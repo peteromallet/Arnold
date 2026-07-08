@@ -2,413 +2,399 @@ schema: arnold.megaplan_native_representation.conformance.v1
 target_report: docs/arnold/megaplan-native-representation-report.md
 traceability: docs/arnold/megaplan-native-representation-traceability.yaml
 rows:
-  - id: prep-clarification-gate
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - source_excerpt
-      - rendered_route
-      - suspend_resume_test
-      - legacy_cursor_compatibility_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold/conformance/test_platform_e2e.py
-  - id: plan-artifact-version-metadata
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - docs/arnold/package-authoring-contract.md
-    proof_categories:
-      - artifact_manifest
-      - schema_test
-    proof_artifacts:
-      - docs/arnold/package-authoring-contract.md
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-  - id: critique-bare-skip
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/planning.py
-    proof_categories:
-      - variant_topology
-      - behavior_golden
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: critique-evaluator-retry
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/planning.py
-    proof_categories:
-      - retry_exhaustion_test
-      - retry_success_test
-      - event_trace
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: critique-parallel-lenses
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - dynamic_list_fanout_fixture
-      - reducer_trace
-      - fallback_behavior_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: critique-gate-revise-loop
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - loop_iteration_trace
-      - cap_test
-      - severity_termination_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: gate-preflight-normalization
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/planning.py
-    proof_categories:
-      - malformed_payload_golden
-      - unavailable_agent_route
-      - topology_excerpt
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: gate-signal-reprompt
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/planning.py
-    proof_categories:
-      - gate_retry_test
-      - route_decision_golden
-      - artifact_schema_check
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: gate-flag-debt-fallback
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - docs/arnold/native-platform.md
-    proof_categories:
-      - effect_event_trace
-      - accepted_with_debt_golden
-      - downgrade_golden
-    proof_artifacts:
-      - docs/arnold/native-platform.md
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
-  - id: tiebreaker-subworkflow
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - subworkflow_graph
-      - path_addressed_trace
-      - proceed_iterate_escalate_tests
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: human-decision-suspension
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - process_death_resume_test
-      - rendered_suspension_points
-      - boundary_receipt_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_resume_routing.py
-      - tests/arnold_pipelines/megaplan/test_semantic_health.py
-  - id: finalize-fallback-routes
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/planning.py
-    proof_categories:
-      - finalize_failure_golden
-      - route_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-  - id: execute-dependency-batches
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - dag_fixture
-      - partial_failure_resume_test
-      - task_dependency_trace
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
-  - id: execute-approval-gates
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - arnold_pipelines/megaplan/workflows/boundary_contracts.py
-    proof_categories:
-      - approval_tests
-      - no_review_golden
-      - deferred_human_golden
-      - boundary_receipt_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
-  - id: execute-review-rework-loop
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - review_goldens
-      - loop_trace
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
-  - id: review-parallel-fanin
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - parallel_review_trace
-      - deterministic_ordering_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
-  - id: review-retry-cap-outcomes
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - arnold_pipelines/megaplan/workflows/boundary_contracts.py
-    proof_categories:
-      - infra_retry_golden
-      - repeated_failure_cap_golden
-      - force_proceed_block_tests
-      - authority_boundary_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
-      - tests/arnold_pipelines/megaplan/test_s6_override_routing.py
-  - id: override-action-surface
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - arnold_pipelines/megaplan/workflows/override_matrix.py
-      - arnold_pipelines/megaplan/workflows/boundary_contracts.py
-    proof_categories:
-      - override_matrix
-      - action_route_tests
-      - authority_boundary_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/override_matrix.py
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_override_action_matrix.py
-      - tests/arnold_pipelines/megaplan/test_s6_override_routing.py
-      - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
-  - id: timeout-deadline-policy
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - docs/arnold/operations.md
-    proof_categories:
-      - timeout_event_trace
-      - retry_escalation_test
-    proof_artifacts:
-      - docs/arnold/operations.md
-      - tests/arnold/conformance/test_platform_e2e.py
-  - id: model-routing-policy
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - docs/arnold/native-platform.md
-    proof_categories:
-      - profile_validation
-      - task_complexity_route_test
-      - rendered_policy_view
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/planning.py
-      - docs/arnold/native-platform.md
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
-  - id: runtime-list-iteration
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - compiler_fixture
-      - runtime_trace
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold/workflow/test_source_compiler_api.py
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-  - id: dynamic-parallel-map
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - selected_lens_fanout_fixture
-      - execute_batch_fanout_fixture
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: typed-loop-outcomes
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - compiler_acceptance_tests
-      - compiler_rejection_tests
-      - route_parity
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold/workflow/test_source_compiler_api.py
-      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
-  - id: autodrive-event-liveness
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/events.py
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - event_replay_test
-      - liveness_policy_test
-      - status_projection_parity
-      - cursor_projection_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/events.py
-      - tests/arnold_pipelines/megaplan/test_s6_auto_event_consumption.py
-      - tests/arnold_pipelines/megaplan/test_workflow_events.py
-      - tests/arnold_pipelines/megaplan/test_observability_events_projection.py
-      - tests/arnold_pipelines/megaplan/test_status_cli.py
-  - id: path-addressed-checkpoints
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - tree_trace_snapshot
-      - resume_from_path_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
-  - id: shadow-topology
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - shadow_topology_diff
-      - review_signoff
-      - parity_notes
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  - id: handler-purity-audit
-    status: implemented
-    semantic_carrier: audited_pure_phase_body
-    carrier_evidence:
-      - arnold_pipelines/megaplan/handlers/plan.py
-      - arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
-    proof_categories:
-      - handler_inventory
-      - purity_scan
-      - source_excerpts
-      - reviewer_signoff
-    proof_artifacts:
-      - tests/arnold_pipelines/megaplan/test_semantics_carrier.py
-      - arnold_pipelines/megaplan/handlers/plan.py
-      - arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
-  - id: golden-trace-regeneration
-    status: implemented
-    semantic_carrier: declared_policy
-    carrier_evidence:
-      - docs/arnold/operations.md
-    proof_categories:
-      - golden_scenario_manifest
-      - semantic_diff_checklist
-      - reviewer_approval
-    proof_artifacts:
-      - tests/characterization/test_pipeline_golden.py
-      - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-      - docs/arnold/operations.md
-  - id: source-path-reconciliation
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - path_reconciliation_table
-      - import_smoke_test
-      - native_shell_negative_test
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py
-      - tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
-      - tests/arnold_pipelines/megaplan/test_native_contract.py
-  - id: behavior-parity
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - golden_suite
-      - live_smoke
-      - installed_wheel_conformance
-    proof_artifacts:
-      - tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
-  - id: source-readability
-    status: implemented
-    semantic_carrier: canonical_source
-    carrier_evidence:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-    proof_categories:
-      - human_review_checklist
-      - rendered_topology_diff
-    proof_artifacts:
-      - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - docs/arnold/package-authoring-contract.md
-      - tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py
+- id: prep-clarification-gate
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - source_excerpt
+  - rendered_route
+  - suspend_resume_test
+  - legacy_cursor_compatibility_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: plan-artifact-version-metadata
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  - docs/arnold/package-authoring-contract.md
+  proof_categories:
+  - artifact_manifest
+  - schema_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  - docs/arnold/package-authoring-contract.md
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/semantic_health.json
+- id: critique-bare-skip
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  proof_categories:
+  - variant_topology
+  - behavior_golden
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/planning.py
+- id: critique-evaluator-retry
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  proof_categories:
+  - retry_exhaustion_test
+  - retry_success_test
+  - event_trace
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor/semantic_health.json
+- id: critique-parallel-lenses
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - dynamic_list_fanout_fixture
+  - reducer_trace
+  - fallback_behavior_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_aggregate_promotion/semantic_health.json
+- id: critique-gate-revise-loop
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - loop_iteration_trace
+  - cap_test
+  - severity_termination_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/semantic_health.json
+- id: gate-preflight-normalization
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  proof_categories:
+  - malformed_payload_golden
+  - unavailable_agent_route
+  - topology_excerpt
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: gate-signal-reprompt
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  proof_categories:
+  - gate_retry_test
+  - route_decision_golden
+  - artifact_schema_check
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_resume_anchor/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: gate-flag-debt-fallback
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - docs/arnold/native-platform.md
+  proof_categories:
+  - effect_event_trace
+  - accepted_with_debt_golden
+  - downgrade_golden
+  proof_artifacts:
+  - docs/arnold/native-platform.md
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: tiebreaker-subworkflow
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - subworkflow_graph
+  - path_addressed_trace
+  - proceed_iterate_escalate_tests
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_synthesis_to_decision/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: human-decision-suspension
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - process_death_resume_test
+  - rendered_suspension_points
+  - boundary_receipt_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - tests/arnold_pipelines/megaplan/test_resume_routing.py
+  - tests/arnold_pipelines/megaplan/test_semantic_health.py
+- id: finalize-fallback-routes
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  proof_categories:
+  - finalize_failure_golden
+  - route_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_fallback/semantic_health.json
+- id: execute-dependency-batches
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - dag_fixture
+  - partial_failure_resume_test
+  - task_dependency_trace
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_aggregate_promotion/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: execute-approval-gates
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - arnold_pipelines/megaplan/workflows/boundary_contracts.py
+  proof_categories:
+  - approval_tests
+  - no_review_golden
+  - deferred_human_golden
+  - boundary_receipt_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - tests/arnold_pipelines/megaplan/test_workflows_planning.py
+  - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
+- id: execute-review-rework-loop
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - review_goldens
+  - loop_trace
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: review-parallel-fanin
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - parallel_review_trace
+  - deterministic_ordering_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_aggregate_promotion/semantic_health.json
+- id: review-retry-cap-outcomes
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - arnold_pipelines/megaplan/workflows/boundary_contracts.py
+  proof_categories:
+  - infra_retry_golden
+  - repeated_failure_cap_golden
+  - force_proceed_block_tests
+  - authority_boundary_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - tests/arnold_pipelines/megaplan/test_workflows_planning.py
+  - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
+  - tests/arnold_pipelines/megaplan/test_s6_override_routing.py
+- id: override-action-surface
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - arnold_pipelines/megaplan/workflows/override_matrix.py
+  - arnold_pipelines/megaplan/workflows/boundary_contracts.py
+  proof_categories:
+  - override_matrix
+  - action_route_tests
+  - authority_boundary_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/override_matrix.py
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - tests/arnold_pipelines/megaplan/test_override_action_matrix.py
+  - tests/arnold_pipelines/megaplan/test_s6_override_routing.py
+  - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
+- id: timeout-deadline-policy
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - docs/arnold/operations.md
+  proof_categories:
+  - timeout_event_trace
+  - retry_escalation_test
+  proof_artifacts:
+  - docs/arnold/operations.md
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: model-routing-policy
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  - docs/arnold/native-platform.md
+  proof_categories:
+  - profile_validation
+  - task_complexity_route_test
+  - rendered_policy_view
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/planning.py
+  - docs/arnold/native-platform.md
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_resume_anchor/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: runtime-list-iteration
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - compiler_fixture
+  - runtime_trace
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+- id: dynamic-parallel-map
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - selected_lens_fanout_fixture
+  - execute_batch_fanout_fixture
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+- id: typed-loop-outcomes
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - compiler_acceptance_tests
+  - compiler_rejection_tests
+  - route_parity
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: autodrive-event-liveness
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/events.py
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - event_replay_test
+  - liveness_policy_test
+  - status_projection_parity
+  - cursor_projection_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/events.py
+  - tests/arnold_pipelines/megaplan/test_s6_auto_event_consumption.py
+  - tests/arnold_pipelines/megaplan/test_workflow_events.py
+  - tests/arnold_pipelines/megaplan/test_observability_events_projection.py
+  - tests/arnold_pipelines/megaplan/test_status_cli.py
+- id: path-addressed-checkpoints
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - tree_trace_snapshot
+  - resume_from_path_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_resume_anchor/semantic_health.json
+  - docs/arnold/megaplan-native-representation-scenarios.yaml
+- id: shadow-topology
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - shadow_topology_diff
+  - review_signoff
+  - parity_notes
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml
+  - tests/arnold_pipelines/megaplan/test_compositional_workflow.py
+- id: handler-purity-audit
+  status: implemented
+  semantic_carrier: audited_pure_phase_body
+  carrier_evidence:
+  - arnold_pipelines/megaplan/handlers/plan.py
+  - arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
+  proof_categories:
+  - handler_inventory
+  - purity_scan
+  - source_excerpts
+  - reviewer_signoff
+  proof_artifacts:
+  - tests/arnold_pipelines/megaplan/test_semantics_carrier.py
+  - arnold_pipelines/megaplan/handlers/plan.py
+  - arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
+- id: golden-trace-regeneration
+  status: implemented
+  semantic_carrier: declared_policy
+  carrier_evidence:
+  - docs/arnold/operations.md
+  proof_categories:
+  - golden_scenario_manifest
+  - semantic_diff_checklist
+  - reviewer_approval
+  proof_artifacts:
+  - docs/arnold/operations.md
+- id: source-path-reconciliation
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - path_reconciliation_table
+  - import_smoke_test
+  - native_shell_negative_test
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py
+  - tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
+  - tests/arnold_pipelines/megaplan/test_native_contract.py
+- id: behavior-parity
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - golden_suite
+  - live_smoke
+  - installed_wheel_conformance
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  - tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
+- id: source-readability
+  status: implemented
+  semantic_carrier: canonical_source
+  carrier_evidence:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_categories:
+  - human_review_checklist
+  - rendered_topology_diff
+  proof_artifacts:
+  - arnold_pipelines/megaplan/workflows/workflow.pypeline

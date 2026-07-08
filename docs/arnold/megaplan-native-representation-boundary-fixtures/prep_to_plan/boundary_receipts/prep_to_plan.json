@@ -1,0 +1,17 @@
+{
+  "artifact_refs": [
+    "research.md",
+    "brief.md"
+  ],
+  "boundary_id": "prep_to_plan",
+  "history_ref": "prep_completed",
+  "invocation_id": "inv-prep_to_plan",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s2.prep.1",
+  "state_observation": {
+    "current_state": "prepped"
+  },
+  "workflow_id": "megaplan-review"
+}

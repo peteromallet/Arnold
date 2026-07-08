@@ -1,0 +1,23 @@
+{
+  "config": {
+    "project_dir": "/tmp/boundary-fixture"
+  },
+  "created_at": "2026-07-08T00:00:00Z",
+  "current_phase": "tiebreaker_synthesis",
+  "current_state": "critiqued",
+  "history": [
+    {
+      "result": "success",
+      "step": "tiebreaker"
+    }
+  ],
+  "iteration": 1,
+  "last_gate": {},
+  "latest_failure": null,
+  "meta": {
+    "current_invocation_id": "inv-tiebreaker_synthesis_to_decision"
+  },
+  "name": "boundary-fixture-tiebreaker_synthesis_to_decision",
+  "plan_versions": [],
+  "sessions": {}
+}

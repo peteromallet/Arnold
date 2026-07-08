@@ -1,0 +1,18 @@
+{
+  "artifact_refs": [
+    "blocked_batch_report.json"
+  ],
+  "batch_index": 1,
+  "boundary_id": "execute_partial_failure",
+  "child_trace_path": "effects/execute_partial_failure.json",
+  "history_ref": "execute_partial_failure",
+  "invocation_id": "inv-execute_partial_failure",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s4.execute.1",
+  "state_observation": {
+    "current_state": "executed"
+  },
+  "workflow_id": "megaplan-review"
+}

@@ -1,0 +1,13 @@
+{
+  "artifacts_written": [],
+  "blocked_tasks": [],
+  "cli_provenance": {},
+  "deviations": [],
+  "exit_kind": "success",
+  "external_error": null,
+  "invocation_id": "inv-tiebreaker_researcher_to_challenger",
+  "phase": "tiebreaker_researcher",
+  "phase_result_contract_version": 1,
+  "schema": "megaplan.phase_result",
+  "schema_version": 1
+}

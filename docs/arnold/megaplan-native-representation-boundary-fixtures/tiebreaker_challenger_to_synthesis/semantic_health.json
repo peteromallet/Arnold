@@ -1,0 +1,16 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "tiebreaker_challenger_to_synthesis",
+  "external_effect_refs": [],
+  "fixture_id": "tiebreaker_challenger_to_synthesis",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/boundary_receipts/tiebreaker_challenger_to_synthesis.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "tiebreaker_challenger_to_synthesis"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

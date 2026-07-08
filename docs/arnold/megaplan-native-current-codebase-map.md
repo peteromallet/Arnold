@@ -32,6 +32,24 @@ The important split is:
 The current `workflow.pypeline` is therefore a readable top-level skeleton, not
 the complete semantic owner of the Megaplan product workflow.
 
+## Evidence-backed status update (2026-07-08)
+
+The current generated evidence bundle narrows that earlier diagnosis. The
+machine-readable conformance ledger now regenerates from current evidence and
+records 31 implemented rows in traceability order. That evidence keeps
+`workflow.pypeline` as the canonical authored source, treats `workflow.py` as
+compatibility glue only, and quarantines `components.py`, route bindings,
+manifest backend routing, CLI dispatch, auto next-step derivation, and
+compatibility shells from satisfying row authority.
+
+The same bundle also records the remaining narrowing findings explicitly:
+handler-purity audit receipts still capture retained-handler routing/state
+mutations, and the compatibility-quarantine and dead-delete mutation records
+preserve the known baseline conformance failures as audit evidence rather than
+as closure proof. The rest of this map should therefore be read as the
+inventory of historical and quarantined semantic carriers that informed the
+corrective work.
+
 ## Canonical Source Surface
 
 ### `arnold_pipelines/megaplan/workflows/workflow.pypeline`

@@ -1,0 +1,63 @@
+{
+  "artifact_refs": [],
+  "authority_records": [
+    {
+      "actor": "fixture-operator",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "adopt-execution",
+      "details": {
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "authority_transition": "adopt-execution",
+        "contract_ref": "override_adopt_execution_authority",
+        "evidence_hashes": {
+          "execution.json": "78ebba42ac02bd9f98738eeecb032010d6660d4738f3bec3809962da0db24b09",
+          "execution_audit.json": "d55ad8492c06d54bee686b9a529ad73afffdc8d1372a29f2198c7f165c095f5d",
+          "final.md": "1653dc38d6d082c2d94941e585e856a6fea2bb82656be967801bd8b639ecd523",
+          "finalize.json": "cd80ba078870720f1c7779b78f8d42efa1baa6dc9c35510780ab8c78ce083b28",
+          "state.json": "d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+        },
+        "freshness_token": "inv-override_adopt_execution_authority",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "optional_evidence_refs": [
+          "execution_audit.json",
+          "final.md"
+        ],
+        "required_evidence_refs": [
+          "state.json",
+          "execution.json",
+          "finalize.json"
+        ]
+      },
+      "evidence_refs": [
+        "state.json",
+        "execution.json",
+        "finalize.json",
+        "execution_audit.json",
+        "final.md"
+      ],
+      "role": "reviewer",
+      "scope": "override.adopt_execution"
+    }
+  ],
+  "boundary_id": "override_adopt_execution_authority",
+  "capability_effects": [
+    "authority",
+    "phase_result",
+    "receipt",
+    "state_history"
+  ],
+  "external_effect_refs": [],
+  "fixture_id": "override_adopt_execution_authority",
+  "path_hashes": {
+    "phase_result_path": "sha256:b0638e51b6f739ba528b865b74c7b5ec83d79598817781db687ca9c921959de0",
+    "receipt_path": "sha256:7c155295262ad4448202249ed9fd1c85599fd0dff049de4e6cc2d418fd752f73",
+    "semantic_health_path": "sha256:77f03751094b5ee0b1c1cac814022cd5870f0cc45bdc7510f38156fce22e1930",
+    "state_path": "sha256:d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+  },
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/phase_result.json",
+  "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/boundary_receipts/override_adopt_execution_authority.json",
+  "reducer_promotion": false,
+  "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/semantic_health.json",
+  "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/state.json"
+}

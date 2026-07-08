@@ -1,0 +1,19 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "execute_partial_failure",
+  "external_effect_refs": [
+    "effects/execute_partial_failure.json",
+    "execute:blocked-recovery"
+  ],
+  "fixture_id": "execute_partial_failure",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/boundary_receipts/execute_partial_failure.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "execute_partial_failure"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}
