@@ -736,6 +736,122 @@ def test_apply_delta_sets_unlinked_widget_value_and_preserves_unrelated_nodes() 
         assert nodes_after[node_id] == before
 
 
+def test_apply_delta_sets_ksampler_control_after_generate_ui_widget() -> None:
+    original = {
+        "last_node_id": 1,
+        "last_link_id": 0,
+        "nodes": [
+            {
+                "id": 1,
+                "type": "KSampler",
+                "pos": [0, 0],
+                "size": [315, 341],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [{"name": "LATENT", "type": "LATENT", "links": None, "slot_index": 0}],
+                "properties": {"vibecomfy_uid": "ksampler"},
+                "widgets_values": [42, "fixed", 8, 1, "euler", "normal", 1],
+            }
+        ],
+        "links": [],
+    }
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "set_node_field",
+                "target": ["", "ksampler", "control_after_generate"],
+                "value": "randomize",
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=_SchemaProvider())
+
+    assert result.ok is True
+    assert result.candidate is not None
+    node = result.candidate["nodes"][0]
+    assert node["widgets_values"] == [42, "randomize", 8, 1, "euler", "normal", 1]
+
+
+def test_apply_delta_maps_legacy_unused_widget_alias_to_control_after_generate() -> None:
+    original = {
+        "last_node_id": 1,
+        "last_link_id": 0,
+        "nodes": [
+            {
+                "id": 1,
+                "type": "KSampler",
+                "pos": [0, 0],
+                "size": [315, 341],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [{"name": "LATENT", "type": "LATENT", "links": None, "slot_index": 0}],
+                "properties": {"vibecomfy_uid": "ksampler"},
+                "widgets_values": [42, "fixed", 8, 1, "euler", "normal", 1],
+            }
+        ],
+        "links": [],
+    }
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "set_node_field",
+                "target": ["", "ksampler", "unused_widget_1"],
+                "value": "randomize",
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=_SchemaProvider())
+
+    assert result.ok is True
+    assert result.candidate is not None
+    node = result.candidate["nodes"][0]
+    assert node["widgets_values"] == [42, "randomize", 8, 1, "euler", "normal", 1]
+
+
+def test_apply_delta_rejects_invalid_control_after_generate_value() -> None:
+    original = {
+        "last_node_id": 1,
+        "last_link_id": 0,
+        "nodes": [
+            {
+                "id": 1,
+                "type": "KSampler",
+                "pos": [0, 0],
+                "size": [315, 341],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [{"name": "LATENT", "type": "LATENT", "links": None, "slot_index": 0}],
+                "properties": {"vibecomfy_uid": "ksampler"},
+                "widgets_values": [42, "fixed", 8, 1, "euler", "normal", 1],
+            }
+        ],
+        "links": [],
+    }
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "set_node_field",
+                "target": ["", "ksampler", "control_after_generate"],
+                "value": "sometimes",
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=_SchemaProvider())
+
+    assert result.ok is False
+    issue = next(issue for issue in result.diagnostics if issue.code == "value_not_in_enum")
+    assert issue.detail["choices"] == ["fixed", "randomize", "increment", "decrement"]
+
+
 def test_apply_delta_adds_node_with_ledger_ids_and_collision_nudging() -> None:
     original = _fixture()
     provider = _SchemaProvider()

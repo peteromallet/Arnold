@@ -4093,6 +4093,72 @@ class TestDoneGateAByteFaithfulness:
         assert "Gate A passed" in result.summary
         assert "1 edit operation" in result.summary
 
+    def test_apply_batch_sets_ksampler_control_after_generate(self):
+        """UI-only KSampler randomization control is editable by semantic name."""
+        from vibecomfy.porting.edit.ops import SetNodeFieldOp
+        from vibecomfy.porting.edit.session import EditSession
+
+        raw = {
+            "last_node_id": 1,
+            "last_link_id": 0,
+            "nodes": [
+                {
+                    "id": 1,
+                    "type": "KSampler",
+                    "mode": 0,
+                    "pos": [0, 0],
+                    "size": [315, 341],
+                    "widgets_values": [42, "fixed", 8, 1, "euler", "normal", 1],
+                    "outputs": [{"name": "LATENT", "type": "LATENT", "slot_index": 0}],
+                    "properties": {"vibecomfy_uid": "ksampler"},
+                },
+            ],
+            "links": [],
+            "groups": [],
+        }
+        session = EditSession(raw, schema_provider=_TestSchemaProvider())
+
+        rendered = session.render()
+        batch = session.apply_batch("ksampler.control_after_generate = 'randomize'\n")
+
+        assert "control_after_generate='fixed'" in rendered
+        assert "unused_widget_1='fixed'" not in rendered
+        assert batch.ok is True
+        assert isinstance(batch.landed_ops[0], SetNodeFieldOp)
+        node = session.working_ui["nodes"][0]
+        assert node["widgets_values"] == [42, "randomize", 8, 1, "euler", "normal", 1]
+
+    def test_apply_batch_maps_legacy_unused_widget_alias_to_control_after_generate(self):
+        """Older scratchpad aliases still land on the same KSampler UI slot."""
+        from vibecomfy.porting.edit.session import EditSession
+
+        raw = {
+            "last_node_id": 1,
+            "last_link_id": 0,
+            "nodes": [
+                {
+                    "id": 1,
+                    "type": "KSampler",
+                    "mode": 0,
+                    "pos": [0, 0],
+                    "size": [315, 341],
+                    "widgets_values": [42, "fixed", 8, 1, "euler", "normal", 1],
+                    "outputs": [{"name": "LATENT", "type": "LATENT", "slot_index": 0}],
+                    "properties": {"vibecomfy_uid": "ksampler"},
+                },
+            ],
+            "links": [],
+            "groups": [],
+        }
+        session = EditSession(raw, schema_provider=_TestSchemaProvider())
+        session.render()
+
+        batch = session.apply_batch("ksampler.unused_widget_1 = 'randomize'\n")
+
+        assert batch.ok is True
+        assert session.working_ui["nodes"][0]["widgets_values"][1] == "randomize"
+        assert batch.field_changes[0].field_path == "control_after_generate"
+
     def test_done_succeeds_after_link_upsert(self):
         """done() passes gate A after linking two nodes."""
         from vibecomfy.porting.edit.ops import UpsertLinkOp

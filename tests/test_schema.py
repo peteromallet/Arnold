@@ -566,7 +566,7 @@ def test_normalize_to_api_preserves_ui_only_widget_slots_from_static_schema() ->
 
     assert api["1"]["inputs"] == {
         "seed": 123,
-        "unused_widget_1": "randomize",
+        "control_after_generate": "randomize",
         "steps": 30,
         "cfg": 6,
         "sampler_name": "uni_pc",

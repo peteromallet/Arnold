@@ -152,7 +152,7 @@ def _normalize_ui_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider
             widget_names = _schema_input_names(schema_provider, class_type)
             for idx, value in enumerate(widgets):
                 if idx < len(widget_names):
-                    name = widget_names[idx]
+                    name = _normalize_widget_input_name(widget_names, idx, value)
                 elif idx < len(ui_widget_names):
                     name = ui_widget_names[idx]
                 else:
@@ -602,6 +602,18 @@ def _schema_input_names(schema_provider: SchemaProvider | None, class_type: str)
     schema = schema_for(schema_provider, class_type)
     names = widget_names_from_schema(class_type, schema)
     return [name if name is not None else f"unused_widget_{index}" for index, name in enumerate(names)]
+
+
+def _normalize_widget_input_name(names: list[str], index: int, value: Any) -> str:
+    name = names[index]
+    if not name.startswith("unused_widget_"):
+        return name
+    if not (isinstance(value, str) and value in _CONTROL_AFTER_GENERATE_VALUES):
+        return name
+    previous = names[index - 1] if index > 0 else ""
+    if previous in {"seed", "noise_seed", "value"}:
+        return "control_after_generate"
+    return name
 
 
 def _schema_output_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:

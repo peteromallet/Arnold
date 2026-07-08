@@ -21,6 +21,8 @@ class WidgetNameResolution:
 
 _WIDGET_KEY_RE = re.compile(r"widget_(\d+)")
 _MISSING_WIDGET_VALUE = object()
+_CONTROL_AFTER_GENERATE_VALUES = {"fixed", "randomize", "increment", "decrement"}
+_PRIMITIVE_CONTROL_WIDGET_CLASSES = {"PrimitiveBoolean", "PrimitiveFloat", "PrimitiveInt"}
 
 
 def compact_widget_names_for_node(
@@ -128,7 +130,7 @@ def _candidate_name_sources(
 
     curated = WIDGET_SCHEMA.get(class_type)
     if curated is not None:
-        sources.append(("committed_widget_schema", list(curated)))
+        sources.append(("committed_widget_schema", _name_ui_control_slots(node, class_type, list(curated))))
 
     semantic_names = _semantic_names_for_count(class_type, value_count)
     if semantic_names:
@@ -150,12 +152,51 @@ def _candidate_name_sources(
             except Exception:
                 object_info_names = []
             if object_info_names:
+                object_info_names = _name_ui_control_slots(node, class_type, list(object_info_names))
                 padded = _leading_null_padded_names(node, list(object_info_names), value_count)
                 if padded:
                     sources.append(("object_info_widget_value_order_leading_null_padding", padded))
                 sources.append(("object_info_widget_value_order", list(object_info_names)))
 
     return sources
+
+
+def _name_ui_control_slots(
+    node: Mapping[str, Any] | Any,
+    class_type: str,
+    names: list[str | None],
+) -> list[str | None]:
+    values = _compact_values(node)
+    if not isinstance(values, (list, Mapping)):
+        return names
+    out = list(names)
+    if isinstance(values, list):
+        value_count = len(values)
+    else:
+        indices = _widget_indices(values)
+        value_count = max(indices) + 1 if indices else len(values)
+    if value_count > len(out):
+        out.extend([None] * (value_count - len(out)))
+    for index, name in enumerate(out):
+        if name is not None:
+            continue
+        if isinstance(values, list):
+            if index >= len(values):
+                continue
+            value = values[index]
+        else:
+            key = f"widget_{index}"
+            if key not in values:
+                continue
+            value = values[key]
+        if not (isinstance(value, str) and value in _CONTROL_AFTER_GENERATE_VALUES):
+            continue
+        previous = out[index - 1] if index > 0 else None
+        if previous in {"seed", "noise_seed", "value"} or (
+            class_type in _PRIMITIVE_CONTROL_WIDGET_CLASSES and index == 1
+        ):
+            out[index] = "control_after_generate"
+    return out
 
 
 def _leading_null_padded_names(

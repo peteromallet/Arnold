@@ -17,13 +17,15 @@ from vibecomfy.porting.edit.apply_field_aliases import (
     socket_source_hint,
 )
 from vibecomfy.porting.edit.apply_links import _build_rewires, _build_rewires_for_setnode_gets, _collect_links_for_origin, _collect_links_for_target, _link_id, _link_ids, _resolve_getnode_source, _resolve_passthrough_source, _schema_output_type
-from vibecomfy.porting.edit.apply_slots import _find_named_slot_index, _widget_index_for_field, _widget_index_from_input_stubs, _widget_name_for_input
+from vibecomfy.porting.edit.apply_slots import _canonical_ui_only_widget_field, _find_named_slot_index, _widget_index_for_field, _widget_index_from_input_stubs, _widget_name_for_input
 from vibecomfy.porting.edit.apply_types import ResolvedFieldRef, ResolvedLinkEndpoint, ResolvedNodeRef, ResolvedOp, ResolvedRemoveLinkRef, ResolvedRemoveNodePlan, _ctx, _endpoint_port_issues, _issue
 from vibecomfy.porting.edit.apply_values import _validate_literal_value
 from vibecomfy.porting.authoring_surface import input_spec_is_socket_only
 from vibecomfy.porting.report import PortIssue
 from vibecomfy.porting.resolution import EditLedgerBackend, _find_named_slot
 from vibecomfy.schema import schema_for, socket_types_compatible
+
+_CONTROL_AFTER_GENERATE_CHOICES = ("fixed", "randomize", "increment", "decrement")
 
 
 def _resolve_scope(ledger: EditLedger, scope_path: str) -> tuple[ScopeState | None, list[PortIssue]]:
@@ -202,6 +204,14 @@ def _resolve_set_node_field(
         schema_inputs,
         schema_provider=schema_provider,
     )
+    ui_only_alias = _canonical_ui_only_widget_field(
+        node,
+        field_path,
+        schema_provider=schema_provider,
+    )
+    ui_only_widget_index = None
+    if ui_only_alias is not None:
+        field_path, ui_only_widget_index = ui_only_alias
     target = (
         op.target
         if field_path == op.target.field_path
@@ -218,7 +228,9 @@ def _resolve_set_node_field(
         if isinstance(raw_input.get("link"), int):
             automatic_link_removal = raw_input["link"]
 
-    widget_index = _widget_index_for_field(node, field_path, schema_provider=schema_provider)
+    widget_index = ui_only_widget_index
+    if widget_index is None:
+        widget_index = _widget_index_for_field(node, field_path, schema_provider=schema_provider)
     widget_stub_name = _widget_name_for_input(raw_input)
     used_schema_less_widget_recovery = False
     if widget_index is None and widget_stub_name == field_path:
@@ -289,6 +301,20 @@ def _resolve_set_node_field(
                     "field_path": field_path,
                     "requested_field_path": op.target.field_path,
                     "class_type": class_type,
+                },
+            )
+        ]
+
+    if field_path == "control_after_generate" and op.value not in _CONTROL_AFTER_GENERATE_CHOICES:
+        return None, [
+            _issue(
+                "value_not_in_enum",
+                f"set_node_field rejected {class_type}.{field_path}: value {op.value!r} is not in the declared enum.",
+                detail={
+                    "class_type": class_type,
+                    "input": field_path,
+                    "value": op.value,
+                    "choices": list(_CONTROL_AFTER_GENERATE_CHOICES),
                 },
             )
         ]

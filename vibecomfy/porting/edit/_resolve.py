@@ -54,6 +54,7 @@ from vibecomfy.porting.edit._ir_utils import (
     _socket_type_from_widget_value,
     _widget_value_for_field,
 )
+from vibecomfy.porting.edit.apply_slots import _canonical_ui_only_widget_field
 from vibecomfy.porting.resolution import _find_named_slot
 
 _EXEC_CLASS_TYPE = "vibecomfy.exec"
@@ -1453,6 +1454,13 @@ class _ResolveMixin:
         schema = schema_for(self.schema_provider, node_ref.class_type)
         schema_inputs = getattr(schema, "inputs", {}) or {}
         field_name = _canonical_input_name_for_class(schema_inputs, node_ref.class_type, field_name)
+        ui_only_alias = _canonical_ui_only_widget_field(
+            node_ref.node,
+            field_name,
+            schema_provider=self.schema_provider,
+        )
+        if ui_only_alias is not None:
+            field_name = ui_only_alias[0]
         schema_input = _input_spec_for_field(schema_inputs, field_name)
         raw_input = _find_named_slot(node_ref.node.get("inputs"), field_name)
         widget_value = _widget_value_for_field(node_ref.node, node_ref.class_type, field_name)

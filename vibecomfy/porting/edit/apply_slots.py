@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
 from vibecomfy.porting.widgets.compact_resolver import widget_index_for_field
+
+_POSITIONAL_WIDGET_FIELD_RE = re.compile(r"(?:unused_)?widget_(\d+)")
 
 
 def _find_named_slot_index(slots: Any, name: str) -> int | None:
@@ -32,6 +35,31 @@ def _widget_index_for_field(
     schema_provider: Any | None = None,
 ) -> int | None:
     return widget_index_for_field(node, field_name, schema_provider=schema_provider)
+
+
+def _canonical_ui_only_widget_field(
+    node: Mapping[str, Any],
+    field_name: str,
+    *,
+    schema_provider: Any | None = None,
+) -> tuple[str, int] | None:
+    """Return a semantic alias for known UI-only widget slots.
+
+    This keeps edit-session compatibility with older scratchpads that exposed
+    Comfy's seed randomization control as ``unused_widget_1`` while letting new
+    code address the same slot as ``control_after_generate``.
+    """
+    class_type = str(node.get("type") or node.get("class_type") or "")
+    resolution = compact_widget_names_for_node(node, class_type, schema_provider=schema_provider)
+    for index, name in enumerate(resolution.names):
+        if name != "control_after_generate":
+            continue
+        if field_name == "control_after_generate":
+            return "control_after_generate", index
+        match = _POSITIONAL_WIDGET_FIELD_RE.fullmatch(field_name)
+        if match is not None and int(match.group(1)) == index:
+            return "control_after_generate", index
+    return None
 
 
 def _widget_index_from_input_stubs(inputs: Any, field_name: str) -> int | None:
