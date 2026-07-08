@@ -2630,6 +2630,58 @@ echo "RESULT rcA=$rcA outcomeA=$(cat {str(outcome_log)!r} 2>/dev/null) probeA=$(
     assert "RETURNED_C" in result.stdout           # Case C must not have exited
 
 
+def test_marker_requires_repair_despite_alive_reports_chain_health_failure(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_dir = tmp_path / "repair-data"
+    workspace = tmp_path / "ws"
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    workspace.mkdir()
+
+    marker_path = marker_dir / "demo-session.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_path = repair_dir / "demo-session.repair-data.json"
+    data_path.write_text("{}\n", encoding="utf-8")
+    (repair_dir / "demo-session.chain-health.json").write_text(
+        json.dumps(
+            {
+                "status": "chain_inconsistent_done",
+                "chain_complete": False,
+                "completed_count": 1,
+                "milestone_count": 2,
+                "pr_state": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            "set -u",
+            f"MARKER_PATH={str(marker_path)!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            _extract_repair_function("marker_requires_repair_despite_alive"),
+            """
+marker_requires_repair_despite_alive
+echo "rc:$?"
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert "chain_health:chain_inconsistent_done:1/2" in result.stdout
+    assert "rc:0" in result.stdout
+
+
 def test_repair_loop_exits_for_terminal_plan_with_stale_chain_state(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_root = tmp_path / "repair-root"
@@ -2787,12 +2839,9 @@ def test_repair_loop_done_chain_is_not_complete_when_chain_health_artifact_is_in
     spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(
-        "milestones:
-"
-        "  - label: m1
-"
-        "  - label: m2
-",
+        "milestones:\n"
+        "  - label: m1\n"
+        "  - label: m2\n",
         encoding="utf-8",
     )
     _write_chain_state(
@@ -2832,9 +2881,7 @@ def test_repair_loop_done_chain_is_not_complete_when_chain_health_artifact_is_in
         encoding="utf-8",
     )
 
-    script = "
-
-".join(
+    script = "\n\n".join(
         [
             _extract_repair_function("repair_target_completion_status"),
             f"REMOTE_SPEC={str(spec_path)!r}",
@@ -2845,7 +2892,7 @@ def test_repair_loop_done_chain_is_not_complete_when_chain_health_artifact_is_in
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    fields = result.stdout.strip().split("	")
+    fields = result.stdout.strip().split("\t")
     assert fields[0] == "0"
 
 def test_repair_target_completion_status_retires_stale_marker_without_current_target_proof(
