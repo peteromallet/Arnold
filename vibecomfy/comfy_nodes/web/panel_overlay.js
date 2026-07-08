@@ -158,22 +158,44 @@ function graphBoundsToViewport(bounds, app) {
   };
 }
 
-function previewChipGeometry(bounds, labelText) {
-  let labelReserve = 56;
-  if (typeof labelText === "string" && labelText) {
-    labelReserve = Math.max(labelReserve, Math.min(labelText.length * 7 + 34, bounds.w - 24));
+function viewportScaleForGraphBounds(bounds, viewport) {
+  const scales = [];
+  if (
+    bounds
+    && viewport
+    && Number.isFinite(bounds.w)
+    && bounds.w > 0
+    && Number.isFinite(viewport.width)
+    && viewport.width > 0
+  ) {
+    scales.push(viewport.width / bounds.w);
   }
-  const rightPad = 8;
-  let overlayW = Math.max(48, bounds.w - rightPad - labelReserve);
-  overlayW = Math.min(overlayW, bounds.w - 12);
-  if (!Number.isFinite(overlayW) || overlayW <= 0) {
+  if (
+    bounds
+    && viewport
+    && Number.isFinite(bounds.h)
+    && bounds.h > 0
+    && Number.isFinite(viewport.height)
+    && viewport.height > 0
+  ) {
+    scales.push(viewport.height / bounds.h);
+  }
+  const finite = scales.filter((value) => Number.isFinite(value) && value > 0);
+  if (finite.length === 0) {
+    return 1;
+  }
+  return Math.min(...finite);
+}
+
+function previewChipGeometry(bounds) {
+  if (!bounds || !Number.isFinite(bounds.w) || !Number.isFinite(bounds.h) || bounds.w <= 0 || bounds.h <= 0) {
     return null;
   }
   return {
-    x: bounds.x + bounds.w - rightPad - overlayW,
-    y: bounds.y + 2,
-    w: overlayW,
-    h: Math.max(bounds.h - 4, 12),
+    x: bounds.x,
+    y: bounds.y,
+    w: bounds.w,
+    h: bounds.h,
   };
 }
 
@@ -191,29 +213,64 @@ function appendPreviewDomChip(root, app, bounds, valueText, labelText = "") {
   if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
     return;
   }
+  const rect = canvasRect(app);
+  if (
+    rect
+    && (
+      viewport.left + viewport.width < rect.left
+      || viewport.top + viewport.height < rect.top
+      || viewport.left > rect.left + rect.width
+      || viewport.top > rect.top + rect.height
+    )
+  ) {
+    return;
+  }
+  const visible = rect
+    ? {
+        left: Math.max(viewport.left, rect.left),
+        top: Math.max(viewport.top, rect.top),
+        right: Math.min(viewport.left + viewport.width, rect.left + rect.width),
+        bottom: Math.min(viewport.top + viewport.height, rect.top + rect.height),
+      }
+    : {
+        left: viewport.left,
+        top: viewport.top,
+        right: viewport.left + viewport.width,
+        bottom: viewport.top + viewport.height,
+      };
+  if (visible.right <= visible.left || visible.bottom <= visible.top) {
+    return;
+  }
+  const zoomScale = viewportScaleForGraphBounds(bounds, viewport);
+  const fontSize = Math.max(1, 11 * zoomScale);
+  const lineHeight = 1.25;
+  const padY = Math.max(0, 4 * zoomScale);
+  const padX = Math.max(0, 7 * zoomScale);
+  const borderWidth = Math.max(0.5, zoomScale);
+  const borderRadius = Math.max(0, 5 * zoomScale);
   const chip = root.ownerDocument.createElement("div");
   chip.dataset.vibecomfyPreviewChip = "1";
   chip.textContent = previewFieldValueText(labelText, valueText);
   Object.assign(chip.style, {
     position: "fixed",
-    left: `${viewport.left}px`,
-    top: `${viewport.top}px`,
-    width: `${viewport.width}px`,
-    height: `${viewport.height}px`,
+    left: `${visible.left}px`,
+    top: `${visible.top}px`,
+    width: `${visible.right - visible.left}px`,
+    height: `${visible.bottom - visible.top}px`,
     boxSizing: "border-box",
     overflow: "hidden",
-    whiteSpace: "nowrap",
-    textOverflow: "ellipsis",
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
     display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    padding: "0 7px",
-    border: "1px solid rgba(255,193,7,0.95)",
-    borderRadius: "5px",
+    alignItems: "flex-start",
+    justifyContent: "flex-start",
+    padding: `${padY}px ${padX}px`,
+    border: `${borderWidth}px solid rgba(255,193,7,0.95)`,
+    borderRadius: `${borderRadius}px`,
     background: "rgba(20,18,8,0.96)",
     color: "rgba(255,193,7,0.98)",
-    font: "11px Arial, sans-serif",
-    lineHeight: "1",
+    font: `${fontSize}px Arial, sans-serif`,
+    lineHeight: String(lineHeight),
     pointerEvents: "none",
     zIndex: "2147483647",
   });
@@ -304,7 +361,7 @@ export function syncPreviewDomOverlay(app, ctx, diff, candidateGraph, deps = {})
       Array.isArray(node.outputs) ? node.outputs.length : 0,
     );
     const computedRowsTop = pos.y + slotRows * SLOT_H;
-    const rowBoundsForWidgetIndex = function (widx) {
+    const rowBoundsForWidgetIndex = function (widx, valueText) {
       const widget = widgets[widx];
       let rowTop = computedRowsTop + widx * WIDGET_H;
       let rowH = WIDGET_H;
@@ -317,6 +374,21 @@ export function syncPreviewDomOverlay(app, ctx, diff, candidateGraph, deps = {})
               rowH = computed[1];
             }
           } catch (_ignored) {}
+        }
+        const rawValue = String(valueText == null ? "" : valueText);
+        const longTextValue = rawValue.indexOf("\n") !== -1 || rawValue.length > 42;
+        if (longTextValue && rowH <= WIDGET_H + 4) {
+          let nextWidgetY = null;
+          for (let ni = 0; ni < widgets.length; ni += 1) {
+            if (ni === widx || typeof widgets[ni]?.last_y !== "number") continue;
+            if (widgets[ni].last_y > widget.last_y && (nextWidgetY == null || widgets[ni].last_y < nextWidgetY)) {
+              nextWidgetY = widgets[ni].last_y;
+            }
+          }
+          const bottomY = nextWidgetY != null ? pos.y + nextWidgetY : pos.y + size.h - 8;
+          if (bottomY > rowTop + rowH) {
+            rowH = Math.min(bottomY - rowTop, 160);
+          }
         }
       }
       return { x: pos.x, y: rowTop, w: size.w, h: rowH };
@@ -333,7 +405,7 @@ export function syncPreviewDomOverlay(app, ctx, diff, candidateGraph, deps = {})
         continue;
       }
       const labelText = typeof widgets[index]?.name === "string" ? widgets[index].name : "";
-      const chipBounds = previewChipGeometry(rowBoundsForWidgetIndex(index), labelText);
+      const chipBounds = previewChipGeometry(rowBoundsForWidgetIndex(index, valueText), labelText, valueText);
       if (!chipBounds) {
         continue;
       }
@@ -653,6 +725,49 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
       return lo > 0 ? text.slice(0, lo) + ellipsis : ellipsis;
     };
 
+    var wrapTextToWidth = function (text, maxWidth, maxLines) {
+      text = String(text == null ? "" : text);
+      if (!text || maxWidth <= 0 || maxLines <= 0) return [];
+      var lines = [];
+      var parts = text.replace(/\r\n/g, "\n").split("\n");
+      var pushWrapped = function (segment) {
+        segment = String(segment || "");
+        if (!segment) {
+          lines.push("");
+          return;
+        }
+        var words = segment.split(/(\s+)/);
+        var current = "";
+        for (var wi = 0; wi < words.length; wi += 1) {
+          var word = words[wi];
+          if (!word) continue;
+          var next = current + word;
+          if (!current || ctx.measureText(next).width <= maxWidth) {
+            current = next;
+            continue;
+          }
+          lines.push(current.trimEnd());
+          current = word.trimStart();
+          while (ctx.measureText(current).width > maxWidth && current.length > 1) {
+            var piece = fitTextToWidth(current, maxWidth);
+            if (!piece || piece === "\u2026") break;
+            var usable = piece.endsWith("\u2026") ? piece.slice(0, -1) : piece;
+            lines.push(usable);
+            current = current.slice(usable.length);
+          }
+        }
+        if (current) lines.push(current.trimEnd());
+      };
+      for (var pi = 0; pi < parts.length; pi += 1) {
+        pushWrapped(parts[pi]);
+      }
+      if (lines.length > maxLines) {
+        lines = lines.slice(0, maxLines);
+        lines[maxLines - 1] = fitTextToWidth(lines[maxLines - 1] + "\u2026", maxWidth);
+      }
+      return lines;
+    };
+
     var widgetIndexFromFieldPath = function (fieldPath) {
       var path = String(fieldPath || "");
       var direct = /(?:^|\.)(?:widgets_values|widgets)\.(\d+)(?:\.|$)/.exec(path);
@@ -739,23 +854,20 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
 
     var drawWidgetValueOverlay = function (bounds, valueText, labelText) {
       var padX = 7;
-      var rightPad = 8;
-      var labelReserve = 56;
-      try {
-        ctx.font = "11px Arial, sans-serif";
-        if (typeof labelText === "string" && labelText && typeof ctx.measureText === "function") {
-          var lm = ctx.measureText(labelText);
-          if (lm && Number.isFinite(lm.width)) {
-            labelReserve = Math.max(labelReserve, lm.width + 34);
-          }
-        }
-      } catch (_e) {}
-      var overlayW = Math.max(48, bounds.w - rightPad - labelReserve);
-      overlayW = Math.min(overlayW, bounds.w - 12);
-      if (!Number.isFinite(overlayW) || overlayW <= 0) return;
-      var overlayX = bounds.x + bounds.w - rightPad - overlayW;
-      var overlayY = bounds.y + 2;
-      var overlayH = Math.max(bounds.h - 4, 12);
+      var padY = 4;
+      var overlayX = bounds.x;
+      var overlayY = bounds.y;
+      var overlayW = bounds.w;
+      var overlayH = Math.max(bounds.h, 12);
+      if (!Number.isFinite(overlayW) || !Number.isFinite(overlayH) || overlayW <= 0 || overlayH <= 0) return;
+      var maxTextW = Math.max(overlayW - padX * 2, 4);
+      var rawValue = previewFieldValueText(labelText, valueText);
+      var wantsMultipleLines = rawValue.indexOf("\n") !== -1 || rawValue.length > 42 || ctx.measureText(rawValue).width > maxTextW;
+      var maxLines = wantsMultipleLines ? Math.max(1, Math.floor((overlayH - padY * 2) / 13)) : 1;
+      var lines = wantsMultipleLines ? wrapTextToWidth(rawValue, maxTextW, maxLines) : [fitTextToWidth(rawValue, maxTextW)];
+      lines = lines.filter(function (line) { return line != null; });
+      if (lines.length === 0) lines = [""];
+      var lineH = 13;
       drawRoundedPanel(
         overlayX,
         overlayY,
@@ -773,14 +885,18 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
           ctx.clip();
         }
         ctx.font = "11px Arial, sans-serif";
-        ctx.textBaseline = "middle";
-        ctx.textAlign = "right";
         ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.98);
-        var fitted = fitTextToWidth(
-          previewFieldValueText(labelText, valueText),
-          Math.max(overlayW - padX * 2, 4),
-        );
-        ctx.fillText(fitted, overlayX + overlayW - padX, overlayY + overlayH / 2);
+        if (wantsMultipleLines) {
+          ctx.textBaseline = "top";
+          ctx.textAlign = "left";
+          for (var li = 0; li < lines.length; li += 1) {
+            ctx.fillText(lines[li], overlayX + padX, overlayY + padY + li * lineH);
+          }
+        } else {
+          ctx.textBaseline = "middle";
+          ctx.textAlign = "right";
+          ctx.fillText(lines[0], overlayX + overlayW - padX, overlayY + overlayH / 2);
+        }
       } finally {
         ctx.restore();
       }
@@ -811,8 +927,9 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
       );
       var computedRowsTop = ey + slotRows * SLOT_H;
       var widgetRowBounds = new Map();
-      var rowBoundsForWidgetIndex = function (widx) {
-        if (widgetRowBounds.has(widx)) {
+      var rowBoundsForWidgetIndex = function (widx, valueText) {
+        var hasValueText = valueText !== undefined && valueText !== null && String(valueText) !== "";
+        if (!hasValueText && widgetRowBounds.has(widx)) {
           return widgetRowBounds.get(widx);
         }
         var w = widgets[widx];
@@ -828,11 +945,28 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
               }
             } catch (_ignored) {}
           }
+          var rawValue = String(valueText == null ? "" : valueText);
+          var longTextValue = rawValue.indexOf("\n") !== -1 || rawValue.length > 42;
+          if (longTextValue && rowH <= WIDGET_H + 4) {
+            var nextWidgetY = null;
+            for (var nwi = 0; nwi < widgets.length; nwi += 1) {
+              if (nwi === widx || !widgets[nwi] || typeof widgets[nwi].last_y !== "number") continue;
+              if (widgets[nwi].last_y > w.last_y && (nextWidgetY == null || widgets[nwi].last_y < nextWidgetY)) {
+                nextWidgetY = widgets[nwi].last_y;
+              }
+            }
+            var bottomY = nextWidgetY != null ? ey + nextWidgetY : ey + eh - 8;
+            if (bottomY > rowTop + rowH) {
+              rowH = Math.min(bottomY - rowTop, 160);
+            }
+          }
         } else {
           rowTop = computedRowsTop + widx * WIDGET_H;
         }
         var bounds = { x: ex, y: rowTop, w: ew, h: rowH };
-        widgetRowBounds.set(widx, bounds);
+        if (!hasValueText) {
+          widgetRowBounds.set(widx, bounds);
+        }
         return bounds;
       };
       ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.22);
@@ -852,7 +986,7 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
             drawnWidgetFieldIndexes.add(resolvedWidgetIndex);
             var overlayWidget = widgets[resolvedWidgetIndex];
             drawWidgetValueOverlay(
-              rowBoundsForWidgetIndex(resolvedWidgetIndex),
+              rowBoundsForWidgetIndex(resolvedWidgetIndex, fieldNewValueLabel(ef)),
               fieldNewValueLabel(ef),
               overlayWidget && typeof overlayWidget.name === "string" ? overlayWidget.name : null,
             );

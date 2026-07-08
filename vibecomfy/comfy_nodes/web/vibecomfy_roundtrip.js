@@ -7994,6 +7994,49 @@ export function drawPreviewOverlay(ctx, diff) {
       return lo > 0 ? text.slice(0, lo) + ellipsis : ellipsis;
     };
 
+    var _wrapTextToWidth = function (text, maxWidth, maxLines) {
+      text = String(text == null ? "" : text);
+      if (!text || maxWidth <= 0 || maxLines <= 0) return [];
+      var lines = [];
+      var parts = text.replace(/\r\n/g, "\n").split("\n");
+      var pushWrapped = function (segment) {
+        segment = String(segment || "");
+        if (!segment) {
+          lines.push("");
+          return;
+        }
+        var words = segment.split(/(\s+)/);
+        var current = "";
+        for (var wi = 0; wi < words.length; wi += 1) {
+          var word = words[wi];
+          if (!word) continue;
+          var next = current + word;
+          if (!current || ctx.measureText(next).width <= maxWidth) {
+            current = next;
+            continue;
+          }
+          lines.push(current.trimEnd());
+          current = word.trimStart();
+          while (ctx.measureText(current).width > maxWidth && current.length > 1) {
+            var piece = _fitTextToWidth(current, maxWidth);
+            if (!piece || piece === "\u2026") break;
+            var usable = piece.endsWith("\u2026") ? piece.slice(0, -1) : piece;
+            lines.push(usable);
+            current = current.slice(usable.length);
+          }
+        }
+        if (current) lines.push(current.trimEnd());
+      };
+      for (var pi = 0; pi < parts.length; pi += 1) {
+        pushWrapped(parts[pi]);
+      }
+      if (lines.length > maxLines) {
+        lines = lines.slice(0, maxLines);
+        lines[maxLines - 1] = _fitTextToWidth(lines[maxLines - 1] + "\u2026", maxWidth);
+      }
+      return lines;
+    };
+
     var _widgetIndexFromFieldPath = function (fieldPath) {
       var path = String(fieldPath || "");
       var direct = /(?:^|\.)(?:widgets_values|widgets)\.(\d+)(?:\.|$)/.exec(path);
@@ -8089,25 +8132,20 @@ export function drawPreviewOverlay(ctx, diff) {
 
     var _drawWidgetValueOverlay = function (bounds, valueText, labelText) {
       var padX = 7;
-      var rightPad = 8;
-      // Cover the WHOLE value area (everything right of the field label) so a
-      // long old value (e.g. a 15-digit seed) cannot peek out beside the panel.
-      var labelReserve = 56; // "◀ " arrow + minimum label room
-      try {
-        ctx.font = "11px Arial, sans-serif";
-        if (typeof labelText === "string" && labelText && typeof ctx.measureText === "function") {
-          var lm = ctx.measureText(labelText);
-          if (lm && Number.isFinite(lm.width)) {
-            labelReserve = Math.max(labelReserve, lm.width + 34);
-          }
-        }
-      } catch (_e) { /* keep default reserve */ }
-      var overlayW = Math.max(48, bounds.w - rightPad - labelReserve);
-      overlayW = Math.min(overlayW, bounds.w - 12);
-      if (!Number.isFinite(overlayW) || overlayW <= 0) return;
-      var overlayX = bounds.x + bounds.w - rightPad - overlayW;
-      var overlayY = bounds.y + 2;
-      var overlayH = Math.max(bounds.h - 4, 12);
+      var padY = 4;
+      var overlayX = bounds.x;
+      var overlayY = bounds.y;
+      var overlayW = bounds.w;
+      var overlayH = Math.max(bounds.h, 12);
+      if (!Number.isFinite(overlayW) || !Number.isFinite(overlayH) || overlayW <= 0 || overlayH <= 0) return;
+      var maxTextW = Math.max(overlayW - padX * 2, 4);
+      var rawValue = _previewFieldValueText(labelText, valueText);
+      var wantsMultipleLines = rawValue.indexOf("\n") !== -1 || rawValue.length > 42 || ctx.measureText(rawValue).width > maxTextW;
+      var maxLines = wantsMultipleLines ? Math.max(1, Math.floor((overlayH - padY * 2) / 13)) : 1;
+      var lines = wantsMultipleLines ? _wrapTextToWidth(rawValue, maxTextW, maxLines) : [_fitTextToWidth(rawValue, maxTextW)];
+      lines = lines.filter(function (line) { return line != null; });
+      if (lines.length === 0) lines = [""];
+      var lineH = 13;
       _drawRoundedPanel(
         overlayX,
         overlayY,
@@ -8125,14 +8163,18 @@ export function drawPreviewOverlay(ctx, diff) {
           ctx.clip();
         }
         ctx.font = "11px Arial, sans-serif";
-        ctx.textBaseline = "middle";
-        ctx.textAlign = "right";
         ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.98);
-        var fitted = _fitTextToWidth(
-          _previewFieldValueText(labelText, valueText),
-          Math.max(overlayW - padX * 2, 4),
-        );
-        ctx.fillText(fitted, overlayX + overlayW - padX, overlayY + overlayH / 2);
+        if (wantsMultipleLines) {
+          ctx.textBaseline = "top";
+          ctx.textAlign = "left";
+          for (var li = 0; li < lines.length; li += 1) {
+            ctx.fillText(lines[li], overlayX + padX, overlayY + padY + li * lineH);
+          }
+        } else {
+          ctx.textBaseline = "middle";
+          ctx.textAlign = "right";
+          ctx.fillText(lines[0], overlayX + overlayW - padX, overlayY + overlayH / 2);
+        }
       } finally {
         ctx.restore();
       }
@@ -8172,8 +8214,9 @@ export function drawPreviewOverlay(ctx, diff) {
       var slotRows = Math.max(inCount, outCount);
       var computedRowsTop = ey + slotRows * SLOT_H;
       var widgetRowBounds = new Map();
-      var _rowBoundsForWidgetIndex = function (widx) {
-        if (widgetRowBounds.has(widx)) {
+      var _rowBoundsForWidgetIndex = function (widx, valueText) {
+        var hasValueText = valueText !== undefined && valueText !== null && String(valueText) !== "";
+        if (!hasValueText && widgetRowBounds.has(widx)) {
           return widgetRowBounds.get(widx);
         }
         var w = widgets[widx];
@@ -8190,11 +8233,28 @@ export function drawPreviewOverlay(ctx, diff) {
               }
             } catch (e) { /* fall back to WIDGET_H */ }
           }
+          var rawValue = String(valueText == null ? "" : valueText);
+          var longTextValue = rawValue.indexOf("\n") !== -1 || rawValue.length > 42;
+          if (longTextValue && rowH <= WIDGET_H + 4) {
+            var nextWidgetY = null;
+            for (var nwi = 0; nwi < widgets.length; nwi += 1) {
+              if (nwi === widx || !widgets[nwi] || typeof widgets[nwi].last_y !== "number") continue;
+              if (widgets[nwi].last_y > w.last_y && (nextWidgetY == null || widgets[nwi].last_y < nextWidgetY)) {
+                nextWidgetY = widgets[nwi].last_y;
+              }
+            }
+            var bottomY = nextWidgetY != null ? ey + nextWidgetY : ey + eh - 8;
+            if (bottomY > rowTop + rowH) {
+              rowH = Math.min(bottomY - rowTop, 160);
+            }
+          }
         } else {
           rowTop = computedRowsTop + widx * WIDGET_H;
         }
         var bounds = { x: ex, y: rowTop, w: ew, h: rowH };
-        widgetRowBounds.set(widx, bounds);
+        if (!hasValueText) {
+          widgetRowBounds.set(widx, bounds);
+        }
         return bounds;
       };
       ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.22);
@@ -8215,7 +8275,7 @@ export function drawPreviewOverlay(ctx, diff) {
             drawnWidgetFieldIndexes.add(resolvedWidgetIndex);
             var _overlayWidget = widgets[resolvedWidgetIndex];
             _drawWidgetValueOverlay(
-              _rowBoundsForWidgetIndex(resolvedWidgetIndex),
+              _rowBoundsForWidgetIndex(resolvedWidgetIndex, _fieldNewValueLabel(ef)),
               _fieldNewValueLabel(ef),
               _overlayWidget && typeof _overlayWidget.name === "string" ? _overlayWidget.name : null,
             );

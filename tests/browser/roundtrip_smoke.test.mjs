@@ -7837,8 +7837,8 @@ test("VibeComfy edited widget field values render on their widget rows instead o
       }
     }
     assert.equal(amberValuePanels.length, 2, "each changed widget gets one row value backdrop");
-    assert.equal(amberValuePanels[0][1], NODE_POS[1] + 48 + 2, "seed value overlay must sit on widget row 0");
-    assert.equal(amberValuePanels[1][1], NODE_POS[1] + 72 + 2, "steps value overlay must sit on widget row 1");
+    assert.equal(amberValuePanels[0][1], NODE_POS[1] + 48, "seed value overlay must cover widget row 0");
+    assert.equal(amberValuePanels[1][1], NODE_POS[1] + 72, "steps value overlay must cover widget row 1");
 
     const newValueTexts = drawOps.filter((op) => op.kind === "fillText" && (op.args[0] === "seed: 5" || op.args[0] === "steps: 24"));
     assert.equal(newValueTexts.length, 2, "new widget values must be drawn as row text");
@@ -8175,6 +8175,8 @@ test("VibeComfy preview widget value chips render in a fixed DOM overlay above C
     assert.equal(chips[0].textContent, "text: new prompt visible above textarea");
     assert.equal(chips[0].style.position, "fixed");
     assert.equal(chips[0].style.zIndex, "2147483647");
+    assert.equal(chips[0].style.whiteSpace, "pre-wrap");
+    assert.equal(chips[0].style.overflowWrap, "anywhere");
     assert.notEqual(chips[0].style.left, "");
     assert.notEqual(chips[0].style.top, "");
   } finally {
