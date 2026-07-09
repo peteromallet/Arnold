@@ -3990,6 +3990,7 @@ claim_active_repair_launch() {
     "$blocker_id" \
     "$request_id" \
     "$$" <<'PY'
+import os
 import sys
 
 from arnold_pipelines.megaplan.cloud import repair_requests
@@ -4000,6 +4001,16 @@ try:
 except ValueError:
     pid = None
 
+
+def _pid_is_live(candidate: int) -> bool:
+    if candidate <= 0:
+        return False
+    try:
+        os.kill(candidate, 0)
+    except OSError:
+        return False
+    return True
+
 result = repair_requests.claim_active_repair_request(
     repair_requests.repair_queue_dir(marker_dir),
     blocker_id=blocker_id,
@@ -4009,8 +4020,33 @@ result = repair_requests.claim_active_repair_request(
     pid=pid,
     command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
     cwd=workspace,
+    is_pid_live=_pid_is_live,
     extra={"workspace": workspace, "remote_spec": remote_spec},
 )
+if result.status == "stale":
+    owner = result.owner if isinstance(result.owner, dict) else {}
+    owner_pid = owner.get("pid")
+    if not isinstance(owner_pid, int):
+        owner_pid = None
+    released = repair_requests.release_active_repair_request_claim(
+        repair_requests.repair_queue_dir(marker_dir),
+        blocker_id=blocker_id,
+        owner=owner,
+        expected_pid=owner_pid,
+    )
+    if released:
+        result = repair_requests.claim_active_repair_request(
+            repair_requests.repair_queue_dir(marker_dir),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            actor="arnold-watchdog",
+            session=session,
+            pid=pid,
+            command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
+            cwd=workspace,
+            is_pid_live=_pid_is_live,
+            extra={"workspace": workspace, "remote_spec": remote_spec},
+        )
 print(result.status)
 PY
 }
