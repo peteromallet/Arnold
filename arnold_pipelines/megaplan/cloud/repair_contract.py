@@ -1680,9 +1680,9 @@ def _event_signature(payload: Mapping[str, Any]) -> tuple[str, str, str]:
     """Return the dedupe signature for repair-data incident emission."""
 
     outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
-    if is_success_outcome(outcome):
-        return ("verified_recovered", outcome, "")
     marker = _repair_attempt_marker(payload)
+    if is_success_outcome(outcome):
+        return ("verified_recovered", outcome, marker)
     if outcome == REPAIRING:
         return ("repair_attempt", "attempted", marker)
     return ("repair_attempt", outcome, marker)

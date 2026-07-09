@@ -730,6 +730,43 @@ def test_save_repair_data_emits_new_repair_attempt_when_attempt_identity_changes
     assert events[1]["payload"]["attempt_id"] == "demo-session-attempted-2"
 
 
+def test_save_repair_data_emits_new_verified_recovered_when_success_identity_changes(
+    tmp_path: Path,
+) -> None:
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    path = repair_dir / "demo-session.repair-data.json"
+    first_payload = repair_contract.merge_additive_fields(
+        {
+            **_legacy_payload(),
+            "outcome": "complete",
+            "repair_run_count": 24,
+        },
+        incident_id="incident-42",
+        verification={"recorded_at": "2026-07-09T07:53:48+00:00"},
+    )
+    second_payload = repair_contract.merge_additive_fields(
+        {
+            **_legacy_payload(),
+            "outcome": "complete",
+            "repair_run_count": 25,
+        },
+        incident_id="incident-42",
+        verification={"recorded_at": "2026-07-09T07:57:55+00:00"},
+    )
+
+    repair_contract.save_repair_data(path, first_payload, root=tmp_path)
+    repair_contract.save_repair_data(path, second_payload, root=tmp_path)
+
+    events = _read_ledger_events(tmp_path)
+    assert len(events) == 2
+    assert all(event["payload"]["type"] == "verified_recovered" for event in events)
+    assert [event["payload"]["summary"] for event in events] == [
+        "repair-data outcome=complete plan=m1-plan kind=chain workspace=/workspace/project",
+        "repair-data outcome=complete plan=m1-plan kind=chain workspace=/workspace/project",
+    ]
+
+
 def test_save_repair_data_defaults_incident_root_to_payload_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
