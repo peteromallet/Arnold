@@ -539,6 +539,27 @@ class TestGreenChecksNoFindings:
 
         assert publication_attempt_ts(incident, {}) == "2026-07-08T20:33:42+00:00"
 
+    def test_publication_attempt_ts_detects_github_sync_events(self) -> None:
+        namespace: dict[str, object] = {}
+        exec(
+            _extract_gather_function("_publication_attempt_ts", "_dedupe_refs"),
+            namespace,
+        )
+        publication_attempt_ts = namespace["_publication_attempt_ts"]
+
+        incident = {
+            "latest_actor": "watchdog",
+            "events": [
+                {
+                    "kind": "incident.github_sync.issue_published",
+                    "actor": "github_sync",
+                    "timestamp": "2026-07-09T03:47:07+00:00",
+                }
+            ],
+        }
+
+        assert publication_attempt_ts(incident, {}) == "2026-07-09T03:47:07+00:00"
+
     def test_json_payload_includes_green_checks_when_findings_empty(self, tmp_path: Path) -> None:
         findings_data = {
             "window_hours": 6,
