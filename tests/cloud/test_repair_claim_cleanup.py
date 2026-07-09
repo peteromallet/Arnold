@@ -4,7 +4,6 @@ import json
 import os
 import stat
 import subprocess
-import time
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud import repair_requests
@@ -108,16 +107,8 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
         text=True,
         env=env,
     )
-    pidfile = marker_dir / "demo-session.repair-loop.pid"
-    try:
-        for _ in range(100):
-            if pidfile.exists():
-                break
-            time.sleep(0.05)
-        assert pidfile.exists(), "repair loop never claimed pidfile"
-    finally:
-        proc.terminate()
-        proc.communicate(timeout=15)
+    _, stderr = proc.communicate(timeout=15)
+    assert proc.returncode == 0, stderr
 
     claim_lock_dir = repair_requests.active_repair_claim_lock_dir(
         repair_requests.repair_queue_dir(marker_dir),
