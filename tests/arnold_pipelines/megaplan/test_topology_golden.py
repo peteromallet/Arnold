@@ -23,8 +23,8 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 MANIFEST_GOLDEN_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_manifest_golden.json"
 NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipeline_shape.json"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
-LOCKED_MANIFEST_HASH = "sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add"
-LOCKED_TOPOLOGY_HASH = "sha256:2705e157e12fc074301afa8f5aec4e48d9820814ebaaa77535d152a8cc381fd4"
+LOCKED_MANIFEST_HASH = "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96"
+LOCKED_TOPOLOGY_HASH = "sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260"
 
 
 @pytest.fixture
@@ -76,16 +76,6 @@ def _capability_contract(capability: Any) -> dict[str, Any]:
     }
 
 
-def _json_contract_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _json_contract_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_json_contract_value(item) for item in value]
-    if isinstance(value, list):
-        return [_json_contract_value(item) for item in value]
-    return value
-
-
 def _policy_contract(policy: Any | None) -> dict[str, Any] | None:
     if policy is None:
         return None
@@ -132,14 +122,14 @@ def _subpipeline_contract(subpipeline: Any | None) -> dict[str, Any] | None:
 
 
 def _normalized_pipeline_contract(pipeline: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "fixture_schema": "arnold.megaplan.normalized_pipeline_shape.v1",
         "source": "arnold_pipelines.megaplan.pipeline:build_pipeline",
         "hash_neutral": True,
         "pipeline": {
             "id": pipeline.id,
             "version": pipeline.version,
-            "metadata": _json_contract_value(dict(pipeline.metadata)),
+            "metadata": dict(pipeline.metadata),
             "policy": _policy_contract(pipeline.policy),
         },
         "counts": {
@@ -159,7 +149,7 @@ def _normalized_pipeline_contract(pipeline: Any) -> dict[str, Any]:
                 "handler_ref": step.metadata.get("handler_ref"),
                 "terminal": bool(step.metadata.get("terminal", False)),
                 "subpipeline": _subpipeline_contract(step.subpipeline),
-                "metadata": _json_contract_value(dict(step.metadata)),
+                "metadata": dict(step.metadata),
             }
             for step in pipeline.steps
         ],
@@ -176,6 +166,7 @@ def _normalized_pipeline_contract(pipeline: Any) -> dict[str, Any]:
             for route in pipeline.routes
         ],
     }
+    return json.loads(json.dumps(payload, sort_keys=True, default=str))
 
 
 def _manifest_policy_contract(policy: Any | None) -> dict[str, Any] | None:
@@ -233,7 +224,7 @@ class TestTopologyFixtureLock:
         edges = {
             (e.label, e.target)
             for e in manifest.edges
-            if e.source == "tiebreaker_decide"
+            if e.source == "tiebreaker_decision"
         }
         expected = {(item["label"], item["target"]) for item in fixture["tiebreaker_targets"]}
         assert edges == expected
@@ -243,13 +234,12 @@ class TestTopologyFixtureLock:
         pipeline_loop_routes = {
             route.id: (route.source, route.target, route.label, route.condition_ref)
             for route in pipeline.routes
-            if route.id in {"revise:critique", "tiebreaker_decide:critique"}
+            if route.id == "tiebreaker_decision:critique"
         }
         assert pipeline_loop_routes == {
-            "revise:critique": ("revise", "critique", "default", "revise:loop"),
-            "tiebreaker_decide:critique": (
-                "tiebreaker_decide",
-                "critique",
+            "tiebreaker_decision:critique": (
+                "tiebreaker_decision",
+                "revise",
                 "iterate",
                 "tiebreaker:loop",
             ),
@@ -259,7 +249,7 @@ class TestTopologyFixtureLock:
         manifest_loop_edges = {
             edge.id: (edge.source, edge.target, edge.label, edge.condition_ref)
             for edge in manifest.edges
-            if edge.id in {"revise:critique", "tiebreaker_decide:critique"}
+            if edge.id == "tiebreaker_decision:critique"
         }
         assert manifest_loop_edges == pipeline_loop_routes
 
@@ -277,7 +267,7 @@ class TestTopologyFixtureLock:
         pipeline = build_pipeline()
         labels_by_source = {
             source: [route.label for route in pipeline.routes if route.source == source]
-            for source in ("gate", "tiebreaker_decide", "review")
+            for source in ("gate", "tiebreaker_decision", "review")
         }
 
         assert labels_by_source == {
@@ -291,8 +281,8 @@ class TestTopologyFixtureLock:
                 "blocked_preflight",
                 "force_proceed",
             ],
-            "tiebreaker_decide": ["iterate", "proceed", "escalate"],
-            "review": ["default", "rework"],
+            "tiebreaker_decision": ["proceed", "iterate", "escalate", "replan"],
+            "review": [],
         }
 
     @pytest.mark.parametrize(
@@ -419,6 +409,32 @@ class TestM6StructuralPolicyAttachments:
         policy_refs = execute_node.metadata.get("policy_refs", [])
         assert "megaplan:execute" in policy_refs
 
+    def test_execute_route_bindings_not_authoritative_in_component(self) -> None:
+        """Execute route authority lives in policy/pypeline, not in component
+        route_bindings.  The compiled execute node must still carry the
+        execute→review edge, but the component-level route_bindings must be
+        absent (or empty) so they cannot become authoritative."""
+        from arnold_pipelines.megaplan import workflows as wf
+
+        execute_component = wf.STEP_COMPONENTS_BY_ID["execute"]
+        bindings = execute_component.metadata.get("route_bindings", ())
+        assert bindings == (), (
+            "EXECUTE step component must not carry authoritative route_bindings; "
+            "route authority is in EXECUTE_POLICY.route_surface / workflow.pypeline"
+        )
+
+        # The compiled manifest must still carry the execute→review edge.
+        manifest = build_and_compile_pipeline()
+        execute_edges = [
+            e for e in manifest.edges
+            if e.source == "execute"
+        ]
+        assert len(execute_edges) == 1, (
+            "compiled manifest must preserve single execute→review edge "
+            "derived from the pypeline"
+        )
+        assert execute_edges[0].target == "review"
+
     def test_override_node_exposes_full_action_matrix_in_policy_overlays(self) -> None:
         manifest = build_and_compile_pipeline()
         override_node = next(node for node in manifest.nodes if node.id == "override")
@@ -466,7 +482,7 @@ class TestM6StructuralPolicyAttachments:
 
     def test_tiebreaker_decide_node_exposes_loop_and_transitions(self) -> None:
         manifest = build_and_compile_pipeline()
-        tiebreaker_node = next(node for node in manifest.nodes if node.id == "tiebreaker_decide")
+        tiebreaker_node = next(node for node in manifest.nodes if node.id == "tiebreaker_decision")
 
         # Loop policy
         assert tiebreaker_node.policy.loop is not None
