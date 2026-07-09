@@ -363,9 +363,6 @@ def _merge_batch_results(
             if task.get("id") in batch_task_id_set
         ]
     )
-    # Accept task_updates for ANY valid task, not just the current batch.
-    # Models often complete multiple batches' worth of work in one pass —
-    # rejecting the extra work as "unknown task_id" wastes correct results.
     all_tasks_by_id = {
         task["id"]: task
         for task in finalize_data.get("tasks", [])
@@ -404,11 +401,16 @@ def _merge_batch_results(
         array_fields = ("files_changed", "commands_run")
         object_fields = ()
         optional_fields = evidence_context_fields
+    merge_targets_by_id = all_tasks_by_id if creative_mode else {
+        task_id: task
+        for task_id, task in all_tasks_by_id.items()
+        if task_id in batch_task_id_set
+    }
     merged_count, _ = _validate_and_merge_batch(
         payload.get("task_updates"),
         required_fields=required_fields,
         optional_fields=optional_fields,
-        targets_by_id=all_tasks_by_id,
+        targets_by_id=merge_targets_by_id,
         id_field="task_id",
         merge_fields=merge_fields,
         issues=issues,
