@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -98,6 +99,8 @@ def _bounded_selector_candidates(repo_root: Path, stem: str) -> list[str]:
 
     matches: list[str] = []
     for path in sorted(tests_dir.rglob("*.py")):
+        if path.name.startswith(".") or any(part.startswith(".") for part in path.relative_to(repo_root).parts):
+            continue
         name = path.name
         if name == f"test_{stem}.py" or (
             name.endswith("_test.py") and stem in name[: -len("_test.py")]
@@ -413,6 +416,18 @@ def compute_default_blast_radius(
 
 
 compute_test_blast_radius = compute_default_blast_radius
+
+
+def _scoped_command_for_paths(paths: list[str]) -> str:
+    """Build a scoped baseline command for a homogeneous selector set.
+
+    ``node --test`` suites are path-oriented too, but forcing them through
+    pytest turns a valid JS baseline into a guaranteed collection error.
+    """
+    normalized = [path.strip() for path in paths if isinstance(path, str) and path.strip()]
+    if normalized and all(path.endswith((".mjs", ".cjs", ".js")) for path in normalized):
+        return "node --test " + " ".join(shlex.quote(path) for path in normalized)
+    return "pytest " + " ".join(shlex.quote(path) for path in normalized)
 
 
 def merge_blast_radius_floor(
@@ -844,26 +859,6 @@ def resolve_baseline_test_selection(
             if isinstance(sel, dict) and sel.get("kind") != "path"
         }
     )
-    if non_path_kinds:
-        has_path_selector = any(
-            isinstance(sel, dict)
-            and sel.get("kind") == "path"
-            and isinstance(sel.get("value"), str)
-            and bool(sel.get("value", "").strip())
-            for sel in selectors
-        )
-        path_detail = "" if has_path_selector else " and no path selectors"
-        return {
-            "mode": "unresolved",
-            "reason": (
-                "test_blast_radius includes non-path selector kind(s) "
-                + ", ".join(non_path_kinds)
-                + path_detail
-                + "; scoped baseline selection is unresolved because pytest paths "
-                "cannot faithfully express the model's wider intent"
-            ),
-            "command_override": None,
-        }
 
     # 4. Build scoped pytest command from path selectors.
     path_values: list[str] = []
@@ -877,8 +872,15 @@ def resolve_baseline_test_selection(
         return {
             "mode": "unresolved",
             "reason": (
-                "test_blast_radius strategy is 'scoped' but no path selectors "
-                "with non-empty values; scoped baseline selection is unresolved"
+                "test_blast_radius includes non-path selector kind(s) "
+                + ", ".join(non_path_kinds)
+                + " and no path selectors; scoped baseline selection is unresolved "
+                "because pytest paths cannot faithfully express the model's wider intent"
+                if non_path_kinds
+                else (
+                    "test_blast_radius strategy is 'scoped' but no path selectors "
+                    "with non-empty values; scoped baseline selection is unresolved"
+                )
             ),
             "command_override": None,
         }
@@ -934,10 +936,16 @@ def resolve_baseline_test_selection(
             "command_override": None,
         }
 
-    scoped_command = "pytest " + " ".join(shlex.quote(p) for p in unique_paths)
+    scoped_command = _scoped_command_for_paths(unique_paths)
     reason = f"Scoped to {len(unique_paths)} path selector(s) from plan metadata"
     if always_run_paths:
         reason += f"; folded in {len(always_run_paths)} always_run path(s)"
+    if non_path_kinds:
+        reason += (
+            "; ignored non-path selector kind(s) "
+            + ", ".join(non_path_kinds)
+            + " for baseline capture"
+        )
     return {
         "mode": "scoped",
         "reason": reason,

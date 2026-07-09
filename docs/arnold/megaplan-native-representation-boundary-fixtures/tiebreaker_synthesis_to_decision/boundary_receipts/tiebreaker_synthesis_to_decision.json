@@ -1,0 +1,16 @@
+{
+  "artifact_refs": [
+    "tiebreaker_payload.json"
+  ],
+  "boundary_id": "tiebreaker_synthesis_to_decision",
+  "history_ref": "tiebreaker_synthesis_completed",
+  "invocation_id": "inv-tiebreaker_synthesis_to_decision",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s3.tiebreaker_synthesis.1",
+  "state_observation": {
+    "current_state": "critiqued"
+  },
+  "workflow_id": "megaplan-review"
+}

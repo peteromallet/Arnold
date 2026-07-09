@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/epic_skill.md
+../../data/epic_skill.md

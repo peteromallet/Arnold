@@ -130,6 +130,19 @@ class DiagnosticCode(StrEnum):
     WORKFLOW_OUTPUT_BINDING_MISMATCH = "AWF237_WORKFLOW_OUTPUT_BINDING_MISMATCH"
     RESUME_SCHEMA_MISMATCH = "AWF238_RESUME_SCHEMA_MISMATCH"
     COMPOSITION_EFFECT_SCHEMA_MISMATCH = "AWF239_COMPOSITION_EFFECT_SCHEMA_MISMATCH"
+    UNRESOLVED_CALLEE_PROVENANCE = "AWF240_UNRESOLVED_CALLEE_PROVENANCE"
+    BRANCH_VOCABULARY_MISMATCH = "AWF241_BRANCH_VOCABULARY_MISMATCH"
+    RAW_STRING_ROUTE_BRANCH = "AWF242_RAW_STRING_ROUTE_BRANCH"
+    LOWERED_TOPOLOGY_DISCARD = "AWF243_LOWERED_TOPOLOGY_DISCARD"
+    HANDLER_PURITY_VIOLATION = "AWF244_HANDLER_PURITY_VIOLATION"
+    ROW_EVIDENCE_INSUFFICIENCY = "AWF245_ROW_EVIDENCE_INSUFFICIENCY"
+    BOUNDARY_CONTRACT_MISSING = "AWF246_BOUNDARY_CONTRACT_MISSING"
+    BOUNDARY_EVIDENCE_MISSING = "AWF247_BOUNDARY_EVIDENCE_MISSING"
+    BOUNDARY_EVIDENCE_WITHOUT_SOURCE = "AWF248_BOUNDARY_EVIDENCE_WITHOUT_SOURCE"
+    BOUNDARY_EVIDENCE_STALE = "AWF249_BOUNDARY_EVIDENCE_STALE"
+    UNKNOWN_OUTCOME_TYPE = "AWF250_UNKNOWN_OUTCOME_TYPE"
+    INVALID_OUTCOME_MEMBER = "AWF251_INVALID_OUTCOME_MEMBER"
+    TIEBREAKER_SHAPE_VIOLATION = "AWF252_TIEBREAKER_SHAPE_VIOLATION"
 
 
 class DiagnosticFamily(StrEnum):
@@ -198,6 +211,19 @@ class DiagnosticFamily(StrEnum):
     WORKFLOW_OUTPUT_BINDING_MISMATCH = "workflow_output_binding_mismatch"
     RESUME_SCHEMA_MISMATCH = "resume_schema_mismatch"
     COMPOSITION_EFFECT_SCHEMA_MISMATCH = "composition_effect_schema_mismatch"
+    UNRESOLVED_CALLEE_PROVENANCE = "unresolved_callee_provenance"
+    BRANCH_VOCABULARY_MISMATCH = "branch_vocabulary_mismatch"
+    RAW_STRING_ROUTE_BRANCH = "raw_string_route_branch"
+    LOWERED_TOPOLOGY_DISCARD = "lowered_topology_discard"
+    HANDLER_PURITY_VIOLATION = "handler_purity_violation"
+    ROW_EVIDENCE_INSUFFICIENCY = "row_evidence_insufficiency"
+    BOUNDARY_CONTRACT_MISSING = "boundary_contract_missing"
+    BOUNDARY_EVIDENCE_MISSING = "boundary_evidence_missing"
+    BOUNDARY_EVIDENCE_WITHOUT_SOURCE = "boundary_evidence_without_source"
+    BOUNDARY_EVIDENCE_STALE = "boundary_evidence_stale"
+    UNKNOWN_OUTCOME_TYPE = "unknown_outcome_type"
+    INVALID_OUTCOME_MEMBER = "invalid_outcome_member"
+    TIEBREAKER_SHAPE_VIOLATION = "tiebreaker_shape_violation"
 
 
 @dataclass(frozen=True)
@@ -641,6 +667,84 @@ DIAGNOSTIC_CODE_SPECS = (
         DiagnosticFamily.COMPOSITION_EFFECT_SCHEMA_MISMATCH,
         "composition-side effect metadata does not satisfy the declared schema",
         "keep composition effect payloads within the declared workflow interface",
+    ),
+    _v2_spec(
+        DiagnosticCode.UNRESOLVED_CALLEE_PROVENANCE,
+        DiagnosticFamily.UNRESOLVED_CALLEE_PROVENANCE,
+        "handler_ref cannot be resolved to a declared Megaplan handler",
+        "ensure the handler is exported from arnold_pipelines.megaplan.handlers and declared in components metadata",
+    ),
+    _v2_spec(
+        DiagnosticCode.BRANCH_VOCABULARY_MISMATCH,
+        DiagnosticFamily.BRANCH_VOCABULARY_MISMATCH,
+        "route branch vocabulary does not match the declared RUNTIME_BRANCH_VOCABULARY for the active step domain",
+        "use only declared enum members whose values are present in the runtime branch vocabulary",
+    ),
+    _v2_spec(
+        DiagnosticCode.RAW_STRING_ROUTE_BRANCH,
+        DiagnosticFamily.RAW_STRING_ROUTE_BRANCH,
+        "route branch comparison uses a raw string literal instead of a declared typed outcome enum member",
+        "replace string-constant branch conditions with typed outcome enum member comparisons",
+    ),
+    _v2_spec(
+        DiagnosticCode.LOWERED_TOPOLOGY_DISCARD,
+        DiagnosticFamily.LOWERED_TOPOLOGY_DISCARD,
+        "source-derived lowered topology is discarded in favour of component-only rebuild",
+        "consume lowered steps and routes instead of rebuilding topology solely from ALL_STEP_COMPONENTS route metadata",
+    ),
+    _v2_spec(
+        DiagnosticCode.HANDLER_PURITY_VIOLATION,
+        DiagnosticFamily.HANDLER_PURITY_VIOLATION,
+        "handler declared as pure phase body contains routing call markers or state-mutation side effects",
+        "remove routing logic from pure handlers or reclassify them as report-semantic owners",
+    ),
+    _v2_spec(
+        DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+        DiagnosticFamily.ROW_EVIDENCE_INSUFFICIENCY,
+        "conformance row is marked proven but lacks structured semantic evidence records",
+        "provide source span, construct type, positive test, negative fixture, and compatibility quarantine records for every proven row",
+    ),
+    _v2_spec(
+        DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+        DiagnosticFamily.BOUNDARY_CONTRACT_MISSING,
+        "boundary-crossing row is missing a declared BoundaryContract",
+        "provide a BoundaryContract with required artifacts, state delta, and phase result expectations for the boundary",
+    ),
+    _v2_spec(
+        DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        DiagnosticFamily.BOUNDARY_EVIDENCE_MISSING,
+        "source topology is present but matching boundary evidence is missing",
+        "emit a BoundaryReceipt with artifact refs, state observation, history ref, and phase result ref after boundary completion",
+    ),
+    _v2_spec(
+        DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+        DiagnosticFamily.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+        "boundary evidence record exists without a matching source-authoritative route",
+        "ensure the boundary evidence references a source-visible topology route in .pypeline or named native subworkflow",
+    ),
+    _v2_spec(
+        DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+        DiagnosticFamily.BOUNDARY_EVIDENCE_STALE,
+        "boundary evidence is present but state observation, history ref, or phase result ref is stale or incoherent",
+        "update the receipt with current state observation, history entry reference, and phase result after each boundary crossing",
+    ),
+    _v2_spec(
+        DiagnosticCode.UNKNOWN_OUTCOME_TYPE,
+        DiagnosticFamily.UNKNOWN_OUTCOME_TYPE,
+        "branch route comparison references an unknown outcome type",
+        "import a closed outcome enum from an allowed outcome module",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_OUTCOME_MEMBER,
+        DiagnosticFamily.INVALID_OUTCOME_MEMBER,
+        "branch route comparison references an invalid outcome member",
+        "compare route branches to a declared member of the imported outcome enum",
+    ),
+    _v2_spec(
+        DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION,
+        DiagnosticFamily.TIEBREAKER_SHAPE_VIOLATION,
+        "tiebreaker is not source-visible as four explicit researcher/challenger/synthesis/decision phases with row-level evidence",
+        "replace a single TIEBREAKER_WORKFLOW call or handler wrapper with four individually authored step calls (researcher, challenger, synthesis, decision) each backed by structured semantic evidence",
     ),
 )
 

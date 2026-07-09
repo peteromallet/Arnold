@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/tickets_skill.md
+../../data/tickets_skill.md

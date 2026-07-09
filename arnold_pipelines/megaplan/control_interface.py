@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from importlib import import_module
+import logging
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from arnold.workflow.boundary_evidence import BoundaryOutcome, BoundaryReceipt
 from arnold.control.interface import (
     ArtifactRequest,
     CONTROL_TARGET_ABORT,
@@ -24,11 +26,78 @@ from arnold.control.interface import (
     RunStateView,
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
+from arnold_pipelines.megaplan.orchestration.override_authority import (
+    OverrideAuthorityError,
+    build_override_authority_record,
+    current_freshness_token,
+    override_authority_contract_for_transition,
+)
+from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
 from arnold_pipelines.megaplan.state_delta import StateDelta, StateDeltaConflict, apply_delta
+from arnold_pipelines.megaplan.workflows.override_matrix import OVERRIDE_ACTION_MATRIX
 from arnold.runtime.outcome import RunOutcome
 
 
 _MISSING_BINDING = object()
+_OVERRIDE_AUTHORITY_TRANSITIONS = frozenset(
+    {"adopt-execution", "recover-blocked", "resume-clarify"}
+)
+log = logging.getLogger(__name__)
+
+
+def _build_declared_override_policy_targets() -> Mapping[str, Mapping[str, str]]:
+    targets: dict[str, Mapping[str, str]] = {}
+    for entry in OVERRIDE_ACTION_MATRIX:
+        if entry.dispatch_surface != "workflow.native_policy":
+            continue
+        target_ref = entry.declared_target_ref or entry.target_ref
+        if target_ref is None or entry.route_signal is None or entry.policy_route_ref is None:
+            raise ValueError(
+                f"Override action {entry.action!r} is missing a native policy target declaration"
+            )
+        targets[entry.action] = {
+            "route_signal": entry.route_signal,
+            "target_ref": target_ref,
+            "policy_route_ref": entry.policy_route_ref,
+        }
+    return targets
+
+
+DECLARED_OVERRIDE_POLICY_TARGETS: Mapping[str, Mapping[str, str]] = (
+    _build_declared_override_policy_targets()
+)
+
+
+def build_override_transition_request(
+    action: str,
+    *,
+    target_id: str | None = None,
+    params: Mapping[str, Any] | None = None,
+    actor: str | None = None,
+    source: str | None = None,
+    reason: str | None = None,
+    note: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    expected_versions: Mapping[str, int] | None = None,
+    idempotency_key: str | None = None,
+) -> ControlTransitionRequest:
+    """Build a caller-facing override request without granting route authority."""
+
+    request_metadata = dict(metadata or {})
+    request_metadata.setdefault("request_surface", "control.adapter")
+    request_metadata.setdefault("requested_action", action)
+    return ControlTransitionRequest(
+        action=action,
+        target_id=target_id or action,
+        params=dict(params or {}),
+        actor=actor,
+        source=source,
+        reason=reason,
+        note=note,
+        metadata=request_metadata,
+        expected_versions=dict(expected_versions or {}),
+        idempotency_key=idempotency_key,
+    )
 
 
 @dataclass(frozen=True)
@@ -38,6 +107,107 @@ class ControlTransitionConflict:
     key: str
     expected: int
     actual: int
+
+
+def declared_override_policy_target(
+    action: str,
+    *,
+    direction: str,
+    source: str | None = None,
+    target_state: str | None = None,
+    operator_action: str | None = None,
+) -> ControlTargetRef:
+    declared = DECLARED_OVERRIDE_POLICY_TARGETS[action]
+    metadata: dict[str, object] = {
+        "kind": "workflow_step",
+        "direction": direction,
+        "actionable": True,
+        "target_ref": declared["target_ref"],
+        "route_signal": declared["route_signal"],
+        "policy_route_ref": declared["policy_route_ref"],
+        "dispatch_surface": "workflow.native_policy",
+    }
+    if source is not None:
+        metadata["source"] = source
+    if target_state is not None:
+        metadata["target_state"] = target_state
+    if operator_action is not None:
+        metadata["operator_action"] = operator_action
+    return ControlTargetRef(id=action, label=action, metadata=metadata)
+
+
+def emit_override_authority_receipt(
+    plan_dir: Path,
+    state: Mapping[str, Any],
+    action: str,
+    *,
+    actor: str = "operator",
+    role: str = "human.override",
+    details: Mapping[str, Any] | None = None,
+) -> None:
+    if action not in _OVERRIDE_AUTHORITY_TRANSITIONS:
+        return
+    try:
+        contract = override_authority_contract_for_transition(action)
+        freshness_token = current_freshness_token(state, transition=action)
+        record = build_override_authority_record(
+            action,
+            plan_dir=plan_dir,
+            actor=actor,
+            role=role,
+            freshness_token=freshness_token,
+            expected_freshness_token=freshness_token,
+            details={
+                "route_signal": DECLARED_OVERRIDE_POLICY_TARGETS[action]["route_signal"],
+                "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
+                "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
+                **(dict(details) if details else {}),
+            },
+        )
+        config = state.get("config")
+        project_dir = (
+            config.get("project_dir")
+            if isinstance(config, Mapping)
+            and isinstance(config.get("project_dir"), str)
+            and config.get("project_dir")
+            else None
+        )
+        receipt = BoundaryReceipt(
+            boundary_id=contract.boundary_id,
+            workflow_id=contract.workflow_id,
+            row_id=contract.row_id,
+            invocation_id=freshness_token,
+            artifact_refs=record.evidence_refs,
+            state_observation={
+                "current_state": state.get("current_state"),
+                "override_action": action,
+                "route_signal": DECLARED_OVERRIDE_POLICY_TARGETS[action]["route_signal"],
+            },
+            outcome=BoundaryOutcome.COMPLETE,
+            authority_records=(record,),
+            details={
+                "dispatch_surface": "workflow.native_policy",
+                "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
+                "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
+            },
+        )
+        write_boundary_receipt(
+            plan_dir,
+            receipt,
+            project_dir=project_dir,
+        )
+    except OverrideAuthorityError:
+        log.warning(
+            "override authority record build failed for %s",
+            action,
+            exc_info=True,
+        )
+    except Exception:
+        log.warning(
+            "override authority receipt emission failed for %s",
+            action,
+            exc_info=True,
+        )
 
 
 def _event_payload(
@@ -349,6 +519,16 @@ def apply_transition(
         )
 
     next_state = applied_state if applied_state is not None else persisted
+    if (
+        transition.op == "override"
+        and isinstance(transition.target_id, str)
+        and transition.target_id
+    ):
+        emit_override_authority_receipt(
+            Path(plan_dir),
+            next_state,
+            transition.target_id,
+        )
     events = tuple(binding_result.events) + (
         _event_payload(
             "OVERRIDE_APPLIED",
@@ -382,6 +562,8 @@ __all__ = [
     "CONTROL_TARGET_RECOVER_FROM_STUCK",
     "CONTROL_TARGET_REROUTE",
     "ArtifactRequest",
+    "build_override_transition_request",
+    "DECLARED_OVERRIDE_POLICY_TARGETS",
     "ControlProjection",
     "ControlInterfaceTarget",
     "ControlTarget",
@@ -393,6 +575,8 @@ __all__ = [
     "RunOutcome",
     "RunStateView",
     "apply_transition",
+    "declared_override_policy_target",
+    "emit_override_authority_receipt",
     "read_valid_targets",
     "synthesize_artifacts",
 ]

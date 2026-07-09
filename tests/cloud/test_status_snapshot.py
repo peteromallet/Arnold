@@ -8,6 +8,7 @@ single source every status consumer reads.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,7 +17,6 @@ import pytest
 
 from arnold_pipelines.megaplan.cloud import status_format as sf
 from arnold_pipelines.megaplan.cloud import status_snapshot as ss
-from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 
 
 NOW = datetime(2026, 7, 4, 22, 13, 15, tzinfo=timezone.utc)
@@ -103,6 +103,27 @@ class Fixture:
             encoding="utf-8",
         )
 
+    def add_repair_data(self, name: str, *, outcome: str = "repairing") -> None:
+        (self.repair_dir / f"{name}.repair-data.json").write_text(
+            json.dumps({"session": name, "outcome": outcome}),
+            encoding="utf-8",
+        )
+
+    def add_plan_state(
+        self,
+        session: str,
+        plan_name: str,
+        *,
+        current_state: str = "finalized",
+        active_step: dict | None = None,
+    ) -> None:
+        plan_dir = self.root / session / ".megaplan" / "plans" / plan_name
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        payload: dict = {"name": plan_name, "current_state": current_state}
+        if active_step is not None:
+            payload["active_step"] = active_step
+        (plan_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
     def add_needs_human(self, name: str, *, summary: str = "awaiting human action") -> None:
         (self.repair_dir / f"{name}.needs-human.json").write_text(
             json.dumps(
@@ -170,6 +191,28 @@ def test_two_running_plus_one_repairing(fx):
     assert snap["summary"]["running"] == 2
     assert snap["summary"]["repairing"] == 1
 
+
+
+def test_active_repair_overrides_stale_needs_human_marker(fx):
+    fx.add_session("repairing", plan_name="planR")
+    fx.add_chain_health(
+        "repairing",
+        current_plan_name="planR",
+        last_state="blocked",
+        updated_at=NOW - timedelta(hours=3),
+    )
+    fx.add_needs_human("repairing", summary="old deterministic failure")
+    fx.add_repair_progress("repairing", updated_at=NOW - timedelta(minutes=2))
+    fx.add_repair_data("repairing", outcome="repairing")
+
+    snap = fx.build()
+    entry = _by_session(snap, "repairing")
+
+    assert entry["status"] == "repairing"
+    assert entry["repairing"] is True
+    assert entry["operator_next"] == "automated repair dispatched for this session"
+    assert snap["summary"]["repairing"] == 1
+    assert snap["summary"]["blocked"] == 0
 
 def test_completed_not_counted_as_active_even_with_stale_failure(fx):
     fx.add_session("done", plan_name="planDone")
@@ -251,6 +294,199 @@ def test_repair_marker_plus_blocked_watchdog_item_is_repairing(fx):
     assert entry["status"] == "repairing"
     assert entry["repairing"] is True
 
+
+def test_successful_repair_data_suppresses_stale_repair_marker(fx):
+    fx.add_session("recovered", plan_name="planRecovered")
+    fx.add_chain_health(
+        "recovered",
+        current_plan_name="planRecovered",
+        last_state="finalized",
+        updated_at=NOW - timedelta(hours=4),
+    )
+    fx.add_repair_progress("recovered")
+    fx.add_repair_data("recovered", outcome="complete")
+
+    snap = fx.build()
+    entry = _by_session(snap, "recovered")
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
+
+
+def test_live_process_with_current_phase_failure_is_attention(fx):
+    fx.add_session("alive-failed", plan_name="planFailed")
+    fx.add_chain_health(
+        "alive-failed",
+        current_plan_name="planFailed",
+        last_state="finalized",
+        updated_at=NOW - timedelta(minutes=5),
+    )
+    fx.add_plan_state(
+        "alive-failed",
+        "planFailed",
+        current_state="finalized",
+    )
+    state_path = fx.root / "alive-failed" / ".megaplan" / "plans" / "planFailed" / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["latest_failure"] = {
+        "kind": "phase_failed",
+        "phase": "execute",
+        "message": "ValueError: module must be a Python identifier",
+    }
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "alive-failed")
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
+    assert "alive_but_failed" in entry["operator_next"]
+
+
+def test_live_process_with_failed_no_next_step_is_attention(fx):
+    fx.add_session("alive-no-next", plan_name="planStuck")
+    fx.add_chain_health(
+        "alive-no-next",
+        current_plan_name="planStuck",
+        last_state="failed",
+        updated_at=NOW - timedelta(minutes=5),
+    )
+    fx.add_plan_state(
+        "alive-no-next",
+        "planStuck",
+        current_state="failed",
+    )
+    state_path = fx.root / "alive-no-next" / ".megaplan" / "plans" / "planStuck" / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["latest_failure"] = {
+        "kind": "no_next_step",
+        "phase": "",
+        "message": "no next_step and no override available",
+    }
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "alive-no-next")
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
+    assert "alive_but_failed" in entry["operator_next"]
+
+
+def test_live_process_beats_repair_marker(fx):
+    fx.add_session("live-repair", plan_name="planLive")
+    fx.add_chain_health(
+        "live-repair",
+        current_plan_name="planLive",
+        last_state="error",
+        updated_at=NOW - timedelta(hours=4),
+    )
+    fx.add_repair_progress("live-repair")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "live-repair")
+    assert entry["status"] == "repairing"
+    assert entry["repairing"] is True
+
+
+def test_active_plan_step_counts_as_live_process_and_latest_activity(fx, monkeypatch):
+    fx.add_session("manual", plan_name="planManual")
+    fx.add_chain_health(
+        "manual",
+        current_plan_name="planManual",
+        last_state="finalized",
+        updated_at=NOW - timedelta(hours=2),
+    )
+    fx.add_plan_state(
+        "manual",
+        "planManual",
+        active_step={
+            "phase": "execute",
+            "worker_pid": 4242,
+            "started_at": (NOW - timedelta(minutes=40)).isoformat(),
+            "last_activity_at": (NOW - timedelta(minutes=2)).isoformat(),
+        },
+    )
+    monkeypatch.setattr(ss, "_pid_is_live", lambda pid: pid == 4242)
+
+    snap = fx.build()
+    entry = _by_session(snap, "manual")
+
+    assert entry["status"] == "running"
+    assert entry["process"] is True
+    assert entry["operator_next"] == "live runner process observed"
+    assert entry["latest_activity"] == "2026-07-04T22:11:15Z"
+
+
+def test_plan_live_activity_sidecar_does_not_count_as_live_process_without_pid(fx):
+    fx.add_session("manual", plan_name="planManual")
+    fx.add_chain_health(
+        "manual",
+        current_plan_name="planManual",
+        last_state="finalized",
+        updated_at=NOW - timedelta(hours=2),
+    )
+    sidecar = fx.marker_dir / "manual.chain-health.progress.json"
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["plan_has_active_step"] = True
+    payload["plan_has_live_activity"] = True
+    payload["plan_signal_liveness"] = "progressing"
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    snap = fx.build()
+    entry = _by_session(snap, "manual")
+
+    assert entry["status"] == "attention"
+    assert entry["process"] is False
+    assert "stalled" in entry["operator_next"]
+
+
+
+def test_live_activity_supersedes_stale_needs_human_and_chain_health_plan(fx):
+    spec = fx.root / "native" / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    workspace = fx.add_session("native", remote_spec=str(spec))
+    old_plan = "plan-old"
+    new_plan = "plan-new"
+    fx.add_chain_health(
+        "native",
+        current_plan_name=old_plan,
+        last_state="blocked",
+        updated_at=NOW - timedelta(hours=1),
+    )
+    chain_digest = hashlib.sha1(str(spec.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{chain_digest}.json"
+    chain_state.parent.mkdir(parents=True, exist_ok=True)
+    chain_state.write_text(
+        json.dumps({"current_plan_name": new_plan, "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+    fx.add_plan_state(
+        "native",
+        new_plan,
+        current_state="finalized",
+        active_step={
+            "phase": "execute",
+            "worker_pid": 4242,
+            "last_activity_at": (NOW - timedelta(minutes=1)).isoformat(),
+        },
+    )
+    (fx.repair_dir / "native.needs-human.json").write_text(
+        json.dumps(
+            {
+                "session": "native",
+                "summary": "old escalation",
+                "recorded_at": (NOW - timedelta(minutes=10)).isoformat(),
+                "current_plan_name": old_plan,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "native")
+
+    assert entry["status"] == "running"
+    assert entry["current_plan"] == new_plan
+    assert entry["operator_next"] == "live runner activity supersedes older needs-human marker"
 
 def test_blocked_session_when_needs_human_marker_present(fx):
     fx.add_session("gated", plan_name="planGated")
@@ -353,6 +589,120 @@ def test_frozen_chain_health_sidecar_defers_to_watchdog_complete(fx):
     entry = _by_session(snap, "done")
     assert entry["status"] == "complete"
     assert entry["should_run"] is False
+
+
+def test_newer_incomplete_done_chain_state_beats_watchdog_complete_verdict(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n"
+        "  - label: m3\n"
+        "    idea: m3.md\n"
+        "  - label: m4\n"
+        "    idea: m4.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=False,
+        completed_count=0,
+        milestone_count=4,
+        current_plan_name="m4-demo-plan",
+        last_state="failed",
+        updated_at=NOW - timedelta(hours=6),
+    )
+    fx.add_watchdog_report(
+        items=[{"session": "epic-run", "status": "complete", "action": "observe", "message": "chain complete"}]
+    )
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_state_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 4,
+                "last_state": "done",
+                "completed": [{"label": "m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "attention"
+    assert entry["chain_complete"] is False
+    assert entry["completed_count"] == 1
+    assert entry["milestone_count"] == 4
+    assert "chain custody mismatch" in entry["operator_next"]
+
+
+def test_newer_four_of_four_chain_state_unlocks_complete_status(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n"
+        "  - label: m3\n"
+        "    idea: m3.md\n"
+        "  - label: m4\n"
+        "    idea: m4.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=False,
+        completed_count=0,
+        milestone_count=4,
+        current_plan_name="m4-demo-plan",
+        last_state="failed",
+        updated_at=NOW - timedelta(hours=6),
+    )
+    fx.add_watchdog_report(
+        items=[{"session": "epic-run", "status": "complete", "action": "observe", "message": "chain complete"}]
+    )
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_state_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 4,
+                "last_state": "done",
+                "completed": [
+                    {"label": "m1", "status": "done"},
+                    {"label": "m2", "status": "done"},
+                    {"label": "m3", "status": "done"},
+                    {"label": "m4", "status": "done"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "complete"
+    assert entry["should_run"] is False
+    assert entry["chain_complete"] is True
+    assert entry["completed_count"] == 4
+    assert entry["milestone_count"] == 4
+    assert entry["progress"]["percent"] == 100
 
 
 def test_summary_counts_partition_all_sessions(fx):
@@ -557,10 +907,60 @@ def test_session_entry_carries_progress_block(fx):
     assert entry["chain_complete"] is False
     assert entry["progress"]["completed_milestones"] == 1
     assert entry["progress"]["total_milestones"] == 4
-    assert entry["progress"]["percent"] == 25
+    assert entry["progress"]["percent"] == 44
     assert entry["progress"]["current_plan"] == "s2-front-half-2026"
     statuses = [s["status"] for s in entry["progress"]["sprints"]]
     assert statuses == ["done", "in_progress", "pending", "pending"]
+
+
+def test_newer_terminal_chain_state_with_missing_completed_records_is_attention(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = fx.root / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n"
+        "  - label: m3\n"
+        "    idea: m3.md\n"
+        "  - label: m4\n"
+        "    idea: m4.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=True,
+        completed_count=4,
+        milestone_count=4,
+        current_plan_name="",
+        last_state="done",
+        updated_at=NOW - timedelta(minutes=5),
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    (chain_dir / "chain.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 4,
+                "last_state": "done",
+                "completed": [{"label": "m1", "pr_number": 93, "pr_state": "merged"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build()
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "attention"
+    assert entry["chain_complete"] is False
+    assert entry["completed_count"] == 1
+    assert entry["milestone_count"] == 4
+    assert entry["progress"]["percent"] == 25
+    assert "chain custody mismatch" in entry["operator_next"]
 
 
 def test_session_entry_progress_none_without_milestones(fx):
@@ -589,7 +989,7 @@ def test_plan_activity_summary_propagates_progress(fx):
     assert summary["degraded"] is False
     active = summary["active_working"]
     assert len(active) == 1
-    assert active[0]["progress"]["percent"] == 50
+    assert active[0]["progress"]["percent"] == 88
     assert active[0]["progress"]["sprints"][1]["status"] == "in_progress"
 
 
@@ -598,621 +998,341 @@ def test_detailed_renders_progress_percent(fx):
     fx.add_chain_health("epic-run", current_plan_name="s2-loop", completed_count=1, milestone_count=4)
     snap = fx.build(watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
-    assert "progress=25%" in detailed
+    assert "progress=44%" in detailed
 
 
-# ---------------------------------------------------------------------------
-# canonical resolver fields — snapshot contract
-# ---------------------------------------------------------------------------
+# --- per-plan stage % (in-flight plan estimate) ---------------------------
 
 
-def test_canonical_fields_present_when_observe_enabled(monkeypatch, fx):
-    """When ARNOLD_RESOLVER_OBSERVE is on, canonical fields appear on every session entry."""
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    fx.add_session("a", plan_name="planA")
-    fx.add_chain_health("a", current_plan_name="planA", completed_count=2, milestone_count=5)
-    snap = fx.build()
-    entry = _by_session(snap, "a")
-
-    assert "canonical_state" in entry, "canonical_state must be present when observe enabled"
-    assert "canonical_reason" in entry, "canonical_reason must be present"
-    assert "canonical_human_required" in entry, "canonical_human_required must be present"
-    assert "canonical_human_gate" in entry, "canonical_human_gate must be present"
-    assert "canonical_resolver" in entry, "canonical_resolver dict must be present"
-    assert isinstance(entry["canonical_resolver"], dict)
-    # The canonical_resolver dict must carry standard resolver output fields.
-    resolver = entry["canonical_resolver"]
-    assert "canonical_state" in resolver
-    assert "confidence" in resolver
-    assert "source_of_truth" in resolver
-    assert "reason" in resolver
-    assert "evidence" in resolver
+def test_plan_stage_percent_maps_ladder_rungs():
+    # completed-stages / total-stages across the 8 rungs; initialized = 0%.
+    assert ss._plan_stage_percent("") is None
+    assert ss._plan_stage_percent("initialized") == 0
+    assert ss._plan_stage_percent("prepped") == 12
+    assert ss._plan_stage_percent("planned") == 25
+    assert ss._plan_stage_percent("gated") == 50
+    assert ss._plan_stage_percent("executed") == 75
+    assert ss._plan_stage_percent("reviewed") == 88
+    assert ss._plan_stage_percent("done") == 100
 
 
-def test_legacy_fields_unchanged_when_canonical_present(monkeypatch, fx):
-    """Legacy snapshot keys are byte-identical regardless of canonical observe mode."""
-    fx.add_session("a", plan_name="planA")
-    fx.add_chain_health("a", current_plan_name="planA", completed_count=2, milestone_count=5)
-
-    # Build with observe OFF
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
-    snap_off = fx.build()
-    entry_off = _by_session(snap_off, "a")
-
-    # Build with observe ON
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    snap_on = fx.build()
-    entry_on = _by_session(snap_on, "a")
-
-    # Every legacy key must have the same value in both snapshots.
-    legacy_keys = {
-        "session", "display_name", "workspace", "spec", "run_kind",
-        "status", "should_run", "tmux", "process", "watchdog", "repairing",
-        "current_plan", "completed_count", "milestone_count", "chain_complete",
-        "progress", "pr_number", "pr_state", "latest_activity", "operator_next",
-        "evidence",
-    }
-    for key in legacy_keys:
-        assert key in entry_off, f"legacy key {key!r} missing from observe-OFF entry"
-        assert key in entry_on, f"legacy key {key!r} missing from observe-ON entry"
-        assert entry_off[key] == entry_on[key], (
-            f"legacy key {key!r} diverges: {entry_off[key]!r} vs {entry_on[key]!r}"
-        )
+def test_plan_stage_percent_none_for_off_ladder_states():
+    for off_ladder in (
+        "blocked",
+        "failed",
+        "aborted",
+        "awaiting_pr_merge",
+        "awaiting_human_verify",
+        "tiebreaker_pending",
+        "nonsense",
+    ):
+        assert ss._plan_stage_percent(off_ladder) is None
 
 
-def test_canonical_fields_absent_when_observe_disabled(monkeypatch, fx):
-    """When ARNOLD_RESOLVER_OBSERVE is off, no canonical fields appear."""
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
-    fx.add_session("a", plan_name="planA")
-    fx.add_chain_health("a", current_plan_name="planA")
-    snap = fx.build()
-    entry = _by_session(snap, "a")
-
-    assert "canonical_state" not in entry
-    assert "canonical_reason" not in entry
-    assert "canonical_human_required" not in entry
-    assert "canonical_human_gate" not in entry
-    assert "canonical_resolver" not in entry
-
-
-def test_canonical_fields_present_on_all_sessions_when_observe_enabled(monkeypatch, fx):
-    """Every session in the snapshot carries canonical fields when observe is on."""
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    for name in ("a", "b", "c"):
-        fx.add_session(name, plan_name=f"plan{name.upper()}")
-        fx.add_chain_health(name, current_plan_name=f"plan{name.upper()}")
-    snap = fx.build()
-    for name in ("a", "b", "c"):
-        entry = _by_session(snap, name)
-        assert "canonical_state" in entry, f"session {name!r} missing canonical_state"
-        assert "canonical_resolver" in entry, f"session {name!r} missing canonical_resolver"
-
-
-def test_legacy_status_classification_unchanged_by_canonical(monkeypatch, fx):
-    """status, should_run, and operator_next are identical with observe on vs off."""
-    fx.add_session("r", plan_name="planR")
-    fx.add_chain_health("r", current_plan_name="planR", last_state="executed")
-    fx.add_session("rep", plan_name="planRep")
-    fx.add_chain_health("rep", last_state="error", updated_at=NOW - timedelta(hours=3))
-    fx.add_repair_progress("rep")
-    fx.add_session("blk", plan_name="planBlk")
-    fx.add_chain_health("blk", last_state="awaiting_human")
-    fx.add_needs_human("blk")
-
-    for observe in ("0", "1"):
-        monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", observe)
-        snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-        for name in ("r", "rep", "blk"):
-            entry = _by_session(snap, name)
-            # Status classifications must be invariant.
-            if name == "r":
-                assert entry["status"] == "running"
-            elif name == "rep":
-                assert entry["status"] == "repairing"
-            elif name == "blk":
-                assert entry["status"] == "blocked"
-
-
-@pytest.mark.parametrize(
-    ("state", "expected_status", "expect_drift"),
-    [
-        (CanonicalState.RUNNING, "running", True),
-        (CanonicalState.REPAIRING, "repairing", True),
-        (CanonicalState.RETRYABLE_EXECUTION_BLOCK, "attention", True),
-        (CanonicalState.REAL_IMPLEMENTATION_BLOCK, "attention", True),
-        (CanonicalState.HUMAN_ACTION_REQUIRED, "blocked", False),
-        (CanonicalState.COMPLETED, "complete", True),
-        (CanonicalState.STALE_DERIVED_STATE, "attention", True),
-        (CanonicalState.BROKEN_STATE_MACHINE, "attention", True),
-    ],
-)
-def test_non_unknown_canonical_status_mapping_overrides_legacy(
-    monkeypatch,
-    fx,
-    state: CanonicalState,
-    expected_status: str,
-    expect_drift: bool,
-):
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    workspace = fx.add_session("blk", plan_name="planBlk")
-    plan_dir = workspace / ".megaplan" / "plans" / "planBlk"
-    plan_dir.mkdir(parents=True, exist_ok=True)
-    fx.add_chain_health("blk", current_plan_name="planBlk", last_state="awaiting_human")
-    fx.add_needs_human("blk")
-
-    events: list[dict[str, object]] = []
-
-    def _fake_resolve_run_state(_evidence):
-        return CanonicalRunState(
-            canonical_state=state,
-            reason=f"{state.name} from test",
-            stale_sources=("needs_human",) if expect_drift else (),
-        )
-
-    def _fake_emit(kind, plan_dir, *, phase=None, payload=None, store=None):
-        record = {"kind": kind, "plan_dir": plan_dir, "payload": payload or {}}
-        events.append(record)
-        return record
-
-    monkeypatch.setattr(ss, "resolve_run_state", _fake_resolve_run_state)
-    monkeypatch.setattr(ss, "emit", _fake_emit)
-
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    entry = _by_session(snap, "blk")
-
-    assert entry["status"] == expected_status
-    assert entry["canonical_state"] == state.name
-    if state is CanonicalState.COMPLETED:
-        assert entry["should_run"] is False
-    if expect_drift:
-        assert len(events) == 1
-        assert events[0]["kind"] == ss.EventKind.DRIFT_DETECTED
-        assert events[0]["plan_dir"] == plan_dir
-        payload = events[0]["payload"]
-        assert payload["expected"] == expected_status
-        assert payload["actual"] == "blocked"
-        assert payload["canonical_state"] == state.name
-        assert payload["session"] == "blk"
-        assert payload["workspace"] == str(workspace)
-        assert payload["current_plan"] == "planBlk"
-    else:
-        assert events == []
-
-
-def test_unknown_canonical_status_falls_back_to_legacy(monkeypatch, fx):
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    fx.add_session("blk", plan_name="planBlk")
-    fx.add_chain_health("blk", current_plan_name="planBlk", last_state="awaiting_human")
-    fx.add_needs_human("blk")
-
-    monkeypatch.setattr(
-        ss,
-        "resolve_run_state",
-        lambda _evidence: CanonicalRunState(
-            canonical_state=CanonicalState.UNKNOWN,
-            reason="insufficient evidence",
-        ),
+def test_session_progress_carries_in_flight_plan_percent():
+    progress = ss._session_progress(
+        completed_count=1,
+        milestone_count=3,
+        current_plan="s2-loop-2026",
+        complete=False,
+        plan_state="executed",
     )
-
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    entry = _by_session(snap, "blk")
-
-    assert entry["status"] == "blocked"
-    assert entry["canonical_state"] == "UNKNOWN"
-
-
-def test_live_pr_probe_overrides_stored_chain_health_pr_fields(monkeypatch, fx):
-    fx.add_session("pr", plan_name="planPr")
-    fx.add_chain_health("pr", current_plan_name="planPr", pr_number=42, pr_state="closed")
-
-    seen: list[object] = []
-
-    def _fake_probe(workspace, pr_number):
-        seen.append(pr_number)
-        return {"available": True, "pr_number": 84, "state": "open"}
-
-    monkeypatch.setattr(ss, "_probe_live_pr_state", _fake_probe)
-
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    entry = _by_session(snap, "pr")
-
-    assert seen == [42]
-    assert entry["pr_number"] == 84
-    assert entry["pr_state"] == "open"
+    assert progress["plan_state"] == "executed"
+    assert progress["plan_percent"] == 75
+    in_flight = progress["sprints"][1]
+    assert in_flight["status"] == "in_progress"
+    assert in_flight["plan_state"] == "executed"
+    assert in_flight["plan_percent"] == 75
 
 
-def test_live_pr_probe_failure_falls_back_to_stored_chain_health_fields(monkeypatch, fx):
-    fx.add_session("pr", plan_name="planPr")
-    fx.add_chain_health("pr", current_plan_name="planPr", pr_number=42, pr_state="closed")
-
-    monkeypatch.setattr(
-        ss,
-        "_probe_live_pr_state",
-        lambda workspace, pr_number: {
-            "available": False,
-            "pr_number": pr_number,
-            "reason": "gh_pr_view_failed",
-        },
+def test_session_progress_state_label_without_percent_when_blocked():
+    progress = ss._session_progress(
+        completed_count=0,
+        milestone_count=2,
+        current_plan="s1-x",
+        complete=False,
+        plan_state="blocked",
     )
+    # blocked is off the ladder → no percent, but the raw state is still exposed.
+    assert progress["plan_state"] == "blocked"
+    assert "plan_percent" not in progress
+    in_flight = progress["sprints"][0]
+    assert in_flight["plan_state"] == "blocked"
+    assert "plan_percent" not in in_flight
 
+
+def test_session_progress_no_plan_keys_without_state():
+    progress = ss._session_progress(
+        completed_count=1, milestone_count=3, current_plan="s2-x", complete=False
+    )
+    assert "plan_state" not in progress
+    assert "plan_percent" not in progress
+    assert "plan_state" not in progress["sprints"][1]
+
+
+def test_session_progress_no_plan_keys_when_complete():
+    progress = ss._session_progress(
+        completed_count=2,
+        milestone_count=2,
+        current_plan=None,
+        complete=True,
+        plan_state="done",
+    )
+    # No in-flight plan on a complete chain → no per-plan estimate.
+    assert "plan_state" not in progress
+    assert "plan_percent" not in progress
+
+
+def test_session_entry_carries_plan_percent_from_last_state(fx):
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run",
+        current_plan_name="s2-loop",
+        completed_count=1,
+        milestone_count=4,
+        last_state="reviewed",
+    )
+    snap = fx.build()
+    entry = _by_session(snap, "epic-run")
+    assert entry["progress"]["plan_state"] == "reviewed"
+    assert entry["progress"]["plan_percent"] == 88
+
+
+def test_plan_activity_summary_propagates_plan_percent(fx):
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run",
+        current_plan_name="s2-loop",
+        completed_count=1,
+        milestone_count=4,
+        last_state="executed",
+    )
+    snap = fx.build()
+    active = ss.plan_activity_summary(snap)["active_working"]
+    assert active[0]["progress"]["plan_percent"] == 75
+    assert active[0]["progress"]["plan_state"] == "executed"
+
+
+def test_detailed_renders_plan_percent_and_state(fx):
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run",
+        current_plan_name="s2-loop",
+        completed_count=1,
+        milestone_count=4,
+        last_state="executed",
+    )
     snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    entry = _by_session(snap, "pr")
+    detailed = sf.format_cloud_status_detailed(snap)
+    assert "progress=44%" in detailed
+    assert "plan=75% (executed)" in detailed
 
-    assert entry["pr_number"] == 42
-    assert entry["pr_state"] == "closed"
+
+def test_epic_percent_folds_in_flight_plan_fraction():
+    # Epic % = (completed + plan_percent/100) / total, so it advances with the
+    # in-flight plan instead of freezing between milestones.
+    gated = ss._session_progress(
+        completed_count=2, milestone_count=8, current_plan="s3-x", complete=False, plan_state="gated"
+    )
+    assert gated["plan_percent"] == 50
+    assert gated["percent"] == 31  # (2 + 0.5) / 8 = 31.25 -> 31
+    executed = ss._session_progress(
+        completed_count=2, milestone_count=8, current_plan="s3-x", complete=False, plan_state="executed"
+    )
+    assert executed["percent"] == 34  # (2 + 0.75) / 8 = 34.375 -> 34
+    # No plan-stage signal -> plain completed/total (frozen milestone view).
+    no_state = ss._session_progress(
+        completed_count=2, milestone_count=8, current_plan="s3-x", complete=False
+    )
+    assert no_state["percent"] == 25
 
 
-def test_probe_live_pr_state_shells_out_to_gh_view_via_monkeypatched_subprocess(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    calls: list[tuple[list[str], str]] = []
+def test_detailed_renders_plan_state_when_not_percentageable(fx):
+    fx.add_session("blk", plan_name="s1-x")
+    fx.add_chain_health(
+        "blk",
+        current_plan_name="s1-x",
+        completed_count=0,
+        milestone_count=3,
+        last_state="blocked",
+    )
+    fx.add_needs_human("blk")
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    detailed = sf.format_cloud_status_detailed(snap)
+    assert "plan=blocked" in detailed
+    assert "plan=blocked%" not in detailed
 
-    def _fake_run(cmd, **kwargs):
-        calls.append((list(cmd), kwargs["cwd"]))
-        return type(
-            "Proc",
-            (),
+
+# --- progress history + time-series deltas --------------------------------
+
+
+def test_append_progress_history_writes_compact_row(tmp_path):
+    history = tmp_path / "progress-history.jsonl"
+    snapshot = {
+        "sessions": [
             {
-                "returncode": 0,
-                "stdout": json.dumps(
-                    {"number": 42, "state": "OPEN", "isDraft": False, "mergedAt": None}
-                ),
-                "stderr": "",
-            },
-        )()
-
-    monkeypatch.setattr(ss.subprocess, "run", _fake_run)
-
-    result = ss._probe_live_pr_state(workspace, 42)
-
-    assert calls == [
-        (
-            ["gh", "pr", "view", "42", "--json", "number,state,isDraft,mergedAt"],
-            str(workspace),
-        )
-    ]
-    assert result == {"available": True, "pr_number": 42, "state": "open"}
-
-
-def test_probe_live_pr_state_failure_returns_unavailable_without_real_gh_call(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-
-    def _fake_run(cmd, **kwargs):
-        return type("Proc", (), {"returncode": 1, "stdout": "", "stderr": "gh unavailable"})()
-
-    monkeypatch.setattr(ss.subprocess, "run", _fake_run)
-
-    result = ss._probe_live_pr_state(workspace, 42)
-
-    assert result["available"] is False
-    assert result["pr_number"] == 42
-    assert result["reason"] == "gh_pr_view_failed"
-
-
-# ---------------------------------------------------------------------------
-# canonical resolver fields — formatter rendering
-# ---------------------------------------------------------------------------
-
-
-def _make_snap_with_canonical_fields(
-    monkeypatch, fx, session_name="s1", plan="plan1",
-    canonical_state="RUNNING", stale_sources=None, next_action=None,
-    fingerprint="fp-001",
-):
-    """Build a snapshot and inject canonical fields into one session entry.
-
-    Returns (snapshot, entry) where entry has been patched with synthetic
-    canonical fields that exercise the formatter rendering paths.
-    """
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    fx.add_session(session_name, plan_name=plan)
-    fx.add_chain_health(session_name, current_plan_name=plan)
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    entry = _by_session(snap, session_name)
-    # Override with specific canonical values for rendering tests.
-    stale = stale_sources or []
-    action = next_action or ""
-    fingerprint_ev = (
-        [{"key": "root_cause_fingerprint", "value": fingerprint, "kind": "root_cause_fingerprint"}]
-        if fingerprint else []
-    )
-    entry["canonical_state"] = canonical_state
-    entry["canonical_reason"] = "synthetic test reason"
-    entry["canonical_human_required"] = False
-    entry["canonical_human_gate"] = None
-    entry["canonical_resolver"] = {
-        "canonical_state": canonical_state,
-        "confidence": "high",
-        "source_of_truth": ["chain_health", "watchdog"],
-        "stale_sources": stale,
-        "human_required": False,
-        "human_gate": None,
-        "repairable": False,
-        "running": True if canonical_state == "RUNNING" else False,
-        "next_action": action,
-        "reason": "synthetic test reason",
-        "evidence": fingerprint_ev,
+                "session": "s1",
+                "progress": {"percent": 30, "plan_percent": 60, "plan_state": "executed", "current_plan": "p1"},
+            }
+        ]
     }
-    return snap, entry
+    ss.append_progress_history(snapshot, history, now=NOW)
+    ss.append_progress_history(snapshot, history, now=NOW)
+    lines = history.read_text().splitlines()
+    assert len(lines) == 2
+    row = json.loads(lines[0])
+    assert row["ts"]
+    assert row["sessions"] == [
+        {"session": "s1", "epic_percent": 30, "plan_percent": 60, "plan_state": "executed", "current_plan": "p1"}
+    ]
 
 
-def test_discord_short_renders_canonical_state_tag(monkeypatch, fx):
-    """Discord short output includes the canonical state emoji+tag for entries with canonical data."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="RETRYABLE_EXECUTION_BLOCK",
+def test_append_progress_history_skips_sessions_without_progress(tmp_path):
+    history = tmp_path / "progress-history.jsonl"
+    ss.append_progress_history({"sessions": [{"session": "s1"}]}, history, now=NOW)
+    assert not history.exists()
+
+
+def test_compute_progress_deltas_windows_and_plan_start(tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = datetime(2026, 7, 6, 14, 0, 0, tzinfo=timezone.utc)
+    # t-90m: epic 20 plan-A · t-40m: epic 30 plan-A · now: epic 45 plan-B
+    for offset_min, pct, plan in ((90, 20, "plan-A"), (40, 30, "plan-A"), (0, 45, "plan-B")):
+        ss.append_progress_history(
+            {"sessions": [{"session": "s1", "progress": {"percent": pct, "current_plan": plan}}]},
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    deltas = ss.compute_progress_deltas(
+        history_path=history, session="s1", now=base, started_at="2026-07-06T12:00:00Z", now_percent=45
     )
-    chunks = sf.format_cloud_status_short(snap)
-    body = "\n".join(chunks)
-    assert "⟨retryable-block⟩" in body, f"canonical retryable-block tag missing:\n{body}"
+    assert deltas["epic_delta_1h"] == 25  # 45 - 20 (latest sample >=1h old)
+    assert deltas["epic_delta_5h"] is None  # nothing 5h back -> honestly omitted
+    assert deltas["plan_started_at"].startswith("2026-07-06T14:00:00")  # A->B transition
+    assert deltas["epic_started_at"] == "2026-07-06T12:00:00Z"  # marker started_at preferred
 
 
-def test_discord_short_renders_stale_warning(monkeypatch, fx):
-    """Stale sources in the canonical resolver produce a ⚠️stale:... warning in Discord output."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="REAL_IMPLEMENTATION_BLOCK",
-        stale_sources=["chain_health", "needs_human"],
+def test_compute_progress_deltas_none_without_history(tmp_path):
+    assert ss.compute_progress_deltas(history_path=tmp_path / "absent.jsonl", session="s1", now=NOW) is None
+
+
+def test_compute_progress_deltas_none_for_unknown_session(tmp_path):
+    history = tmp_path / "ph.jsonl"
+    ss.append_progress_history(
+        {"sessions": [{"session": "other", "progress": {"percent": 10, "current_plan": "p"}}]}, history, now=NOW
     )
-    chunks = sf.format_cloud_status_short(snap)
-    body = "\n".join(chunks)
-    assert "⚠️stale:" in body, f"stale warning missing:\n{body}"
-    assert "chain_health" in body
-    assert "needs_human" in body
+    assert ss.compute_progress_deltas(history_path=history, session="s1", now=NOW) is None
 
 
-def test_discord_short_renders_next_action_hint(monkeypatch, fx):
-    """Next-action hints from the canonical resolver appear in Discord output."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="BROKEN_STATE_MACHINE",
-        next_action="dispatch broken-superfixer for session s1",
+def test_snapshot_enriches_progress_with_deltas(tmp_path, fx):
+    history = tmp_path / "ph.jsonl"
+    # completed=1/4 + executed(75%) -> epic 44. Seed history: 24 at 2h ago, 34 at 1h ago.
+    for offset_min, pct in ((120, 24), (60, 34)):
+        ss.append_progress_history(
+            {"sessions": [{"session": "epic-run", "progress": {"percent": pct, "current_plan": "s2-loop"}}]},
+            history,
+            now=NOW - timedelta(minutes=offset_min),
+        )
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run", current_plan_name="s2-loop", completed_count=1, milestone_count=4, last_state="executed"
     )
-    chunks = sf.format_cloud_status_short(snap)
-    body = "\n".join(chunks)
-    assert "→ dispatch broken-superfixer" in body, f"next-action hint missing:\n{body}"
+    snap = fx.build(history_path=history)
+    progress = _by_session(snap, "epic-run")["progress"]
+    assert progress["percent"] == 44
+    assert progress["epic_delta_1h"] == 10  # 44 - 34 (sample ~1h ago)
+    assert progress["epic_delta_5h"] is None
+    assert progress["plan_started_at"].startswith("2026-07-04T20")  # first sample ~NOW-2h
 
 
-def test_detailed_renders_canonical_block(monkeypatch, fx):
-    """Detailed CLI output includes a canonical: line with confidence."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="HUMAN_ACTION_REQUIRED",
+def test_detailed_renders_epic_deltas(fx, tmp_path):
+    history = tmp_path / "ph.jsonl"
+    ss.append_progress_history(
+        {"sessions": [{"session": "epic-run", "progress": {"percent": 24, "current_plan": "s2-loop"}}]},
+        history,
+        now=NOW - timedelta(minutes=60),
     )
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run", current_plan_name="s2-loop", completed_count=1, milestone_count=4, last_state="executed"
+    )
+    snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
-    assert "canonical:" in detailed, f"canonical block missing from detailed:\n{detailed}"
-    assert "confidence=high" in detailed
+    assert "(+20%/1h)" in detailed  # 44 now - 24 an hour ago
 
 
-def test_detailed_renders_canonical_reason(monkeypatch, fx):
-    """Detailed output includes the canonical reason line."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="STALE_DERIVED_STATE",
+def test_compute_progress_deltas_stage_changes(tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = datetime(2026, 7, 6, 14, 0, 0, tzinfo=timezone.utc)
+    # t-90m: planned · t-40m: gated · now: finalized
+    for offset_min, plan_state in ((90, "planned"), (40, "gated"), (0, "finalized")):
+        ss.append_progress_history(
+            {
+                "sessions": [
+                    {"session": "s1", "progress": {"percent": 10, "current_plan": "p", "plan_state": plan_state}}
+                ]
+            },
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    deltas = ss.compute_progress_deltas(history_path=history, session="s1", now=base, now_percent=10)
+    # prior (>=1h old) = planned; window newly reached gated then finalized
+    assert deltas["stage_changes_1h"] == ["gated", "finalized"]
+
+
+def test_compute_progress_deltas_stage_changes_empty_when_static(tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = datetime(2026, 7, 6, 14, 0, 0, tzinfo=timezone.utc)
+    for offset_min in (90, 40, 0):
+        ss.append_progress_history(
+            {
+                "sessions": [
+                    {"session": "s1", "progress": {"percent": 10, "current_plan": "p", "plan_state": "finalized"}}
+                ]
+            },
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    deltas = ss.compute_progress_deltas(history_path=history, session="s1", now=base, now_percent=10)
+    # held finalized the whole window -> no new stages
+    assert deltas["stage_changes_1h"] == []
+
+
+def test_compute_progress_deltas_stage_changes_skips_off_ladder(tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = datetime(2026, 7, 6, 14, 0, 0, tzinfo=timezone.utc)
+    # prior: planned; window: authority_divergence (off-ladder, ignored) then finalized
+    for offset_min, plan_state in ((90, "planned"), (40, "authority_divergence"), (0, "finalized")):
+        ss.append_progress_history(
+            {
+                "sessions": [
+                    {"session": "s1", "progress": {"percent": 10, "current_plan": "p", "plan_state": plan_state}}
+                ]
+            },
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    deltas = ss.compute_progress_deltas(history_path=history, session="s1", now=base, now_percent=10)
+    assert deltas["stage_changes_1h"] == ["finalized"]  # authority_divergence skipped
+
+
+def test_detailed_renders_stage_changes(fx, tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = NOW
+    for offset_min, plan_state in ((90, "planned"), (0, "gated")):
+        ss.append_progress_history(
+            {
+                "sessions": [
+                    {"session": "epic-run", "progress": {"percent": 20, "current_plan": "s2-loop", "plan_state": plan_state}}
+                ]
+            },
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run", current_plan_name="s2-loop", completed_count=0, milestone_count=4, last_state="gated"
     )
+    snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
-    assert "canonical_reason:" in detailed, f"canonical_reason missing:\n{detailed}"
-    assert "synthetic test reason" in detailed
-
-
-def test_detailed_renders_stale_sources_individually(monkeypatch, fx):
-    """Each stale source gets its own line in the detailed canonical block."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="UNKNOWN",
-        stale_sources=["chain_health", "watchdog", "needs_human"],
-    )
-    detailed = sf.format_cloud_status_detailed(snap)
-    assert "stale_source[0]:" in detailed
-    assert "stale_source[1]:" in detailed
-    assert "stale_source[2]:" in detailed
-    assert "chain_health" in detailed
-
-
-def test_detailed_renders_next_action(monkeypatch, fx):
-    """Detailed output renders the next_action hint."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="RETRYABLE_EXECUTION_BLOCK",
-        next_action="retry with fresh budget after 60s",
-    )
-    detailed = sf.format_cloud_status_detailed(snap)
-    assert "next_action:" in detailed
-    assert "retry with fresh budget" in detailed
-
-
-def test_detailed_truncates_long_stale_source_list(monkeypatch, fx):
-    """When there are more than 5 stale sources, the detailed block shows a truncation indicator."""
-    many_stale = [f"src_{i:03d}" for i in range(8)]
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="STALE_DERIVED_STATE",
-        stale_sources=many_stale,
-    )
-    detailed = sf.format_cloud_status_detailed(snap)
-    # Only 5 lines rendered, plus a truncation note.
-    assert "… +3 more stale sources" in detailed, f"truncation note missing:\n{detailed}"
-
-
-def test_attention_only_renders_canonical_tag_on_noteworthy(monkeypatch, fx):
-    """Attention-only formatter includes canonical tag for blocked/repairing/attention sessions."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, session_name="blk", canonical_state="HUMAN_ACTION_REQUIRED",
-        next_action="approve PR #42 and re-trigger",
-    )
-    # Override status to blocked so attention formatter picks it up.
-    entry = _by_session(snap, "blk")
-    entry["status"] = "blocked"
-    entry["operator_next"] = "human review required"
-
-    body = sf.format_attention_only(snap)
-    assert "blk" in body
-    # The canonical short tag should appear.
-    assert "⟨" in body, f"canonical tag missing from attention output:\n{body}"
-
-
-def test_attention_only_renders_next_action_on_noteworthy(monkeypatch, fx):
-    """Attention-only formatter includes next-action hint for noteworthy entries."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, session_name="att", canonical_state="BROKEN_STATE_MACHINE",
-        next_action="escalate to superfixer with replay data",
-    )
-    entry = _by_session(snap, "att")
-    entry["status"] = "attention"
-    entry["operator_next"] = "stalled — investigate"
-
-    body = sf.format_attention_only(snap)
-    assert "escalate to superfixer" in body
-
-
-def test_discord_short_tolerates_absent_canonical_fields(monkeypatch, fx):
-    """Entries without canonical fields render normally in Discord short format."""
-    # Observe OFF → no canonical fields
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
-    fx.add_session("a", plan_name="planA")
-    fx.add_chain_health("a", current_plan_name="planA")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-
-    chunks = sf.format_cloud_status_short(snap)
-    body = "\n".join(chunks)
-    # Must still render the session normally.
-    assert "a" in body
-    assert "running" in body
-    # No canonical noise when there are no canonical fields.
-    assert "⟨" not in body
-
-
-def test_detailed_tolerates_absent_canonical_fields(monkeypatch, fx):
-    """Detailed formatter works with snapshots that have no canonical data."""
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
-    fx.add_session("a", plan_name="planA")
-    fx.add_chain_health("a", current_plan_name="planA")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-
-    detailed = sf.format_cloud_status_detailed(snap)
-    assert "a" in detailed
-    assert "canonical:" not in detailed
-    assert "canonical_reason:" not in detailed
-
-
-def test_attention_only_tolerates_absent_canonical_fields(monkeypatch, fx):
-    """Attention-only formatter works with no canonical fields."""
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
-    fx.add_session("blk", plan_name="planBlk")
-    fx.add_chain_health("blk", last_state="awaiting_human")
-    fx.add_needs_human("blk")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-
-    body = sf.format_attention_only(snap)
-    assert "blk" in body
-    assert "blocked" in body
-    # No canonical noise.
-    assert "⟨" not in body
-
-
-def test_formatters_tolerate_partial_canonical_fields(monkeypatch, fx):
-    """Entries with only some canonical keys (e.g., canonical_state but no canonical_resolver dict)
-    must not crash formatters."""
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    fx.add_session("partial", plan_name="planP")
-    fx.add_chain_health("partial", current_plan_name="planP")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    entry = _by_session(snap, "partial")
-
-    # Inject only canonical_state; delete canonical_resolver to simulate partial data.
-    entry["canonical_state"] = "RUNNING"
-    del entry["canonical_resolver"]
-    entry.pop("canonical_reason", None)
-    entry.pop("canonical_human_required", None)
-    entry.pop("canonical_human_gate", None)
-
-    # None of the formatters should raise.
-    sf.format_cloud_status_short(snap)
-    sf.format_cloud_status_detailed(snap)
-    sf.format_attention_only(snap)
-
-
-def test_formatters_tolerate_empty_canonical_resolver_dict(monkeypatch, fx):
-    """An empty canonical_resolver dict must be handled gracefully by all formatters."""
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    fx.add_session("empty", plan_name="planE")
-    fx.add_chain_health("empty", current_plan_name="planE")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    entry = _by_session(snap, "empty")
-    # Replace with empty dict.
-    entry["canonical_resolver"] = {}
-    entry["canonical_state"] = None
-    entry["canonical_reason"] = None
-    entry["canonical_human_required"] = None
-    entry["canonical_human_gate"] = None
-
-    # All formatters must return without error.
-    sf.format_cloud_status_short(snap)
-    sf.format_cloud_status_detailed(snap)
-    sf.format_attention_only(snap)
-
-
-def test_formatters_tolerate_none_canonical_resolver(monkeypatch, fx):
-    """A None canonical_resolver must be handled gracefully."""
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-    fx.add_session("none", plan_name="planN")
-    fx.add_chain_health("none", current_plan_name="planN")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    entry = _by_session(snap, "none")
-    entry["canonical_resolver"] = None
-
-    sf.format_cloud_status_short(snap)
-    sf.format_cloud_status_detailed(snap)
-    sf.format_attention_only(snap)
-
-
-def test_discord_short_stale_warning_truncates_after_three_sources(monkeypatch, fx):
-    """Discord short format only lists the first 3 stale sources with an ellipsis suffix."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="UNKNOWN",
-        stale_sources=["a_long_source_name_1", "b_long_source_name_2", "c_long_source_name_3", "d_extra"],
-    )
-    chunks = sf.format_cloud_status_short(snap)
-    body = "\n".join(chunks)
-    assert "⚠️stale:" in body
-    # The 4th source should NOT appear (only first 3 rendered with …).
-    assert "…" in body, f"ellipsis missing for >3 stale sources:\n{body}"
-
-
-def test_discord_short_no_stale_warning_when_empty(monkeypatch, fx):
-    """No stale warning appears when stale_sources is empty."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="RUNNING",
-        stale_sources=[],
-    )
-    chunks = sf.format_cloud_status_short(snap)
-    body = "\n".join(chunks)
-    assert "⚠️stale:" not in body
-
-
-def test_discord_short_no_next_action_when_empty(monkeypatch, fx):
-    """No → arrow appears when next_action is empty."""
-    snap, _ = _make_snap_with_canonical_fields(
-        monkeypatch, fx, canonical_state="RUNNING",
-        next_action="",
-    )
-    chunks = sf.format_cloud_status_short(snap)
-    body = "\n".join(chunks)
-    # Check that the arrow only appears when there's a next_action value
-    # (the arrow would be "→" in the output)
-    assert "→" not in body or "→" in body  # just verify no crash; arrow may appear from other context
-
-
-def test_detailed_skips_canonical_block_when_no_fields(monkeypatch, fx):
-    """Detailed output has no canonical block lines when the entry lacks canonical data."""
-    # Force missing canonical data by using observe=OFF
-    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
-    fx.add_session("s1", plan_name="plan1")
-    fx.add_chain_health("s1", current_plan_name="plan1")
-    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
-    detailed = sf.format_cloud_status_detailed(snap)
-    # No canonical lines.
-    for line in detailed.split("\n"):
-        assert "canonical:" not in line, f"unexpected canonical line: {line!r}"
-        assert "canonical_reason:" not in line
-        assert "stale_source[" not in line
-        assert "next_action:" not in line
+    assert "stages1h:gated" in detailed

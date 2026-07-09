@@ -1,0 +1,51 @@
+{
+  "authority_records": [
+    {
+      "actor": "fixture-operator",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "adopt-execution",
+      "details": {
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "authority_transition": "adopt-execution",
+        "contract_ref": "override_adopt_execution_authority",
+        "evidence_hashes": {
+          "execution.json": "78ebba42ac02bd9f98738eeecb032010d6660d4738f3bec3809962da0db24b09",
+          "execution_audit.json": "d55ad8492c06d54bee686b9a529ad73afffdc8d1372a29f2198c7f165c095f5d",
+          "final.md": "1653dc38d6d082c2d94941e585e856a6fea2bb82656be967801bd8b639ecd523",
+          "finalize.json": "cd80ba078870720f1c7779b78f8d42efa1baa6dc9c35510780ab8c78ce083b28",
+          "state.json": "d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+        },
+        "freshness_token": "inv-override_adopt_execution_authority",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "optional_evidence_refs": [
+          "execution_audit.json",
+          "final.md"
+        ],
+        "required_evidence_refs": [
+          "state.json",
+          "execution.json",
+          "finalize.json"
+        ]
+      },
+      "evidence_refs": [
+        "state.json",
+        "execution.json",
+        "finalize.json",
+        "execution_audit.json",
+        "final.md"
+      ],
+      "role": "reviewer",
+      "scope": "override.adopt_execution"
+    }
+  ],
+  "boundary_id": "override_adopt_execution_authority",
+  "invocation_id": "inv-override_adopt_execution_authority",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s6.override.adopt_execution.1",
+  "state_observation": {
+    "current_state": "critiqued"
+  },
+  "workflow_id": "megaplan-review"
+}

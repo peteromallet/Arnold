@@ -945,6 +945,28 @@ def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
     )
 
 
+def _is_harness_generated_block(task: dict[str, Any]) -> bool:
+    if task.get("status") != "blocked":
+        return False
+    notes = task.get("executor_notes")
+    return isinstance(notes, str) and "[harness]" in notes
+
+
+def _prerequisite_blocked_task_ids(
+    tasks: Iterable[dict[str, Any]],
+    *,
+    active_task_ids: set[str],
+) -> set[str]:
+    return {
+        task["id"]
+        for task in tasks
+        if task.get("status") == "blocked"
+        and not _is_harness_generated_block(task)
+        and isinstance(task.get("id"), str)
+        and task["id"] in active_task_ids
+    }
+
+
 def baseline_unavailable_checkpoint_ids(
     finalize_data: dict[str, Any],
     candidate_ids: Iterable[str],
@@ -1947,6 +1969,51 @@ def _sync_resolved_prerequisite_blocked_tasks(
     return finalize_data, reset_ids
 
 
+def _reset_stale_authority_done_tasks(
+    finalize_data: dict[str, Any],
+    *,
+    plan_dir: Path,
+    root: Path | None,
+    state: PlanState,
+) -> list[str]:
+    """Demote terminal-success rows whose authority evidence went stale."""
+
+    tasks = finalize_data.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return []
+    decisions: dict[str, Any] = {}
+    completed_ids = _scheduler_completed_ids_for_tasks(
+        [task for task in tasks if isinstance(task, dict)],
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+        decisions=decisions,
+    )
+    reset_ids: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        raw_status = task.get("status")
+        if not isinstance(task_id, str) or raw_status not in {"done", "completed"}:
+            continue
+        if task_id in completed_ids:
+            continue
+        decision = decisions.get(task_id)
+        if decision is None:
+            continue
+        reasons = tuple(
+            reason
+            for reason in getattr(decision, "would_block_reasons", ())
+            if isinstance(reason, str) and reason
+        )
+        if not reasons or any(not reason.startswith("stale_evidence:") for reason in reasons):
+            continue
+        _clear_task_attempt_fields(task)
+        reset_ids.append(task_id)
+    return sorted(reset_ids)
+
+
 _BASELINE_VERIFICATION_MARKER = "introduce no new failures vs the recorded baseline"
 _BASELINE_UNAVAILABLE_BLOCKER_KIND = "baseline-unavailable-no-new-failures-checkpoint"
 
@@ -2533,6 +2600,26 @@ def handle_execute_auto_loop(
         log_label="resolved-prereq-retry",
     )
     if resolved_prereq_reset_ids:
+        tasks = finalize_data.get("tasks", [])
+
+    stale_authority_reset_ids = _reset_stale_authority_done_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+    )
+    if stale_authority_reset_ids:
+        write_plan_artifact_json(
+            plan_dir,
+            "finalize.json",
+            finalize_data,
+            contract_context=None,
+        )
+        log.info(
+            "stale-authority-retry: reset %d stale done task(s) to pending: %s",
+            len(stale_authority_reset_ids),
+            ", ".join(stale_authority_reset_ids),
+        )
         tasks = finalize_data.get("tasks", [])
 
     deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
@@ -3319,7 +3406,10 @@ def handle_execute_auto_loop(
         finalize_data, active_blocked_task_ids
     )
     active_blocked_task_ids -= baseline_unavailable_blocked_ids
-    prereq_blocked_task_ids = set(active_blocked_task_ids)
+    prereq_blocked_task_ids = _prerequisite_blocked_task_ids(
+        finalize_data.get("tasks", []),
+        active_task_ids=active_task_ids,
+    )
     blocked_task_reason = _blocked_task_reason(active_blocked_task_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)

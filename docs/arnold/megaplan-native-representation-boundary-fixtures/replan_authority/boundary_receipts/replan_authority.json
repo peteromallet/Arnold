@@ -1,0 +1,23 @@
+{
+  "artifact_refs": [
+    "replan_decision.json"
+  ],
+  "authority_records": [
+    {
+      "actor": "fixture-operator",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "role": "reviewer"
+    }
+  ],
+  "boundary_id": "replan_authority",
+  "history_ref": "replan_authorized",
+  "invocation_id": "inv-replan_authority",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s3.replan_authority.1",
+  "state_observation": {
+    "current_state": "critiqued"
+  },
+  "workflow_id": "megaplan-review"
+}

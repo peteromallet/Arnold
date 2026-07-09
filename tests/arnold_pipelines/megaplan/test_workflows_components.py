@@ -34,8 +34,12 @@ class TestWorkflowComponents:
             "critique",
             "gate",
             "revise",
-            "tiebreaker_run",
-            "tiebreaker_decide",
+            "tiebreaker_run",  # bridge-only: legacy carrier
+            "tiebreaker_decide",  # bridge-only: legacy carrier
+            "tiebreaker_researcher",
+            "tiebreaker_challenger",
+            "tiebreaker_synthesis",
+            "tiebreaker_decision",
             "finalize",
             "execute",
             "review",
@@ -47,9 +51,29 @@ class TestWorkflowComponents:
         assert workflows.STEP_COMPONENTS_BY_ID["gate"].label == "Megaplan gate"
         assert workflows.STEP_COMPONENTS_BY_ID["halt"].metadata["terminal"] is True
 
+    def test_front_half_compatibility_exports_are_quarantined(self) -> None:
+        for name, canonical in (
+            ("SOURCE_PREP", workflows.PREP),
+            ("SOURCE_PLAN", workflows.PLAN),
+            ("SOURCE_CRITIQUE", workflows.CRITIQUE),
+            ("SOURCE_GATE", workflows.GATE),
+            ("SOURCE_REVISE", workflows.REVISE),
+            ("AUTHORING_PREP", workflows.PREP),
+            ("AUTHORING_PLAN", workflows.PLAN),
+            ("AUTHORING_CRITIQUE", workflows.CRITIQUE),
+            ("AUTHORING_GATE", workflows.GATE),
+            ("AUTHORING_REVISE", workflows.REVISE),
+        ):
+            compatibility = getattr(workflows.components, name)
+            assert compatibility.id == canonical.id
+            assert compatibility is not canonical
+            assert compatibility.metadata.get("route_bindings", ()) == ()
+            assert compatibility.metadata["compatibility_quarantine"]["kind"] == "route_metadata_removed"
+
     def test_handler_refs_point_to_megaplan_handlers(self) -> None:
         for component in workflows.ALL_STEP_COMPONENTS:
-            handler_ref = component.metadata.get("handler_ref")
+            step_id = component.id.removeprefix("megaplan:")
+            handler_ref = planning.declared_handler_binding(step_id) or component.metadata.get("handler_ref")
             if handler_ref is None:
                 assert component.id == "megaplan:halt", "only halt lacks a handler"
                 continue
@@ -74,6 +98,12 @@ class TestWorkflowComponents:
             for capability in pipeline.capabilities
         }
 
+    # Steps whose route authority is declared in the workflow.pypeline or
+    # named policy constructs (EXECUTE_POLICY.route_surface) rather than
+    # in component-level ``route_bindings``.
+    _POLICY_ROUTED_STEP_IDS: frozenset[str] = frozenset({"execute", "review", "override"})
+    _BRIDGE_ONLY_STEP_IDS: frozenset[str] = frozenset({"tiebreaker_run", "tiebreaker_decide"})
+
     def test_step_route_bindings_match_explicit_reference(self) -> None:
         pipeline = planning.build_pipeline()
         routes_by_source: dict[str, list[dict[str, str]]] = {}
@@ -87,11 +117,52 @@ class TestWorkflowComponents:
                 binding["condition_ref"] = route.condition_ref
             routes_by_source.setdefault(route.source, []).append(binding)
 
+        front_half_sources = {
+            route.source for route in pipeline.routes if route.source in planning.FRONT_HALF_ROUTING_STEP_IDS
+        }
+        assert front_half_sources == planning.FRONT_HALF_ROUTING_STEP_IDS - {"revise"}
+
         for component in workflows.ALL_STEP_COMPONENTS:
             step_id = component.id.removeprefix("megaplan:")
-            assert tuple(dict(binding) for binding in component.metadata["route_bindings"]) == tuple(
-                routes_by_source.get(step_id, ())
-            )
+            if step_id in planning.FRONT_HALF_ROUTING_STEP_IDS:
+                continue
+            if step_id in self._POLICY_ROUTED_STEP_IDS:
+                continue
+            if step_id in self._BRIDGE_ONLY_STEP_IDS:
+                continue
+            bindings = planning.declared_step_route_bindings(step_id) or component.metadata["route_bindings"]
+            actual = {tuple(sorted(dict(binding).items())) for binding in bindings}
+            expected = {
+                tuple(sorted(binding.items()))
+                for binding in routes_by_source.get(step_id, ())
+            }
+            assert expected <= actual
+
+    def test_execute_route_authority_comes_from_policy_not_component_bindings(self) -> None:
+        """Execute route authority lives in EXECUTE_POLICY.route_surface and
+        the workflow.pypeline, not in component-level ``route_bindings``."""
+        execute_component = workflows.STEP_COMPONENTS_BY_ID["execute"]
+        assert execute_component.metadata.get("route_bindings", ()) == (), (
+            "EXECUTE component must not carry authoritative route_bindings; "
+            "route authority lives in EXECUTE_POLICY.route_surface or workflow.pypeline"
+        )
+        policy_by_id = {p.id: p for p in workflows.POLICY_COMPONENTS}
+        execute_policy = policy_by_id["megaplan:execute"]
+        route_surface = execute_policy.metadata["route_surface"]
+        assert "branch_surface_ref" in route_surface, (
+            "EXECUTE_POLICY.route_surface must declare branch_surface_ref to the "
+            "typed EXECUTE_BRANCH_SURFACE authority"
+        )
+        assert "batch_continuation" in route_surface
+        assert "review_handoff" in route_surface
+        assert "aggregate_promotion" in route_surface
+        # Verify the pipeline still carries the execute→review route (derived
+        # from the pypeline, not from component bindings).
+        pipeline = planning.build_pipeline()
+        execute_routes = [r for r in pipeline.routes if r.source == "execute"]
+        assert len(execute_routes) == 1
+        assert execute_routes[0].target == "review"
+        assert execute_routes[0].id == "execute:review"
 
     def test_step_capability_metadata_matches_explicit_policy_reference(self) -> None:
         pipeline = planning.build_pipeline()
@@ -101,21 +172,28 @@ class TestWorkflowComponents:
         }
 
         for component in workflows.ALL_STEP_COMPONENTS:
-            capability_requirements = component.metadata["capability_requirements"]
+            step_id = component.id.removeprefix("megaplan:")
+            declared_capabilities = planning.declared_step_capabilities(step_id)
             policy = next(
-                step.policy
-                for step in pipeline.steps
-                if step.id == component.id.removeprefix("megaplan:")
+                (
+                    step.policy
+                    for step in pipeline.steps
+                    if step.id == step_id
+                ),
+                None,
             )
+            if policy is None:
+                assert component.id in {"megaplan:tiebreaker_run", "megaplan:tiebreaker_decide"}
+                continue
             suspension_capabilities = {
                 route.capability_id for route in policy.suspension_routes if route.capability_id is not None
             }
-            assert {requirement["id"] for requirement in capability_requirements} == suspension_capabilities
-            for requirement in capability_requirements:
+            assert {capability.id for capability in declared_capabilities} == suspension_capabilities
+            for capability in declared_capabilities:
                 assert {
-                    "route": requirement["route"],
-                    "required": requirement["required"],
-                } == capabilities_by_id[requirement["id"]]
+                    "route": capability.route,
+                    "required": capability.required,
+                } == capabilities_by_id[capability.id]
 
     def test_policy_components_preserve_explicit_reference_metadata(self) -> None:
         pipeline = planning.build_pipeline()
@@ -134,6 +212,8 @@ class TestWorkflowComponents:
             "megaplan:robustness",
             "megaplan:artifact-contract",
             "megaplan:suspension",
+            "megaplan:prep-clarify",
+            "megaplan:blast-radius",
         }
 
         for component in workflows.ALL_STEP_COMPONENTS:
@@ -145,7 +225,14 @@ class TestWorkflowComponents:
             if not carriers:
                 assert policy.metadata.get("authoring_surface") is True
                 continue
-            explicit_policies = [steps_by_id[carrier].policy for carrier in carriers]
+            explicit_policies = [
+                steps_by_id[carrier].policy
+                for carrier in carriers
+                if carrier in steps_by_id
+            ]
+            if not explicit_policies:
+                assert set(carriers) <= {"tiebreaker_run", "tiebreaker_decide"}
+                continue
             assert all(explicit.timing is not None for explicit in explicit_policies)
             assert policy.config["timeout_seconds_ref"] == "build_pipeline.timeout_seconds"
             if "suspension_routes" in policy.config:
@@ -189,6 +276,19 @@ class TestWorkflowComponents:
                 assert all(explicit.escalation is not None for explicit in explicit_policies)
 
     def test_runtime_branch_vocabulary_is_declared(self) -> None:
+        prep = workflows.STEP_COMPONENTS_BY_ID["prep"]
+        assert prep.metadata["runtime_branch_vocabulary"] == (
+            "continue",
+            "awaiting_human",
+        )
+        critique = workflows.STEP_COMPONENTS_BY_ID["critique"]
+        assert critique.metadata["runtime_branch_vocabulary"] == (
+            "completed",
+        )
+        revise = workflows.STEP_COMPONENTS_BY_ID["revise"]
+        assert revise.metadata["runtime_branch_vocabulary"] == (
+            "completed",
+        )
         gate = workflows.STEP_COMPONENTS_BY_ID["gate"]
         assert gate.metadata["runtime_branch_vocabulary"] == (
             "proceed",
@@ -199,6 +299,8 @@ class TestWorkflowComponents:
             "suspend",
             "blocked_preflight",
             "force_proceed",
+            "retry_gate",
+            "reprompt_downgrade",
         )
         assert workflows.STEP_COMPONENTS_BY_ID["review"].metadata["runtime_branch_vocabulary"] == (
             "pass",
@@ -206,6 +308,35 @@ class TestWorkflowComponents:
             "blocked",
             "force_proceeded",
             "deferred_human",
+        )
+
+    def test_outcome_vocabulary_parity(self) -> None:
+        """Every outcome enum value must match its RUNTIME_BRANCH_VOCABULARY entry."""
+        from arnold_pipelines.megaplan.outcomes import (
+            OUTCOME_CLASS_BY_VOCABULARY_KEY,
+        )
+        from arnold_pipelines.megaplan.workflows.components import (
+            RUNTIME_BRANCH_VOCABULARY,
+        )
+
+        for key, enum_cls in OUTCOME_CLASS_BY_VOCABULARY_KEY.items():
+            expected = tuple(member.value for member in enum_cls.__members__.values())
+            actual = RUNTIME_BRANCH_VOCABULARY.get(key)
+            assert actual is not None, (
+                f"Outcome key '{key}' has enum {enum_cls.__name__} "
+                f"but is missing from RUNTIME_BRANCH_VOCABULARY"
+            )
+            assert set(expected) == set(actual), (
+                f"Vocabulary mismatch for '{key}': "
+                f"enum values {expected!r} != RUNTIME_BRANCH_VOCABULARY {actual!r}"
+            )
+
+        # Every RUNTIME_BRANCH_VOCABULARY key must have an outcome enum
+        covered = set(OUTCOME_CLASS_BY_VOCABULARY_KEY)
+        actual_keys = set(RUNTIME_BRANCH_VOCABULARY)
+        uncovered = actual_keys - covered
+        assert not uncovered, (
+            f"RUNTIME_BRANCH_VOCABULARY keys without outcome enum: {sorted(uncovered)}"
         )
 
     def test_gate_policy_metadata_exposes_handler_free_route_surface(self) -> None:
@@ -219,10 +350,44 @@ class TestWorkflowComponents:
         }
         assert route_surface["fallback_route_signals"] == {
             "blocking_flag_reprompt": "retry_gate",
-            "reprompt_downgrade": "iterate",
+            "reprompt_downgrade": "reprompt_downgrade",
             "preflight_failed": "blocked_preflight",
             "unknown_recommendation": "escalate",
             "critique_cap": "force_proceed",
+        }
+        assert route_surface["severity_policy"] == {
+            "blocking_statuses": ("open", "addressed", "disputed"),
+            "significant_severities": ("significant", "likely-significant"),
+            "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
+            "critical_categories": ("correctness", "security"),
+        }
+        assert route_surface["normalization_policy"] == {
+            "invalid_recommendation": {
+                "owner": "gate",
+                "effect": "normalize_to_inferred_recommendation",
+                "fallback_recommendations": {
+                    "blocking_flags_present": "ITERATE",
+                    "preflight_failed": "ESCALATE",
+                    "clear_to_proceed": "PROCEED",
+                },
+            },
+            "empty_payload": {
+                "owner": "gate",
+                "effect": "normalize_to_inferred_recommendation",
+            },
+        }
+        assert route_surface["debt_visibility"] == {
+            "owner": "gate",
+            "effect": "publish_debt_payload_on_proceed",
+            "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
+        }
+        assert route_surface["reprompt_policy"] == {
+            "downgrade_on_unresolved_blockers": {
+                "route_signal": "reprompt_downgrade",
+                "recommendation": "ITERATE",
+                "passed": False,
+                "fallback_kind": "reprompt_downgrade",
+            }
         }
         assert route_surface["critique_gate_diagnostics"] == {
             "bare_skip": {
@@ -236,6 +401,11 @@ class TestWorkflowComponents:
             "malformed_payload": {
                 "owner": "gate",
                 "effect": "normalize_to_inferred_recommendation",
+                "fallback_recommendations": {
+                    "blocking_flags_present": "ITERATE",
+                    "preflight_failed": "ESCALATE",
+                    "clear_to_proceed": "PROCEED",
+                },
             },
             "empty_payload": {
                 "owner": "gate",
@@ -248,7 +418,88 @@ class TestWorkflowComponents:
             "debt_recorded": {
                 "owner": "gate",
                 "effect": "publish_debt_payload_on_proceed",
+                "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
             },
+        }
+
+    def test_revise_loop_policy_exposes_bounded_gate_revise_surface(self) -> None:
+        loop_surface = workflows.REVISE_LOOP_POLICY.metadata["loop_surface"]
+
+        assert loop_surface["loop_id"] == "critique-gate-revise"
+        assert loop_surface["max_iterations"] == workflows.M4_LOOP_MAX_ITERATIONS
+        assert loop_surface["max_iterations_ref"] == "M4_LOOP_MAX_ITERATIONS"
+        assert loop_surface["reentry"] == {
+            "route_id": "revise:loop",
+            "reentry_id": "critique",
+            "target_ref": "critique-fanout",
+        }
+        assert loop_surface["until_exits"] == {
+            "proceed": "finalize",
+            "force_proceed": "finalize",
+        }
+        assert loop_surface["unless_exits"] == {
+            "escalate": "override",
+            "abort": "halt",
+            "blocked_preflight": "override",
+            "suspend": "halt",
+        }
+        assert loop_surface["revise_reentries"] == {
+            "iterate": "revise",
+            "retry_gate": "gate_retry_revise",
+            "reprompt_downgrade": "gate_reprompt_revise",
+        }
+        assert loop_surface["cap_outcomes"] == {
+            "critical_or_security_blockers": "escalate",
+            "cosmetic_only": "force_proceed",
+            "no_progress_with_blockers": "escalate",
+        }
+        assert loop_surface["termination_policy"] == {
+            "iteration_caps": {
+                "default_config_key": "max_critique_iterations",
+                "robust_config_key": "max_robust_critique_iterations",
+                "robustness_overrides": {
+                    "light": {"max_value": 2},
+                },
+            },
+            "no_progress_cap": {
+                "config_scope": "execution",
+                "config_key": "max_critique_no_progress",
+            },
+            "severity_policy": {
+                "blocking_statuses": ("open", "addressed", "disputed"),
+                "significant_severities": ("significant", "likely-significant"),
+                "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
+                "critical_categories": ("correctness", "security"),
+            },
+            "cap_outcomes": {
+                "critical_or_security_blockers": "escalate",
+                "cosmetic_only": "force_proceed",
+                "no_progress_with_blockers": "escalate",
+            },
+            "debt_visibility": {
+                "owner": "gate",
+                "effect": "publish_debt_payload_on_proceed",
+                "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
+            },
+        }
+        assert loop_surface["gate_route_signals"] == workflows.RUNTIME_BRANCH_VOCABULARY["gate"]
+        assert loop_surface["suspension"] == {
+            "route_signal": "suspend",
+            "route_id": "gate:human",
+            "reentry_id": "revise:loop",
+            "resume_target_ref": "gate",
+        }
+        assert loop_surface["tiebreaker"] == {
+            "call_ref": "TIEBREAKER_WORKFLOW",
+            "call_id": "tiebreaker",
+            "inputs": ("gate_payload",),
+            "rejoin": {
+                "proceed": "finalize",
+                "iterate": "revise",
+                "escalate": "override",
+                "fallback": "override",
+            },
+            "internals": "delegated",
         }
 
     def test_default_policy_metadata_exposes_critique_fanout_and_external_call_surface(self) -> None:
@@ -260,6 +511,70 @@ class TestWorkflowComponents:
             "reducer_ref": "SOURCE_CRITIQUE",
             "path_template": "critique/{item_id}",
             "route_signal": "critique_payload",
+            "lens_cardinality": {
+                "minimum": 0,
+                "maximum_ref": "len(megaplan.policy.critique_lenses)",
+            },
+            "typed_reducer_outcomes": {
+                "critique": ("completed",),
+                "gate": (
+                    "proceed",
+                    "iterate",
+                    "tiebreaker",
+                    "escalate",
+                    "abort",
+                    "suspend",
+                    "blocked_preflight",
+                    "force_proceed",
+                    "retry_gate",
+                    "reprompt_downgrade",
+                ),
+            },
+        }
+        assert critique_surface["selection_policy"] == {
+            "skip": {
+                "when": "robustness == bare",
+                "route_signal": "skip_to_finalize",
+            },
+            "static": {
+                "when": "adaptive critique disabled or creative mode enabled",
+                "lens_source": "megaplan.policy.critique_lenses",
+            },
+            "adaptive": {
+                "when": "adaptive critique enabled and creative mode disabled",
+                "phase": "critique_evaluator",
+                "fallback": "static",
+            },
+        }
+        assert critique_surface["retry_policy"] == {
+            "phase": "critique_evaluator",
+            "max_attempts": 2,
+            "on_exhausted": "blocked",
+            "recovery_artifact": "critique_output.json",
+            "promote_to": "critique_v{iteration}.json",
+        }
+        assert critique_surface["evidence_contract"] == {
+            "skip": {
+                "construct_type": "critique",
+                "selection_mode": "skip",
+                "route_signal": "skip_to_finalize",
+            },
+            "static": {
+                "construct_type": "critique",
+                "selection_mode": "static",
+                "lens_source": "megaplan.policy.critique_lenses",
+            },
+            "adaptive": {
+                "construct_type": "critique",
+                "selection_mode": "adaptive",
+                "phase": "critique_evaluator",
+                "fallback": "static",
+            },
+            "retry_exhausted": {
+                "construct_type": "gate",
+                "phase": "critique_evaluator",
+                "route_signal": "blocked",
+            },
         }
         assert critique_surface["skip_and_retry_policy"] == {
             "bare_robustness": {
@@ -291,6 +606,70 @@ class TestWorkflowComponents:
             "parallel_map_id": "critique-fanout",
             "path_template": "critique/{item_id}",
             "route_signal": "critique_payload",
+            "lens_cardinality": {
+                "minimum": 0,
+                "maximum_ref": "len(megaplan.policy.critique_lenses)",
+            },
+            "typed_reducer_outcomes": {
+                "critique": ("completed",),
+                "gate": (
+                    "proceed",
+                    "iterate",
+                    "tiebreaker",
+                    "escalate",
+                    "abort",
+                    "suspend",
+                    "blocked_preflight",
+                    "force_proceed",
+                    "retry_gate",
+                    "reprompt_downgrade",
+                ),
+            },
+            "selection_policy": {
+                "skip": {
+                    "when": "robustness == bare",
+                    "route_signal": "skip_to_finalize",
+                },
+                "static": {
+                    "when": "adaptive critique disabled or creative mode enabled",
+                    "lens_source": "megaplan.policy.critique_lenses",
+                },
+                "adaptive": {
+                    "when": "adaptive critique enabled and creative mode disabled",
+                    "phase": "critique_evaluator",
+                    "fallback": "static",
+                },
+            },
+            "retry_policy": {
+                "phase": "critique_evaluator",
+                "max_attempts": 2,
+                "on_exhausted": "blocked",
+                "recovery_artifact": "critique_output.json",
+                "promote_to": "critique_v{iteration}.json",
+            },
+            "evidence_contract": {
+                "skip": {
+                    "construct_type": "critique",
+                    "selection_mode": "skip",
+                    "route_signal": "skip_to_finalize",
+                },
+                "static": {
+                    "construct_type": "critique",
+                    "selection_mode": "static",
+                    "lens_source": "megaplan.policy.critique_lenses",
+                },
+                "adaptive": {
+                    "construct_type": "critique",
+                    "selection_mode": "adaptive",
+                    "phase": "critique_evaluator",
+                    "fallback": "static",
+                },
+                "retry_exhausted": {
+                    "construct_type": "gate",
+                    "phase": "critique_evaluator",
+                    "route_signal": "blocked",
+                },
+            },
             "skip_and_retry_policy": {
                 "bare_robustness": "skip_to_finalize",
                 "evaluator_retry_attempts": 2,
@@ -355,8 +734,12 @@ class TestSubworkflowSchemaDeclarations:
                 "critique:input", "critique:output",
                 "gate:input", "gate:output",
                 "revise:input", "revise:output",
-                "tiebreaker_run:input", "tiebreaker_run:output",
-                "tiebreaker_decide:input", "tiebreaker_decide:output",
+                "tiebreaker_run:input", "tiebreaker_run:output",  # bridge-only
+                "tiebreaker_decide:input", "tiebreaker_decide:output",  # bridge-only
+                "tiebreaker_researcher:input", "tiebreaker_researcher:output",
+                "tiebreaker_challenger:input", "tiebreaker_challenger:output",
+                "tiebreaker_synthesis:input", "tiebreaker_synthesis:output",
+                "tiebreaker_decision:input", "tiebreaker_decision:output",
                 "finalize:input", "finalize:output",
                 "execute:input", "execute:output",
                 "review:input", "review:output",
@@ -368,12 +751,12 @@ class TestSubworkflowSchemaDeclarations:
         actual_ids = [s.id for s in SCHEMA_COMPONENTS]
         assert actual_ids == expected_ids, f"Schema IDs mismatch:\n  got: {actual_ids}\n  expected: {expected_ids}"
 
-    def test_schema_count_is_24(self) -> None:
-        """There are 24 schema components: 11 input + 13 output (HALT and SUSPEND have no input)."""
+    def test_schema_count_is_32(self) -> None:
+        """There are 32 schema components: 15 input + 17 output (HALT and SUSPEND have no input)."""
         from arnold_pipelines.megaplan.workflows import SCHEMA_COMPONENTS
 
-        assert len(SCHEMA_COMPONENTS) == 24, (
-            f"Expected 24 schema components, got {len(SCHEMA_COMPONENTS)}"
+        assert len(SCHEMA_COMPONENTS) == 32, (
+            f"Expected 32 schema components, got {len(SCHEMA_COMPONENTS)}"
         )
 
     def test_schema_types_are_input_or_output(self) -> None:
@@ -466,7 +849,7 @@ class TestPolicyPlacement:
         assert route_surface["matrix_ref"].endswith("override_matrix:OVERRIDE_ACTION_MATRIX")
         assert {
             action["action"] for action in route_surface["actions"]
-        } == set(workflows.OVERRIDE.metadata["override_actions"])
+        } == set(planning.declared_step_interface("override")["override_actions"])
 
     def test_execute_has_execute_policy(self) -> None:
         """EXECUTE component must use EXECUTE_POLICY."""
@@ -498,47 +881,113 @@ class TestPolicyPlacement:
             )
 
     def test_execute_review_and_override_declare_policy_refs(self) -> None:
-        assert workflows.EXECUTE.metadata["policy_refs"] == (
+        assert planning.declared_step_policy_refs("execute") == (
             "megaplan:execute",
             "megaplan:model-routing",
             "megaplan:artifact-contract",
             "megaplan:suspension",
         )
-        assert workflows.REVIEW.metadata["policy_refs"] == (
+        assert planning.declared_step_policy_refs("review") == (
             "megaplan:review",
             "megaplan:artifact-contract",
             "megaplan:suspension",
         )
-        assert workflows.OVERRIDE.metadata["policy_refs"] == (
+        assert planning.declared_step_policy_refs("override") == (
             "megaplan:override",
             "megaplan:model-routing",
         )
 
     def test_tiebreaker_and_finalize_policy_metadata_expose_route_surface(self) -> None:
-        assert workflows.FINALIZE.metadata["policy_refs"] == (
+        assert planning.declared_step_policy_refs("finalize") == (
             "megaplan:default",
+            "megaplan:finalize",
             "megaplan:artifact-contract",
         )
         assert workflows.TIEBREAKER_POLICY.metadata["route_surface"] == {
             "run_completion_route": {
                 "route_signal": "default",
-                "target_ref": "tiebreaker_decide",
+                "target_ref": "tiebreaker_decision",
                 "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
             },
             "decision_routes": {
                 "pick": {"route_signal": "proceed", "target_ref": "finalize"},
-                "replan": {"route_signal": "iterate", "target_ref": "critique-fanout"},
+                "replan": {"route_signal": "replan", "target_ref": "revise"},
+                "reiterate": {"route_signal": "iterate", "target_ref": "critique-fanout"},
                 "escalate": {"route_signal": "escalate", "target_ref": "override"},
             },
             "fallback_route_signal": "escalate",
         }
         assert workflows.FINALIZE_POLICY.metadata["route_surface"] == {
-            "success_route": {"route_signal": "default", "target_ref": "execute"},
+            "success_route": {
+                "route_signal": "default",
+                "target_ref": "execute",
+                "artifact_effect_id": "artifact.finalize.plan",
+                "artifact_policy_ref": "megaplan:artifact-contract",
+                "projection_route_ref": "finalize:execute",
+                "state_ref": "finalized",
+            },
             "fallback_routes": {
                 "plan_contract_revise_needed": {
                     "route_signal": "revise",
                     "target_ref": "revise",
                     "reason": "missing_scoped_baseline_test_contract",
+                    "projection_route_ref": "finalize:revise",
+                    "phase_ref": "revise",
+                },
+            },
+            "skip_review_routes": {
+                "no_review": {
+                    "route_signal": "no_review",
+                    "target_ref": "halt",
+                    "terminal_state": "done",
+                    "branch_ref": "execute:no-review-terminal-done",
+                    "projected_status_ref": "status:terminal",
+                    "history_entry": "execute_no_review_terminal",
+                },
+                "deferred_human": {
+                    "route_signal": "deferred_human",
+                    "target_ref": "halt",
+                    "terminal_state": "awaiting_human_verify",
+                    "branch_ref": "execute:no-review-terminal-awaiting-human",
+                    "projected_status_ref": "status:terminal",
+                    "resume_cursor_ref": "cursor:suspension",
+                    "history_entry": "execute_no_review_terminal",
+                },
+            },
+            "canonical_artifacts": {
+                "finalize_plan": {
+                    "effect_id": "artifact.finalize.plan",
+                    "payload_ref": "finalize.finalize_payload",
+                    "policy_ref": "megaplan:artifact-contract",
+                    "idempotency_key_ref": "artifact_contract.finalize",
+                },
+            },
+            "final_projection_routes": {
+                "execute": {
+                    "route_signal": "default",
+                    "target_ref": "execute",
+                    "state_ref": "finalized",
+                    "artifact_ref": "artifact.finalize.plan",
+                    "projected_phase": "execute",
+                },
+                "revise_fallback": {
+                    "route_signal": "revise",
+                    "target_ref": "revise",
+                    "projected_phase": "revise",
+                    "reason": "missing_scoped_baseline_test_contract",
+                },
+                "no_review_done": {
+                    "route_signal": "no_review",
+                    "target_ref": "halt",
+                    "terminal_state": "done",
+                    "projected_status_ref": "status:terminal",
+                },
+                "no_review_deferred_human": {
+                    "route_signal": "deferred_human",
+                    "target_ref": "halt",
+                    "terminal_state": "awaiting_human_verify",
+                    "projected_status_ref": "status:terminal",
+                    "resume_cursor_ref": "cursor:suspension",
                 },
             },
         }
@@ -627,8 +1076,8 @@ class TestPolicyPlacement:
         }
 
     def test_execute_and_review_child_workflows_expose_route_contracts(self) -> None:
-        execute_contract = workflows.SOURCE_EXECUTE_BATCH_WORKFLOW.metadata["topology_contract"]
-        review_contract = workflows.SOURCE_REVIEW_PANEL_WORKFLOW.metadata["topology_contract"]
+        execute_contract = planning.declared_workflow_topology_contract("execute_batch")
+        review_contract = planning.declared_workflow_topology_contract("review_panel")
 
         assert execute_contract["approval_gates"] == workflows.EXECUTE_POLICY.metadata["route_surface"]["approval_gates"]
         assert execute_contract["fanout_contract"] == workflows.EXECUTE_POLICY.metadata["route_surface"]["fanout_contract"]
@@ -653,80 +1102,112 @@ class TestPolicyPlacement:
             "cap_exhausted_with_blockers": "recoverable_block",
         }
 
+    def test_live_step_metadata_is_quarantined_behind_declared_interfaces(self) -> None:
+        expected = {
+            "prep": ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            "plan": ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            "critique": ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            (
+                "gate"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings", "capability_requirements"}),
+            (
+                "revise"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings", "capability_requirements"}),
+            (
+                "tiebreaker_researcher"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            (
+                "tiebreaker_challenger"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            (
+                "tiebreaker_synthesis"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            (
+                "tiebreaker_decision"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings", "capability_requirements"}),
+            "finalize": ("non_authoritative_adapter_metadata", {"handler_ref", "policy_refs", "route_bindings"}),
+            "execute": ("declared_step_interface_bridge", {"handler_ref", "policy_refs", "capability_requirements"}),
+            (
+                "review"
+            ): (
+                "non_authoritative_adapter_metadata",
+                {"handler_ref", "policy_refs", "route_bindings", "runtime_branch_vocabulary"},
+            ),
+            "override": ("declared_step_interface_bridge", {"handler_ref", "route_bindings", "policy_refs", "override_actions"}),
+        }
+        for step_id, (expected_kind, preserved_fields) in expected.items():
+            component = workflows.STEP_COMPONENTS_BY_ID[step_id]
+            quarantine = component.metadata["compatibility_quarantine"]
+            assert quarantine["kind"] == expected_kind
+            assert set(quarantine["preserved_fields"]) == preserved_fields
+            if expected_kind == "declared_step_interface_bridge":
+                assert quarantine["canonical_refs"] == (
+                    f"arnold_pipelines.megaplan.workflows.workflow.pypeline:{step_id}",
+                    f"arnold_pipelines.megaplan.workflows.planning:declared_step_interface({step_id})",
+                )
 
-class TestLegacyAliases:
-    """Verify legacy aliases for profile slots, override targets, status payloads, and cursors."""
+    def test_child_workflow_topology_metadata_is_quarantined_behind_declared_contracts(self) -> None:
+        expected = {
+            "SOURCE_EXECUTE_BATCH_WORKFLOW": ("execute_batch", {"policy_refs", "topology_contract"}),
+            "SOURCE_REVIEW_PANEL_WORKFLOW": (
+                "review_panel",
+                {"fan_in_ref", "policy_refs", "topology_contract"},
+            ),
+            "SOURCE_TIEBREAKER_WORKFLOW": ("tiebreaker_child", {"policy_refs", "topology_contract"}),
+        }
+        for export_name, (workflow_id, preserved_fields) in expected.items():
+            component = getattr(workflows.components, export_name)
+            quarantine = component.metadata["compatibility_quarantine"]
+            assert quarantine["kind"] in {
+                "declared_topology_contract_bridge",
+                "non_authoritative_adapter_metadata",
+            }
+            assert set(quarantine["preserved_fields"]) == preserved_fields
+            assert (
+                f"arnold_pipelines.megaplan.workflows.planning:declared_workflow_topology_contract({workflow_id})"
+                in quarantine["canonical_refs"]
+            )
 
-    def test_legacy_aliases_defined(self) -> None:
-        """LEGACY_ALIASES mapping is present and non-empty."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-        assert len(LEGACY_ALIASES) > 0, "LEGACY_ALIASES must be non-empty"
 
-    def test_profile_slot_aliases_present(self) -> None:
-        """Profile slot aliases are preserved."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
+class TestCompatibilityQuarantine:
+    """Verify compatibility exports are explicit quarantine bridges, not authority."""
 
-        profile_keys = [
-            "profile:default_routing",
-            "profile:loader",
-            "profile:robustness_levels",
-            "profile:robustness_accepted",
-            "profile:robustness_normalizer",
-            "profile:phase_model_override",
-        ]
-        for key in profile_keys:
-            assert key in LEGACY_ALIASES, f"Missing profile alias: {key}"
+    def test_legacy_aliases_are_not_exported(self) -> None:
+        assert not hasattr(workflows, "LEGACY_ALIASES")
+        assert "LEGACY_ALIASES" not in workflows.__all__
 
-    def test_override_target_aliases_present(self) -> None:
-        """Override target aliases are preserved."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
+    def test_retained_source_pure_body_carriers_are_quarantined(self) -> None:
+        expected = {
+            "SOURCE_TIEBREAKER_RUN": (
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:tiebreaker_researcher",
+                "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(tiebreaker_researcher)",
+                "arnold_pipelines.megaplan.workflows.planning:declared_workflow_topology_contract(tiebreaker_child)",
+            ),
+            "SOURCE_TIEBREAKER_DECIDE": (
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:tiebreaker_decision",
+                "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(tiebreaker_decision)",
+                "TIEBREAKER_POLICY.metadata.route_surface",
+            ),
+            "SOURCE_EXECUTE": (
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:execute",
+                "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(execute)",
+                "EXECUTE_POLICY.metadata.route_surface",
+            ),
+            "SOURCE_OVERRIDE": (
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:override",
+                "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(override)",
+                "OVERRIDE_POLICY.metadata.route_surface",
+            ),
+        }
 
-        override_keys = [
-            "override:abort",
-            "override:force_proceed",
-            "override:replan",
-            "override:set_robustness",
-            "override:add_note",
-        ]
-        for key in override_keys:
-            assert key in LEGACY_ALIASES, f"Missing override alias: {key}"
-
-    def test_status_payload_aliases_present(self) -> None:
-        """Status payload aliases are preserved."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-
-        status_keys = ["status:halt", "status:terminal"]
-        for key in status_keys:
-            assert key in LEGACY_ALIASES, f"Missing status alias: {key}"
-
-    def test_cursor_aliases_present(self) -> None:
-        """Cursor aliases for suspension and reentry are preserved."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-
-        cursor_keys = [
-            "cursor:suspension",
-            "cursor:resume_contract",
-            "cursor:reentry:gate",
-            "cursor:reentry:review",
-            "cursor:reentry:revise_loop",
-            "cursor:reentry:tiebreaker_loop",
-        ]
-        for key in cursor_keys:
-            assert key in LEGACY_ALIASES, f"Missing cursor alias: {key}"
-
-    def test_legacy_aliases_has_expected_count(self) -> None:
-        """LEGACY_ALIASES must have exactly 19 entries."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-        assert len(LEGACY_ALIASES) == 19, (
-            f"Expected 19 legacy aliases, got {len(LEGACY_ALIASES)}: {list(LEGACY_ALIASES.keys())}"
-        )
-
-    def test_all_legacy_alias_values_are_strings(self) -> None:
-        """Every alias value must be a non-empty string."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-        for key, value in LEGACY_ALIASES.items():
-            assert isinstance(value, str), f"Alias '{key}' value is not a string: {type(value)}"
-            assert value, f"Alias '{key}' value is empty"
+        for export_name, canonical_refs in expected.items():
+            compatibility = getattr(workflows.components, export_name)
+            quarantine = compatibility.metadata["compatibility_quarantine"]
+            assert compatibility.metadata.get("route_bindings", ()) == ()
+            assert quarantine["kind"] == "pure_body_component_metadata_bridge"
+            assert quarantine["canonical_refs"] == canonical_refs
+            assert quarantine["sunset_condition"] == "typed_interfaces_replace_component_metadata"
+            assert "handler_ref" in quarantine["preserved_fields"]
 
 
 class TestStableIdsAuthoritative:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,7 @@ _INCIDENT_LEDGER_DIR = Path(".megaplan") / "incident-ledger"
 _EVENTS_FILE = "events.jsonl"
 _PUBLICATION_TEXT_LIMIT_BYTES = 2 * 1024
 _PUBLICATION_TEXT_TRUNCATION = "\n[truncated to fit 2KB publication gate]"
+_MISSING_LABEL_RE = re.compile(r"could not add label: ['\"]?([^'\"]+)['\"]? not found", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -81,11 +83,11 @@ def sync_persistent_problems(
         if action == "create":
             issue_title = _issue_title(problem)
             issue_body = _issue_body(problem, incident)
-            result = github_cli.create_issue(
-                config.repo_path,
-                config.repo,
-                issue_title,
-                issue_body,
+            result = _create_issue_with_label_fallback(
+                repo_path=config.repo_path,
+                repo=config.repo,
+                title=issue_title,
+                body=issue_body,
                 labels=list(config.issue_labels),
             )
             summary = f"Published persistent problem {problem_id} to GitHub as a new issue"
@@ -111,6 +113,18 @@ def sync_persistent_problems(
 
         publication_links = _publication_links(problem, publication, body_text=issue_body)
         event_evidence = _publication_evidence(problem, incident, issue_body)
+        if result.get("omitted_labels"):
+            publication_links["label_fallback"] = {
+                "omitted_labels": list(result["omitted_labels"]),
+                "applied_labels": list(result.get("applied_labels") or []),
+            }
+            event_evidence.append(
+                {
+                    "kind": "github_sync.label_fallback",
+                    "omitted_labels": list(result["omitted_labels"]),
+                    "applied_labels": list(result.get("applied_labels") or []),
+                }
+            )
         incident_id = incident.get("incident_id") if isinstance(incident, dict) else None
 
         if result.get("ok"):
@@ -196,6 +210,55 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if not result["failed"] else 1
+
+
+def _create_issue_with_label_fallback(
+    *,
+    repo_path: Path | str,
+    repo: str,
+    title: str,
+    body: str,
+    labels: list[str],
+) -> dict[str, Any]:
+    requested_labels = [label.strip() for label in labels if str(label).strip()]
+    attempted_labels = list(requested_labels)
+    omitted_labels: list[str] = []
+    while True:
+        result = github_cli.create_issue(
+            repo_path,
+            repo,
+            title,
+            body,
+            labels=attempted_labels or None,
+        )
+        if result.get("ok"):
+            if omitted_labels:
+                result["omitted_labels"] = list(omitted_labels)
+                result["applied_labels"] = list(attempted_labels)
+            return result
+        retry_labels = _retry_labels_after_missing_label_error(
+            result.get("error"),
+            attempted_labels,
+        )
+        if retry_labels is None:
+            return result
+        omitted_labels.extend(label for label in attempted_labels if label not in retry_labels)
+        attempted_labels = retry_labels
+
+
+def _retry_labels_after_missing_label_error(
+    error: Any,
+    attempted_labels: list[str],
+) -> list[str] | None:
+    if not attempted_labels:
+        return None
+    match = _MISSING_LABEL_RE.search(str(error or ""))
+    if match is None:
+        return None
+    missing_label = match.group(1).strip()
+    if missing_label not in attempted_labels:
+        return None
+    return [label for label in attempted_labels if label != missing_label]
 
 
 def _publication_action(

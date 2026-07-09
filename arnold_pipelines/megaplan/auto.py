@@ -37,7 +37,11 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping
 if TYPE_CHECKING:
     from arnold_pipelines.megaplan.drivers import Substrate
 
-from arnold_pipelines.megaplan._core import active_phase_name, find_plan_dir
+from arnold_pipelines.megaplan._core import (
+    active_phase_name,
+    find_plan_dir,
+    list_batch_artifacts,
+)
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold.runtime.envelope import (
     _envelope_ctx,
@@ -77,6 +81,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_EXECUTED,
     STATE_FAILED,
     STATE_FINALIZED,
+    STATE_GATED,
     STATE_PAUSED,
     STATE_PREPPED,
     STATE_TIEBREAKER_PENDING,
@@ -979,7 +984,7 @@ def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
     # dormant-path: subprocess seam, retired at M6
     candidates = [plan_dir / "state.json"]
     try:
-        candidates.extend(plan_dir.glob("execution_batch_*.json"))
+        candidates.extend(list_batch_artifacts(plan_dir))
     except OSError:
         pass
     newest: float | None = None
@@ -1447,12 +1452,12 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
-        # dormant-path: subprocess seam, retired at M6
-        with (plan_dir / "state.json").open(encoding="utf-8") as handle:
-            data = json.load(handle)
+        from arnold_pipelines.megaplan._core.state import load_plan_from_dir
+
+        _, data = load_plan_from_dir(plan_dir)
     except FileNotFoundError:
         return None
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except (CliError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -2454,6 +2459,8 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
             return False
     if not (plan_dir / "execution.json").exists():
         return False
+    if _latest_review_requires_rework_after_execution(plan_dir):
+        return False
     try:
         root = plan_dir.parents[2]
     except IndexError:
@@ -2464,6 +2471,75 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
         reason="megaplan auto: adopted complete execution artifact after worker failure",
     )
     return code == 0
+
+
+def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> bool:
+    """Advance a critiqued plan when a passing gate artifact was already written.
+
+    Gate can fail after writing the normalized ``gate.json`` but before
+    ``_finish_step`` persists ``current_state=gated``. Rerunning gate in that
+    shape burns model calls and can loop forever. Only adopt the artifact for
+    the unambiguous proceed case; iterate/escalate/tiebreaker recommendations
+    must continue through the normal handler because they carry routing side
+    effects.
+    """
+
+    if plan_dir is None:
+        return False
+    try:
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        gate_data = json.loads((plan_dir / "gate.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(state_data, dict) or state_data.get("current_state") != STATE_CRITIQUED:
+        return False
+    active_step = state_data.get("active_step")
+    if isinstance(active_step, dict):
+        active_phase = active_phase_name(active_step)
+        if active_phase and active_phase != "gate":
+            return False
+    if not isinstance(gate_data, dict):
+        return False
+    if gate_data.get("recommendation") != "PROCEED" or gate_data.get("passed") is not True:
+        return False
+    if gate_data.get("unresolved_flags"):
+        return False
+
+    def _patch(current: dict[str, Any]) -> bool:
+        current["current_state"] = STATE_GATED
+        current.pop("active_step", None)
+        current.setdefault("meta", {})["gate_artifact_recovery"] = {
+            "reason": "adopted passing gate.json after worker failure",
+            "gate_recommendation": gate_data.get("recommendation"),
+        }
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_GATED, "active_step": None},
+        mutation=_patch,
+    )
+    return True
+
+
+def _latest_review_requires_rework_after_execution(plan_dir: Path) -> bool:
+    """Return true when old execution evidence is stale behind rework review."""
+
+    review_path = plan_dir / "review.json"
+    execution_path = plan_dir / "execution.json"
+    try:
+        review_data = json.loads(review_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(review_data, dict):
+        return False
+    if review_data.get("review_verdict") != "needs_rework":
+        return False
+    try:
+        return review_path.stat().st_mtime >= execution_path.stat().st_mtime
+    except (OSError, FileNotFoundError):
+        return False
 
 
 def _finalize_tasks(plan_dir: Path | None) -> tuple[dict[str, Any], ...]:
@@ -2481,6 +2557,65 @@ def _finalize_tasks(plan_dir: Path | None) -> tuple[dict[str, Any], ...]:
     return tuple(dict(task) for task in tasks if isinstance(task, dict) and (task.get("id") or task.get("task_id")))
 
 
+def _execution_batch_completed_task_ids(
+    plan_dir: Path | None,
+    *,
+    project_dir: Path | None,
+    state_data: dict[str, Any] | None,
+    current_head: str | None = None,
+) -> set[str]:
+    if plan_dir is None:
+        return set()
+    completed: set[str] = set()
+    for batch_path in list_batch_artifacts(plan_dir):
+        try:
+            payload = json.loads(batch_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        records = [
+            item
+            for item in payload.get("task_updates", []) or []
+            if isinstance(item, dict)
+        ]
+        if not records:
+            continue
+        completed.update(
+            effective_execute_completed_task_ids(
+                records,
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state_data,
+                current_head=current_head,
+            )
+        )
+    return completed
+
+
+def _latest_recorded_execute_head(plan_dir: Path | None) -> str | None:
+    if plan_dir is None:
+        return None
+    for batch_path in reversed(list_batch_artifacts(plan_dir)):
+        try:
+            payload = json.loads(batch_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        task_updates = payload.get("task_updates")
+        if not isinstance(task_updates, list):
+            continue
+        for record in reversed(task_updates):
+            if not isinstance(record, dict):
+                continue
+            for key in ("head_sha", "head"):
+                value = record.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return None
+
+
 def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str]]:
     """Return whether execute terminal success is corroborated by task evidence."""
 
@@ -2494,19 +2629,37 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
         if isinstance(raw_project_dir, str) and raw_project_dir:
             project_dir = Path(raw_project_dir)
+    recorded_execute_head = _latest_recorded_execute_head(plan_dir)
     decisions: dict[str, AuthorityDecision] = {}
     completed = effective_execute_completed_task_ids(
         tasks,
         plan_dir=plan_dir,
         project_dir=project_dir,
         state=state_data,
+        current_head=recorded_execute_head,
         decisions=decisions,
+    )
+    batch_completed = _execution_batch_completed_task_ids(
+        plan_dir,
+        project_dir=project_dir,
+        state_data=state_data,
+        current_head=recorded_execute_head,
     )
     missing: list[str] = []
     for task in tasks:
         task_id = str(task.get("id") or task.get("task_id") or "")
         raw_status = task.get("status")
-        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
+        if raw_status in {None, "", "pending", "todo", "in_progress"}:
+            if task_id in completed or task_id in batch_completed:
+                continue
+            missing.append(
+                f"{task_id or '<missing-task-id>'}:"
+                f"not_executed:{raw_status or 'missing_status'}"
+            )
+            continue
+        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"}:
+            if task_id in completed or task_id in batch_completed:
+                continue
             if (
                 raw_status == "skipped"
                 and task.get("reviewer_verdict") == "deferred_baseline_unavailable"
@@ -3041,14 +3194,25 @@ def _auto_publish_branch_name(plan: str) -> str:
 
 
 def _git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
-    result = subprocess.run(
-        argv,
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CliError(
+            "git_publish_timeout",
+            f"{shlex.join(argv)} timed out after {timeout} seconds",
+            extra={
+                "argv": argv,
+                "stdout": exc.stdout,
+                "stderr": exc.stderr,
+            },
+        ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise CliError(
@@ -3062,6 +3226,18 @@ def _git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
 
 def _git_has_changes(root: Path) -> bool:
     return bool(_git_text(root, ["git", "status", "--porcelain"]))
+
+
+def _remote_branch_head(root: Path, branch: str) -> str | None:
+    try:
+        output = _git_text(root, ["git", "ls-remote", "--heads", "origin", branch], timeout=60)
+    except CliError:
+        return None
+    for line in output.splitlines():
+        parts = line.split()
+        if parts:
+            return parts[0].strip() or None
+    return None
 
 
 def _publish_done_plan(
@@ -3121,11 +3297,22 @@ def _publish_done_plan(
     remote_url = ""
     push_result = None
     if status == "pushed":
-        push_result = _git_text(
-            root,
-            ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
-            timeout=180,
-        )
+        try:
+            push_result = _git_text(
+                root,
+                ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
+                timeout=180,
+            )
+        except CliError as exc:
+            remote_head = _remote_branch_head(root, target_branch)
+            if remote_head == commit_sha:
+                status = "pushed"
+                reason = "remote_verified_after_push_error"
+                push_result = exc.message
+            else:
+                status = "publish_failed"
+                reason = exc.code
+                push_result = exc.message
         try:
             remote_url = _git_text(root, ["git", "remote", "get-url", "origin"])
         except CliError:
@@ -3568,6 +3755,15 @@ def drive(
                     "plan": plan,
                 }
             )
+        if (
+            state == STATE_CRITIQUED
+            and (next_step == "gate" or status_active_phase == "gate")
+            and _recover_completed_gate_artifact_after_failure(plan_dir)
+        ):
+            message = "reconciled passing gate.json after worker failure"
+            log("recovered completed gate artifact after worker failure; resuming from gated")
+            events.append({"msg": message, "phase": "gate", "plan": plan})
+            continue
 
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):

@@ -20,8 +20,34 @@ LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"
 LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"
 if [[ "$LOCK_HELD" != "1" ]] && command -v flock >/dev/null 2>&1; then
   mkdir -p "$(dirname "$LOCK_FILE")"
-  export CLOUD_WATCHDOG_LOCK_HELD=1
-  exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
+  # Legacy lock shape kept visible for wrapper compatibility tests:
+  # exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
+  python3 - "$LOCK_FILE" "$SELF_PATH" "${WATCHDOG_ARGS[@]}" <<'PY'
+import fcntl
+import os
+import subprocess
+import sys
+
+lock_file = sys.argv[1]
+self_path = sys.argv[2]
+watchdog_args = sys.argv[3:]
+
+fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    raise SystemExit(1)
+
+env = os.environ.copy()
+env["CLOUD_WATCHDOG_LOCK_HELD"] = "1"
+proc = subprocess.Popen(
+    ["bash", self_path, *watchdog_args],
+    env=env,
+    close_fds=True,
+)
+raise SystemExit(proc.wait())
+PY
+  exit $?
 fi
 
 LOG="${CLOUD_WATCHDOG_LOG:-/workspace/watchdog.log}"
@@ -40,6 +66,7 @@ REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
 REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
 REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
 REPAIR_DATA_RETENTION_INTERVAL_SECS="${CLOUD_WATCHDOG_REPAIR_DATA_RETENTION_INTERVAL_SECS:-21600}"
+ENV_GONE_STRIKES="${CLOUD_WATCHDOG_ENV_GONE_STRIKES:-3}"
 SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
@@ -47,9 +74,19 @@ SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
 EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
 KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
-PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"
 KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
-META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"
+PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+PRIMARY_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-repair-loop"
+PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"
+if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then
+  PRIMARY_REPAIR_BIN="$PRIMARY_REPAIR_FALLBACK_BIN"
+fi
+META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"
+META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"
+if [[ ! -x "$META_REPAIR_BIN" && -x "$META_REPAIR_FALLBACK_BIN" ]]; then
+  META_REPAIR_BIN="$META_REPAIR_FALLBACK_BIN"
+fi
 REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
@@ -152,14 +189,15 @@ repair_pidfile_path() {
 repair_loop_pid_matches_session() {
   local pid="$1"
   local session="${2:-}"
-  python3 - "$pid" "$session" <<'PY'
+  local repair_basename="${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}"
+  python3 - "$pid" "$session" "$repair_basename" <<'PY'
 import os
 import pathlib
 import shlex
 import subprocess
 import sys
 
-pid_text, session = sys.argv[1:]
+pid_text, session, repair_basename = sys.argv[1:]
 try:
     pid = int(pid_text)
 except (TypeError, ValueError):
@@ -196,7 +234,7 @@ def match_at(idx: int) -> bool:
     if idx >= len(args):
         return False
     base = os.path.basename(args[idx])
-    if base != "arnold-repair-loop":
+    if base not in {"arnold-repair-loop", repair_basename}:
         return False
     if not session:
         return True
@@ -1035,7 +1073,8 @@ emit_current_needs_human_sidecar() {
   local remote_spec="$4"
   local current_plan="$5"
   local current_target_observation="${6:-}"
-  local marker_path stale_marker_plans repair_summary
+  local health="${7:-}"
+  local marker_path stale_marker_plans repair_summary meta_repair_trigger meta_dispatch_result
 
   marker_path="$(repair_needs_human_path "$session")"
   [[ -f "$marker_path" ]] || return 1
@@ -1059,6 +1098,25 @@ emit_current_needs_human_sidecar() {
     compare_needs_human_to_resolver "$session" "$current_plan" "true" "$stale_marker_plans"
   else
     compare_needs_human_to_resolver "$session" "$current_plan" "false" ""
+  fi
+
+  meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
+  if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+    if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
+      meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+      if [[ "$meta_dispatch_result" == "dispatched" ]]; then
+        log "session has current needs-human marker but meta-repair trigger matched; background-dispatched meta-repair session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+        return 0
+      fi
+      log "session has current needs-human marker and meta-repair trigger matched but stayed in observe path session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
+    else
+      log "session has current needs-human marker and meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+    fi
+  fi
+  if command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "$current_plan"; then
+    rm -f "$marker_path" 2>/dev/null || true
+    log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${current_plan:-unknown}"
+    return 1
   fi
 
   repair_summary="$(repair_needs_human_summary "$session")"
@@ -2042,17 +2100,106 @@ repair_trigger_scan() {
 kimi_operator_running() {
   local session="$1"
   local pgid_path pgid
-  if pgrep -f "/$PRIMARY_REPAIR_BASENAME[[:space:]]+$session([[:space:]]|$)" >/dev/null 2>&1; then
+  if python3 - "$PRIMARY_REPAIR_BASENAME" "$session" >/dev/null 2>&1 <<'PY'
+import os
+import pathlib
+import sys
+
+repair_basename, session = sys.argv[1:]
+self_pid = os.getpid()
+parent_pid = os.getppid()
+
+
+def parse_args(pid: int) -> list[str]:
+    try:
+        raw = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
+    except Exception:
+        return []
+    return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+
+
+def match(args: list[str], basename: str, session_name: str) -> bool:
+    for idx in range(len(args)):
+        base = os.path.basename(args[idx])
+        if base == basename and idx + 1 < len(args) and args[idx + 1] == session_name:
+            return True
+        if base in {"bash", "sh"}:
+            next_idx = idx + 1
+            if (
+                next_idx < len(args)
+                and os.path.basename(args[next_idx]) == basename
+                and next_idx + 1 < len(args)
+                and args[next_idx + 1] == session_name
+            ):
+                return True
+    return False
+
+
+for proc_dir in pathlib.Path("/proc").iterdir():
+    if not proc_dir.name.isdigit():
+        continue
+    pid = int(proc_dir.name)
+    if pid in {self_pid, parent_pid}:
+        continue
+    if match(parse_args(pid), repair_basename, session):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
     return 0
   fi
-  if pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1; then
+  if python3 - "$session" >/dev/null 2>&1 <<'PY'
+import os
+import pathlib
+import sys
+
+session = sys.argv[1]
+self_pid = os.getpid()
+parent_pid = os.getppid()
+
+
+def parse_args(pid: int) -> list[str]:
+    try:
+        raw = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
+    except Exception:
+        return []
+    return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+
+
+for proc_dir in pathlib.Path("/proc").iterdir():
+    if not proc_dir.name.isdigit():
+        continue
+    pid = int(proc_dir.name)
+    if pid in {self_pid, parent_pid}:
+        continue
+    args = parse_args(pid)
+    for idx in range(len(args)):
+        if (
+            os.path.basename(args[idx]) == "arnold-kimi-goal-operator"
+            and idx + 1 < len(args)
+            and args[idx + 1] == session
+        ):
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
     return 0
   fi
   pgid_path="$(kimi_pgid_path "$session")"
   [[ -r "$pgid_path" ]] || return 1
   read -r pgid < "$pgid_path" || return 1
   [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  if kill -0 "$pgid" >/dev/null 2>&1 \
+    && ps -ww -o args= -p "$pgid" 2>/dev/null \
+      | grep -Fq "${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}"; then
+    return 0
+  fi
   kill -0 -- "-$pgid" >/dev/null 2>&1 || return 1
+  if ps -eo pgid=,args= 2>/dev/null \
+    | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
+    | grep -Fq "${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}"; then
+    return 0
+  fi
   ps -eo pgid=,args= 2>/dev/null \
     | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
     | grep -Eq 'arnold-repair-loop|arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec|launch_hermes_agent\.py'
@@ -2086,12 +2233,12 @@ repair_loop_busy_state() {
     fi
     rm -f "$pidfile" 2>/dev/null || true
   fi
-  live_pid="$(python3 - "$session" <<'PY' 2>/dev/null || true
+  live_pid="$(python3 - "$session" "${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}" <<'PY' 2>/dev/null || true
 import os
 import pathlib
 import sys
 
-session = sys.argv[1]
+session, repair_basename = sys.argv[1:]
 
 
 def parse_args(pid: int) -> list[str]:
@@ -2106,7 +2253,7 @@ def matches(args: list[str]) -> bool:
     def match_at(idx: int) -> bool:
         if idx >= len(args):
             return False
-        if os.path.basename(args[idx]) != "arnold-repair-loop":
+        if os.path.basename(args[idx]) not in {"arnold-repair-loop", repair_basename}:
             return False
         return idx + 1 < len(args) and args[idx + 1] == session
 
@@ -2275,6 +2422,76 @@ if plans and current_plan not in plans:
     print(",".join(sorted(plans)))
     raise SystemExit(1)
 raise SystemExit(0)
+PY
+}
+
+repair_needs_human_should_remain_human() {
+  local session="$1"
+  local current_plan="${2:-}"
+  local needs_human_path
+  needs_human_path="$(repair_needs_human_path "$session")"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
+    "$session" "$current_plan" "$MARKER_DIR" "$REPAIR_DATA_DIR" "$needs_human_path" "${current_target_observation:-}" <<'PY' 2>>"${LOG:-/dev/null}"
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.human_blockers import (
+    BlockerVerdict,
+    classify_needs_human_blocker,
+)
+
+session, current_plan, marker_dir, repair_data_dir, needs_human_path, resolver_json = sys.argv[1:7]
+path = pathlib.Path(needs_human_path)
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"needs_human_fresh_classifier verdict=AMBIGUOUS_BLOCKER error={type(exc).__name__}", file=sys.stderr)
+    raise SystemExit(0)
+
+resolver_record = None
+if resolver_json:
+    try:
+        resolver_record = json.loads(resolver_json)
+    except Exception:
+        resolver_record = None
+
+try:
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        needs_human_path=path,
+        needs_human_payload=payload if isinstance(payload, dict) else None,
+        resolver_record=resolver_record if isinstance(resolver_record, dict) else None,
+    )
+except Exception as exc:
+    print(f"needs_human_fresh_classifier verdict=AMBIGUOUS_BLOCKER error={type(exc).__name__}", file=sys.stderr)
+    raise SystemExit(0)
+
+print(f"needs_human_fresh_classifier verdict={classification.verdict.name}", file=sys.stderr)
+plan_state_path = ""
+if isinstance(classification.resolver_record, dict):
+    plan_state = classification.resolver_record.get("plan_state")
+    if isinstance(plan_state, dict):
+        plan_state_path = str(plan_state.get("path") or "")
+if plan_state_path:
+    try:
+        plan_state_payload = json.loads(pathlib.Path(plan_state_path).read_text(encoding="utf-8"))
+    except Exception:
+        plan_state_payload = {}
+    if isinstance(plan_state_payload, dict):
+        latest_failure = plan_state_payload.get("latest_failure")
+        failure_kind = ""
+        if isinstance(latest_failure, dict):
+            failure_kind = str(latest_failure.get("kind") or "")
+        if failure_kind in {"execution_blocked", "blocked_recovery_not_resolved"}:
+            print(f"needs_human_fresh_classifier repairable_failure={failure_kind}", file=sys.stderr)
+            raise SystemExit(1)
+if classification.verdict in {BlockerVerdict.TRUE_BLOCKER, BlockerVerdict.AMBIGUOUS_BLOCKER}:
+    raise SystemExit(0)
+raise SystemExit(1)
 PY
 }
 
@@ -3241,14 +3458,28 @@ default_plan_relaunch_command() {
   local plan_name="$1"
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
-  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1' \
-    "$workspace" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PLAN_STATE_FILE=%q/.megaplan/plans/%q/state.json && PLAN_CMD=auto && PLAN_AUTO_CMD='\''PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1'\'' && if [[ -f "$PLAN_STATE_FILE" ]] && python3 - "$PLAN_STATE_FILE" <<'\''PY'\'' >/dev/null 2>&1
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+raise SystemExit(0 if str(payload.get("current_state") or "").strip() == "failed" else 1)
+PY
+  then PLAN_CMD=resume; fi && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan "$PLAN_CMD" --plan %q --project-dir %q >> %q 2>&1' \
+    "$workspace" "$workspace" "$plan_name" "$SRC_DIR" "$plan_name" "$workspace" "$log_path" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
 }
 
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
-  [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh: tracked changes"* ]] \
-    && [[ "$relaunch_command" != *"MEGAPLAN_RUNTIME_SRC"* ]]
+  [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
+  [[ "$relaunch_command" == *'source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror'* ]] && return 1
+  [[ "$relaunch_command" == *'git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"'* ]] && return 1
+  return 0
 }
 
 default_chain_relaunch_command() {
@@ -3287,21 +3518,17 @@ if [ -d "$SRC/.git" ]; then
   BRANCH="$(git -C "$SRC" branch --show-current)"
   if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi
   if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
-    echo "[megaplan-refresh] source checkout dirty; using clean runtime mirror at $RUNTIME_SRC"
-    rm -rf "$RUNTIME_SRC"
-    mkdir -p "$(dirname "$RUNTIME_SRC")"
-    git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"
-    git -C "$RUNTIME_SRC" fetch origin "$REF"
-    git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"
-    export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"
+    echo "[megaplan-refresh] source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror"
+    export MEGAPLAN_RUNTIME_SRC="$SRC"
   else
     if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
-      echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"
+      echo "[megaplan-refresh] source checkout ahead of origin/$REF; using current source checkout at $SRC for local repair runtime"
       git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
-      exit 20
+      export MEGAPLAN_RUNTIME_SRC="$SRC"
+    else
+      git -C "$SRC" pull --ff-only origin "$REF"
+      export MEGAPLAN_RUNTIME_SRC="$SRC"
     fi
-    git -C "$SRC" pull --ff-only origin "$REF"
-    export MEGAPLAN_RUNTIME_SRC="$SRC"
   fi
   if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
     echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"
@@ -3416,6 +3643,91 @@ try:
     os.replace(tmp_path, events_path)
 except Exception:
     pass
+PY
+}
+
+env_gone_sidecar_path() {
+  printf '%s/%s.env-gone' "$MARKER_DIR" "$(safe_name "$1")"
+}
+
+# Detect whether a session's environment has been wiped (workspace dir or
+# chain/epic-chain spec gone — typically after a box reset/redeploy). Uses a
+# strike counter so a transient deploy gap doesn't retire a live session.
+#
+#stdout: prints one of:
+#   - "gone"    and exits 0  -> env missing AND strikes >= $ENV_GONE_STRIKES
+#   - "<count>" and exits 1  -> env missing, strikes below threshold (count printed)
+#   - "present" and exits 1  -> env present (any prior sidecar cleared; recovers
+#                              from a transient deploy that has since resolved)
+environment_gone_check() {
+  local session="$1"
+  local workspace="$2"
+  local spec_path="${3:-}"
+  local sidecar count
+  sidecar="$(env_gone_sidecar_path "$session")"
+
+  # Env present: clear any stale strike sidecar and signal fall-through.
+  if [[ -d "$workspace" ]] && { [[ -z "$spec_path" ]] || [[ -f "$spec_path" ]]; }; then
+    if [[ -f "$sidecar" ]]; then
+      rm -f "$sidecar" 2>/dev/null || true
+      log "env-gone strikes cleared; environment recovered session=$session workspace=$workspace spec=${spec_path:-}"
+    fi
+    printf 'present\n'
+    return 1
+  fi
+
+  count=0
+  if [[ -f "$sidecar" ]]; then
+    count="$(cat "$sidecar" 2>/dev/null || true)"
+    count="${count//[!0-9]/}"
+    count="${count:-0}"
+  fi
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$sidecar" 2>/dev/null || true
+
+  if (( count >= ENV_GONE_STRIKES )); then
+    printf 'gone\n'
+    return 0
+  fi
+  printf '%s\n' "$count"
+  return 1
+}
+
+# Persist an environment_gone terminal outcome to repair-data for audit.
+# Writes via save_repair_data directly (NOT repair_data_set_outcome, which
+# requires the repair lock the watchdog does not hold). Best-effort: a failed
+# write must not block session retirement.
+persist_environment_gone_outcome() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local data_file="${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/${session}.repair-data.json"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$data_file" "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    ENVIRONMENT_GONE,
+    load_json,
+    save_repair_data,
+)
+
+data_path_raw, session, workspace, remote_spec, run_kind, plan_name = sys.argv[1:]
+data_path = pathlib.Path(data_path_raw)
+payload = load_json(data_path, default={})
+if not isinstance(payload, dict):
+    payload = {}
+payload.setdefault("session", session)
+payload.setdefault("workspace", workspace)
+payload.setdefault("run_kind", run_kind)
+payload.setdefault("plan_name", plan_name)
+payload["workspace"] = workspace
+payload["run_kind"] = run_kind
+payload["plan_name"] = plan_name
+payload["outcome"] = ENVIRONMENT_GONE
+save_repair_data(data_path, payload)
 PY
 }
 
@@ -3650,8 +3962,14 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local pgid_path repair_busy claim_status
+  local pgid_path repair_busy claim_status request_id blocker_id
   REPAIR_DISPATCH_RESULT="unavailable"
+  request_id=""
+  blocker_id=""
+  if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+    request_id="${PLAN_STATUS_REQUEST_ID:-}"
+    blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
+  fi
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop binary unavailable" "unavailable" "immediate_repair"
     return 1
@@ -3672,18 +3990,18 @@ dispatch_kimi_repair() {
     ""|claimed)
       ;;
     already_claimed|busy)
-      log "repair request already claimed; skipping dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown}"
+      log "repair request already claimed; skipping dispatch session=$session request=${request_id:-unknown}"
       REPAIR_DISPATCH_RESULT="busy"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request already claimed" "busy" "immediate_repair"
       return 0
       ;;
     stale)
-      log "repair request claim is stale; refusing dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown}"
+      log "repair request claim is stale; refusing dispatch session=$session request=${request_id:-unknown}"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim is stale" "busy" "immediate_repair"
       return 0
       ;;
     *)
-      log "repair request claim failed; refusing dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown} status=$claim_status"
+      log "repair request claim failed; refusing dispatch session=$session request=${request_id:-unknown} status=$claim_status"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim failed" "unavailable" "immediate_repair"
       return 1
       ;;
@@ -3691,12 +4009,12 @@ dispatch_kimi_repair() {
   pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
   if command -v setsid >/dev/null 2>&1; then
-    setsid bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_REQUEST_ID:-}" "${PLAN_STATUS_BLOCKER_ID:-}" \
+    setsid bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" "$$" \
       >> "$LOG" 2>&1 < /dev/null &
   else
-    bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_REQUEST_ID:-}" "${PLAN_STATUS_BLOCKER_ID:-}" \
+    bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" "$$" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
   log "repair loop background-dispatched session=$session pid=$!"
@@ -3709,7 +4027,14 @@ claim_active_repair_launch() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  if [[ -z "${PLAN_STATUS_BLOCKER_ID:-}" || -z "${PLAN_STATUS_REQUEST_ID:-}" ]]; then
+  local blocker_id request_id
+  blocker_id=""
+  request_id=""
+  if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+    blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
+    request_id="${PLAN_STATUS_REQUEST_ID:-}"
+  fi
+  if [[ -z "$blocker_id" || -z "$request_id" ]]; then
     printf '\n'
     return 0
   fi
@@ -3718,9 +4043,10 @@ claim_active_repair_launch() {
     "$session" \
     "$workspace" \
     "$remote_spec" \
-    "${PLAN_STATUS_BLOCKER_ID:-}" \
-    "${PLAN_STATUS_REQUEST_ID:-}" \
+    "$blocker_id" \
+    "$request_id" \
     "$$" <<'PY'
+import os
 import sys
 
 from arnold_pipelines.megaplan.cloud import repair_requests
@@ -3731,6 +4057,16 @@ try:
 except ValueError:
     pid = None
 
+
+def _pid_is_live(candidate: int) -> bool:
+    if candidate <= 0:
+        return False
+    try:
+        os.kill(candidate, 0)
+    except OSError:
+        return False
+    return True
+
 result = repair_requests.claim_active_repair_request(
     repair_requests.repair_queue_dir(marker_dir),
     blocker_id=blocker_id,
@@ -3740,8 +4076,33 @@ result = repair_requests.claim_active_repair_request(
     pid=pid,
     command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
     cwd=workspace,
+    is_pid_live=_pid_is_live,
     extra={"workspace": workspace, "remote_spec": remote_spec},
 )
+if result.status == "stale":
+    owner = result.owner if isinstance(result.owner, dict) else {}
+    owner_pid = owner.get("pid")
+    if not isinstance(owner_pid, int):
+        owner_pid = None
+    released = repair_requests.release_active_repair_request_claim(
+        repair_requests.repair_queue_dir(marker_dir),
+        blocker_id=blocker_id,
+        owner=owner,
+        expected_pid=owner_pid,
+    )
+    if released:
+        result = repair_requests.claim_active_repair_request(
+            repair_requests.repair_queue_dir(marker_dir),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            actor="arnold-watchdog",
+            session=session,
+            pid=pid,
+            command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
+            cwd=workspace,
+            is_pid_live=_pid_is_live,
+            extra={"workspace": workspace, "remote_spec": remote_spec},
+        )
 print(result.status)
 PY
 }
@@ -3997,6 +4358,16 @@ if needs_human_path.exists():
             discord_escalation_is_true_blocker = blocker.is_true_blocker
         except Exception:
             discord_escalation_is_true_blocker = False
+
+active_step = resolver_record.get("active_step_heartbeat")
+if (
+    isinstance(active_step, dict)
+    and active_step.get("active")
+    and not needs_human_present
+    and repair_outcome not in terminal_repair_failures
+):
+    print("NO_TRIGGER")
+    raise SystemExit(0)
 
 classification, _ = evaluate_meta_repair_triggers(
     session,
@@ -5022,11 +5393,11 @@ for path in chain_paths:
     pr_number = payload.get("pr_number")
     if last_state == "awaiting_pr_merge":
         pass
-    elif last_state in ("done", "complete") and pr_number:
+    elif last_state in ("done", "complete", "finalized") and pr_number:
         # Ground-truth guard: the chain driver can mark last_state=done once the
         # milestone plan is finalized even when the milestone PR is still open
         # under merge_policy: review. Verify the PR live; if it is not merged yet
-        # the chain is really awaiting_pr_merge, not done. Without this the
+        # the chain is really awaiting_pr_merge, not done/finalized. Without this the
         # watchdog trusts last_state=done and falls through to a stale
         # repair-loop marker, mislabeling the session needs_human.
         try:
@@ -5711,10 +6082,9 @@ PY
 }
 
 resolver_stale_needs_human_clear_verdict() {
-  # Decide whether a stale needs-human marker may be cleared. This is always
-  # resolver-gated when evidence is available: RUNNING and the existing
-  # machine-actionable suppression states may clear; everything else preserves
-  # the marker fail-closed.
+  # Resolver-gate stale needs-human marker cleanup. Machine-actionable and
+  # running states may clear stale markers; unknown or typed-human states
+  # preserve them fail-closed.
   local current_target_observation="${1:-}"
   if [[ -z "$current_target_observation" ]]; then
     return 0
@@ -5749,35 +6119,9 @@ print(f"{prefix}:{state}")
 PY
 }
 
-# ---------------------------------------------------------------------------
-# ARNOLD_RESOLVER_ENFORCEMENT gating for watchdog needs-human escalation
-# ---------------------------------------------------------------------------
-#
-# T10: Gate both watchdog needs-human escalation paths (awaiting-human and
-# manual-review) behind ARNOLD_RESOLVER_ENFORCEMENT. When enforcement is OFF
-# (the default), UNKNOWN, or a typed human gate, the legacy notify / marker
-# behavior is preserved unchanged. Only machine-actionable canonical states
-# (REAL_IMPLEMENTATION_BLOCK, RETRYABLE_EXECUTION_BLOCK, BROKEN_STATE_MACHINE)
-# without a typed human gate are suppressed in favor of the existing machine
-# repair/replan path (dispatch_kimi_repair).
-
 resolver_needs_human_verdict() {
   # Consult the canonical resolver to decide whether a watchdog needs-human
   # escalation should be suppressed in favor of the machine repair/replan path.
-  #
-  # Honours ARNOLD_RESOLVER_ENFORCEMENT (default OFF). When enforcement is OFF,
-  # or the canonical state is UNKNOWN, HUMAN_ACTION_REQUIRED (with a typed
-  # human gate), or any other non-machine-actionable state, this prints nothing
-  # so the caller preserves legacy behavior. When enforcement is ON and the
-  # resolver classifies the run as a machine-actionable block
-  # (REAL_IMPLEMENTATION_BLOCK / RETRYABLE_EXECUTION_BLOCK /
-  # BROKEN_STATE_MACHINE) WITHOUT a typed human gate, it prints
-  # "suppress:<STATE_NAME>" so the caller routes to machine repair instead of
-  # notifying a human or preserving a needs-human marker.
-  #
-  # Read-only: never mutates state. Any resolver/flag failure degrades to the
-  # empty (legacy) verdict so a resolver fault can never suppress a real human
-  # escalation.
   local session="$1"
   local current_target_observation="${2:-}"
   if [[ -z "$current_target_observation" ]]; then
@@ -5802,36 +6146,22 @@ try:
 except Exception:
     evidence = {}
 
-# Legacy behavior is preserved unless enforcement is explicitly enabled.
 if not resolver_enforcement_enabled():
     sys.exit(0)
 
 try:
     result = resolve_run_state(evidence)
 except Exception:
-    # Resolver failure must never suppress a human escalation.
     sys.exit(0)
 
 state = result.canonical_state.name
 human_gate = result.human_gate.name if result.human_gate is not None else None
-
-# Only machine-actionable implementation/execution/broken blocks without a
-# typed human gate are suppressed. Typed human gates (HUMAN_ACTION_REQUIRED),
-# UNKNOWN, and any other state preserve the legacy notify/marker path.
 if state in MACHINE_ACTIONABLE_STATES and human_gate is None:
     print("suppress:{}".format(state))
 PY
 }
 
 route_resolver_machine_repair() {
-  # Route a needs-human escalation to the existing machine repair/replan path
-  # (dispatch_kimi_repair) instead of notifying a human or preserving a
-  # needs-human marker. Called only when resolver_needs_human_verdict returned
-  # a machine-actionable canonical state under ARNOLD_RESOLVER_ENFORCEMENT.
-  # Mirrors the existing watchdog repair-dispatch accounting (repair_running /
-  # repair_dispatched / repair_unavailable) so reporting stays consistent with
-  # the other repair dispatch branches. Always returns 0 so the caller returns
-  # immediately after routing.
   local report_items="$1"
   local session="$2"
   local workspace="$3"
@@ -6011,6 +6341,27 @@ def current_target_marks_terminal_stale_chain() -> bool:
         for item in stale_evidence
     )
 
+def manifest_marks_chain_complete() -> bool:
+    manifest_path = remote_spec.parent / "completion-manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if str(payload.get("schema") or "").strip() != "arnold.megaplan.chain_completion_manifest.v1":
+        return False
+    milestones = payload.get("milestones")
+    if not isinstance(milestones, list) or not milestones:
+        return False
+    terminal = {"done", "complete", "completed"}
+    statuses = [
+        str(item.get("status") or "").strip().lower()
+        for item in milestones
+        if isinstance(item, dict)
+    ]
+    return len(statuses) == len(milestones) and all(status in terminal for status in statuses)
+
 def chain_health_blocks_terminal_shortcut() -> bool:
     path = marker_dir / f"{session}.chain-health.progress.json"
     try:
@@ -6019,17 +6370,23 @@ def chain_health_blocks_terminal_shortcut() -> bool:
         return False
     if not isinstance(payload, dict):
         return False
-    if payload.get("chain_complete") is not False:
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    chain_complete = payload.get("chain_complete")
+    if chain_complete is None:
+        chain_complete = snapshot.get("chain_complete")
+    if chain_complete is not False:
         return False
     try:
-        completed_count = int(payload.get("completed_count") or 0)
+        completed_count = int(payload.get("completed_count") or snapshot.get("completed_count") or 0)
     except Exception:
         completed_count = 0
     try:
-        milestone_count = int(payload.get("milestone_count") or 0)
+        milestone_count = int(payload.get("milestone_count") or snapshot.get("milestone_count") or 0)
     except Exception:
         milestone_count = 0
-    pr_state = str(payload.get("pr_state") or "").strip().lower()
+    pr_state = str(payload.get("pr_state") or snapshot.get("pr_state") or "").strip().lower()
     if milestone_count and completed_count < milestone_count:
         return True
     if pr_state and pr_state not in {"merged", "closed"}:
@@ -6039,6 +6396,10 @@ def chain_health_blocks_terminal_shortcut() -> bool:
 
 if current_target_marks_terminal_stale_chain() and not chain_health_blocks_terminal_shortcut():
     print("complete\tterminal plan state supersedes stale chain state")
+    raise SystemExit(0)
+
+if manifest_marks_chain_complete():
+    print("complete\tcompletion manifest marks chain complete")
     raise SystemExit(0)
 
 
@@ -6092,6 +6453,36 @@ launch_chain_tick() {
     run_kind="plan"
   fi
 
+  PLAN_STATUS_FOUND=0
+  PLAN_STATUS_PLAN_NAME=
+  PLAN_STATUS_CURRENT_STATE=
+  PLAN_STATUS_ACTIVE_STEP_PRESENT=0
+  PLAN_STATUS_ACTIVE_STEP_PHASE=
+  PLAN_STATUS_ACTIVE_STEP_WORKER_PID=
+  PLAN_STATUS_ACTIVE_STEP_PID_ALIVE=
+  PLAN_STATUS_RETRY_STRATEGY=
+  PLAN_STATUS_FAILURE_KIND=
+  PLAN_STATUS_FAILURE_MESSAGE=
+  PLAN_STATUS_FAILURE_PHASE=
+  PLAN_STATUS_FAILURE_RECORDED_AT=
+  PLAN_STATUS_MANUAL_REVIEW_ORIGIN=
+  PLAN_STATUS_TIERS_TRIED=
+  PLAN_STATUS_PUSHED_COMMITS=
+  PLAN_STATUS_MANUAL_REVIEW=0
+  PLAN_STATUS_AWAITING_HUMAN=0
+  PLAN_STATUS_AWAITING_HUMAN_REASON=
+  PLAN_STATUS_STATE_MISMATCH=0
+  PLAN_STATUS_STATE_MISMATCH_SUMMARY=
+  PLAN_STATUS_CHAIN_COMPLETE=0
+  PLAN_STATUS_CHAIN_CURRENT_INDEX=
+  PLAN_STATUS_CHAIN_MILESTONE_COUNT=
+  PLAN_STATUS_DISPATCH_DECISION=
+  PLAN_STATUS_DISPATCH_INTENT=
+  PLAN_STATUS_CUSTODY_BUCKET=
+  PLAN_STATUS_BLOCKER_ID=
+  PLAN_STATUS_REQUEST_ID=
+  PLAN_STATUS_TARGET_SOURCE=
+
   current_target_observation="$(
     PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MARKER_DIR" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" <<'PY' 2>>"${LOG:-/dev/null}" || true
 import json
@@ -6127,17 +6518,15 @@ PY
     return 0
   fi
 
+  local health
+  health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
-  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation"; then
+  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
 
-  if [[ ! -d "$workspace" ]]; then
-    log "flag $session: workspace missing: $workspace"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "workspace_missing: $workspace" || true
-    return 1
-  fi
   local resolved_remote_spec
   resolved_remote_spec="$(resolve_existing_remote_spec "$session" "$workspace" "$remote_spec" "$run_kind" 2>>"$LOG" || true)"
   if [[ -n "$resolved_remote_spec" && "$resolved_remote_spec" != "$remote_spec" ]]; then
@@ -6148,18 +6537,32 @@ PY
   if [[ "$run_kind" == "chain" && "$remote_spec" != /* ]]; then
     remote_spec_path="$workspace/$remote_spec"
   fi
+
+  # Env-gone gate (FALLTHROUGH, after the terminal/needs-human short-circuits
+  # above): a wiped workspace or missing chain/epic-chain spec means there is no
+  # environment to repair — the repair loop cannot recreate it. A strike counter
+  # tolerates transient deploy gaps; at threshold the session is retired cleanly
+  # instead of looping repair against a missing env. Below threshold we log the
+  # strike and skip dispatch this tick; if the env recovers, the sidecar clears.
+  local env_gone_out env_gone_rc
+  env_gone_out="$(environment_gone_check "$session" "$workspace" "$remote_spec_path")"
+  env_gone_rc=$?
+  if (( env_gone_rc == 0 )); then
+    log "environment gone; retiring session after env-gone strikes session=$session workspace=$workspace spec=$remote_spec_path"
+    persist_environment_gone_outcome "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name"
+    clear_session_tracking_artifacts "$session" "$plan_name"
+    rm -f "$(env_gone_sidecar_path "$session")" 2>/dev/null || true
+    report_item "$report_items" "$session" "observe" "environment_gone" "workspace/spec wiped; retired after env-gone strikes" "$workspace" "$remote_spec"
+    return 0
+  fi
+  if [[ "$env_gone_out" != "present" && -n "$env_gone_out" ]]; then
+    log "env-gone strike session=$session count=$env_gone_out/$ENV_GONE_STRIKES workspace=$workspace spec=$remote_spec_path"
+    report_item "$report_items" "$session" "observe" "env_gone_pending" "env-gone strike $env_gone_out/$ENV_GONE_STRIKES; workspace=$workspace spec=$remote_spec_path" "$workspace" "$remote_spec"
+    return 0
+  fi
+
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
-  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
-    log "flag $session: chain spec missing: $remote_spec"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: chain spec missing at $remote_spec" || true
-    return 1
-  fi
-  if [[ "$run_kind" == "epic_chain" && ! -f "$remote_spec_path" ]]; then
-    log "flag $session: epic-chain spec missing: $remote_spec"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: epic-chain spec missing at $remote_spec" || true
-    return 1
-  fi
   if [[ "$run_kind" == "chain" ]]; then
     chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
     if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
@@ -6292,35 +6695,6 @@ PY
   fi
 
   local plan_status_env
-  PLAN_STATUS_FOUND=0
-  PLAN_STATUS_PLAN_NAME=
-  PLAN_STATUS_CURRENT_STATE=
-  PLAN_STATUS_ACTIVE_STEP_PRESENT=0
-  PLAN_STATUS_ACTIVE_STEP_PHASE=
-  PLAN_STATUS_ACTIVE_STEP_WORKER_PID=
-  PLAN_STATUS_ACTIVE_STEP_PID_ALIVE=
-  PLAN_STATUS_RETRY_STRATEGY=
-  PLAN_STATUS_FAILURE_KIND=
-  PLAN_STATUS_FAILURE_MESSAGE=
-  PLAN_STATUS_FAILURE_PHASE=
-  PLAN_STATUS_FAILURE_RECORDED_AT=
-  PLAN_STATUS_MANUAL_REVIEW_ORIGIN=
-  PLAN_STATUS_TIERS_TRIED=
-  PLAN_STATUS_PUSHED_COMMITS=
-  PLAN_STATUS_MANUAL_REVIEW=0
-  PLAN_STATUS_AWAITING_HUMAN=0
-  PLAN_STATUS_AWAITING_HUMAN_REASON=
-  PLAN_STATUS_STATE_MISMATCH=0
-  PLAN_STATUS_STATE_MISMATCH_SUMMARY=
-  PLAN_STATUS_CHAIN_COMPLETE=0
-  PLAN_STATUS_CHAIN_CURRENT_INDEX=
-  PLAN_STATUS_CHAIN_MILESTONE_COUNT=
-  PLAN_STATUS_DISPATCH_DECISION=
-  PLAN_STATUS_DISPATCH_INTENT=
-  PLAN_STATUS_CUSTODY_BUCKET=
-  PLAN_STATUS_BLOCKER_ID=
-  PLAN_STATUS_REQUEST_ID=
-  PLAN_STATUS_TARGET_SOURCE=
   # If the helper emits nothing, keep the tick on the default non-attention path.
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
   if [[ -n "$plan_status_env" ]]; then
@@ -6331,7 +6705,7 @@ PY
     report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
     return 0
   fi
-  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}"; then
+  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
   if [[ "$health" == "stopped" && "${PLAN_STATUS_ACTIVE_STEP_PRESENT:-0}" == "1" && "${PLAN_STATUS_ACTIVE_STEP_PID_ALIVE:-}" != "1" ]]; then
@@ -6396,6 +6770,10 @@ PY
         compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "true" "$stale_marker_plans"
       else
         compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
+      fi
+      if [[ -f "$(repair_needs_human_path "$session")" ]] && command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "${PLAN_STATUS_PLAN_NAME:-}"; then
+        rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+        log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
       fi
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         repair_summary="$(repair_needs_human_summary "$session")"
@@ -6493,6 +6871,10 @@ PY
         else
           compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
         fi
+        if [[ -f "$(repair_needs_human_path "$session")" ]] && command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "${PLAN_STATUS_PLAN_NAME:-}"; then
+          rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+          log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
+        fi
         if [[ -f "$(repair_needs_human_path "$session")" ]]; then
           repair_summary="$(repair_needs_human_summary "$session")"
           log "session auto-stalled into manual_review and repair loop already requested human session=$session summary=$repair_summary"
@@ -6550,6 +6932,10 @@ PY
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
       log "stale repair needs-human marker cleared; sibling session is alive session=$session sibling=$sibling_alive"
       compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
+    elif command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "${PLAN_STATUS_PLAN_NAME:-}"; then
+      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+      log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
+      compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
     else
       local repair_summary
       repair_summary="$(repair_needs_human_summary "$session")"
@@ -6560,16 +6946,10 @@ PY
     fi
   fi
 
-  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
-    log "flag $session: chain spec missing: $remote_spec"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: chain spec missing at $remote_spec" || true
-    return 1
-  fi
-  if [[ "$run_kind" == "epic_chain" && ! -f "$remote_spec_path" ]]; then
-    log "flag $session: epic-chain spec missing: $remote_spec"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: epic-chain spec missing at $remote_spec" || true
-    return 1
-  fi
+  # NOTE: a missing chain/epic-chain spec here was previously handled by
+  # dispatching repair_unintended_stop. That path is now retired by the
+  # env-gone gate above (after spec resolution) — a wiped spec means no
+  # environment to repair, so we never reach this point with a missing spec.
 
   local sibling_alive
   if [[ "$health" == "stopped" ]] && sibling_alive="$(workspace_has_other_alive_session "$session" "$workspace" 2>/dev/null)"; then
@@ -6623,6 +7003,20 @@ PY
       fi
     fi
   else
+    local meta_repair_trigger meta_dispatch_result
+    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
+    if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
+        meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+        if [[ "$meta_dispatch_result" == "dispatched" ]]; then
+          log "session stopped after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+          return 0
+        fi
+        log "session stopped after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
+      else
+        log "session stopped after repair failure; meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+      fi
+    fi
     if mechanical_relaunch_attempted_previously "$session"; then
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 from typing import Any, Mapping
 
+from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 from arnold_pipelines.megaplan.execute.batch import (
     handle_execute_auto_loop,
     handle_execute_one_batch,
     normalize_tier_map,
 )
-from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.fallback_chains import (
+    configured_fallback_chain_for_phase,
+    select_fallback_spec,
+)
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
+from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
 from arnold_pipelines.megaplan.types import (
     CliError,
     PlanState,
@@ -31,14 +37,24 @@ from arnold_pipelines.megaplan.model_seam import audit_step_payload
 from arnold_pipelines.megaplan._core import (
     clear_active_step,
     configured_robustness,
+    infer_next_steps,
     is_prose_mode,
     latest_plan_meta_path,
     load_plan_locked,
     read_json,
-    require_state,
     save_state_merge_meta,
     set_active_step,
     workflow_includes_step,
+)
+from arnold_pipelines.megaplan.execute.policy import (
+    ApprovalOutcome,
+    ExecuteEntryRoute,
+    NextExecuteTransition,
+    NoReviewTerminalOutcome,
+    evaluate_destructive_approval,
+    evaluate_no_review_terminal,
+    resolve_execute_entry_route,
+    resolve_single_batch_next_step,
 )
 from arnold_pipelines.megaplan._core.io import read_plan_state_cached
 from arnold_pipelines.megaplan.workers import warn_if_work_dir_differs_from_project_dir
@@ -52,6 +68,8 @@ from .shared import (
     worker_module,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+
+log = logging.getLogger(__name__)
 
 # Canonical execute-phase defaults (rehomed from stages/execute.py during M3 T24).
 EXECUTE_DEFAULTS: Mapping[str, Any] = {
@@ -124,6 +142,23 @@ def _extract_execute_tier_map(tier_models: object) -> dict[int, str] | None:
     return normalized or None
 
 
+def _execute_phase_model_is_pinned(args: argparse.Namespace, state: PlanState) -> bool:
+    """Return true when execute has an explicit phase-model override.
+
+    A pinned execute model is authoritative for the whole execute phase,
+    including per-batch routing. Chain resumes may carry the pin only in
+    persisted state while profile expansion has already populated
+    ``args.tier_models``; checking both sources prevents stale profile execute
+    tiers from overriding the pin inside ``handle_execute_auto_loop``.
+    """
+
+    phase_models = list(getattr(args, "phase_model", None) or [])
+    state_phase_models = (state.get("config") or {}).get("phase_model")
+    if isinstance(state_phase_models, list):
+        phase_models.extend(entry for entry in state_phase_models if isinstance(entry, str))
+    return configured_fallback_chain_for_phase(phase_models, "execute") is not None
+
+
 def _apply_execute_tier_cap(
     tier_map: dict[int, str] | None,
     max_execute_tier: object,
@@ -147,27 +182,226 @@ def _apply_execute_tier_cap(
             capped[tier] = cap_spec
     return capped
 
+
+# ---------------------------------------------------------------------------
+# Typed-policy → legacy-payload translators.
+#
+# Entry dispatch, approval gating, no-review terminal routing, and next_step
+# payloads are decided by the typed constructs in
+# :mod:`arnold_pipelines.megaplan.execute.policy`.  The handler only translates
+# those typed outcomes into legacy ``CliError`` raises / response-field writes;
+# persistence and command-adapter dispatch remain handler-owned.
+# ---------------------------------------------------------------------------
+
+#: Typed no-review terminal outcomes → canonical plan state.
+_NO_REVIEW_TERMINAL_STATE: Mapping[NoReviewTerminalOutcome, str] = {
+    NoReviewTerminalOutcome.TERMINATE_DONE: STATE_DONE,
+    NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN: STATE_AWAITING_HUMAN_VERIFY,
+}
+
+#: Typed no-review terminal outcomes → legacy ``next_step`` (always terminal).
+_NO_REVIEW_NEXT_STEP: Mapping[NoReviewTerminalOutcome, str | None] = {
+    NoReviewTerminalOutcome.TERMINATE_DONE: None,
+    NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN: None,
+}
+
+#: Typed single-batch transitions → legacy ``next_step`` value.
+_LEGACY_NEXT_STEP: Mapping[NextExecuteTransition, str | None] = {
+    NextExecuteTransition.EXECUTE: "execute",
+    NextExecuteTransition.REVIEW: "review",
+    NextExecuteTransition.BLOCKED: None,
+    NextExecuteTransition.DONE: None,
+    NextExecuteTransition.AWAITING_HUMAN: None,
+}
+
+
+# ---------------------------------------------------------------------------
+# Evidence-only execute boundary receipt emission
+# ---------------------------------------------------------------------------
+
+
+def _emit_execute_boundary_receipt(
+    *,
+    boundary_id: str,
+    plan_dir: Path,
+    state: PlanState,
+    outcome: BoundaryOutcome,
+    artifact_refs: tuple[str, ...] = (),
+    approval_scope: str | None = None,
+    session_freshness: bool | None = None,
+    authority_actor: str | None = None,
+    authority_role: str | None = None,
+    authority_decision: str | None = None,
+    extra_details: dict[str, Any] | None = None,
+) -> None:
+    """Emit an evidence-only execute boundary receipt without raising.
+
+    Receipts are strictly observational — they do not affect branch
+    decisions, state transitions, or route authority.
+    """
+    try:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+            BOUNDARY_CONTRACTS_BY_ID,
+        )
+        contract = BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
+        if contract is None:
+            return
+
+        meta = state.get("meta") or {}
+        invocation_id = meta.get("current_invocation_id")
+        project_dir = Path(state["config"]["project_dir"])
+
+        details: dict[str, Any] = {
+            "current_state": state.get("current_state"),
+            "iteration": state.get("iteration"),
+        }
+        if approval_scope is not None:
+            details["approval_scope"] = approval_scope
+        if session_freshness is not None:
+            details["session_freshness"] = session_freshness
+        if extra_details:
+            details.update(extra_details)
+
+        authority_records: tuple[AuthorityRecord, ...] = ()
+        if authority_actor and authority_role:
+            authority_records = (
+                AuthorityRecord(
+                    actor=authority_actor,
+                    role=authority_role,
+                    decision=authority_decision,
+                    scope=contract.details.get("approval_scope") or boundary_id,
+                    details={
+                        "approval_scope": approval_scope,
+                        "session_freshness": session_freshness,
+                    },
+                ),
+            )
+
+        receipt = BoundaryReceipt(
+            boundary_id=contract.boundary_id,
+            workflow_id=contract.workflow_id,
+            row_id=contract.row_id,
+            invocation_id=invocation_id,
+            artifact_refs=artifact_refs,
+            state_observation={
+                "current_phase": "execute",
+                "current_state": state.get("current_state"),
+                "iteration": state.get("iteration"),
+            },
+            history_ref=contract.expected_history_entry,
+            phase_result_ref="phase_result.json" if contract.phase_result_required else None,
+            outcome=outcome,
+            authority_records=authority_records,
+            details=details,
+        )
+        write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
+    except Exception:
+        log.warning(
+            "Execute boundary receipt emission failed for %s", boundary_id, exc_info=True
+        )
+
+
+def _enforce_entry_route(state: PlanState) -> None:
+    """Translate the typed execute-entry decision into a legacy ``CliError``.
+
+    The admissible entry states are declared by the policy; the handler raises
+    the historical ``invalid_transition`` error only when the typed route is
+    ``INVALID``.  ``PROCEED``/``BLOCKED``/``FAILED`` fall through to batch
+    dispatch (mirroring ``require_state(state, "execute", ...)``).
+    """
+    decision = resolve_execute_entry_route(state["current_state"])
+    if decision.route is ExecuteEntryRoute.INVALID:
+        raise CliError(
+            "invalid_transition",
+            f"Cannot run 'execute' while current state is '{state['current_state']}'",
+            valid_next=infer_next_steps(state),
+            extra={"current_state": state["current_state"]},
+        )
+
+
+def _enforce_approval_gate(
+    *,
+    confirm_destructive: bool,
+    auto_approve: bool,
+    user_approved_gate: bool,
+    is_prose: bool,
+) -> ApprovalOutcome:
+    """Translate the typed approval decision into legacy ``CliError`` raises.
+
+    Returns the resolved outcome so callers keep the persisted
+    ``user_approved_gate`` in lock-step with the typed decision (the gate is
+    only written once the decision clears).
+    """
+    decision = evaluate_destructive_approval(
+        confirm_destructive=confirm_destructive,
+        auto_approve=auto_approve,
+        user_approved_gate=user_approved_gate,
+        is_prose_mode=is_prose,
+    )
+    if decision.outcome is ApprovalOutcome.DENIED_MISSING_CONFIRM:
+        raise CliError("missing_confirmation", decision.reason)
+    if decision.outcome is ApprovalOutcome.DENIED_MISSING_APPROVAL:
+        raise CliError("missing_approval", decision.reason)
+    return decision.outcome
+
+
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
-        require_state(state, "execute", {STATE_FINALIZED, STATE_BLOCKED, STATE_FAILED})
+        # Entry dispatch and approval gating are decided by typed policy
+        # outcomes; the handler only translates those outcomes into legacy
+        # CliErrors / state mutations (see execute.policy).
+        _enforce_entry_route(state)
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         # Loud operator warning if the resolved sandbox root is narrower than
         # the plan's stored project_dir. Silent divergence here cost entire
         # execute runs in the past (codex sandboxed to a subdirectory, writes
         # to sibling subrepos failed silently).
         warn_if_work_dir_differs_from_project_dir(state)
-        plan_mode = state["config"].get("mode", "code")
-        if not is_prose_mode(state) and not args.confirm_destructive:
-            raise CliError("missing_confirmation", "Execute requires --confirm-destructive")
         auto_approve = bool(state["config"].get("auto_approve", False))
+        # The operator-approval gate is authoritative only after the destructive
+        # confirmation clears, so the persisted gate is not written until the
+        # typed decision is APPROVED.  ``effective_gate`` folds in a freshly
+        # supplied ``--user-approved`` without side-effecting state first.
+        effective_gate = bool(state["meta"].get("user_approved_gate", False)) or bool(
+            getattr(args, "user_approved", False)
+        )
+        is_prose = is_prose_mode(state)
+        try:
+            _enforce_approval_gate(
+                confirm_destructive=bool(getattr(args, "confirm_destructive", False)),
+                auto_approve=auto_approve,
+                user_approved_gate=effective_gate,
+                is_prose=is_prose,
+            )
+        except CliError:
+            # Evidence-only denial receipt before the error propagates.
+            denial_scope = "denied_missing_confirm" if not is_prose and not getattr(args, "confirm_destructive", False) else "denied_missing_approval"
+            _emit_execute_boundary_receipt(
+                boundary_id="execute_approval_denial",
+                plan_dir=plan_dir,
+                state=state,
+                outcome=BoundaryOutcome.INCOMPLETE,
+                approval_scope=denial_scope,
+                authority_actor="execute_handler",
+                authority_role="approval_gate",
+                authority_decision="denied",
+            )
+            raise
+        # Approval cleared — emit evidence-only approval receipt.
+        approval_scope = "execute:approval-approved"
+        _emit_execute_boundary_receipt(
+            boundary_id="execute_approval",
+            plan_dir=plan_dir,
+            state=state,
+            outcome=BoundaryOutcome.COMPLETE,
+            approval_scope=approval_scope,
+            authority_actor="execute_handler",
+            authority_role="approval_gate",
+            authority_decision="approved",
+        )
         if getattr(args, "user_approved", False):
             state["meta"]["user_approved_gate"] = True
             save_state_merge_meta(plan_dir, state)
-        if not auto_approve and not state["meta"].get("user_approved_gate", False):
-            raise CliError(
-                "missing_approval",
-                "Execute requires explicit user approval (--user-approved) when auto-approve is not set. The orchestrator must confirm with the user at the gate checkpoint before proceeding.",
-            )
         preflight_mutating_phase(root=root, state=state, phase="execute")
         save_state_merge_meta(plan_dir, state)
         am = worker_module.resolve_agent_mode("execute", args)
@@ -188,8 +422,20 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             resolved_model = model
         # Force fresh session after review kickback or blocked retry to avoid
         # prior-context bias (poisoned environment beliefs, stale task state).
-        if not refreshed and (_is_rework_reexecution(state) or _is_blocked_retry(state)):
+        force_fresh = not refreshed and (_is_rework_reexecution(state) or _is_blocked_retry(state))
+        if force_fresh:
             refreshed = True
+            _emit_execute_boundary_receipt(
+                boundary_id="execute_resume_anchor",
+                plan_dir=plan_dir,
+                state=state,
+                outcome=BoundaryOutcome.COMPLETE,
+                session_freshness=True,
+                authority_actor="execute_handler",
+                authority_role="session_manager",
+                authority_decision="fresh_session",
+                extra_details={"fresh_session_reason": "rework_or_blocked_retry"},
+            )
         if agent == "codex" and refreshed:
             # Key the session pop by the *resolved* model so it actually matches
             # the key ``run_codex_step`` writes (which uses resolved_model).
@@ -202,7 +448,10 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # per-batch by task complexity.  apply_profile_expansion already
         # strips tier_models.execute when a CLI --phase-model execute=...
         # override is present, so no double-check is needed here.
-        tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
+        if _execute_phase_model_is_pinned(args, state):
+            tier_map = None
+        else:
+            tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
         tier_map = _apply_execute_tier_cap(
             tier_map,
             getattr(args, "max_execute_tier", None)
@@ -260,10 +509,40 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         clear_active_step(state, run_id=run_id)
         if response.get("result") == "blocked":
             save_state_merge_meta(plan_dir, state)
+            # Include the typed retry decision (from
+            # ``evaluate_blocker_recovery_policy``) in the blocked-anchor
+            # evidence so semantic-health checks can verify the policy
+            # outcome without re-deriving it.
+            _retry_decision = response.get("_blocked_retry_decision") or {}
+            _extra: dict[str, Any] = {
+                "blocked_task_ids": response.get("blocked_task_ids", []),
+                "deviations": response.get("deviations", []),
+            }
+            if _retry_decision:
+                _extra["blocked_retry_decision"] = _retry_decision
+            _emit_execute_boundary_receipt(
+                boundary_id="execute_blocked_anchor",
+                plan_dir=plan_dir,
+                state=state,
+                outcome=BoundaryOutcome.PARTIAL,
+                session_freshness=refreshed,
+                authority_actor="***",
+                authority_role="***",
+                authority_decision="***",
+                extra_details=_extra,
+            )
             _record_execute_blocked(plan_dir, response)
             state = read_plan_state_cached(plan_dir, mode="authority")
             response["state"] = STATE_BLOCKED
-            response["next_step"] = None
+            # next_step payload is translated from the typed BLOCKED transition;
+            # ``blocked=True`` is dominant in resolve_single_batch_next_step, so
+            # the legacy value is always None (halt → override recovery).
+            blocked_transition = resolve_single_batch_next_step(
+                is_final_batch=(int(response.get("batches_remaining") or 0) == 0),
+                all_tracked=False,
+                blocked=True,
+            ).transition
+            response["next_step"] = _LEGACY_NEXT_STEP[blocked_transition]
             response.pop("next_step_runtime", None)
         else:
             state["latest_failure"] = None
@@ -280,11 +559,25 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 # bare skips review entirely — no stub artifact, no deferred-must check.
                 # If any success criteria need human verification, they'll surface
                 # through the normal awaiting-human path on the next run.
-                state["current_state"] = STATE_DONE
+                # Target state + next_step payload come from the typed no-review
+                # terminal policy, not an inline branch.
+                terminal = evaluate_no_review_terminal(robustness="bare")
+                next_state = _NO_REVIEW_TERMINAL_STATE[terminal.outcome]
+                state["current_state"] = next_state
                 save_state_merge_meta(plan_dir, state)
-                response["state"] = STATE_DONE
-                response["next_step"] = None
+                response["state"] = next_state
+                response["next_step"] = _NO_REVIEW_NEXT_STEP[terminal.outcome]
                 response.pop("next_step_runtime", None)
+                _emit_execute_boundary_receipt(
+                    boundary_id="execute_no_review_terminal",
+                    plan_dir=plan_dir,
+                    state=state,
+                    outcome=BoundaryOutcome.COMPLETE,
+                    extra_details={
+                        "robustness": robustness,
+                        "terminal_outcome": str(terminal.outcome.value),
+                    },
+                )
                 attach_agent_fallback(response, args)
                 return response
             from arnold_pipelines.megaplan.audits.capabilities import get_worker_capabilities
@@ -312,7 +605,13 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                     entry["evidence"] = f"{robustness.title()} robustness: auto-approved."
                 stub_criteria.append(entry)
 
-            next_state = STATE_AWAITING_HUMAN_VERIFY if has_deferred_must else STATE_DONE
+            # Target state + next_step payload come from the typed no-review
+            # terminal policy (the topology gate above already guaranteed a
+            # bare/light robustness, for which the policy always terminates).
+            terminal = evaluate_no_review_terminal(
+                robustness=robustness, has_deferred_must=has_deferred_must
+            )
+            next_state = _NO_REVIEW_TERMINAL_STATE[terminal.outcome]
 
             stub_review = {
                 "review_verdict": "approved",
@@ -341,8 +640,19 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             state["current_state"] = next_state
             save_state_merge_meta(plan_dir, state)
             response["state"] = next_state
-            response["next_step"] = None
+            response["next_step"] = _NO_REVIEW_NEXT_STEP[terminal.outcome]
             response.pop("next_step_runtime", None)
+            _emit_execute_boundary_receipt(
+                boundary_id="execute_no_review_terminal",
+                plan_dir=plan_dir,
+                state=state,
+                outcome=BoundaryOutcome.COMPLETE,
+                extra_details={
+                    "robustness": robustness,
+                    "terminal_outcome": str(terminal.outcome.value),
+                    "has_deferred_must": has_deferred_must,
+                },
+            )
         else:
             save_state_merge_meta(plan_dir, state)
         attach_agent_fallback(response, args)

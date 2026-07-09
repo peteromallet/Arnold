@@ -11,12 +11,6 @@ All three take the snapshot dict produced by
 :mod:`arnold_pipelines.megaplan.cloud.status_snapshot` and render plain text.
 They never read files or SSH; they only format what the snapshot already holds,
 so a snapshot is genuinely the single source of truth.
-
-When a session entry carries canonical resolver fields (``canonical_state``,
-``canonical_resolver``, etc.) the formatters render the canonical
-classification, stale-source warnings, and next-action hints alongside the
-legacy output.  Entries without canonical fields continue to render exactly
-as before — the formatters tolerate partial snapshots gracefully.
 """
 
 from __future__ import annotations
@@ -36,32 +30,6 @@ _STATUS_EMOJI = {
 }
 
 _STATUS_ORDER = ("running", "repairing", "blocked", "attention", "complete")
-
-# Canonical-state emoji hints for short-format surfaces.
-_CANONICAL_EMOJI: dict[str, str] = {
-    "RUNNING": "🟢",
-    "REPAIRING": "🛠️",
-    "RETRYABLE_EXECUTION_BLOCK": "🔁",
-    "REAL_IMPLEMENTATION_BLOCK": "🧱",
-    "HUMAN_ACTION_REQUIRED": "👤",
-    "COMPLETED": "✅",
-    "STALE_DERIVED_STATE": "⏳",
-    "BROKEN_STATE_MACHINE": "💥",
-    "UNKNOWN": "❓",
-}
-
-# Human-readable short labels for canonical states.
-_CANONICAL_LABEL: dict[str, str] = {
-    "RUNNING": "running",
-    "REPAIRING": "repairing",
-    "RETRYABLE_EXECUTION_BLOCK": "retryable-block",
-    "REAL_IMPLEMENTATION_BLOCK": "impl-block",
-    "HUMAN_ACTION_REQUIRED": "needs-human",
-    "COMPLETED": "complete",
-    "STALE_DERIVED_STATE": "stale",
-    "BROKEN_STATE_MACHINE": "broken-sm",
-    "UNKNOWN": "unknown",
-}
 
 
 def _summary_line(snapshot: Mapping[str, Any]) -> str:
@@ -93,101 +61,6 @@ def _ordered_sessions(snapshot: Mapping[str, Any]) -> list[Mapping[str, Any]]:
             return (len(_STATUS_ORDER), entry.get("session", ""))
 
     return sorted(sessions, key=rank)
-
-
-# --- canonical resolver rendering helpers ----------------------------------
-
-
-def _canonical_info(entry: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Extract canonical resolver fields from a session entry for rendering.
-
-    Returns ``None`` when the entry carries no canonical resolver data, so
-    callers can branch cleanly and preserve legacy output.
-    """
-    resolver = entry.get("canonical_resolver")
-    if not isinstance(resolver, Mapping) or not resolver:
-        return None
-    return {
-        "state": entry.get("canonical_state"),
-        "reason": entry.get("canonical_reason"),
-        "human_required": entry.get("canonical_human_required"),
-        "human_gate": entry.get("canonical_human_gate"),
-        "stale_sources": resolver.get("stale_sources") or [],
-        "next_action": resolver.get("next_action", ""),
-        "confidence": resolver.get("confidence", "medium"),
-        "running": resolver.get("running", False),
-        "repairable": resolver.get("repairable", False),
-        "source_of_truth": resolver.get("source_of_truth") or [],
-    }
-
-
-def _canonical_short_tag(entry: Mapping[str, Any]) -> str:
-    """Return a compact canonical-state tag suitable for Discord one-liners.
-
-    Returns an empty string when there is no canonical data or when the
-    canonical classification mirrors the legacy status (avoiding noise).
-    """
-    info = _canonical_info(entry)
-    if info is None or not info["state"]:
-        return ""
-    state = str(info["state"])
-    emoji = _CANONICAL_EMOJI.get(state, "❓")
-    label = _CANONICAL_LABEL.get(state, state.lower())
-    return f" {emoji}⟨{label}⟩"
-
-
-def _canonical_stale_warning(entry: Mapping[str, Any]) -> str:
-    """Return a compact stale-source warning, or empty string if none."""
-    info = _canonical_info(entry)
-    if info is None:
-        return ""
-    stale = info["stale_sources"]
-    if not stale:
-        return ""
-    # Keep it short for Discord; truncate source names.
-    names = [str(s)[:24] for s in stale[:3]]
-    suffix = "…" if len(stale) > 3 else ""
-    return f" ⚠️stale:{','.join(names)}{suffix}"
-
-
-def _canonical_next_action_hint(entry: Mapping[str, Any]) -> str:
-    """Return a compact next-action hint, or empty string if none."""
-    info = _canonical_info(entry)
-    if info is None:
-        return ""
-    action = info["next_action"]
-    if not action or not isinstance(action, str) or not action.strip():
-        return ""
-    return f" → {action.strip()[:80]}"
-
-
-def _canonical_detail_lines(entry: Mapping[str, Any]) -> list[str]:
-    """Return multi-line canonical detail block for the CLI formatter.
-
-    Returns an empty list when canonical data is absent so the detailed
-    formatter can skip the block entirely.
-    """
-    info = _canonical_info(entry)
-    if info is None:
-        return []
-    lines: list[str] = []
-    state = info["state"]
-    if state:
-        label = _CANONICAL_LABEL.get(str(state), str(state).lower())
-        lines.append(f"      canonical: {label} (confidence={info['confidence']})")
-        reason = info["reason"]
-        if reason:
-            lines.append(f"      canonical_reason: {reason[:200]}")
-    stale = info["stale_sources"]
-    if stale:
-        for i, src in enumerate(stale[:5]):
-            lines.append(f"      stale_source[{i}]: {src}")
-        if len(stale) > 5:
-            lines.append(f"      … +{len(stale) - 5} more stale sources")
-    action = info["next_action"]
-    if action and isinstance(action, str) and action.strip():
-        lines.append(f"      next_action: {action.strip()[:200]}")
-    return lines
 
 
 def format_cloud_status_short(
@@ -224,10 +97,6 @@ def format_cloud_status_short(
         line = f"{emoji} `{entry.get('session', '?')}` — {status}: {plan}"
         if entry.get("operator_next") and status in {"repairing", "blocked", "attention"}:
             line += f" ({entry['operator_next']})"
-        # --- canonical resolver hints (additive; absent fields produce empty strings) ---
-        line += _canonical_short_tag(entry)
-        line += _canonical_stale_warning(entry)
-        line += _canonical_next_action_hint(entry)
         lines.append(line)
 
     return _chunk_lines(lines, max_chars=max_chars)
@@ -246,11 +115,31 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
     for entry in _ordered_sessions(snapshot):
         status = entry.get("status", "attention")
         progress = entry.get("progress")
-        progress_str = (
-            f"  progress={progress.get('percent')}%"
-            if isinstance(progress, Mapping) and progress.get("percent") is not None
-            else ""
-        )
+        progress_str = ""
+        if isinstance(progress, Mapping) and progress.get("percent") is not None:
+            progress_str = f"  progress={progress.get('percent')}%"
+            # In-flight plan stage estimate (completed lifecycle stages / total),
+            # or the raw plan state when it is not percentage-able (e.g. blocked).
+            plan_percent = progress.get("plan_percent")
+            plan_state = progress.get("plan_state")
+            if plan_percent is not None:
+                progress_str += f"  plan={plan_percent}%"
+                if plan_state:
+                    progress_str += f" ({plan_state})"
+            elif plan_state:
+                progress_str += f"  plan={plan_state}"
+            # Epic % gained over the last 1h / 5h, from sweep history.
+            delta_parts = []
+            for window, key in (("1h", "epic_delta_1h"), ("5h", "epic_delta_5h")):
+                delta = progress.get(key)
+                if isinstance(delta, int):
+                    delta_parts.append(f"{delta:+d}%/{window}")
+            if delta_parts:
+                progress_str += "  (" + ", ".join(delta_parts) + ")"
+            # Ladder stages the plan newly reached in the past hour.
+            stage_changes = progress.get("stage_changes_1h") or []
+            if stage_changes:
+                progress_str += "  stages1h:" + "→".join(stage_changes)
         out.append(
             f"[{status}] {entry.get('session', '?')}  "
             f"plan={entry.get('current_plan') or '-'}  "
@@ -264,8 +153,6 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
         evidence = entry.get("evidence") or {}
         if isinstance(evidence, Mapping) and evidence.get("marker"):
             out.append(f"      evidence: {evidence['marker']}")
-        # --- canonical resolver detail block (additive; absent → no output) ---
-        out.extend(_canonical_detail_lines(entry))
     return "\n".join(out)
 
 
@@ -287,16 +174,10 @@ def format_attention_only(snapshot: Mapping[str, Any] | None) -> str:
     lines = [f"Cloud status needs attention — {_summary_line(snapshot)}"]
     for entry in sorted(noteworthy, key=lambda e: _STATUS_ORDER.index(e.get("status", "attention")) if e.get("status") in _STATUS_ORDER else len(_STATUS_ORDER)):
         emoji = _STATUS_EMOJI.get(entry.get("status"), "⚠️")
-        line = (
+        lines.append(
             f"{emoji} {entry.get('session', '?')}: {entry.get('status')} — "
             f"{entry.get('operator_next', '')}".rstrip()
         )
-        # --- canonical resolver context (additive; absent → no suffix) ---
-        canon_tag = _canonical_short_tag(entry)
-        if canon_tag:
-            line += canon_tag
-        line += _canonical_next_action_hint(entry)
-        lines.append(line)
     return "\n".join(lines)
 
 

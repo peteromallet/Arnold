@@ -125,6 +125,84 @@ def test_chain_facade_reexports_git_push_helper() -> None:
     )
 
 
+
+def test_git_push_helper_uses_noninteractive_github_token(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setenv("GITHUB_TOKEN", "gho_testtoken")
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+
+    git_ops._run_git_push_command(
+        tmp_path,
+        ["git", "push", "--no-verify", "-u", "origin", "demo-branch"],
+        writer=lambda _msg: None,
+    )
+
+    env = seen["env"]
+    assert isinstance(env, dict)
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert env["GIT_CONFIG_VALUE_0"].startswith("AUTHORIZATION: basic ")
+
+
+def test_gh_command_env_preserves_token_auth_for_first_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "gho_testtoken")
+    env = git_ops._command_env(["gh", "pr", "list"])
+
+    assert isinstance(env, dict)
+    assert env["GH_TOKEN"] == "gho_testtoken"
+
+
+def test_run_command_retries_gh_without_env_on_bad_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run(cmd, **kwargs):
+        env = kwargs.get("env")
+        calls.append({"cmd": list(cmd), "env": dict(env) if isinstance(env, dict) else env})
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                stdout="",
+                stderr="authentication failed",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setenv("GH_TOKEN", "gho_badtoken")
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        git_ops,
+        "_compat",
+        lambda: SimpleNamespace(
+            subprocess=git_ops.subprocess,
+            _command_env=git_ops._command_env,
+            _command_env_without_gh_tokens=git_ops._command_env_without_gh_tokens,
+            _should_retry_gh_without_env=git_ops._should_retry_gh_without_env,
+        ),
+    )
+
+    proc = git_ops._run_command(
+        tmp_path,
+        ["gh", "pr", "list", "--json", "number"],
+        writer=lambda _message: None,
+        error_code="gh_pr_lookup_failed",
+    )
+
+    assert proc.returncode == 0
+    assert len(calls) == 2
+    assert calls[0]["env"]["GH_TOKEN"] == "gho_badtoken"
+    assert "GH_TOKEN" not in calls[1]["env"]
+
 def test_chain_fresh_refuses_to_delete_unregistered_spec_directory(tmp_path: Path) -> None:
     invoking_repo = tmp_path / "app"
     _init_repo(invoking_repo)
@@ -341,6 +419,53 @@ def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:
         is None
     )
     assert any("gh executable not found" in message for message in messages)
+
+
+def test_ensure_milestone_pr_defers_when_branch_has_no_commits_ahead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    milestone = MilestoneSpec(
+        label="m1",
+        idea=Path("m1.md"),
+        branch="test/m1",
+    )
+
+    def fail_run_command(_root, _argv, **_kwargs):
+        raise CliError(
+            "gh_pr_create_failed",
+            "gh pr create failed",
+            extra={
+                "stderr": (
+                    "pull request create failed: GraphQL: "
+                    "No commits between main and test/m1 (createPullRequest)"
+                )
+            },
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops.shutil.which",
+        lambda name: "/usr/bin/gh" if name == "gh" else "/bin/other",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _list_open_pr_for_branch=lambda *_args, **_kwargs: None,
+            _run_command=fail_run_command,
+            _parse_pr_number_from_url=lambda _output: None,
+        ),
+    )
+
+    assert (
+        _ensure_milestone_pr(
+            Path.cwd(),
+            milestone,
+            base_branch="main",
+            writer=messages.append,
+        )
+        is None
+    )
+    assert any("deferring PR creation" in message for message in messages)
 
 
 def test_checkout_existing_milestone_reconciles_with_refreshed_base(
@@ -824,6 +949,173 @@ def test_commit_and_push_phase_uses_extended_timeout_for_push(
     assert push_timeouts == [git_ops._GIT_PUSH_TIMEOUT_SECONDS]
 
 
+def test_run_git_push_command_recovers_when_timeout_already_published_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages: list[str] = []
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        raise CliError(
+            "git_push_failed",
+            "git push failed with timeout",
+            extra={"command": cmd, "error": "Command timed out after 600 seconds"},
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _run_command=fake_run_command,
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._expected_remote_push_target",
+        lambda *_args, **_kwargs: ("branch-x", "abc123"),
+    )
+    remote_heads = iter([None, "abc123"])
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._remote_branch_head",
+        lambda *_args, **_kwargs: next(remote_heads),
+    )
+    monkeypatch.setattr("arnold_pipelines.megaplan.chain.git_ops.time.sleep", lambda _seconds: None)
+
+    proc = git_ops._run_git_push_command(
+        root,
+        ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+        writer=messages.append,
+    )
+
+    assert proc.returncode == 0
+    assert any("timed out locally" in message for message in messages)
+
+
+def test_run_git_push_command_retries_non_fast_forward_with_force_with_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages: list[str] = []
+    calls: list[list[str]] = []
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        calls.append(list(cmd))
+        if cmd == ["git", "push", "--no-verify", "origin", "HEAD:branch-x"]:
+            raise CliError(
+                "git_push_failed",
+                "git push failed",
+                extra={"stderr": "! [rejected] HEAD -> branch-x (non-fast-forward)"},
+            )
+        if cmd == ["git", "push", "--no-verify", "--force-with-lease", "origin", "HEAD:branch-x"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _run_command=fake_run_command,
+        ),
+    )
+
+    proc = git_ops._run_git_push_command(
+        root,
+        ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+        writer=messages.append,
+    )
+
+    assert proc.returncode == 0
+    assert calls == [
+        ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+        ["git", "push", "--no-verify", "--force-with-lease", "origin", "HEAD:branch-x"],
+    ]
+    assert any("retrying with --force-with-lease" in message for message in messages)
+
+
+def test_run_git_push_command_recovers_when_timeout_already_published_branch_with_u_origin_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages: list[str] = []
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        raise CliError(
+            "git_push_failed",
+            "git push failed with timeout",
+            extra={"command": cmd, "error": "Command timed out after 600 seconds"},
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _run_command=fake_run_command,
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._expected_remote_push_target",
+        lambda *_args, **_kwargs: ("branch-x", "abc123"),
+    )
+    remote_heads = iter([None, "abc123"])
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._remote_branch_head",
+        lambda *_args, **_kwargs: next(remote_heads),
+    )
+    monkeypatch.setattr("arnold_pipelines.megaplan.chain.git_ops.time.sleep", lambda _seconds: None)
+
+    proc = git_ops._run_git_push_command(
+        root,
+        ["git", "push", "--no-verify", "-u", "origin", "branch-x"],
+        writer=messages.append,
+    )
+
+    assert proc.returncode == 0
+    assert any("timed out locally" in message for message in messages)
+
+
+def test_run_git_push_command_raises_when_timeout_not_published(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        raise CliError(
+            "git_push_failed",
+            "git push failed with timeout",
+            extra={"command": cmd, "error": "Command timed out after 600 seconds"},
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _run_command=fake_run_command,
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._expected_remote_push_target",
+        lambda *_args, **_kwargs: ("branch-x", "abc123"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._remote_branch_head",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops.time.monotonic",
+        iter([0.0, 31.0]).__next__,
+    )
+
+    with pytest.raises(CliError, match="git push failed with timeout"):
+        git_ops._run_git_push_command(
+            root,
+            ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+            writer=lambda _msg: None,
+        )
+
+
 def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -898,6 +1190,178 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     saved = load_chain_state(spec_path)
     assert saved.pr_number == 118
     assert saved.pr_state == "merged"
+
+
+def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"plan-m1","current_state":"initialized"}\n',
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        chain_module.ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="initialized",
+            pr_number=None,
+            pr_state=None,
+        ),
+    )
+
+    commit_calls: list[tuple[str, str, str]] = []
+    ensure_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state",
+        lambda *_args, **_kwargs: "initialized",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._resume_needs_init_anchor",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+        lambda _root, branch, plan, phase, **_kwargs: commit_calls.append((branch, plan, phase)),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        lambda _root, milestone, *, base_branch, writer: ensure_calls.append(milestone.label) or 81,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: SimpleNamespace(status="blocked", reason="stop"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        lambda *args, **kwargs: "open",
+    )
+
+    result = run_chain(spec_path, root, writer=lambda _message: None)
+
+    assert result["status"] == "stopped"
+    assert commit_calls == [("test/m1", "plan-m1", "init")]
+    assert ensure_calls == ["m1"]
+    saved = load_chain_state(spec_path)
+    assert saved.pr_number == 81
+    assert saved.pr_state == "open"
+
+
+def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    _git(root, "add", "NORTHSTAR.md", "chain.yaml", "idea.md")
+    _git(root, "commit", "-m", "add chain spec")
+
+    ensure_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._refresh_base_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._init_plan",
+        lambda *args, **kwargs: "plan-m1",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._write_chain_policy_into_plan_meta",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._attach_chain_anchors_to_plan",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+
+    def fake_ensure(*_args, **_kwargs):
+        ensure_calls.append("ensure")
+        return None if len(ensure_calls) == 1 else 80
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        fake_ensure,
+    )
+
+    def fake_drive_plan(*_args, on_phase_complete=None, **_kwargs):
+        assert on_phase_complete is not None
+        on_phase_complete("plan", 0, "", "")
+        return DriverOutcome(
+            status="done",
+            plan="plan-m1",
+            final_state="done",
+            iterations=1,
+            reason="ok",
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        fake_drive_plan,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._record_chain_last_state_after_plan_run",
+        lambda _root, _spec_path, state, outcome, *, writer: state,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+
+    run_chain(spec_path, root, writer=lambda _message: None)
+
+    saved = load_chain_state(spec_path)
+    assert ensure_calls == ["ensure", "ensure"]
+    assert saved.pr_number == 80
+    assert saved.pr_state == "open"
 
 
 def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monkeypatch) -> None:

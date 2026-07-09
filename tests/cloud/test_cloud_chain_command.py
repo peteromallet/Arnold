@@ -42,6 +42,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _validate_chain_spec_location,
     build_cloud_parser,
     cloud_chain_status_payload,
+    run_cloud_cli,
 )
 from arnold_pipelines.megaplan.fallback_chains import encode_phase_model_value
 from arnold_pipelines.megaplan.cloud.spec import (
@@ -1024,6 +1025,46 @@ def test_cloud_chain_status_payload_exposes_plan_latest_failure() -> None:
 
     assert payload["latest_failure"]["message"] == "Claude routes through Shannon, but bun is missing"
     assert payload["plan_status"] == plan_status
+
+
+def test_cloud_resume_uses_resume_command_for_failed_plan(monkeypatch, tmp_path: Path) -> None:
+    commands: list[str] = []
+
+    class Provider:
+        def status_payload(self, *, plan: str | None, workspace: str) -> dict:
+            assert plan == "milestone-demo"
+            assert workspace == "/workspace/chain-51d959cf/vibecomfy"
+            return {
+                "state": "failed",
+                "next_step": "review",
+                "valid_next": ["review"],
+            }
+
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._load_cloud_spec",
+        lambda root, args: _cloud_spec(),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._provider_for_action",
+        lambda spec, args: Provider(),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._resolve_resume_workspace",
+        lambda root, args, spec, provider: "/workspace/chain-51d959cf/vibecomfy",
+    )
+
+    args = _cloud_parser().parse_args(["cloud", "resume", "--plan", "milestone-demo"])
+
+    rc = run_cloud_cli(tmp_path, args)
+
+    assert rc == 0
+    assert commands == [
+        "cd /workspace/chain-51d959cf/vibecomfy && arnold resume --plan milestone-demo"
+    ]
 
 
 def test_cloud_chain_status_payload_treats_live_process_as_alive_runner() -> None:

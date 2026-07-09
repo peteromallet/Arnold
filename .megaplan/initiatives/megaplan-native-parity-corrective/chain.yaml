@@ -53,6 +53,9 @@ milestones:
   profile: partnered-5
   robustness: extreme
   depth: max
+  phase_model:
+  - execute=codex:gpt-5.5
+  - loop_execute=codex:gpt-5.5
   depends_on:
   - m3-tiebreaker-replan-native
 - label: m5-review-rework-finalize

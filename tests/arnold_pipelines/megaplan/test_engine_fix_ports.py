@@ -11,6 +11,8 @@ from arnold_pipelines.megaplan.blocker_recovery import (
     find_synthetic_before_execute_gate,
 )
 from arnold_pipelines.megaplan.execute.batch import (
+    _prerequisite_blocked_task_ids,
+    _reset_stale_authority_done_tasks,
     _normalize_execute_capture_payload,
     _repair_missing_user_action_gate,
     _resolve_batch_artifact_number,
@@ -196,6 +198,29 @@ def test_harness_artifact_paths_are_removed_from_execute_claims() -> None:
     assert _collect_execute_claimed_paths(
         {"files_changed": ["src/app.py", ".megaplan/plans/run/state.json"]}
     ) == {"src/app.py"}
+
+
+def test_prerequisite_blocked_task_ids_excludes_harness_generated_blocks() -> None:
+    task_ids = _prerequisite_blocked_task_ids(
+        [
+            {
+                "id": "T7",
+                "status": "blocked",
+                "executor_notes": (
+                    "BLOCKED — no files modified.\n"
+                    "[harness] status auto-downgraded: deviation contains budget exhausted"
+                ),
+            },
+            {
+                "id": "T8",
+                "status": "blocked",
+                "executor_notes": "Blocked by explicit prerequisite `ua-1`.",
+            },
+        ],
+        active_task_ids={"T7", "T8"},
+    )
+
+    assert task_ids == {"T8"}
 
 
 def test_pre_existing_contract_ids_skip_hollow_done_evidence(tmp_path: Path) -> None:
@@ -395,6 +420,74 @@ def test_effective_execute_completed_task_ids_marks_explained_noops_authoritativ
     assert decisions["T9"].diagnostics["execute_completion"] == "explained_noop_completion"
 
 
+def test_reset_stale_authority_done_tasks_demotes_stale_terminal_successes(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=project_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project_dir, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=project_dir, check=True)
+    (project_dir / "file.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=project_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=project_dir, check=True, capture_output=True)
+    base_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=project_dir, text=True).strip()
+    (project_dir / "file.txt").write_text("observed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=project_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "observed"], cwd=project_dir, check=True, capture_output=True)
+    observed_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=project_dir, text=True).strip()
+    subprocess.run(["git", "checkout", "-b", "diverged", base_sha], cwd=project_dir, check=True, capture_output=True)
+    (project_dir / "file.txt").write_text("diverged\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=project_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "diverged"], cwd=project_dir, check=True, capture_output=True)
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    state = {
+        "config": {"project_dir": str(project_dir)},
+        "meta": {"execution_baseline": {"head": base_sha}},
+    }
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T2",
+                "status": "done",
+                "kind": "audit",
+                "commands_run": ["pytest tests/test_example.py -q"],
+                "executor_notes": "Observed stale external state.",
+                "head_sha": observed_head,
+            }
+        ]
+    }
+    (plan_dir / "finalize.json").write_text(json.dumps(finalize_data) + "\n", encoding="utf-8")
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T2",
+                        "status": "done",
+                        "commands_run": ["pytest tests/test_example.py -q"],
+                        "head_sha": observed_head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reset_ids = _reset_stale_authority_done_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        root=project_dir,
+        state=state,
+    )
+
+    assert reset_ids == ["T2"]
+    assert finalize_data["tasks"][0]["status"] == "pending"
+    assert finalize_data["tasks"][0]["commands_run"] == []
+
+
 def test_execute_completion_authority_prefers_fresh_execution_evidence_over_stale_finalize(
     tmp_path: Path,
 ) -> None:
@@ -455,6 +548,128 @@ def test_execute_completion_authority_prefers_fresh_execution_evidence_over_stal
 
     assert ok is True
     assert missing == []
+
+
+def test_execute_completion_authority_accepts_batch_corroboration_for_stale_done_finalize_row(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=project_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project_dir, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=project_dir, check=True)
+    (project_dir / "file.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=project_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=project_dir, check=True, capture_output=True)
+    execute_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=project_dir, text=True
+    ).strip()
+
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-batch-corroboration"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"config": {"project_dir": str(project_dir)}}) + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "test",
+                        "commands_run": ["pytest tests/test_example.py -q"],
+                        "head_sha": "stale-head",
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "kind": "test",
+                        "commands_run": ["pytest tests/test_example.py -q"],
+                        "head_sha": execute_head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    (project_dir / "after.txt").write_text("after\n", encoding="utf-8")
+    subprocess.run(["git", "add", "after.txt"], cwd=project_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "after"], cwd=project_dir, check=True, capture_output=True)
+
+    ok, missing = _execute_completion_authority(plan_dir)
+
+    assert ok is True
+    assert missing == []
+
+
+def test_validate_execution_evidence_ignores_stale_pending_finalize_rows(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=project_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project_dir, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=project_dir, check=True)
+    (project_dir / "file.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=project_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=project_dir, check=True, capture_output=True)
+    current_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=project_dir, text=True
+    ).strip()
+
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-stale-finalize-audit"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T11",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["file.txt"],
+                        "head_sha": current_head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    audit = validate_execution_evidence(
+        {
+            "tasks": [
+                {
+                    "id": "T11",
+                    "status": "pending",
+                    "kind": "code",
+                    "executor_notes": "Stale finalize snapshot before execute batch reconciliation.",
+                }
+            ],
+            "sense_checks": [],
+        },
+        project_dir,
+        plan_dir=plan_dir,
+    )
+
+    assert not any(
+        "Tasks left pending after execute" in finding for finding in audit["findings"]
+    )
 
 
 def test_execute_completion_authority_accepts_explained_noop_done_task(

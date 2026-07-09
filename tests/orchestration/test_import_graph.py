@@ -154,6 +154,27 @@ def test_import_graph_syntax_error_degrades_without_losing_other_edges(
     assert resolution.unresolved == []
 
 
+def test_import_graph_ignores_hidden_and_non_importable_python_paths(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/util.py", "VALUE = 1\n")
+    _write(repo, "tests/test_feature.py", "import pkg.util\n")
+    _write(repo, "tests/cloud/._test_watchdog_wrappers.py", "import pkg.util\n")
+    _write(repo, "tools/subagent-launcher/helper.py", "import pkg.util\n")
+
+    graph = ImportGraph.build(repo)
+    resolution = graph.tests_importing(
+        ["pkg/util.py"],
+        is_test_file=lambda rel_path: rel_path.startswith("tests/test_"),
+    )
+
+    assert "tests/cloud/._test_watchdog_wrappers.py" not in graph._file_to_module
+    assert "tools/subagent-launcher/helper.py" not in graph._file_to_module
+    assert resolution.degraded is False
+    assert resolution.test_files == ["tests/test_feature.py"]
+
+
 def test_degraded_import_graph_caps_scoped_confidence_at_medium(
     tmp_path: Path,
 ) -> None:
@@ -369,11 +390,12 @@ def test_resolve_baseline_test_selection_explicit_full_allows_full(
     assert "explicit opt-out" in result["reason"]
 
 
-def test_resolve_baseline_test_selection_falls_back_on_non_path_selector(
+def test_resolve_baseline_test_selection_ignores_non_path_selector_when_paths_exist(
     tmp_path: Path,
 ) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
+    _write(tmp_path, "tests/test_feature.py")
     state = _make_state(plan_dir)
     _write_plan_meta(
         plan_dir,
@@ -394,9 +416,36 @@ def test_resolve_baseline_test_selection_falls_back_on_non_path_selector(
 
     result = resolve_baseline_test_selection(plan_dir, state)
 
+    assert result["mode"] == "scoped"
+    assert result["command_override"] == "pytest tests/test_feature.py"
+    assert "ignored non-path selector kind(s) marker" in result["reason"]
+
+
+def test_resolve_baseline_test_selection_rejects_non_path_selector_without_paths(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [{"kind": "marker", "value": "slow"}],
+            "changed_surfaces": ["pkg/util.py"],
+            "always_run": [],
+            "full_suite_fallback": True,
+            "rationale": "Model widened with marker only.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
     assert result["mode"] == "unresolved"
     assert result["command_override"] is None
-    assert "non-path selector kind(s) marker" in result["reason"]
+    assert "non-path selector kind(s) marker and no path selectors" in result["reason"]
 
 
 def test_finalize_baseline_selection_uses_task_files_when_plan_metadata_absent(

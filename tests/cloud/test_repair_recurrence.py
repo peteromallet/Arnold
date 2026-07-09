@@ -77,6 +77,30 @@ def test_problem_signature_is_stable_across_message_drift() -> None:
     )
 
 
+def test_problem_signature_is_blank_for_mechanical_redrive_only_context() -> None:
+    context = {
+        "failure_classification": "timeout_or_hang",
+        "stale_state": {
+            "classification": "NO LATEST FAILURE",
+            "recommended_action": "mechanical re-drive only",
+        },
+        "plan_latest_failure": {
+            "plan_name": "demo-plan",
+            "current_state": "initialized",
+            "events_path": "/tmp/demo/events.ndjson",
+        },
+        "plan_runtime_state": {"current_state": "initialized"},
+        "chain_state_summary": {
+            "current_plan_name": "demo-plan",
+            "last_state": "initialized",
+        },
+    }
+
+    assert repair_recurrence.build_problem_signature(context) == {
+        field: "" for field in repair_recurrence.PROBLEM_SIGNATURE_FIELDS
+    }
+
+
 def test_advancement_window_fires_only_when_repairs_repeat_without_progress() -> None:
     snapshot = repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain")
     first = repair_recurrence.update_session_repair_snapshot(
@@ -178,6 +202,54 @@ def test_problem_signature_includes_event_signature_field(tmp_path: Path) -> Non
     assert signature["event_signature"] == "authority_divergence/head_mismatch"
 
 
+def test_problem_signature_prefers_phase_result_over_noisy_event_signature(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo-plan"
+    plan_dir.mkdir()
+    events_path = plan_dir / "events.ndjson"
+    events_path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "seq": index,
+                    "ts_utc": f"2026-07-05T00:00:{index:02d}+00:00",
+                    "kind": "llm_token_heartbeat",
+                    "payload": {},
+                }
+            )
+            for index in range(3)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text("{}", encoding="utf-8")
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            {
+                "phase": "execute",
+                "exit_kind": "blocked_by_quality",
+                "blocked_tasks": [],
+                "deviations": [
+                    {
+                        "kind": "quality_gate",
+                        "message": "Focused probe still reports AWF245_ROW_EVIDENCE_INSUFFICIENCY.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = _failure_context(phase="execute")
+    ctx["workspace"] = str(tmp_path)
+    ctx["plan_latest_failure"]["state_path"] = str(plan_dir / "state.json")
+    ctx["plan_latest_failure"]["events_path"] = str(events_path)
+
+    signature = repair_recurrence.build_problem_signature(ctx)
+
+    assert signature["event_signature"] == (
+        "phase_result/execute/blocked_by_quality/quality_gate:AWF245_ROW_EVIDENCE_INSUFFICIENCY"
+    )
+
+
 def test_problem_signature_event_signature_empty_when_no_events() -> None:
     signature = repair_recurrence.build_problem_signature(_failure_context())
     assert signature["event_signature"] == ""
@@ -192,12 +264,120 @@ def test_layer3_breaker_trips_on_consecutive_same_signature() -> None:
     assert result["layer3"]["breaker_signature"] == result["problem_signature"]
 
 
+def test_layer3_breaker_ignores_same_signature_before_advancement_epoch() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    attempts = [
+        {
+            "attempt_id": 1,
+            "dispatched_at": "2026-06-30T00:00:00+00:00",
+            "problem_signature": signature,
+        }
+    ]
+    result = repair_recurrence.evaluate_recurrence(
+        signature,
+        attempts,
+        {"last_advancement_at": "2026-06-30T00:10:00+00:00"},
+    )
+    assert result["deterministic_failure_breaker"] is False
+    assert result["layer1"]["detected"] is False
+
+
+def test_legacy_advancement_snapshot_promotes_updated_at_to_epoch() -> None:
+    snapshot = repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain")
+    legacy_previous = {
+        "updated_at": "2026-06-30T00:10:00+00:00",
+        "advancement_since_last_dispatch": True,
+        "last_dispatch_snapshot": snapshot,
+        "no_advance_dispatches": ["2026-06-30T00:10:00+00:00"],
+        "no_advance_count": 1,
+    }
+
+    updated = repair_recurrence.update_session_repair_snapshot(
+        legacy_previous,
+        snapshot,
+        dispatched_at="2026-06-30T00:20:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert updated["last_advancement_at"] == "2026-06-30T00:10:00+00:00"
+
+
 def test_layer3_breaker_does_not_trip_when_signature_changed() -> None:
     prior_sig = repair_recurrence.build_problem_signature(_failure_context(blocked_task_id="task-a"))
     attempts = [{"attempt_id": 1, "problem_signature": prior_sig}]
     current_sig = repair_recurrence.build_problem_signature(_failure_context(blocked_task_id="task-b"))
     result = repair_recurrence.evaluate_recurrence(current_sig, attempts, {})
     assert result["deterministic_failure_breaker"] is False
+
+
+def test_layer3_breaker_trips_on_consecutive_empty_pending_batches_across_tasks(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+
+    def context_for(task_id: str, index: int) -> dict[str, object]:
+        artifact = plan_dir / f"execute_batch_{index}_output.json"
+        artifact.write_text(
+            json.dumps(
+                {
+                    "files_changed": [],
+                    "commands_run": [],
+                    "task_updates": [
+                        {
+                            "task_id": task_id,
+                            "status": "pending",
+                            "executor_notes": "",
+                            "files_changed": [],
+                            "commands_run": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        ctx = _failure_context(blocked_task_id=task_id, current_state="finalized")
+        ctx["workspace"] = str(tmp_path)
+        ctx["execute_attempt_context"] = {
+            "execution_batch": {
+                "path": str(artifact),
+                "blocked_or_deferred_tasks": [{"task_id": task_id}],
+            },
+            "execute_batch_output": {"path": str(artifact)},
+            "plan_history": {"last_entries": [{"step": "execute", "result": "blocked"}]},
+        }
+        return ctx
+
+    prior_one = context_for("T3", 1)
+    prior_two = context_for("T5", 2)
+    current = context_for("T8", 3)
+    attempts = [
+        {
+            "attempt_id": 1,
+            "problem_signature": repair_recurrence.build_problem_signature(prior_one),
+            "failure_context": prior_one,
+        },
+        {
+            "attempt_id": 2,
+            "problem_signature": repair_recurrence.build_problem_signature(prior_two),
+            "failure_context": prior_two,
+        },
+    ]
+    current_snapshot = repair_recurrence.build_advancement_snapshot(current, run_kind="chain")
+
+    result = repair_recurrence.evaluate_recurrence(
+        repair_recurrence.build_problem_signature(current),
+        attempts,
+        {"current": current_snapshot, "min_dispatches": 3},
+    )
+
+    assert result["deterministic_failure_breaker"] is True
+    assert result["layer3"]["consecutive_same_signature"] is False
+    assert result["layer3"]["empty_batch_streak"] == {
+        "detected": True,
+        "count": 3,
+        "min_dispatches": 3,
+        "task_id_batches": [["T8"], ["T5"], ["T3"]],
+    }
 
 
 def test_layer3_breaker_does_not_trip_on_empty_signature() -> None:

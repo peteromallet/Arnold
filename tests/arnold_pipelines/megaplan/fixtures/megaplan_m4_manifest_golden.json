@@ -39,7 +39,7 @@
       "target": "execute"
     },
     {
-      "condition_ref": "blocked",
+      "condition_ref": "gate.gate_route_signal.eq.blocked_preflight",
       "id": "gate:blocked",
       "label": "blocked_preflight",
       "metadata": {},
@@ -47,7 +47,7 @@
       "target": "override"
     },
     {
-      "condition_ref": "proceed",
+      "condition_ref": "gate.gate_route_signal.eq.proceed",
       "id": "gate:finalize",
       "label": "proceed",
       "metadata": {},
@@ -55,7 +55,7 @@
       "target": "finalize"
     },
     {
-      "condition_ref": "force_proceed",
+      "condition_ref": "gate.gate_route_signal.eq.force_proceed",
       "id": "gate:force_proceed",
       "label": "force_proceed",
       "metadata": {},
@@ -63,7 +63,7 @@
       "target": "finalize"
     },
     {
-      "condition_ref": "abort",
+      "condition_ref": "gate.gate_route_signal.eq.abort",
       "id": "gate:halt",
       "label": "abort",
       "metadata": {},
@@ -71,7 +71,7 @@
       "target": "halt"
     },
     {
-      "condition_ref": "escalate",
+      "condition_ref": "gate.gate_route_signal.eq.escalate",
       "id": "gate:override",
       "label": "escalate",
       "metadata": {},
@@ -79,7 +79,7 @@
       "target": "override"
     },
     {
-      "condition_ref": "iterate",
+      "condition_ref": "gate.gate_route_signal.eq.iterate",
       "id": "gate:revise",
       "label": "iterate",
       "metadata": {},
@@ -87,7 +87,7 @@
       "target": "revise"
     },
     {
-      "condition_ref": "suspend",
+      "condition_ref": "gate.gate_route_signal.eq.suspend",
       "id": "gate:suspend",
       "label": "suspend",
       "metadata": {},
@@ -95,15 +95,15 @@
       "target": "halt"
     },
     {
-      "condition_ref": "tiebreaker",
+      "condition_ref": "gate.gate_route_signal.eq.tiebreaker",
       "id": "gate:tiebreaker",
       "label": "tiebreaker",
       "metadata": {},
       "source": "gate",
-      "target": "tiebreaker_run"
+      "target": "tiebreaker_researcher"
     },
     {
-      "condition_ref": "force_proceed",
+      "condition_ref": "tiebreaker_override.override_result.eq.force_proceed",
       "id": "override:finalize",
       "label": "force_proceed",
       "metadata": {},
@@ -111,7 +111,7 @@
       "target": "finalize"
     },
     {
-      "condition_ref": "abort",
+      "condition_ref": "override.override_result.eq.abort",
       "id": "override:halt",
       "label": "abort",
       "metadata": {},
@@ -119,7 +119,7 @@
       "target": "halt"
     },
     {
-      "condition_ref": "replan",
+      "condition_ref": "tiebreaker_override.override_result.eq.replan",
       "id": "override:revise",
       "label": "replan",
       "metadata": {},
@@ -141,63 +141,61 @@
       "target": "plan"
     },
     {
-      "condition_ref": "pass",
-      "id": "review:halt",
+      "id": "tiebreaker_challenger:synthesis",
       "label": "default",
       "metadata": {},
-      "source": "review",
-      "target": "halt"
-    },
-    {
-      "condition_ref": "rework",
-      "id": "review:revise",
-      "label": "rework",
-      "metadata": {},
-      "source": "review",
-      "target": "revise"
-    },
-    {
-      "condition_ref": "revise:loop",
-      "id": "revise:critique",
-      "label": "default",
-      "metadata": {},
-      "source": "revise",
-      "target": "critique"
+      "source": "tiebreaker_challenger",
+      "target": "tiebreaker_synthesis"
     },
     {
       "condition_ref": "tiebreaker:loop",
-      "id": "tiebreaker_decide:critique",
+      "id": "tiebreaker_decision:critique",
       "label": "iterate",
       "metadata": {},
-      "source": "tiebreaker_decide",
-      "target": "critique"
+      "source": "tiebreaker_decision",
+      "target": "revise"
     },
     {
       "condition_ref": "proceed",
-      "id": "tiebreaker_decide:finalize",
+      "id": "tiebreaker_decision:finalize",
       "label": "proceed",
       "metadata": {},
-      "source": "tiebreaker_decide",
+      "source": "tiebreaker_decision",
       "target": "finalize"
     },
     {
       "condition_ref": "escalate",
-      "id": "tiebreaker_decide:override",
+      "id": "tiebreaker_decision:override",
       "label": "escalate",
       "metadata": {},
-      "source": "tiebreaker_decide",
+      "source": "tiebreaker_decision",
       "target": "override"
     },
     {
-      "id": "tiebreaker_run:decide",
+      "condition_ref": "tiebreaker:replan",
+      "id": "tiebreaker_decision:revise_replan",
+      "label": "replan",
+      "metadata": {},
+      "source": "tiebreaker_decision",
+      "target": "revise"
+    },
+    {
+      "id": "tiebreaker_researcher:challenger",
       "label": "default",
       "metadata": {},
-      "source": "tiebreaker_run",
-      "target": "tiebreaker_decide"
+      "source": "tiebreaker_researcher",
+      "target": "tiebreaker_challenger"
+    },
+    {
+      "id": "tiebreaker_synthesis:decision",
+      "label": "default",
+      "metadata": {},
+      "source": "tiebreaker_synthesis",
+      "target": "tiebreaker_decision"
     }
   ],
   "id": "megaplan",
-  "manifest_hash": "sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add",
+  "manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
   "metadata": {
     "max_critique_iterations": 4,
     "policy_refs": [
@@ -214,19 +212,27 @@
       "capabilities": [],
       "id": "critique",
       "inputs": [
-        "plan_payload"
+        "items"
       ],
       "kind": "megaplan:critique",
       "metadata": {
+        "call_site_path": "critique-fanout",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
         "input_bindings": {
-          "plan_payload": {
-            "value_ref": "plan.plan_payload"
+          "items": {
+            "value_ref": "megaplan.policy.critique_lenses"
           }
         },
+        "items_ref": "megaplan.policy.critique_lenses",
+        "iteration_coordinate": "{item_id}",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:CRITIQUE_PANEL_WORKFLOW",
         "output_bindings": {
           "critique_payload": {}
-        }
+        },
+        "parallel_map": true,
+        "path_template": "critique/{item_id}",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_CRITIQUE",
+        "source_form": "function"
       },
       "outputs": [
         "critique_payload"
@@ -241,31 +247,46 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 10,
+        "end_line": 401,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 28,
+        "start_line": 395
       }
     },
     {
       "capabilities": [],
       "id": "execute",
       "inputs": [
-        "finalize_payload"
+        "items"
       ],
       "kind": "megaplan:execute",
       "metadata": {
+        "call_site_path": "execute-batches",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
         "input_bindings": {
-          "finalize_payload": {
-            "value_ref": "finalize.finalize_payload"
+          "items": {
+            "value_ref": "megaplan.execute.batches"
           }
         },
+        "items_ref": "megaplan.execute.batches",
+        "iteration_coordinate": "{index}",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:EXECUTE_BATCH_WORKFLOW",
         "output_bindings": {
           "execute_payload": {}
         },
+        "parallel_map": true,
+        "path_template": "execute/{index}",
         "policy_refs": [
           "megaplan:execute",
           "megaplan:model-routing",
           "megaplan:artifact-contract",
           "megaplan:suspension"
-        ]
+        ],
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_EXECUTE",
+        "source_form": "function"
       },
       "outputs": [
         "execute_payload"
@@ -276,11 +297,19 @@
         "effects": [
           {
             "effect_id": "artifact.execute.receipt",
+            "idempotency": {
+              "key_ref": "execute.receipt",
+              "required": true
+            },
             "payload_ref": "execute.execute_payload",
             "route": "default"
           },
           {
             "effect_id": "artifact.execute.checkpoint",
+            "idempotency": {
+              "key_ref": "execute.checkpoint",
+              "required": true
+            },
             "payload_ref": "execute.execute_payload",
             "route": "default"
           }
@@ -329,6 +358,13 @@
             ]
           }
         ]
+      },
+      "source_span": {
+        "end_column": 14,
+        "end_line": 412,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 31,
+        "start_line": 406
       }
     },
     {
@@ -339,10 +375,11 @@
       ],
       "kind": "megaplan:finalize",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_FINALIZE",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
         "input_bindings": {
           "gate_payload": {
-            "value_ref": "gate.gate_payload"
+            "value_ref": "output:gate_route_signal"
           }
         },
         "output_bindings": {
@@ -350,8 +387,11 @@
         },
         "policy_refs": [
           "megaplan:default",
+          "megaplan:finalize",
           "megaplan:artifact-contract"
-        ]
+        ],
+        "source_form": "function",
+        "terminal": false
       },
       "outputs": [
         "finalize_payload"
@@ -366,6 +406,13 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 97,
+        "end_line": 405,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 32,
+        "start_line": 405
       }
     },
     {
@@ -376,20 +423,21 @@
       ],
       "kind": "megaplan:gate",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_GATE",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate",
         "input_bindings": {
           "critique_payload": {
-            "value_ref": "critique.critique_payload"
+            "value_ref": "output:critique_payload"
           }
         },
         "output_bindings": {
-          "gate_payload": {},
-          "recommendation": {}
-        }
+          "gate_route_signal": {}
+        },
+        "source_form": "function",
+        "terminal": false
       },
       "outputs": [
-        "gate_payload",
-        "recommendation"
+        "gate_route_signal"
       ],
       "policy": {
         "authority": [],
@@ -410,7 +458,7 @@
           },
           {
             "policy_ref": "megaplan:gate",
-            "target_ref": "tiebreaker_run",
+            "target_ref": "tiebreaker_researcher",
             "transition_id": "gate:tiebreaker",
             "transition_type": "override",
             "trigger_ref": "gate.recommendation"
@@ -442,17 +490,33 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 89,
+        "end_line": 402,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 29,
+        "start_line": 402
       }
     },
     {
       "capabilities": [],
       "id": "halt",
-      "inputs": [],
+      "inputs": [
+        "review_payload"
+      ],
       "kind": "megaplan:halt",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_HALT",
+        "input_bindings": {
+          "review_payload": {
+            "value_ref": "output:review_route_signal"
+          }
+        },
         "output_bindings": {
           "status": {}
         },
+        "source_form": "function",
         "terminal": true
       },
       "outputs": [
@@ -468,6 +532,13 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 78,
+        "end_line": 421,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 17,
+        "start_line": 421
       }
     },
     {
@@ -478,10 +549,11 @@
       ],
       "kind": "megaplan:override",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_OVERRIDE",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override",
         "input_bindings": {
           "gate_payload": {
-            "value_ref": "gate.gate_payload"
+            "value_ref": "output:review_route_signal"
           }
         },
         "output_bindings": {
@@ -503,7 +575,9 @@
         "policy_refs": [
           "megaplan:override",
           "megaplan:model-routing"
-        ]
+        ],
+        "source_form": "function",
+        "terminal": false
       },
       "outputs": [
         "override_result"
@@ -525,26 +599,46 @@
         "effects": [
           {
             "effect_id": "override.add_note",
+            "idempotency": {
+              "key_ref": "override.add_note",
+              "required": true
+            },
             "payload_ref": "override.override_result",
             "route": "default"
           },
           {
             "effect_id": "override.set_model",
+            "idempotency": {
+              "key_ref": "override.set_model",
+              "required": true
+            },
             "payload_ref": "override.override_result",
             "route": "default"
           },
           {
             "effect_id": "override.set_profile",
+            "idempotency": {
+              "key_ref": "override.set_profile",
+              "required": true
+            },
             "payload_ref": "override.override_result",
             "route": "default"
           },
           {
             "effect_id": "override.set_robustness",
+            "idempotency": {
+              "key_ref": "override.set_robustness",
+              "required": true
+            },
             "payload_ref": "override.override_result",
             "route": "default"
           },
           {
             "effect_id": "override.set_vendor",
+            "idempotency": {
+              "key_ref": "override.set_vendor",
+              "required": true
+            },
             "payload_ref": "override.override_result",
             "route": "default"
           }
@@ -655,6 +749,13 @@
             ]
           }
         ]
+      },
+      "source_span": {
+        "end_column": 91,
+        "end_line": 457,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 17,
+        "start_line": 457
       }
     },
     {
@@ -665,15 +766,18 @@
       ],
       "kind": "megaplan:plan",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_PLAN",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan",
         "input_bindings": {
           "prep_payload": {
-            "value_ref": "prep.prep_payload"
+            "value_ref": "output:prep_signal"
           }
         },
         "output_bindings": {
           "plan_payload": {}
-        }
+        },
+        "source_form": "function",
+        "terminal": false
       },
       "outputs": [
         "plan_payload"
@@ -688,21 +792,38 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 71,
+        "end_line": 391,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 20,
+        "start_line": 391
       }
     },
     {
       "capabilities": [],
       "id": "prep",
-      "inputs": [],
+      "inputs": [
+        "brief"
+      ],
       "kind": "megaplan:prep",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_PREP",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep",
+        "input_bindings": {
+          "brief": {
+            "value_ref": "param:brief"
+          }
+        },
         "output_bindings": {
-          "prep_payload": {}
-        }
+          "prep_signal": {}
+        },
+        "source_form": "function",
+        "terminal": false
       },
       "outputs": [
-        "prep_payload"
+        "prep_signal"
       ],
       "policy": {
         "authority": [],
@@ -714,40 +835,55 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 57,
+        "end_line": 390,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 19,
+        "start_line": 390
       }
     },
     {
       "capabilities": [],
       "id": "review",
       "inputs": [
-        "execute_payload"
+        "items"
       ],
       "kind": "megaplan:review",
       "metadata": {
+        "call_site_path": "review-fan-in",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review",
         "input_bindings": {
-          "execute_payload": {
-            "value_ref": "execute.execute_payload"
+          "items": {
+            "value_ref": "output:execute_payload"
           }
         },
+        "items_ref": "execute_payload",
+        "iteration_coordinate": "{item_id}",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:REVIEW_PANEL_WORKFLOW",
         "output_bindings": {
-          "review_payload": {}
+          "review_route_signal": {}
         },
+        "parallel_map": true,
+        "path_template": "review/{item_id}",
         "policy_refs": [
           "megaplan:review",
           "megaplan:artifact-contract",
           "megaplan:suspension"
-        ]
+        ],
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_REVIEW",
+        "source_form": "function"
       },
       "outputs": [
-        "review_payload"
+        "review_route_signal"
       ],
       "policy": {
         "authority": [],
         "control_transitions": [
           {
             "policy_ref": "megaplan:review",
-            "target_ref": "revise",
+            "target_ref": "execute",
             "transition_id": "review:rework",
             "transition_type": "fallback",
             "trigger_ref": "review.verdict"
@@ -784,11 +920,19 @@
         "effects": [
           {
             "effect_id": "artifact.review.receipt",
+            "idempotency": {
+              "key_ref": "review.receipt",
+              "required": true
+            },
             "payload_ref": "review.review_payload",
             "route": "default"
           },
           {
             "effect_id": "artifact.review.output",
+            "idempotency": {
+              "key_ref": "review.output",
+              "required": true
+            },
             "payload_ref": "review.review_payload",
             "route": "default"
           }
@@ -833,6 +977,13 @@
             ]
           }
         ]
+      },
+      "source_span": {
+        "end_column": 14,
+        "end_line": 419,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 35,
+        "start_line": 413
       }
     },
     {
@@ -843,16 +994,19 @@
       ],
       "kind": "megaplan:revise",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_REVISE",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
         "input_bindings": {
           "gate_payload": {
-            "value_ref": "gate.gate_payload"
+            "value_ref": "output:rework_review_route_signal"
           }
         },
         "max_iterations": 4,
         "output_bindings": {
           "revise_payload": {}
-        }
+        },
+        "source_form": "function",
+        "terminal": false
       },
       "outputs": [
         "revise_payload"
@@ -877,25 +1031,78 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 98,
+        "end_line": 442,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 21,
+        "start_line": 442
       }
     },
     {
       "capabilities": [],
-      "id": "tiebreaker_decide",
+      "id": "tiebreaker_challenger",
+      "inputs": [
+        "research_findings"
+      ],
+      "kind": "megaplan:tiebreaker_challenger",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_CHALLENGER",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "input_bindings": {
+          "research_findings": {
+            "value_ref": "output:research_findings"
+          }
+        },
+        "output_bindings": {
+          "challenge_findings": {}
+        },
+        "source_form": "function",
+        "terminal": false
+      },
+      "outputs": [
+        "challenge_findings"
+      ],
+      "policy": {
+        "authority": [],
+        "control_transitions": [],
+        "effects": [],
+        "reducers": [],
+        "suspension_routes": [],
+        "timing": {
+          "timeout_seconds": 300.0
+        },
+        "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 14,
+        "end_line": 479,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 34,
+        "start_line": 476
+      }
+    },
+    {
+      "capabilities": [],
+      "id": "tiebreaker_decision",
       "inputs": [
         "tiebreaker_payload"
       ],
-      "kind": "megaplan:tiebreaker_decide",
+      "kind": "megaplan:tiebreaker_decision",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_DECISION",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide",
         "input_bindings": {
           "tiebreaker_payload": {
-            "value_ref": "tiebreaker_run.tiebreaker_payload"
+            "value_ref": "output:tiebreaker_payload"
           }
         },
         "output_bindings": {
           "decision": {}
-        }
+        },
+        "source_form": "function",
+        "terminal": false
       },
       "outputs": [
         "decision"
@@ -905,24 +1112,31 @@
         "control_transitions": [
           {
             "policy_ref": "megaplan:tiebreaker",
-            "target_ref": "critique",
+            "target_ref": "revise",
             "transition_id": "tiebreaker:iterate",
             "transition_type": "override",
-            "trigger_ref": "tiebreaker_decide.decision"
+            "trigger_ref": "tiebreaker_decision.decision"
           },
           {
             "policy_ref": "megaplan:tiebreaker",
             "target_ref": "finalize",
             "transition_id": "tiebreaker:proceed",
             "transition_type": "override",
-            "trigger_ref": "tiebreaker_decide.decision"
+            "trigger_ref": "tiebreaker_decision.decision"
           },
           {
             "policy_ref": "megaplan:tiebreaker",
             "target_ref": "override",
             "transition_id": "tiebreaker:escalate",
             "transition_type": "escalation",
-            "trigger_ref": "tiebreaker_decide.decision"
+            "trigger_ref": "tiebreaker_decision.decision"
+          },
+          {
+            "policy_ref": "megaplan:tiebreaker",
+            "target_ref": "revise",
+            "transition_id": "tiebreaker:replan",
+            "transition_type": "override",
+            "trigger_ref": "tiebreaker_decision.decision"
           }
         ],
         "effects": [],
@@ -942,25 +1156,82 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 14,
+        "end_line": 488,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 24,
+        "start_line": 485
       }
     },
     {
       "capabilities": [],
-      "id": "tiebreaker_run",
+      "id": "tiebreaker_researcher",
       "inputs": [
         "gate_payload"
       ],
-      "kind": "megaplan:tiebreaker_run",
+      "kind": "megaplan:tiebreaker_researcher",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_RESEARCHER",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
         "input_bindings": {
           "gate_payload": {
-            "value_ref": "gate.gate_payload"
+            "value_ref": "output:gate_route_signal"
+          }
+        },
+        "output_bindings": {
+          "research_findings": {}
+        },
+        "source_form": "function",
+        "terminal": false
+      },
+      "outputs": [
+        "research_findings"
+      ],
+      "policy": {
+        "authority": [],
+        "control_transitions": [],
+        "effects": [],
+        "reducers": [],
+        "suspension_routes": [],
+        "timing": {
+          "timeout_seconds": 300.0
+        },
+        "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 14,
+        "end_line": 475,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 33,
+        "start_line": 472
+      }
+    },
+    {
+      "capabilities": [],
+      "id": "tiebreaker_synthesis",
+      "inputs": [
+        "research_findings",
+        "challenge_findings"
+      ],
+      "kind": "megaplan:tiebreaker_synthesis",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_SYNTHESIS",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "input_bindings": {
+          "challenge_findings": {
+            "value_ref": "output:challenge_findings"
+          },
+          "research_findings": {
+            "value_ref": "output:research_findings"
           }
         },
         "output_bindings": {
           "tiebreaker_payload": {}
-        }
+        },
+        "source_form": "function",
+        "terminal": false
       },
       "outputs": [
         "tiebreaker_payload"
@@ -975,6 +1246,13 @@
           "timeout_seconds": 300.0
         },
         "topology_overlays": []
+      },
+      "source_span": {
+        "end_column": 14,
+        "end_line": 484,
+        "path": "/Users/peteromalley/Documents/Arnold-consolidation-clean-20260709/arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        "start_column": 34,
+        "start_line": 480
       }
     }
   ],
@@ -984,16 +1262,28 @@
     "effects": [
       {
         "effect_id": "artifact.finalize.plan",
+        "idempotency": {
+          "key_ref": "artifact_contract.finalize",
+          "required": true
+        },
         "payload_ref": "finalize.finalize_payload",
         "route": "default"
       },
       {
         "effect_id": "artifact.execute.receipt",
+        "idempotency": {
+          "key_ref": "artifact_contract.execute",
+          "required": true
+        },
         "payload_ref": "execute.execute_payload",
         "route": "default"
       },
       {
         "effect_id": "artifact.review.receipt",
+        "idempotency": {
+          "key_ref": "artifact_contract.review",
+          "required": true
+        },
         "payload_ref": "review.review_payload",
         "route": "default"
       }
@@ -1051,6 +1341,10 @@
           "revise",
           "tiebreaker_run",
           "tiebreaker_decide",
+          "tiebreaker_researcher",
+          "tiebreaker_challenger",
+          "tiebreaker_synthesis",
+          "tiebreaker_decision",
           "finalize",
           "execute",
           "review"
@@ -1097,6 +1391,6 @@
     ]
   },
   "schema_version": "arnold.workflow.manifest.v1",
-  "topology_hash": "sha256:2705e157e12fc074301afa8f5aec4e48d9820814ebaaa77535d152a8cc381fd4",
+  "topology_hash": "sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260",
   "version": "m4-phase3"
 }

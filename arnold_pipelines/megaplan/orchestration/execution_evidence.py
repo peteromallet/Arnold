@@ -9,6 +9,7 @@ from typing import Any
 
 from arnold_pipelines.megaplan.types import PlanState
 from arnold_pipelines.megaplan._core import is_prose_mode
+from arnold_pipelines.megaplan._core.io import list_batch_artifacts, read_json
 from arnold_pipelines.megaplan.execute.quality import unchanged_baseline_uncommitted_paths
 from arnold_pipelines.megaplan.loop.git import _collect_git_status_paths_with_nested_repos, _normalize_repo_path
 
@@ -43,6 +44,35 @@ def _pre_existing_task_ids(plan_dir: Path | None) -> set[str]:
         for item in pre_existing
         if isinstance(item, str) and item.strip()
     }
+
+
+def _authoritative_execute_task_overrides(plan_dir: Path | None) -> dict[str, dict[str, Any]]:
+    """Return newest persisted execute task records keyed by task ID."""
+
+    if plan_dir is None:
+        return {}
+    overrides: dict[str, dict[str, Any]] = {}
+    try:
+        artifacts = list_batch_artifacts(plan_dir)
+    except Exception:
+        return {}
+    for artifact in artifacts:
+        try:
+            payload = read_json(artifact)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        raw_updates = payload.get("task_updates")
+        if not isinstance(raw_updates, list):
+            continue
+        for item in raw_updates:
+            if not isinstance(item, dict):
+                continue
+            task_id = item.get("task_id") or item.get("id")
+            if isinstance(task_id, str) and task_id.strip():
+                overrides[task_id.strip()] = item
+    return overrides
 
 
 def validate_execution_evidence(
@@ -237,11 +267,26 @@ def _validate_execution_evidence_code(
     base_ref: str | None = None,
     state: PlanState | None = None,
 ) -> dict[str, Any]:
+    authoritative_overrides = _authoritative_execute_task_overrides(plan_dir)
+    audited_tasks: list[dict[str, Any]] = []
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id") or task.get("task_id")
+        merged = dict(task)
+        if isinstance(task_id, str):
+            authoritative = authoritative_overrides.get(task_id)
+            if isinstance(authoritative, dict):
+                merged.update(authoritative)
+                merged.setdefault("id", task_id)
+                merged.setdefault("task_id", task_id)
+        audited_tasks.append(merged)
+
     findings: list[str] = []
     files_claimed = sorted(
         {
             _normalize_repo_path(path, project_dir)
-            for task in finalize_data.get("tasks", [])
+            for task in audited_tasks
             for path in task.get("files_changed", [])
             if isinstance(path, str)
             and path.strip()
@@ -363,7 +408,7 @@ def _validate_execution_evidence_code(
     blocked_without_reason: list[str] = []
     hollow_done_tasks: list[str] = []
     pre_existing_ids = _pre_existing_task_ids(plan_dir)
-    for task in finalize_data.get("tasks", []):
+    for task in audited_tasks:
         task_id = task.get("id", "?")
         status = task.get("status", "")
         notes = task.get("executor_notes", "")

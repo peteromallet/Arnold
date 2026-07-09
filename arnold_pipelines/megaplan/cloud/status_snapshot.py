@@ -25,18 +25,17 @@ import os
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabled
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
+from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
-from arnold_pipelines.megaplan.observability.events import EventKind, emit
-from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
-from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
 
 # --- canonical paths -------------------------------------------------------
 
@@ -46,7 +45,25 @@ DEFAULT_FALLBACK_WATCHDOG_REPORT = Path("/workspace/.megaplan/watchdog-report.js
 DEFAULT_STATUS_DIR = Path("/workspace/.megaplan/status")
 DEFAULT_SNAPSHOT_PATH = DEFAULT_STATUS_DIR / "cloud-status.json"
 DEFAULT_PREVIOUS_SNAPSHOT_PATH = DEFAULT_STATUS_DIR / "cloud-status.previous.json"
+DEFAULT_HISTORY_PATH = DEFAULT_STATUS_DIR / "progress-history.jsonl"
 DEFAULT_WORKSPACE_ROOT = Path("/workspace")
+
+# Progress-history rotation thresholds. The watchdog appends one compact row per
+# sweep; we keep the file bounded so multi-week chains do not grow it unbounded.
+HISTORY_TRIM_SIZE_BYTES = 512 * 1024
+HISTORY_KEEP_LINES = 2000
+
+STATE_INITIALIZED = "initialized"
+PLAN_PROGRESSION_RUNGS: tuple[str, ...] = (
+    "prepped",
+    "planned",
+    "critiqued",
+    "gated",
+    "finalized",
+    "executed",
+    "reviewed",
+    "done",
+)
 
 SNAPSHOT_SOURCE = "cloud-local-observer"
 
@@ -69,21 +86,10 @@ def is_trusted_container() -> bool:
 STALE_ACTIVITY_S = 30 * 60
 # A repair-progress marker older than this no longer counts as "repairing".
 REPAIR_FRESH_S = 6 * 60 * 60
+CHAIN_HEALTH_STALE_GRACE_S = 5
 
 SessionStatus = str  # one of: running | repairing | blocked | complete | attention
 LivenessProbe = Callable[[Mapping[str, Any]], dict[str, bool]]
-
-_CANONICAL_STATUS_MAP: dict[CanonicalState, SessionStatus | None] = {
-    CanonicalState.RUNNING: "running",
-    CanonicalState.REPAIRING: "repairing",
-    CanonicalState.RETRYABLE_EXECUTION_BLOCK: "attention",
-    CanonicalState.REAL_IMPLEMENTATION_BLOCK: "attention",
-    CanonicalState.HUMAN_ACTION_REQUIRED: "blocked",
-    CanonicalState.COMPLETED: "complete",
-    CanonicalState.STALE_DERIVED_STATE: "attention",
-    CanonicalState.BROKEN_STATE_MACHINE: "attention",
-    CanonicalState.UNKNOWN: None,
-}
 
 
 # --- public API ------------------------------------------------------------
@@ -97,6 +103,7 @@ def build_cloud_status_snapshot(
     workspace_root: Path = DEFAULT_WORKSPACE_ROOT,
     now: datetime | None = None,
     liveness_probe: LivenessProbe | None = None,
+    history_path: Path | str | None = None,
 ) -> dict[str, Any]:
     """Build the canonical cloud status snapshot from local observation only.
 
@@ -132,6 +139,24 @@ def build_cloud_status_snapshot(
         )
 
     sessions.sort(key=lambda entry: (entry["session"] != "editable-install", entry["status"], entry["session"]))
+
+    # Enrich each session's progress block with time-series deltas (epic %
+    # gained over 1h/5h, epic/plan start times) from the sweep history. Best
+    # effort: missing/unreadable history just leaves the deltas absent.
+    hist_path = Path(history_path) if history_path else DEFAULT_HISTORY_PATH
+    for entry in sessions:
+        progress = entry.get("progress")
+        if not isinstance(progress, dict):
+            continue
+        deltas = compute_progress_deltas(
+            history_path=hist_path,
+            session=entry.get("session"),
+            now=now,
+            started_at=entry.get("started_at"),
+            now_percent=progress.get("percent"),
+        )
+        if deltas:
+            progress.update(deltas)
 
     summary = _summarize(sessions)
     snapshot: dict[str, Any] = {
@@ -195,19 +220,23 @@ def build_and_write_snapshot(
     watchdog_report_path: Path | None = None,
     path: Path | str = DEFAULT_SNAPSHOT_PATH,
     previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
+    history_path: Path | str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the snapshot and atomically write it + the previous rotation.
 
     Convenience entrypoint for the watchdog: one call after each sweep keeps
-    ``cloud-status.json`` fresh. Returns the snapshot that was written.
+    ``cloud-status.json`` fresh and appends one row to the progress-history log
+    (sweep cadence, not per-resident-turn). Returns the snapshot that was written.
     """
     snapshot = build_cloud_status_snapshot(
         marker_dir=marker_dir,
         watchdog_report_path=watchdog_report_path,
         now=now,
+        history_path=history_path,
     )
     write_cloud_status_snapshot(snapshot, path=path, previous_path=previous_path)
+    append_progress_history(snapshot, history_path or DEFAULT_HISTORY_PATH, now=now)
     return snapshot
 
 
@@ -292,6 +321,225 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def append_progress_history(
+    snapshot: Mapping[str, Any] | None,
+    path: Path | str = DEFAULT_HISTORY_PATH,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Append one compact progress row per sweep to the history log.
+
+    The watchdog calls this once per sweep (via :func:`build_and_write_snapshot`)
+    so the file grows on sweep cadence — not on every resident turn. Each row
+    records the epic %, in-flight plan %, plan state, and current plan for every
+    session carrying a progress block. The resident later reads this series to
+    answer "how much has the epic advanced in the past hour?".
+
+    Best-effort and never raises: a write failure simply means one missed
+    sample. The file is trimmed to ``HISTORY_KEEP_LINES`` once it exceeds
+    ``HISTORY_TRIM_SIZE_BYTES``.
+    """
+    if not snapshot or not isinstance(snapshot, Mapping):
+        return
+    now = now or _utcnow()
+    samples: list[dict[str, Any]] = []
+    for entry in snapshot.get("sessions") or []:
+        if not isinstance(entry, Mapping):
+            continue
+        progress = entry.get("progress")
+        if not isinstance(progress, Mapping):
+            continue
+        samples.append(
+            {
+                "session": entry.get("session"),
+                "epic_percent": progress.get("percent"),
+                "plan_percent": progress.get("plan_percent"),
+                "plan_state": progress.get("plan_state"),
+                "current_plan": progress.get("current_plan"),
+            }
+        )
+    if not samples:
+        return
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps({"ts": _isoformat(now), "sessions": samples}, separators=(",", ":")) + "\n"
+            )
+    except OSError:
+        return
+    _maybe_trim_history(path)
+
+
+def _maybe_trim_history(path: Path) -> None:
+    """Bound the history log: once it exceeds the size threshold, keep the tail."""
+    try:
+        if path.stat().st_size < HISTORY_TRIM_SIZE_BYTES:
+            return
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    if len(lines) <= HISTORY_KEEP_LINES:
+        return
+    tail = lines[-HISTORY_KEEP_LINES:]
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text("\n".join(tail) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def _load_progress_history(path: Path | str) -> list[dict[str, Any]]:
+    """Read the progress-history log as a list of parsed rows."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return rows
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def compute_progress_deltas(
+    *,
+    history_path: Path | str = DEFAULT_HISTORY_PATH,
+    session: str | None = None,
+    now: datetime | None = None,
+    started_at: str | None = None,
+    now_percent: Any = None,
+) -> dict[str, Any] | None:
+    """Compute time-series progress deltas for one session from sweep history.
+
+    Returns ``epic_delta_1h`` / ``epic_delta_5h`` (percentage points the epic
+    gained over the last 1h / 5h), plus ``epic_started_at`` and
+    ``plan_started_at``. Deltas are reported only when a history sample exists
+    from at least that far back — a young epic honestly shows ``None`` until the
+    window fills. Returns ``None`` when there is no history for the session.
+
+    ``epic_started_at`` prefers the session marker's ``started_at`` (true chain
+    start) and falls back to the first history sample. ``plan_started_at`` is the
+    timestamp of the most recent transition into the current plan.
+    """
+    if not session:
+        return None
+    now = now or _utcnow()
+    rows = _load_progress_history(history_path)
+    if not rows:
+        return None
+    # Sorted timeline of (ts, epic_percent, current_plan, plan_state) for this session.
+    points: list[tuple[datetime, Any, Any, Any]] = []
+    for row in rows:
+        row_dt = _parse_iso(row.get("ts"))
+        if row_dt is None:
+            continue
+        for sample in row.get("sessions") or []:
+            if not isinstance(sample, dict) or sample.get("session") != session:
+                continue
+            points.append(
+                (row_dt, sample.get("epic_percent"), sample.get("current_plan"), sample.get("plan_state"))
+            )
+            break
+    if not points:
+        return None
+    points.sort(key=lambda item: item[0])
+
+    current_percent = now_percent
+    if current_percent is None:
+        current_percent = points[-1][1]
+
+    def _percent_at_or_before(target: datetime) -> int | None:
+        """Epic % at the latest sample at or before ``target`` (None if none)."""
+        best: int | None = None
+        for sample_dt, percent, _plan, _state in points:
+            if sample_dt > target:
+                break
+            value = _as_int(percent)
+            if value is not None:
+                best = value
+        return best
+
+    def _delta(window_s: int) -> int | None:
+        if current_percent is None:
+            return None
+        reference = _percent_at_or_before(now - timedelta(seconds=window_s))
+        if reference is None:
+            return None
+        return _as_int(current_percent) - reference
+
+    def _stages_advanced(window_s: int) -> list[str]:
+        """Ladder rungs newly reached in the window, for "advanced N stages" color.
+
+        Compares the highest ladder rung held at/before the window start against
+        rungs first seen inside the window. Off-ladder states (authority_divergence,
+        blocked, …) are skipped so transient sub-states don't masquerade as progress.
+        """
+        window_start = now - timedelta(seconds=window_s)
+        prior_idx = -1
+        for sample_dt, _pct, _plan, state in points:
+            if sample_dt > window_start:
+                break
+            idx = _ladder_index(state)
+            if idx >= 0:
+                prior_idx = idx
+        reached: list[str] = []
+        seen: set[int] = set()
+        for sample_dt, _pct, _plan, state in points:
+            if sample_dt <= window_start:
+                continue
+            idx = _ladder_index(state)
+            if idx < 0 or idx <= prior_idx or idx in seen:
+                continue
+            reached.append(PLAN_PROGRESSION_RUNGS[idx])
+            seen.add(idx)
+        return reached
+
+    # plan_started_at: most recent transition into the current plan.
+    current_plan = points[-1][2]
+    plan_started_at: str | None = None
+    prev_plan: Any = None
+    for sample_dt, _percent, plan, _state in points:
+        if plan != prev_plan:
+            if plan is not None and plan == current_plan:
+                plan_started_at = _isoformat(sample_dt)
+            prev_plan = plan
+
+    epic_started_at = started_at or _isoformat(points[0][0])
+    return {
+        "epic_delta_1h": _delta(3600),
+        "epic_delta_5h": _delta(5 * 3600),
+        "stage_changes_1h": _stages_advanced(3600),
+        "epic_started_at": epic_started_at,
+        "plan_started_at": plan_started_at,
+    }
+
+
+def _ladder_index(plan_state: Any) -> int:
+    """Index of a state in PLAN_PROGRESSION_RUNGS, or -1 if off-ladder/empty."""
+    if not plan_state:
+        return -1
+    try:
+        return PLAN_PROGRESSION_RUNGS.index(str(plan_state).strip().lower())
+    except ValueError:
+        return -1
+
+
 def _as_int(value: Any) -> int | None:
     """Best-effort int coercion; ``None`` for non-numeric (or bool) values."""
     if isinstance(value, bool):
@@ -304,56 +552,26 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def _normalize_gh_pr_state(payload: Mapping[str, Any]) -> str:
-    merged_at = str(payload.get("mergedAt") or "").strip()
-    if merged_at:
-        return "merged"
-    state = str(payload.get("state") or "").strip().lower()
-    if state == "open" and bool(payload.get("isDraft")):
-        return "draft"
-    if state in {"open", "closed", "merged", "draft"}:
-        return state
-    return ""
+def _plan_stage_percent(plan_state: str) -> int | None:
+    """Estimate a coarse "% through the in-flight plan" from its lifecycle state.
 
-
-def _probe_live_pr_state(workspace: Path | None, pr_number: object) -> dict[str, Any]:
-    pr = _as_int(pr_number)
-    if pr is None:
-        return {"available": False, "reason": "no_pr_number"}
-    if workspace is None:
-        return {"available": False, "pr_number": pr, "reason": "no_workspace"}
+    A plan advances through a fixed ladder of stages (``PLAN_PROGRESSION_RUNGS``);
+    its recorded ``current_state`` (exposed via chain-health ``last_state``) tells
+    us how many it has completed. We map that to completed-stages / total-stages.
+    ``initialized`` is 0%; an off-ladder state (blocked / failed / awaiting_* /
+    tiebreaker_*) is not percentage-able, so we return ``None`` and let the caller
+    surface the raw state label instead. This is a deliberately coarse stage
+    estimate, not exact sub-plan progress — stages are treated as equal-weight.
+    """
+    if not plan_state:
+        return None
+    if plan_state == STATE_INITIALIZED:
+        return 0
     try:
-        proc = subprocess.run(
-            ["gh", "pr", "view", str(pr), "--json", "number,state,isDraft,mergedAt"],
-            cwd=str(workspace),
-            text=True,
-            capture_output=True,
-            timeout=20,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"available": False, "pr_number": pr, "reason": type(exc).__name__}
-    if proc.returncode != 0:
-        return {
-            "available": False,
-            "pr_number": pr,
-            "reason": "gh_pr_view_failed",
-            "stderr": str(proc.stderr or "").strip()[-500:],
-        }
-    try:
-        payload = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return {"available": False, "pr_number": pr, "reason": "invalid_gh_json"}
-    if not isinstance(payload, Mapping):
-        return {"available": False, "pr_number": pr, "reason": "invalid_gh_payload"}
-    state = _normalize_gh_pr_state(payload)
-    if not state:
-        return {"available": False, "pr_number": pr, "reason": "missing_gh_state"}
-    return {
-        "available": True,
-        "pr_number": _as_int(payload.get("number")) or pr,
-        "state": state,
-    }
+        index = PLAN_PROGRESSION_RUNGS.index(plan_state)
+    except ValueError:
+        return None
+    return round((index + 1) / len(PLAN_PROGRESSION_RUNGS) * 100)
 
 
 def _session_progress(
@@ -362,6 +580,7 @@ def _session_progress(
     milestone_count: Any,
     current_plan: str | None,
     complete: bool,
+    plan_state: str | None = None,
 ) -> dict[str, Any] | None:
     """Pre-calculate epic/sprint progress for one snapshot session.
 
@@ -374,8 +593,18 @@ def _session_progress(
 
     The breakdown follows the chain's standard sequential progression: the first
     ``completed_count`` milestones are done, the next is the in-flight sprint
-    (carrying ``current_plan``), and the rest are pending. We report discrete
-    states rather than a false-precision sub-sprint percentage.
+    (carrying ``current_plan``), and the rest are pending.
+
+    For the in-flight sprint we additionally estimate a per-plan percent
+    (``plan_percent``) from ``plan_state`` via :func:`_plan_stage_percent`, plus
+    the raw ``plan_state`` label. Both are omitted when there is no in-flight
+    plan or no recorded state, so the progress block stays clean.
+
+    The headline ``percent`` is the epic progress **with the in-flight plan's
+    stage fraction folded in** — ``(completed + plan_percent/100) / total`` — so
+    it advances as the current plan progresses rather than freezing between
+    milestones. Without an in-flight plan-stage signal it falls back to plain
+    ``completed / total``.
     """
     total = _as_int(milestone_count)
     if total is None or total <= 0:
@@ -388,7 +617,24 @@ def _session_progress(
         done = total
     plan = current_plan or None
 
-    percent = 100 if complete else round(done / total * 100)
+    # The in-flight plan's stage estimate is only meaningful while a sprint is
+    # actually in progress (chain not complete, milestones remain).
+    has_in_flight = (not complete) and done < total
+    plan_state_norm = str(plan_state).strip().lower() if plan_state else ""
+    plan_percent = _plan_stage_percent(plan_state_norm) if has_in_flight else None
+
+    # Epic % folds the in-flight plan's stage fraction in, so the headline moves
+    # as the current plan advances instead of freezing between milestones. With
+    # no in-flight plan (complete) or no plan-stage signal, it is plain
+    # completed-milestones / total. The plan fraction counts as up to one
+    # milestone's worth of credit.
+    if complete:
+        percent = 100
+    elif plan_percent is not None:
+        percent = round((done + plan_percent / 100) / total * 100)
+    else:
+        percent = round(done / total * 100)
+
     sprints: list[dict[str, Any]] = []
     for index in range(1, total + 1):
         if complete or index <= done:
@@ -397,11 +643,15 @@ def _session_progress(
             sprint: dict[str, Any] = {"sprint": f"s{index}", "status": "in_progress"}
             if plan:
                 sprint["plan"] = plan
+            if plan_state_norm:
+                sprint["plan_state"] = plan_state_norm
+            if plan_percent is not None:
+                sprint["plan_percent"] = plan_percent
             sprints.append(sprint)
         else:
             sprints.append({"sprint": f"s{index}", "status": "pending"})
 
-    return {
+    progress: dict[str, Any] = {
         "completed_milestones": done,
         "total_milestones": total,
         "percent": percent,
@@ -409,107 +659,130 @@ def _session_progress(
         "current_plan": plan,
         "sprints": sprints,
     }
+    if has_in_flight and plan_state_norm:
+        progress["plan_state"] = plan_state_norm
+    if plan_percent is not None:
+        progress["plan_percent"] = plan_percent
+    return progress
+
+
+def _overlay_newer_chain_state(
+    chain_health: Mapping[str, Any] | None,
+    *,
+    workspace: Path | None,
+    remote_spec: str,
+) -> Mapping[str, Any] | None:
+    state_path, chain_state = _load_latest_chain_state(workspace)
+    if state_path is None or not isinstance(chain_state, Mapping):
+        return chain_health
+
+    health_mtime = _chain_health_mtime(chain_health)
+    try:
+        state_mtime = state_path.stat().st_mtime
+    except OSError:
+        return chain_health
+    if health_mtime is not None and state_mtime <= health_mtime + CHAIN_HEALTH_STALE_GRACE_S:
+        return chain_health
+
+    milestone_count = _chain_milestone_count(remote_spec)
+    if milestone_count is None and isinstance(chain_health, Mapping):
+        milestone_count = _as_int(chain_health.get("milestone_count"))
+    completed = chain_state.get("completed")
+    completed_len = len(completed) if isinstance(completed, list) else 0
+    current_index = _as_int(chain_state.get("current_milestone_index"))
+    last_state = str(chain_state.get("last_state") or "").strip()
+    chain_complete = _chain_state_complete(
+        last_state=last_state,
+        completed_len=completed_len,
+        milestone_count=milestone_count,
+    )
+    custody_mismatch = bool(
+        last_state.lower() in {"done", "complete", "completed"}
+        and milestone_count is not None
+        and completed_len < milestone_count
+    )
+
+    merged: dict[str, Any] = dict(chain_health or {})
+    merged.update(
+        {
+            "chain_complete": chain_complete,
+            "completed_count": completed_len,
+            "current_milestone_index": current_index,
+            "custody_mismatch": custody_mismatch,
+            "last_state": last_state,
+            "updated_at": _isoformat(datetime.fromtimestamp(state_mtime, timezone.utc)),
+            "source": "chain_state",
+            "chain_state_path": str(state_path),
+        }
+    )
+    if milestone_count is not None:
+        merged["milestone_count"] = milestone_count
+    if chain_complete:
+        merged["current_plan_name"] = ""
+    elif isinstance(chain_state.get("current_plan_name"), str):
+        merged["current_plan_name"] = chain_state.get("current_plan_name")
+    completed_pr = completed[-1] if isinstance(completed, list) and completed else {}
+    if chain_state.get("pr_number") is not None:
+        merged["pr_number"] = chain_state.get("pr_number")
+    elif isinstance(completed_pr, Mapping) and completed_pr.get("pr_number") is not None:
+        merged["pr_number"] = completed_pr.get("pr_number")
+    if chain_state.get("pr_state") is not None:
+        merged["pr_state"] = chain_state.get("pr_state")
+    elif isinstance(completed_pr, Mapping) and completed_pr.get("pr_state") is not None:
+        merged["pr_state"] = completed_pr.get("pr_state")
+    return merged
+
+
+def _load_latest_chain_state(workspace: Path | None) -> tuple[Path | None, Mapping[str, Any] | None]:
+    if workspace is None:
+        return None, None
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    try:
+        candidates = [p for p in chain_dir.glob("*.json") if p.is_file()]
+    except OSError:
+        return None, None
+    if not candidates:
+        return None, None
+    path = max(candidates, key=lambda p: p.stat().st_mtime)
+    payload = _load_json(path)
+    if not isinstance(payload, Mapping):
+        return None, None
+    return path, payload
+
+
+def _chain_health_mtime(chain_health: Mapping[str, Any] | None) -> float | None:
+    if not chain_health:
+        return None
+    updated = _parse_iso(chain_health.get("updated_at"))
+    return updated.timestamp() if updated is not None else None
+
+
+def _chain_milestone_count(remote_spec: str) -> int | None:
+    if not remote_spec:
+        return None
+    try:
+        spec_path = Path(remote_spec)
+        if not spec_path.exists():
+            return None
+        return len(load_chain_spec(spec_path).milestones)
+    except Exception:
+        return None
+
+
+def _chain_state_complete(
+    *,
+    last_state: str,
+    completed_len: int,
+    milestone_count: int | None,
+) -> bool:
+    if last_state.strip().lower() not in {"done", "complete", "completed"}:
+        return False
+    if milestone_count is None:
+        return True
+    return completed_len >= milestone_count
 
 
 # --- per-session classification -------------------------------------------
-
-
-def _build_resolver_evidence(
-    *,
-    chain_health: Mapping[str, Any] | None,
-    needs_human: Mapping[str, Any] | None,
-    repair_progress: Mapping[str, Any] | None,
-    watchdog_item: Mapping[str, Any],
-    liveness: Mapping[str, bool],
-    chain_complete: bool,
-) -> dict[str, Any]:
-    """Map already-gathered status-snapshot evidence into resolver-compatible shape.
-
-    This is read-only and purely derived from evidence ``_build_session_entry``
-    already loaded — no additional filesystem I/O.
-    """
-    ch = chain_health or {}
-    nh = needs_human or {}
-    wi = watchdog_item or {}
-    is_live = bool(liveness.get("tmux") or liveness.get("process"))
-
-    # Authority completion: a terminal "done" plan state
-    plan_current_state = "done" if chain_complete else (ch.get("current_plan_name") or "")
-
-    # Chain last_state — defer to watchdog verdict when chain-health is frozen
-    chain_last_state = "done" if chain_complete else (ch.get("last_state") or "")
-    wd_status = str(wi.get("status", "")).lower()
-    if not chain_last_state and wd_status:
-        chain_last_state = wd_status
-
-    # Needs-human structured evidence
-    nh_present = bool(nh)
-    nh_evidence: dict[str, Any] = {"present": nh_present}
-    if nh_present:
-        nh_evidence.update(
-            {
-                "summary": nh.get("summary", ""),
-                "path": nh.get("path", ""),
-                "recorded_at": nh.get("recorded_at", ""),
-                "escalation_label": nh.get("escalation_label", ""),
-                "gate_type": nh.get("gate_type", ""),
-                "human_gate": nh.get("human_gate", ""),
-                "gate": nh.get("gate", ""),
-                "category": nh.get("category", ""),
-                "gate_kind": nh.get("gate_kind", ""),
-                "kind": nh.get("kind", ""),
-                "blocked_task_id": nh.get("current", ""),
-                "plan_refs": nh.get("plan_refs", []),
-            }
-        )
-
-    # Repair-progress items
-    rp_items: list[dict[str, Any]] = []
-    if isinstance(repair_progress, Mapping) and repair_progress:
-        rp_items = [dict(repair_progress)]
-
-    return {
-        "schema_version": 1,
-        "session": "",
-        "target_id": "snapshot-observe",
-        "authoritative_source": "status_snapshot_observe",
-        "target_session": "",
-        "current_refs": {},
-        "marker": {},
-        "plan_state": {
-            "current_state": plan_current_state,
-            "fingerprint": ch.get("fingerprint", ""),
-            "mtime": ch.get("mtime", 0.0),
-        },
-        "chain_state": {
-            "last_state": chain_last_state,
-            "fingerprint": ch.get("fingerprint", ""),
-            "mtime": ch.get("mtime", 0.0),
-        },
-        "event_cursors": {
-            "latest_gate_kind": wi.get("status", ""),
-        },
-        "tmux_process": {
-            "live_status": "alive" if is_live else "stopped",
-        },
-        "needs_human": nh_evidence,
-        "repair_progress": {
-            "present": bool(repair_progress),
-            "items": rp_items,
-        },
-        "chain_log": {},
-        "active_step_heartbeat": {},
-        "sibling_sessions": [],
-        "ignored_artifacts": [],
-        "stale_evidence": [],
-        "rationale": ["resolver observe via status_snapshot"],
-        "diagnostic_codes": {
-            "escalation_label": nh.get("escalation_label", ""),
-            "event_signature_labels": [],
-            "discord_status": "",
-            "retry_strategy": "",
-        },
-    }
 
 
 def _build_session_entry(
@@ -530,6 +803,11 @@ def _build_session_entry(
 
     marker_path = Path(marker.get("_marker_path") or (marker_dir / f"{session}.json"))
     chain_health = _load_json(marker_dir / f"{session}.chain-health.progress.json")
+    chain_health = _overlay_newer_chain_state(
+        chain_health,
+        workspace=workspace,
+        remote_spec=remote_spec,
+    )
     repair_progress = _load_json(marker_dir / f"{session}.repair-progress.json")
     needs_human = _load_json(repair_data_dir / f"{session}.needs-human.json")
     watchdog_item = watchdog_by_session.get(session, {})
@@ -542,59 +820,50 @@ def _build_session_entry(
         or plan_name
         or None
     )
-    latest_activity = _latest_activity(chain_health, marker)
-    plan_state = _load_current_plan_state(workspace, str(current_plan or ""))
+    try:
+        current_target_record = resolve_current_target(
+            session,
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+        )
+    except Exception:
+        current_target_record = {}
+    current_refs = (
+        current_target_record.get("current_refs")
+        if isinstance(current_target_record, Mapping)
+        else None
+    )
+    if isinstance(current_refs, Mapping):
+        resolved_current_plan = current_refs.get("current_plan_name")
+        if isinstance(resolved_current_plan, str) and resolved_current_plan.strip():
+            current_plan = resolved_current_plan.strip()
+    # Plan lifecycle state for the per-plan stage %. Prefer the plan's own
+    # ``current_state`` (from state.json): the chain-health ``last_state`` can be
+    # a transient execute sub-state (e.g. ``authority_divergence``, ``error``)
+    # that sits off the progression ladder and would under-report the plan's
+    # position. Fall back to last_state when state.json is unavailable.
+    plan_state_doc = _load_current_plan_state(workspace, str(current_plan or ""))
+    plan_current_state = (
+        str(plan_state_doc.get("current_state") or "").strip().lower()
+        if isinstance(plan_state_doc, Mapping)
+        else ""
+    )
+    plan_state_label = plan_current_state or (
+        chain_health.get("last_state") if chain_health else None
+    )
+    if isinstance(chain_health, Mapping) and chain_health.get("custody_mismatch"):
+        plan_state_label = None
+    latest_activity = _latest_activity(chain_health, marker, plan_state_doc)
     liveness = _augment_liveness_with_plan_state(
         _safe_liveness(liveness_probe, marker),
         chain_health=chain_health,
-        plan_state=plan_state,
+        plan_state=plan_state_doc,
     )
     superseding_sibling = _find_superseding_sibling(
         marker,
         marker_dir=marker_dir,
         liveness_probe=liveness_probe,
     )
-
-    canonical_run_state: CanonicalRunState | None = None
-    canonical_state: str | None = None
-    canonical_reason: str | None = None
-    canonical_human_required: bool | None = None
-    canonical_human_gate: str | None = None
-    canonical_resolver_dict: dict[str, Any] | None = None
-    try:
-        resolver_evidence = _build_resolver_evidence(
-            chain_health=chain_health,
-            needs_human=needs_human,
-            repair_progress=repair_progress,
-            watchdog_item=watchdog_item,
-            liveness=liveness,
-            chain_complete=chain_complete,
-        )
-        canonical_run_state = resolve_run_state(resolver_evidence)
-        if resolver_observe_enabled():
-            canonical_state = canonical_run_state.canonical_state.name
-            canonical_reason = canonical_run_state.reason
-            canonical_human_required = canonical_run_state.human_required
-            canonical_human_gate = (
-                canonical_run_state.human_gate.name if canonical_run_state.human_gate else None
-            )
-            canonical_resolver_dict = canonical_run_state.to_dict()
-    except Exception:
-        # Resolver failure must never affect the legacy snapshot output.
-        canonical_run_state = None
-        canonical_resolver_dict = None
-
-    event_plan_dir = _derive_status_event_plan_dir(
-        workspace=workspace,
-        current_plan=str(current_plan or ""),
-        marker_dir=marker_dir,
-        session=session,
-    )
-    stored_pr_number = chain_health.get("pr_number") if chain_health else None
-    stored_pr_state = chain_health.get("pr_state") if chain_health else None
-    live_pr_state = _probe_live_pr_state(workspace, stored_pr_number)
-    pr_number = live_pr_state.get("pr_number") if live_pr_state.get("available") else stored_pr_number
-    pr_state = live_pr_state.get("state") if live_pr_state.get("available") else stored_pr_state
 
     status, operator_next = _classify_session(
         session=session,
@@ -611,18 +880,17 @@ def _build_session_entry(
         marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
         current_plan=str(current_plan or ""),
-        plan_state=plan_state,
+        plan_state=plan_state_doc,
         now=now,
-        canonical_run_state=canonical_run_state,
-        event_plan_dir=event_plan_dir,
     )
 
-    entry: dict[str, Any] = {
+    return {
         "session": session,
         "display_name": session,
         "workspace": str(workspace) if workspace else "",
         "spec": remote_spec,
         "run_kind": run_kind,
+        "started_at": marker.get("started_at"),
         "status": status,
         "should_run": status not in {"complete"},
         "tmux": liveness.get("tmux", False),
@@ -638,9 +906,10 @@ def _build_session_entry(
             milestone_count=milestone_count,
             current_plan=current_plan,
             complete=chain_complete,
+            plan_state=plan_state_label,
         ),
-        "pr_number": pr_number,
-        "pr_state": pr_state,
+        "pr_number": chain_health.get("pr_number") if chain_health else None,
+        "pr_state": chain_health.get("pr_state") if chain_health else None,
         "latest_activity": latest_activity,
         "operator_next": operator_next,
         "evidence": {
@@ -654,76 +923,8 @@ def _build_session_entry(
         },
     }
 
-    # Attach canonical resolver fields when observe is enabled and the resolver
-    # produced a result.  These are flat keys so callers don't need to drill into
-    # a nested object, but they are also self-contained in canonical_resolver_dict
-    # for consumers that want the full structured result.
-    if canonical_resolver_dict is not None:
-        entry["canonical_state"] = canonical_state
-        entry["canonical_reason"] = canonical_reason
-        entry["canonical_human_required"] = canonical_human_required
-        entry["canonical_human_gate"] = canonical_human_gate
-        entry["canonical_resolver"] = canonical_resolver_dict
-
-    return entry
-
 
 def _classify_session(
-    *,
-    session: str,
-    workspace: Path | None,
-    remote_spec: str,
-    chain_health: Mapping[str, Any],
-    chain_complete: bool,
-    needs_human: Mapping[str, Any],
-    repair_progress: Mapping[str, Any],
-    watchdog_item: Mapping[str, Any],
-    liveness: Mapping[str, bool],
-    superseding_sibling: str | None,
-    latest_activity_dt: datetime | None,
-    marker_dir: Path,
-    repair_data_dir: Path,
-    current_plan: str,
-    plan_state: Mapping[str, Any] | None,
-    now: datetime,
-    canonical_run_state: CanonicalRunState | None,
-    event_plan_dir: Path,
-) -> tuple[SessionStatus, str]:
-    legacy_status, legacy_reason = _classify_session_legacy(
-        session=session,
-        workspace=workspace,
-        remote_spec=remote_spec,
-        chain_health=chain_health,
-        chain_complete=chain_complete,
-        needs_human=needs_human,
-        repair_progress=repair_progress,
-        watchdog_item=watchdog_item,
-        liveness=liveness,
-        superseding_sibling=superseding_sibling,
-        latest_activity_dt=latest_activity_dt,
-        marker_dir=marker_dir,
-        repair_data_dir=repair_data_dir,
-        current_plan=current_plan,
-        plan_state=plan_state,
-        now=now,
-    )
-    canonical_status = _canonical_session_status(canonical_run_state)
-    if canonical_status is not None:
-        if canonical_status != legacy_status:
-            _emit_status_drift_detected(
-                event_plan_dir=event_plan_dir,
-                canonical_run_state=canonical_run_state,
-                canonical_status=canonical_status,
-                legacy_status=legacy_status,
-                session=session,
-                workspace=workspace,
-                current_plan=current_plan,
-            )
-        return canonical_status, legacy_reason
-    return legacy_status, legacy_reason
-
-
-def _classify_session_legacy(
     *,
     session: str,
     workspace: Path | None,
@@ -756,16 +957,39 @@ def _classify_session_legacy(
             f"superseded by sibling session {superseding_sibling}; no runner expected",
         )
 
-    # A spec inside the session workspace is canonical durable input; if that
-    # file is gone, old chain-health and needs-human sidecars are stale evidence
-    # and must not keep the session classified as a live blocker. Specs outside
-    # the workspace (placeholders, legacy) never invalidate a session.
     if _canonical_spec_missing(workspace, remote_spec):
         return "attention", "spec missing or unreadable"
 
-    # A current needs-human sidecar is ground truth for active work. A complete
-    # chain with no active plan has no live repair target, so stale repair
-    # exhaustion markers from earlier ticks must not keep it blocked forever.
+    if isinstance(chain_health, Mapping) and chain_health.get("custody_mismatch"):
+        completed = chain_health.get("completed_count")
+        total = chain_health.get("milestone_count")
+        current_index = chain_health.get("current_milestone_index")
+        return (
+            "attention",
+            "chain custody mismatch: terminal state with "
+            f"completed={completed}/{total} current_milestone_index={current_index}",
+        )
+
+    # Fresh repair custody is stronger than a needs-human sidecar. Repair loops
+    # can leave old needs-human markers in place while a higher layer is already
+    # working the case; status consumers should show that as repairing.
+    if _is_repair_active(repair_progress, repair_data_dir, session, now):
+        return "repairing", "automated repair dispatched for this session"
+
+    # A live runner with activity newer than the needs-human marker means the
+    # target has moved since escalation. Do not let that stale marker mask the
+    # recovery/retry that is currently executing.
+    if _needs_human_superseded_by_live_activity(
+        needs_human=needs_human,
+        liveness=liveness,
+        latest_activity_dt=latest_activity_dt,
+    ):
+        return "running", "live runner activity supersedes older needs-human marker"
+
+    # A current needs-human sidecar is ground truth for non-repairing active
+    # work. A complete chain with no active plan has no live repair target, so
+    # stale repair exhaustion markers from earlier ticks must not keep it
+    # blocked forever.
     if _is_current_needs_human(
         session=session,
         needs_human=needs_human,
@@ -791,15 +1015,6 @@ def _classify_session_legacy(
     if chain_complete:
         return "complete", "chain complete; no runner expected"
 
-    # Active automated repair takes precedence over plain stalled/running when
-    # the chain is not advancing on its own.
-    if _is_repair_active(repair_progress, repair_data_dir, session, now):
-        return "repairing", "automated repair dispatched for this session"
-
-    # A live process plus an unchanged repairable failure receipt is custody, not
-    # running: the failure has not been cleared, so report it as attention so the
-    # operator can see the repair system is stuck. Checked before any
-    # liveness-based ``running`` return on purpose.
     if _has_current_repairable_failure(plan_state):
         return "attention", "alive_but_failed: current repairable failure receipt remains"
 
@@ -816,55 +1031,7 @@ def _classify_session_legacy(
     return "attention", f"stalled (no live process, last activity {_age_s(latest_activity_dt, now)}s ago)"
 
 
-def _canonical_session_status(canonical_run_state: CanonicalRunState | None) -> SessionStatus | None:
-    if canonical_run_state is None:
-        return None
-    return _CANONICAL_STATUS_MAP.get(canonical_run_state.canonical_state)
-
-
-def _derive_status_event_plan_dir(
-    *,
-    workspace: Path | None,
-    current_plan: str,
-    marker_dir: Path,
-    session: str,
-) -> Path:
-    plan_name = current_plan.strip()
-    if workspace is not None and plan_name:
-        return workspace / ".megaplan" / "plans" / plan_name
-    return marker_dir / ".status-events" / (session or "_unknown-session")
-
-
-def _emit_status_drift_detected(
-    *,
-    event_plan_dir: Path,
-    canonical_run_state: CanonicalRunState | None,
-    canonical_status: SessionStatus,
-    legacy_status: SessionStatus,
-    session: str,
-    workspace: Path | None,
-    current_plan: str,
-) -> None:
-    if canonical_run_state is None:
-        return
-    payload = {
-        "what": "status_snapshot.session_status",
-        "expected": canonical_status,
-        "actual": legacy_status,
-        "canonical_state": canonical_run_state.canonical_state.name,
-        "legacy_label": legacy_status,
-        "stale_sources": list(canonical_run_state.stale_sources),
-        "session": session,
-        "workspace": str(workspace) if workspace is not None else "",
-        "current_plan": current_plan,
-    }
-    try:
-        emit(EventKind.DRIFT_DETECTED, event_plan_dir, payload=payload)
-    except Exception:
-        return
-
-
-def _canonical_spec_missing(workspace: Path | None, remote_spec: str) -> bool:
+def _canonical_spec_missing(workspace: Path, remote_spec: str) -> bool:
     """True when a chain marker points at a spec that should exist locally.
 
     Many tests and some legacy markers carry placeholder specs outside the
@@ -873,7 +1040,7 @@ def _canonical_spec_missing(workspace: Path | None, remote_spec: str) -> bool:
     old chain-health and needs-human sidecars are stale evidence and must not
     keep the session classified as a live blocker.
     """
-    if workspace is None or not remote_spec:
+    if not remote_spec:
         return False
     try:
         spec_path = Path(remote_spec)
@@ -1011,6 +1178,21 @@ def _find_superseding_sibling(
 
 
 
+def _needs_human_superseded_by_live_activity(
+    *,
+    needs_human: Mapping[str, Any] | None,
+    liveness: Mapping[str, bool],
+    latest_activity_dt: datetime | None,
+) -> bool:
+    if not _is_needs_human(needs_human):
+        return False
+    if not (liveness.get("tmux") or liveness.get("process")):
+        return False
+    if latest_activity_dt is None:
+        return False
+    recorded_at = _parse_iso(str(needs_human.get("recorded_at") or ""))
+    return recorded_at is not None and latest_activity_dt > recorded_at
+
 def _is_current_needs_human(
     *,
     session: str,
@@ -1064,11 +1246,17 @@ def _is_repair_active(
 ) -> bool:
     if not isinstance(repair_progress, Mapping) or not repair_progress:
         return False
+    repair_data = _load_json(repair_data_dir / f"{session}.repair-data.json")
+    if isinstance(repair_data, Mapping):
+        outcome = str(repair_data.get("outcome") or "").strip()
+        if is_success_outcome(outcome):
+            return False
+        if str(repair_data.get("completed_at") or "").strip():
+            return False
     recorded_at = _parse_iso(repair_progress.get("updated_at") or repair_progress.get("ts"))
     if recorded_at is None:
         # A repair-progress marker without a timestamp still means a repair ran;
         # treat it as active only if recent repair-data exists alongside.
-        repair_data = _load_json(repair_data_dir / f"{session}.repair-data.json")
         return bool(repair_data)
     age = (now - recorded_at).total_seconds()
     return age <= REPAIR_FRESH_S
@@ -1082,7 +1270,6 @@ def _watchdog_status(watchdog_item: Mapping[str, Any], chain_complete: bool) -> 
 
 
 def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[str, Any] | None:
-    """Load the per-plan ``state.json`` so custody can read its failure receipt."""
     if workspace is None or not current_plan:
         return None
     path = workspace / ".megaplan" / "plans" / current_plan / "state.json"
@@ -1091,13 +1278,6 @@ def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[
 
 
 def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> bool:
-    """True when the current plan state carries an unresolved repairable failure.
-
-    A live process coexisting with such a receipt is ``alive_but_failed`` custody
-    (attention), not ``running``: the failure has not been cleared. ``phase_failed``
-    in the execute phase is the open repair case; a finalized/blocked/manual-review
-    state with a step/handler failure is the parked-but-unresolved case.
-    """
     if not isinstance(plan_state, Mapping) or not plan_state:
         return False
     latest_failure = plan_state.get("latest_failure")
@@ -1108,11 +1288,46 @@ def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> boo
     current_state = str(plan_state.get("current_state") or "").strip().lower()
     if kind == "phase_failed" and phase in {"", "execute"}:
         return True
-    return current_state in {"blocked", "manual_review", "finalized"} and kind in {
+    if current_state == "failed" and kind == "no_next_step":
+        return True
+    return current_state in {"blocked", "manual_review", "finalized", "failed"} and kind in {
         "phase_failed",
         "step_failed",
         "handler_failed",
+        "no_next_step",
     }
+
+
+def _latest_activity(
+    chain_health: Mapping[str, Any] | None,
+    marker: Mapping[str, Any],
+    plan_state: Mapping[str, Any] | None = None,
+) -> str:
+    candidates: list[datetime] = []
+    raw_candidates: list[Any] = []
+    if chain_health:
+        raw_candidates.append(chain_health.get("updated_at"))
+        raw_candidates.append(_iso_from_epoch(chain_health.get("events_mtime")))
+    if plan_state:
+        active_step = plan_state.get("active_step")
+        if isinstance(active_step, Mapping):
+            raw_candidates.append(active_step.get("last_activity_at"))
+            raw_candidates.append(active_step.get("started_at"))
+        raw_candidates.append(plan_state.get("updated_at"))
+    raw_candidates.append(marker.get("updated_at"))
+    raw_candidates.append(marker.get("started_at"))
+    for value in raw_candidates:
+        if isinstance(value, (int, float)) and value:
+            parsed = _parse_iso(_iso_from_epoch(value))
+            if parsed is not None:
+                candidates.append(parsed)
+        if isinstance(value, str) and value:
+            parsed = _parse_iso(value)
+            if parsed is not None:
+                candidates.append(parsed)
+    if candidates:
+        return _isoformat(max(candidates))
+    return ""
 
 
 def _augment_liveness_with_plan_state(
@@ -1121,13 +1336,6 @@ def _augment_liveness_with_plan_state(
     chain_health: Mapping[str, Any] | None,
     plan_state: Mapping[str, Any] | None,
 ) -> dict[str, bool]:
-    """Augment generic ps/tmux liveness with plan-state + chain-health signals.
-
-    The generic process matcher can miss a manual-phase worker (e.g.
-    ``megaplan execute --plan ...``) that the watchdog chain-health and the plan's
-    own ``active_step`` already track. This keeps custody honest about which
-    processes are truly live without re-implementing a process scanner here.
-    """
     augmented = {"tmux": bool(liveness.get("tmux")), "process": bool(liveness.get("process"))}
     if augmented["process"]:
         return augmented
@@ -1139,13 +1347,8 @@ def _augment_liveness_with_plan_state(
             augmented["process"] = True
             return augmented
 
-    # Watchdog chain-health is produced from the same local namespace and can
-    # observe an active step even when the generic ps matcher cannot identify a
-    # direct manual phase command.
-    if chain_health and bool(chain_health.get("plan_has_active_step")) and bool(
-        chain_health.get("plan_has_live_activity")
-    ):
-        augmented["process"] = True
+    # Chain-health active-step flags are cached breadcrumbs. They can outlive
+    # the worker, so only a live PID or process probe may upgrade liveness.
     return augmented
 
 
@@ -1161,22 +1364,6 @@ def _pid_is_live(pid: int) -> bool:
     except OSError:
         return False
     return True
-
-
-def _latest_activity(chain_health: Mapping[str, Any] | None, marker: Mapping[str, Any]) -> str:
-    candidates = []
-    if chain_health:
-        candidates.append(chain_health.get("updated_at"))
-        candidates.append(_iso_from_epoch(chain_health.get("events_mtime")))
-    candidates.append(marker.get("started_at"))
-    for value in candidates:
-        if isinstance(value, (int, float)) and value:
-            iso = _iso_from_epoch(value)
-            if iso:
-                return iso
-        if isinstance(value, str) and value:
-            return value
-    return ""
 
 
 def _is_plan_kind_marker(workspace: Path | None) -> bool:
@@ -1207,6 +1394,7 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
     workspace = str(marker.get("workspace") or "")
     remote_spec = str(marker.get("remote_spec") or "")
     plan_name = str(marker.get("plan_name") or "")
+    relaunch_command = str(marker.get("relaunch_command") or "")
 
     tmux_alive = False
     if session:
@@ -1223,6 +1411,9 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
             tmux_alive = False
 
     process_alive = False
+    marker_pid = _as_int(marker.get("pid"))
+    if marker_pid is not None and _pid_is_live(marker_pid):
+        process_alive = True
     needles = [value for value in (remote_spec, workspace, plan_name) if value]
     if needles:
         try:
@@ -1237,10 +1428,18 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
             ps = None
         if ps is not None and ps.returncode == 0:
             for line in ps.stdout.splitlines():
-                if "arnold_pipelines.megaplan" not in line:
-                    continue
-                if needles[0] in line and (
-                    " chain start" in line or " epic-chain start" in line or " auto " in line
+                if session and f"watchdog-{session}" in line:
+                    process_alive = True
+                    break
+                if relaunch_command and relaunch_command in line:
+                    process_alive = True
+                    break
+                if "arnold_pipelines.megaplan" in line and any(needle in line for needle in needles) and (
+                    " chain start" in line
+                    or " epic-chain start" in line
+                    or " auto " in line
+                    or " execute " in line
+                    or " resume " in line
                 ):
                     process_alive = True
                     break

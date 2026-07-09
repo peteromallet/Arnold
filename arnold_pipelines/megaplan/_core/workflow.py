@@ -489,20 +489,18 @@ def _resume_execute_authority_failure(
             "message": "finalize.json task list has no task IDs",
             "resume_cursor": dict(cursor),
         }
-    from arnold_pipelines.megaplan.orchestration.authority_readers import (
-        AuthorityDecision,
-        corroborated_completed_task_ids,
-    )
+    from arnold_pipelines.megaplan.auto import _execute_completion_authority
 
-    decisions: dict[str, AuthorityDecision] = {}
-    completed = corroborated_completed_task_ids(
-        task_records,
-        plan_dir=plan_dir,
-        decisions=decisions,
-    )
-    missing = sorted(task_ids - completed)
-    if not missing:
+    ok, reasons = _execute_completion_authority(plan_dir)
+    if ok:
         return None
+    missing = sorted(
+        reason.split(":", 1)[0]
+        for reason in reasons
+        if isinstance(reason, str) and reason
+    )
+    if not missing:
+        missing = sorted(task_ids)
     return {
         "guard": guard,
         "reason": "execute_authority_diverged",
@@ -511,15 +509,18 @@ def _resume_execute_authority_failure(
         "missing_task_ids": missing,
         "decisions": {
             task_id: {
-                "status": decision.status.value,
-                "authoritative": decision.authoritative,
-                "would_block_reasons": list(decision.would_block_reasons),
-                "missing_outputs": list(decision.missing_outputs),
-                "stale_evidence": list(decision.stale_evidence),
-                "error": decision.error,
+                "status": "unknown",
+                "authoritative": False,
+                "would_block_reasons": [
+                    reason
+                    for reason in reasons
+                    if isinstance(reason, str) and reason.startswith(f"{task_id}:")
+                ],
+                "missing_outputs": [],
+                "stale_evidence": [],
+                "error": None,
             }
-            for task_id, decision in sorted(decisions.items())
-            if task_id in missing
+            for task_id in missing
         },
     }
 

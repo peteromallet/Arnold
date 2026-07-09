@@ -211,6 +211,37 @@ workflow(id="custom-resolver", steps=[plan(id="plan")])
     assert resolver.resolved == (ImportRef("project.workflow_components", "plan"),)
 
 
+def test_source_compiler_normalizes_relative_import_modules_for_absolute_hyphenated_paths() -> None:
+    source = """
+from __future__ import annotations
+
+from .workflow_components import plan
+from arnold.workflow.authoring import workflow
+
+workflow(id="relative-import", steps=[plan(id="plan")])
+"""
+    resolver = _Resolver(
+        {
+            "_.tmp.hyphenated_root.pkg.workflow_components:plan": authoring.StepComponent(
+                id="plan",
+                provenance=authoring.ComponentProvenance(
+                    module="_.tmp.hyphenated_root.pkg.workflow_components",
+                    qualname="plan",
+                    export_name="plan",
+                ),
+            )
+        }
+    )
+    source_path = Path("/tmp/hyphenated-root/pkg/relative_import.pypeline")
+
+    pipeline = workflow.lower_workflow_source(source, source_path=source_path, resolver=resolver)
+
+    assert pipeline.steps[0].metadata["component_ref"] == (
+        "_.tmp.hyphenated_root.pkg.workflow_components:plan"
+    )
+    assert resolver.resolved == (ImportRef("_.tmp.hyphenated_root.pkg.workflow_components", "plan"),)
+
+
 def test_source_compiler_lowers_direct_form_to_linear_pipeline_with_call_site_spans() -> None:
     source_path = Path("tests/fixtures/workflow_authoring/valid_direct_linear.py")
     source = source_path.read_text(encoding="utf-8")
@@ -1790,6 +1821,100 @@ def flow() -> None:
     assert _diagnostic_payloads(source_error.value)[0]["message"] == expected_message
 
 
+def test_source_compiler_m3_accepts_unique_branch_local_target_for_route_metadata() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import decide, finalize
+
+@workflow(id="branch-local-route-binding")
+def flow() -> None:
+    decision = decide(id="decide")
+    if decision == "approve":
+        finalize(id="approve_finalize")
+    else:
+        finalize(id="reject_finalize")
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:decide": _step_component(
+                "decide",
+                route_bindings=(
+                    {"id": "decide:finalize", "label": "approve", "target_ref": "finalize"},
+                ),
+            ),
+            "project.workflow_components:finalize": _step_component("finalize"),
+        }
+    )
+
+    lowered = workflow.lower_workflow_source(
+        source,
+        source_path="branch_local_route_binding.py",
+        resolver=resolver,
+    )
+
+    assert tuple((route.id, route.source, route.target, route.label) for route in lowered.routes) == (
+        ("decide:finalize", "decide", "approve_finalize", "approve"),
+        ("decide-reject_finalize", "decide", "reject_finalize", "else"),
+    )
+
+
+def test_source_compiler_m3_binds_route_metadata_to_parallel_map_reducer_target() -> None:
+    source = """
+from arnold.pipeline import parallel_map
+from arnold.workflow.authoring import workflow
+from project.workflow_components import decide, execute, execute_child, finalize
+
+@workflow(id="parallel-map-route-binding")
+def flow() -> None:
+    decision = decide(id="decide")
+    if decision == "approve":
+        finalize_payload = finalize(id="approve_finalize")
+        parallel_map(
+            id="approve_execute_batches",
+            items="project.items",
+            step=execute_child,
+            reducer=execute,
+            path_template="execute/{index}",
+        )
+    else:
+        return None
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:decide": _step_component("decide"),
+            "project.workflow_components:execute": _step_component("execute"),
+            "project.workflow_components:execute_child": authoring.ComponentContract(
+                id="execute_child",
+                kind=authoring.ComponentKind.WORKFLOW,
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="execute_child",
+                    export_name="execute_child",
+                ),
+            ),
+            "project.workflow_components:finalize": _step_component(
+                "finalize",
+                route_bindings=(
+                    {"id": "finalize:execute", "label": "default", "target_ref": "execute"},
+                ),
+            ),
+        }
+    )
+
+    lowered = workflow.lower_workflow_source(
+        source,
+        source_path="parallel_map_route_binding.py",
+        resolver=resolver,
+    )
+
+    assert (
+        "finalize:execute",
+        "approve_finalize",
+        "approve_execute_batches",
+        "default",
+    ) in tuple((route.id, route.source, route.target, route.label) for route in lowered.routes)
+
+
 @pytest.mark.parametrize(
     ("condition", "expected_message"),
     [
@@ -1822,6 +1947,36 @@ def flow(brief):
 
     assert _diagnostic_payloads(result)[0]["code"] == "AWF011_DYNAMIC_ROUTING_CONDITION"
     assert _diagnostic_payloads(result)[0]["message"] == expected_message
+
+
+def test_source_compiler_m3_accepts_imported_strenum_branch_targets() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import execute, route
+from arnold_pipelines.megaplan.outcomes import GateOutcome
+
+@workflow(id="enum-branch")
+def flow(brief):
+    decision = route(id="route", brief=brief)
+    if decision == GateOutcome.PROCEED:
+        execute(id="execute", plan=decision)
+    else:
+        execute(id="fallback", plan=decision)
+"""
+
+    resolver = _Resolver(
+        {
+            "project.workflow_components:route": _step_component("route"),
+            "project.workflow_components:execute": _step_component("execute"),
+        }
+    )
+    result = workflow.check_workflow_source(
+        source,
+        source_path="enum_branch.py",
+        resolver=resolver,
+    )
+
+    assert result.diagnostics == ()
 
 
 def test_source_compiler_m3_rejects_repeated_branch_conditions() -> None:
@@ -2851,6 +3006,34 @@ workflow(id="no-exec-file", steps=[plan(id="plan")])
     assert check_result.ok
     assert pipeline.id == "no-exec-file"
     assert manifest.id == "no-exec-file"
+
+
+def test_source_compiler_file_apis_accept_absolute_paths_with_non_identifier_dirs(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "megaplan-native-parity-corrective"
+    source_dir.mkdir()
+    source_path = source_dir / "local_workflow.py"
+    source_path.write_text(
+        """
+from arnold.pipeline import step, workflow
+
+@step(id="local-step")
+def local_step():
+    return {}
+
+workflow(id="absolute-path-ok", steps=[local_step(id="s1")])
+""",
+        encoding="utf-8",
+    )
+
+    check_result = workflow.check_workflow_file(source_path)
+    pipeline = workflow.lower_workflow_file(source_path)
+    manifest = workflow.compile_workflow_file(source_path)
+
+    assert check_result.ok
+    assert pipeline.id == "absolute-path-ok"
+    assert manifest.id == "absolute-path-ok"
 
 
 def _codes(result: workflow.CheckWorkflowSourceResult) -> set[diagnostics.DiagnosticCode]:

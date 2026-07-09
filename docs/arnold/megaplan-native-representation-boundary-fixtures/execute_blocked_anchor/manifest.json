@@ -1,0 +1,31 @@
+{
+  "artifact_refs": [
+    "retry_decision.json"
+  ],
+  "authority_records": [],
+  "boundary_id": "execute_blocked_anchor",
+  "capability_effects": [
+    "artifact",
+    "external_effect",
+    "phase_result",
+    "receipt",
+    "state_history"
+  ],
+  "external_effect_refs": [
+    "effects/execute_blocked_anchor.json",
+    "execute:timeout-retry"
+  ],
+  "fixture_id": "execute_blocked_anchor",
+  "path_hashes": {
+    "phase_result_path": "sha256:418a6854a2564af96470d8648fdb83d2a9e65223a5230ec72510aa7ea1522a7d",
+    "receipt_path": "sha256:7f0f61d5faa098748a333f877ef169c7d086df59ff3d350d544bd498f288aa81",
+    "semantic_health_path": "sha256:a6a7d8063183f46ce55db8ecaf61ed90385076e3a59c283aa937b587497b935f",
+    "state_path": "sha256:dfb9b4da50397b76890a891b9378cd3d937a3876b5a87f2ab6eb4fb3b23f3d6f"
+  },
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor/phase_result.json",
+  "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor/boundary_receipts/execute_blocked_anchor.json",
+  "reducer_promotion": false,
+  "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor/semantic_health.json",
+  "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor/state.json"
+}

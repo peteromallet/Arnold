@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -20,6 +21,14 @@ _MISSING_REMOTE_REF_MARKERS = (
     "remote ref does not exist",
 )
 
+_NON_FAST_FORWARD_PUSH_MARKERS = (
+    "non-fast-forward",
+    "[rejected]",
+    "fetch first",
+    "stale info",
+    "failed to push some refs",
+)
+
 _CHAIN_RUNTIME_JOURNAL_PATTERNS = (
     ".megaplan/epics/*/events.jsonl",
     ".megaplan/plans/*/events.ndjson",
@@ -34,6 +43,7 @@ _CHAIN_INTERNAL_DIRTY_PATTERNS = (
 
 _DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
 _GIT_PUSH_TIMEOUT_SECONDS = 600
+_GIT_PUSH_TIMEOUT_RECOVERY_WINDOW_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -434,12 +444,15 @@ def _run_command(
     writer,
     timeout: float = _DEFAULT_COMMAND_TIMEOUT_SECONDS,
     error_code: str = "command_failed",
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a git/gh command and raise CliError with captured output on failure."""
+    command_env = env if env is not None else _compat()._command_env(cmd)
     try:
         proc = _compat().subprocess.run(
             cmd,
             cwd=str(root),
+            env=command_env,
             capture_output=True,
             text=True,
             check=False,
@@ -461,7 +474,7 @@ def _run_command(
             proc = _compat().subprocess.run(
                 cmd,
                 cwd=str(root),
-                env=_compat()._command_env(cmd),
+                env=_compat()._command_env_without_gh_tokens(cmd),
                 capture_output=True,
                 text=True,
                 check=False,
@@ -499,13 +512,141 @@ def _run_git_push_command(
     writer,
     error_code: str = "git_push_failed",
 ) -> subprocess.CompletedProcess[str]:
-    return _compat()._run_command(
-        root,
-        cmd,
-        writer=writer,
-        timeout=_GIT_PUSH_TIMEOUT_SECONDS,
-        error_code=error_code,
+    try:
+        return _compat()._run_command(
+            root,
+            cmd,
+            writer=writer,
+            timeout=_GIT_PUSH_TIMEOUT_SECONDS,
+            error_code=error_code,
+            env=_git_push_env(cmd),
+        )
+    except CliError as exc:
+        error = exc.extra.get("error") if isinstance(exc.extra, dict) else None
+        if (
+            isinstance(error, str)
+            and "timed out" in error.lower()
+            and _recover_timed_out_git_push(root, cmd, writer=writer)
+        ):
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if _should_retry_force_with_lease_push(cmd, exc):
+            retry_cmd = _force_with_lease_variant(cmd)
+            if retry_cmd is not None:
+                writer(
+                    "[chain] git push rejected after local publish prep; "
+                    "retrying with --force-with-lease\n"
+                )
+                return _compat()._run_command(
+                    root,
+                    retry_cmd,
+                    writer=writer,
+                    timeout=_GIT_PUSH_TIMEOUT_SECONDS,
+                    error_code=error_code,
+                    env=_git_push_env(retry_cmd),
+                )
+        raise
+
+
+def _should_retry_force_with_lease_push(cmd: list[str], exc: CliError) -> bool:
+    if cmd[:2] != ["git", "push"] or "--force-with-lease" in cmd:
+        return False
+    if not any(token.startswith("HEAD:") for token in cmd):
+        return False
+    detail_parts: list[str] = []
+    if exc.message:
+        detail_parts.append(exc.message)
+    if isinstance(exc.extra, dict):
+        for key in ("stderr", "stdout", "error"):
+            value = exc.extra.get(key)
+            if isinstance(value, str) and value:
+                detail_parts.append(value)
+    detail = "\n".join(detail_parts).lower()
+    return any(marker in detail for marker in _NON_FAST_FORWARD_PUSH_MARKERS)
+
+
+def _force_with_lease_variant(cmd: list[str]) -> list[str] | None:
+    if cmd[:2] != ["git", "push"] or "--force-with-lease" in cmd:
+        return None
+    retry_cmd = list(cmd)
+    try:
+        origin_index = retry_cmd.index("origin")
+    except ValueError:
+        return None
+    retry_cmd.insert(origin_index, "--force-with-lease")
+    return retry_cmd
+
+
+def _git_push_env(cmd: list[str]) -> dict[str, str] | None:
+    if len(cmd) < 2 or cmd[0] != "git" or cmd[1] != "push":
+        return None
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    token = env.get("GITHUB_TOKEN") or env.get("GH_TOKEN")
+    if token:
+        auth = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+        try:
+            count = int(env.get("GIT_CONFIG_COUNT") or "0")
+        except ValueError:
+            count = 0
+        env["GIT_CONFIG_COUNT"] = str(count + 1)
+        env[f"GIT_CONFIG_KEY_{count}"] = "http.https://github.com/.extraheader"
+        env[f"GIT_CONFIG_VALUE_{count}"] = f"AUTHORIZATION: basic {auth}"
+    return env
+
+def _recover_timed_out_git_push(root: Path, cmd: list[str], *, writer) -> bool:
+    """Treat timed-out pushes as success when origin reached the expected sha."""
+    target = _expected_remote_push_target(root, cmd)
+    if target is None:
+        return False
+    branch, expected_sha = target
+    deadline = time.monotonic() + _GIT_PUSH_TIMEOUT_RECOVERY_WINDOW_SECONDS
+    while time.monotonic() < deadline:
+        remote_sha = _remote_branch_head(root, branch)
+        if remote_sha == expected_sha:
+            writer(
+                "[chain] git push timed out locally, but origin/"
+                f"{branch} now points at {expected_sha}; continuing\n"
+            )
+            return True
+        time.sleep(2)
+    writer(
+        "[chain] git push timed out and origin/"
+        f"{branch} did not reach expected sha {expected_sha} during recovery window\n"
     )
+    return False
+
+
+def _expected_remote_push_target(root: Path, cmd: list[str]) -> tuple[str, str] | None:
+    """Best-effort parse of the remote branch and source sha for a git push."""
+    if len(cmd) < 4 or cmd[0] != "git" or cmd[1] != "push":
+        return None
+    try:
+        origin_index = cmd.index("origin")
+    except ValueError:
+        return None
+    refspecs = [token for token in cmd[origin_index + 1 :] if not token.startswith("-")]
+    if not refspecs:
+        return None
+    branch: str | None = None
+    source_ref: str | None = None
+    first = refspecs[0]
+    if ":" in first:
+        source_ref, dest_ref = first.split(":", 1)
+        if dest_ref.startswith("refs/heads/"):
+            branch = dest_ref.removeprefix("refs/heads/")
+        else:
+            branch = dest_ref
+    else:
+        branch = first
+        source_ref = first
+    if not branch or not source_ref:
+        return None
+    expected_sha = _resolve_commitish(root, source_ref, writer=writer)
+    if expected_sha is None and source_ref == "HEAD":
+        expected_sha = _resolve_commitish(root, "HEAD", writer=writer)
+    if expected_sha is None:
+        return None
+    return branch, expected_sha
 
 
 def _should_retry_gh_without_env(cmd: list[str], proc: subprocess.CompletedProcess[str]) -> bool:
@@ -528,15 +669,23 @@ def _should_retry_gh_without_env(cmd: list[str], proc: subprocess.CompletedProce
 
 
 def _command_env(cmd: list[str]) -> dict[str, str] | None:
-    """Return a subprocess env for commands whose auth can be poisoned by env.
+    """Return a subprocess env for commands whose auth may need a retry policy.
 
-    gh gives GH_TOKEN/GITHUB_TOKEN precedence over the logged-in keychain auth.
-    In long agent sessions those variables are often stale or scoped for a
-    different identity, so chain-managed gh calls should prefer gh's own auth.
+    ``gh`` gives ``GH_TOKEN``/``GITHUB_TOKEN`` precedence over any logged-in
+    keychain auth. The first attempt must still preserve those variables so
+    token-only cloud runtimes can authenticate; if the provided token is stale,
+    ``_run_command`` retries with those variables cleared.
     """
     if not cmd or cmd[0] != "gh":
         return None
-    env = os.environ.copy()
+    return os.environ.copy()
+
+
+def _command_env_without_gh_tokens(cmd: list[str]) -> dict[str, str] | None:
+    """Return a ``gh`` env with token overrides cleared for auth fallback."""
+    env = _command_env(cmd)
+    if env is None:
+        return None
     env.pop("GH_TOKEN", None)
     env.pop("GITHUB_TOKEN", None)
     return env
@@ -857,26 +1006,41 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, base_branch: s
         f"Automated megaplan chain milestone `{milestone.label}`.\n\n"
         f"Idea file: `{milestone.idea}`\n"
     )
-    proc = _compat()._run_command(
-        root,
-        [
-            "gh",
-            "pr",
-            "create",
-            "--draft",
-            "--base",
-            base_branch,
-            "--head",
-            milestone.branch,
-            "--title",
-            title,
-            "--body",
-            body,
-        ],
-        writer=writer,
-        timeout=120,
-        error_code="gh_pr_create_failed",
-    )
+    try:
+        proc = _compat()._run_command(
+            root,
+            [
+                "gh",
+                "pr",
+                "create",
+                "--draft",
+                "--base",
+                base_branch,
+                "--head",
+                milestone.branch,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
+            writer=writer,
+            timeout=120,
+            error_code="gh_pr_create_failed",
+        )
+    except CliError as exc:
+        extra = exc.extra if isinstance(exc.extra, dict) else {}
+        detail = "\n".join(
+            str(part).strip()
+            for part in (exc.message, extra.get("stderr"), extra.get("stdout"))
+            if isinstance(part, str) and part.strip()
+        ).lower()
+        if "no commits between" in detail:
+            writer(
+                f"[chain] deferring PR creation for {milestone.branch}: "
+                f"no commits are ahead of {base_branch} yet\n"
+            )
+            return None
+        raise
     number = _compat()._parse_pr_number_from_url(proc.stdout.strip())
     if number is not None:
         return number

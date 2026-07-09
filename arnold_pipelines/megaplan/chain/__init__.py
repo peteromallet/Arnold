@@ -71,6 +71,7 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     resolve_execution_environment,
 )
 from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
     atomic_write_json,
     resolve_plan_dir,
     save_state_merge_meta,
@@ -89,17 +90,13 @@ from arnold_pipelines.megaplan.profiles import (
     _resolve_default_vendor,
     load_profile_metadata,
 )
-from arnold_pipelines.megaplan.run_state import (
-    CanonicalRunState,
-    CanonicalState,
-    resolve_run_state,
-)
 from arnold_pipelines.megaplan.runtime.process import (
     megaplan_engine_env,
     megaplan_engine_root,
 )
 from arnold_pipelines.megaplan.anchors import AnchorCaptureRequest, attach_anchor_documents, resolve_anchor_path
 from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
+from arnold_pipelines.megaplan.user_actions import action_resolution_status
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_PR_MERGE,
@@ -1771,7 +1768,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     def _authoritative_batch_task_overrides() -> dict[str, dict[str, Any]]:
         overrides: dict[str, dict[str, Any]] = {}
         for batch_path in sorted(
-            plan_dir.glob("execution_batch_*.json"),
+            list_batch_artifacts(plan_dir),
             key=_execution_batch_sort_key,
         ):
             try:
@@ -1807,7 +1804,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
 
     authoritative_batch_overrides = _authoritative_batch_task_overrides()
     batches = sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
     )
     if not batches:
@@ -1880,25 +1877,24 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
 
-    # finalize.json is only authoritative when EVERY non-baseline-unavailable
-    # task is genuinely complete. When we have a valid execution window
-    # (``current_head`` is known), a ``pending`` finalize row that no
-    # authoritative execution-batch update corroborates is a stale finalize
-    # snapshot — defer to the execution-batch authority path below instead of
-    # evaluating finalize and rejecting the whole milestone.
-    #
-    # When ``current_head`` is unavailable (e.g. rev-parse failed), there is no
-    # execution-window authority to defer to, so finalize MUST be evaluated
-    # directly and the milestone rejected on its own evidence (see
-    # test_latest_execution_batch_all_tasks_done_prefers_latest_recorded_head_over_stale_baseline).
+    # finalize.json defines the required task universe. A later execution batch
+    # may override stale finalize rows for individual tasks, but it may not
+    # shrink the universe to just the latest touched task. This is the incident
+    # class where T1/T2/T6 completed, T3+ stayed pending, and the chain accepted
+    # the latest execution_batch_N.json anyway.
     if authoritative_finalize_records and batches and execution_window_available:
-        has_pending_without_batch_override = any(
-            _optional_finalize_status(task) == "pending"
-            and str(task.get("id") or "") not in authoritative_batch_overrides
+        pending_without_batch_override = [
+            str(task.get("id") or "")
             for task in authoritative_finalize_records
-        )
-        if has_pending_without_batch_override:
-            authoritative_finalize_records = None
+            if _optional_finalize_status(task) == "pending"
+            and str(task.get("id") or "") not in authoritative_batch_overrides
+        ]
+        if pending_without_batch_override:
+            return (
+                False,
+                "finalize.json has pending tasks without authoritative execution "
+                f"updates: {', '.join(pending_without_batch_override)}",
+            )
 
     if authoritative_finalize_records:
         finalize_decisions: dict[str, AuthorityDecision] = {}
@@ -2001,7 +1997,7 @@ def _best_effort_git_head(project_dir: Path) -> str | None:
 
 def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
     for path in sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
         reverse=True,
     ):
@@ -2059,6 +2055,31 @@ def _plan_terminal_completion_is_authoritative(
             f"plan {plan_name} directory unavailable; no chain artifacts to inspect",
         )
     return _latest_execution_batch_all_tasks_done(plan_dir)
+
+
+def _finalized_plan_has_successful_review(plan_state: dict[str, Any]) -> bool:
+    """Return true when a finalized plan has already completed review successfully."""
+
+    if plan_state.get("current_state") != STATE_FINALIZED:
+        return False
+    if plan_state.get("latest_failure"):
+        return False
+    if plan_state.get("active_step"):
+        return False
+    history = plan_state.get("history")
+    if not isinstance(history, list):
+        return False
+    saw_execute = False
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        step = str(entry.get("step") or "").strip().lower()
+        result = str(entry.get("result") or "").strip().lower()
+        if step == "execute":
+            saw_execute = True
+        if saw_execute and step == "review" and result == "success":
+            return True
+    return False
 
 
 def _read_typed_noop_completion_waiver(
@@ -2344,7 +2365,7 @@ def _published_pr_target_from_gh(
                 "view",
                 str(pr_number),
                 "--json",
-                "state,mergeCommit,headRefOid",
+                "state,mergedAt,mergeCommit,headRefOid",
             ],
             cwd=str(root),
             capture_output=True,
@@ -2366,6 +2387,9 @@ def _published_pr_target_from_gh(
     state = _string_value(payload.get("state"))
     if not state or state.lower() != "merged":
         return None, f"gh pr view #{pr_number} state={state!r} is not merged"
+    merged_at = _string_value(payload.get("mergedAt"))
+    if not merged_at:
+        return None, f"gh pr view #{pr_number} has no mergedAt timestamp"
     merge_sha = _sha_from_payload_value(payload.get("mergeCommit"))
     if merge_sha:
         return merge_sha, f"gh.pr#{pr_number}.mergeCommit"
@@ -2378,6 +2402,24 @@ def _published_pr_target_from_gh(
 def _completion_record_is_merged_pr(record: dict[str, Any]) -> bool:
     pr_state = _string_value(record.get("pr_state"))
     return bool(pr_state and pr_state.lower() == "merged")
+
+
+def _published_target_is_in_chain_target(
+    root: Path,
+    target: str,
+    chain_state: ChainState | None,
+) -> tuple[bool | None, str]:
+    if chain_state is None:
+        return None, "chain target unavailable"
+    target_ref = _string_value(chain_state.target_base_ref)
+    if not target_ref:
+        return None, "chain target ref unavailable"
+    if _git_is_ancestor(root, target, target_ref):
+        return True, f"published PR target {target[:12]} is contained in {target_ref}"
+    return (
+        False,
+        f"published PR target {target[:12]} is not contained in chain target {target_ref}",
+    )
 
 
 def _published_pr_semantic_diff_nonempty_from_base(
@@ -2398,6 +2440,13 @@ def _published_pr_semantic_diff_nonempty_from_base(
         target, source = _published_pr_target_from_record(record, chain_state)
     if target is None:
         return None, f"published PR target unavailable: {source}"
+    landed_ok, landed_reason = _published_target_is_in_chain_target(
+        root,
+        target,
+        chain_state,
+    )
+    if landed_ok is False:
+        return False, landed_reason
     return _semantic_diff_nonempty_between_refs(
         root,
         base_sha,
@@ -2412,7 +2461,6 @@ def _chain_completion_guard(
     *,
     implementation_milestone: bool,
     chain_state: ChainState | None = None,
-    canonical_run_state: CanonicalRunState | None = None,
 ) -> tuple[bool, str]:
     plan_name = record.get("plan")
     if not isinstance(plan_name, str) or not plan_name.strip():
@@ -2424,11 +2472,13 @@ def _chain_completion_guard(
 
     plan_state = _read_plan_state_payload_from_dir(plan_dir)
     current_state = plan_state.get("current_state")
+    current_state_note = ""
     is_merged_pr = _completion_record_is_merged_pr(record)
     if is_merged_pr and not implementation_milestone:
         return True, "merged PR milestone accepted without implementation checks"
     merged_pr_internal_state_bypass = is_merged_pr and current_state in {
         STATE_BLOCKED,
+        STATE_EXECUTED,
         STATE_FINALIZED,
     }
     merged_pr_state_bypass_reason = ""
@@ -2447,22 +2497,13 @@ def _chain_completion_guard(
             f"merged PR milestone; internal plan state {current_state!r} bypassed "
             "because PR is merged"
         )
+        if current_state_note:
+            merged_pr_state_bypass_reason = (
+                f"{current_state_note}; {merged_pr_state_bypass_reason}"
+            )
 
     if not implementation_milestone:
         return True, "non-implementation completion guard passed"
-
-    if canonical_run_state is not None:
-        canonical_state = canonical_run_state.canonical_state
-        if canonical_state is not CanonicalState.COMPLETED:
-            reason = (
-                f"plan {plan_name} current_state={current_state!r} cannot complete "
-                f"because canonical_state={canonical_state.name!r}"
-            )
-            if canonical_state is CanonicalState.STALE_DERIVED_STATE:
-                return False, f"{reason} indicates stale derived state"
-            if canonical_run_state.running or canonical_run_state.repairable:
-                return False, f"{reason} remains nonterminal under canonical custody"
-            return False, f"{reason} is not canonical terminal success"
 
     milestone_base_sha = _milestone_base_sha_from_plan_state(plan_state)
     waiver_ok, waiver_reason = _read_typed_noop_completion_waiver(
@@ -2483,6 +2524,11 @@ def _chain_completion_guard(
                 chain_state=chain_state,
             )
         )
+        if (
+            published_diff_ok is False
+            and "not contained in chain target" in published_diff_reason
+        ):
+            return False, published_diff_reason
         local_diff_ok = False
         local_diff_reason = ""
         local_raw_diff_ok: bool | None = None
@@ -2580,9 +2626,60 @@ def _chain_completion_guard(
     if waiver_ok:
         return True, f"typed no-op waiver accepted: {waiver_reason}"
     reason_parts = [reason, finalize_reason, diff_reason]
+    if current_state_note:
+        reason_parts.insert(0, current_state_note)
     if published_diff_reason is not None:
         reason_parts.append(published_diff_reason)
     return True, f"completion guard passed: {'; '.join(reason_parts)}"
+
+
+def _is_failed_no_next_step_blocked_execute(plan_state: dict[str, Any]) -> bool:
+    current_state = plan_state.get("current_state")
+    if current_state != "failed":
+        return False
+    latest_failure = plan_state.get("latest_failure")
+    if not isinstance(latest_failure, dict):
+        return False
+    if latest_failure.get("kind") != "no_next_step":
+        return False
+    history = plan_state.get("history")
+    if not isinstance(history, list):
+        return False
+    return any(
+        isinstance(entry, dict)
+        and entry.get("step") == "execute"
+        and entry.get("result") == "blocked"
+        for entry in history
+    )
+
+
+def _finalize_has_only_terminal_status_rows(plan_dir: Path) -> tuple[bool, str]:
+    try:
+        payload = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False, "finalize.json unavailable"
+    if not isinstance(payload, dict):
+        return False, "finalize.json is not an object"
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return False, "finalize.json has no tasks"
+    saw_terminal = False
+    for task in tasks:
+        if not isinstance(task, dict):
+            return False, "finalize.json contains non-object task rows"
+        status = _optional_finalize_status(task)
+        if status not in {"done", "skipped", "waived", "not_applicable"}:
+            return False, f"finalize.json has non-terminal task status {status!r}"
+        if _task_record_has_authority_payload(task):
+            return False, "finalize.json terminal rows still carry authority payload"
+        saw_terminal = True
+    if not saw_terminal:
+        return False, "finalize.json has no terminal task rows"
+    return True, "terminal finalize task statuses"
+
+
+def _is_chain_control_path(path: str) -> bool:
+    return path in {"chain.yaml", "idea.md", "NORTHSTAR.md"}
 
 
 def _current_branch_name(root: Path) -> str | None:
@@ -2656,6 +2753,7 @@ def _ensure_published_claimed_changes_for_pr_progression(
         path
         for path in dirty_paths
         if path not in claimed_root_paths
+        and not _is_chain_control_path(path)
         and path != ".megaplan"
         and not path.startswith(".megaplan/")
     )
@@ -2717,7 +2815,6 @@ def _recover_stale_merged_pr_for_unfinished_plan(
     milestone: MilestoneSpec,
     plan_state: dict[str, Any],
     *,
-    canonical_run_state: CanonicalRunState | None = None,
     writer,
 ) -> tuple[ChainState | None, str]:
     """Retire a merged PR cursor that points at a plan that still must run.
@@ -2735,27 +2832,12 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         return None, "missing active plan or milestone branch for stale merged PR recovery"
 
     current_state = plan_state.get("current_state")
+    canonical_current_state = current_state
     if current_state == STATE_DONE:
         return None, f"plan {plan_name} is already {STATE_DONE!r}"
-    if not isinstance(current_state, str) or not current_state:
+    if not isinstance(canonical_current_state, str) or not canonical_current_state:
         return None, f"plan {plan_name} has no usable current_state for stale merged PR recovery"
-    recoverable_states = {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}
-    recoverable_canonical_states = {
-        CanonicalState.RUNNING,
-        CanonicalState.REPAIRING,
-        CanonicalState.RETRYABLE_EXECUTION_BLOCK,
-    }
-    if canonical_run_state is not None:
-        canonical_state = canonical_run_state.canonical_state
-        if canonical_state not in recoverable_canonical_states:
-            reason = (
-                f"plan {plan_name} current_state={current_state!r} cannot recover stale "
-                f"merged PR because canonical_state={canonical_state.name!r}"
-            )
-            if canonical_state is CanonicalState.STALE_DERIVED_STATE:
-                return None, f"{reason} indicates stale derived state under canonical custody"
-            return None, f"{reason} is not eligible for unfinished-plan recovery"
-    elif current_state not in recoverable_states:
+    if canonical_current_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
         return (
             None,
             f"plan {plan_name} current_state={current_state!r} is not recoverable "
@@ -2769,6 +2851,7 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         path
         for path in dirty_paths
         if path not in claimed_root_paths
+        and not _is_chain_control_path(path)
         and path != ".megaplan"
         and not path.startswith(".megaplan/")
     )
@@ -2814,18 +2897,54 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         _capture_sync_state(root, spec_path, branch=milestone.branch, pr_number=None)
         state = chain_spec.load_chain_state(spec_path)
 
+    plan_dir = resolve_plan_dir(root, plan_name)
+    authoritative, authority_reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    empty_finalize_tasks, finalize_reason = _finalize_payload_has_empty_tasks(plan_dir)
+    terminal_finalize_only, terminal_finalize_reason = _finalize_has_only_terminal_status_rows(
+        plan_dir
+    )
+    if (
+        canonical_current_state == STATE_EXECUTED
+        and terminal_finalize_only
+    ):
+        _mark_plan_completed_by_chain(
+            root,
+            plan_name,
+            milestone_label=milestone.label,
+            completion_reason=(
+                "stale merged PR recovery accepted terminal finalize task statuses: "
+                f"{terminal_finalize_reason}"
+            ),
+            writer=writer,
+        )
+        state.last_state = STATE_DONE
+        state.metadata["stale_merged_pr_recovery"] = {
+            "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "milestone": milestone.label,
+            "plan": plan_name,
+            "stale_pr_number": old_pr_number,
+            "plan_current_state": current_state,
+            "canonical_plan_current_state": canonical_current_state,
+            "dirty_claimed_paths": dirty_claimed,
+            "unclaimed_execute_dirty_paths": unrelated_dirty,
+        }
+        chain_spec.save_chain_state(spec_path, state)
+        return (
+            state,
+            "recovered stale merged PR with terminal finalize task statuses; "
+            f"{terminal_finalize_reason}",
+        )
+
     state.pr_number = None
     state.pr_state = None
-    state.last_state = current_state
+    state.last_state = canonical_current_state
     state.metadata["stale_merged_pr_recovery"] = {
         "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "milestone": milestone.label,
         "plan": plan_name,
         "stale_pr_number": old_pr_number,
         "plan_current_state": current_state,
-        "canonical_state": (
-            canonical_run_state.canonical_state.name if canonical_run_state is not None else None
-        ),
+        "canonical_plan_current_state": canonical_current_state,
         "dirty_claimed_paths": dirty_claimed,
         "unclaimed_execute_dirty_paths": unrelated_dirty,
     }
@@ -2873,7 +2992,6 @@ def _append_completed_with_guard(
     record: dict[str, Any],
     *,
     implementation_milestone: bool,
-    canonical_run_state: CanonicalRunState | None = None,
     writer,
 ) -> tuple[bool, str]:
     ok, reason = _chain_completion_guard(
@@ -2881,7 +2999,6 @@ def _append_completed_with_guard(
         record,
         implementation_milestone=implementation_milestone,
         chain_state=state,
-        canonical_run_state=canonical_run_state,
     )
     if not ok:
         state.last_state = "authority_divergence"
@@ -2890,6 +3007,39 @@ def _append_completed_with_guard(
         return False, reason
     state.completed.append(record)
     return True, reason
+
+
+def _append_reconciled_completed_record(
+    root: Path,
+    state: ChainState,
+    *,
+    plan_name: str,
+    milestone: MilestoneSpec,
+    pr_number: int | None,
+    pr_state: str | None,
+    completion_reason: str,
+    writer,
+) -> None:
+    state.completed.append(
+        {
+            "label": milestone.label,
+            "plan": plan_name,
+            "status": STATE_DONE,
+            "pr_number": pr_number,
+            "pr_state": pr_state,
+        }
+    )
+    _mark_plan_completed_by_chain(
+        root,
+        plan_name,
+        milestone_label=milestone.label,
+        completion_reason=completion_reason,
+        writer=writer,
+    )
+    writer(
+        f"[chain] reconciled terminal plan {plan_name} into completed "
+        f"milestone {milestone.label}\n"
+    )
 
 
 def _handle_completion_guard_failure(
@@ -3082,6 +3232,38 @@ def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
     )
 
 
+def _has_unresolved_execute_user_actions(plan_dir: Path) -> tuple[bool, str | None]:
+    try:
+        finalize_payload = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return False, None
+    if not isinstance(finalize_payload, dict):
+        return False, None
+    user_actions = finalize_payload.get("user_actions")
+    if not isinstance(user_actions, list) or not user_actions:
+        return False, None
+
+    try:
+        state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        state_payload = {}
+    if not isinstance(state_payload, dict):
+        state_payload = {}
+
+    resolutions = effective_user_action_resolutions(plan_dir, state_payload)
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id")
+        if not isinstance(action_id, str) or not action_id:
+            continue
+        status = action_resolution_status(action, resolutions)
+        if status.get("resolution") in {"satisfied", "accepted_blocked", "waived"}:
+            continue
+        return True, action_id
+    return False, None
+
+
 def _mark_plan_completed_by_chain(
     root: Path,
     plan_name: str,
@@ -3233,6 +3415,17 @@ def _recover_blocked_execute_if_tasks_done(
         )
         return False
     if _latest_execute_result(plan_dir) != "blocked":
+        return False
+    has_unresolved_user_actions, action_id = _has_unresolved_execute_user_actions(plan_dir)
+    if has_unresolved_user_actions:
+        reason = (
+            f"unresolved user action {action_id}"
+            if action_id
+            else "unresolved execute user action"
+        )
+        writer(
+            f"[chain] execute result=blocked for {outcome.plan}; treating as real block: {reason}\n"
+        )
         return False
 
     all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)
@@ -3543,6 +3736,7 @@ def _drive_plan_with_blocked_execute_recovery(
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     writer,
 ) -> DriverOutcome:
+    _recover_failed_plan_before_drive(root, plan, writer=writer)
     outcome = _drive_plan(
         root,
         plan,
@@ -3564,6 +3758,28 @@ def _drive_plan_with_blocked_execute_recovery(
         spec,
         on_phase_complete=on_phase_complete,
         writer=writer,
+    )
+
+
+def _recover_failed_plan_before_drive(root: Path, plan: str, *, writer) -> None:
+    """Let the plan recovery entrypoint clear failed state before chain auto-drive."""
+
+    if _plan_current_state_from_payload(root, plan) != "failed":
+        return
+    writer(f"[chain] plan {plan} is failed; invoking resume before auto-drive\n")
+    _run_command(
+        root,
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "resume",
+            "--plan",
+            plan,
+        ],
+        writer=writer,
+        error_code="plan_resume_failed",
     )
 
 
@@ -3659,7 +3875,18 @@ def _awaiting_human_can_retry(root: Path, plan: str | None) -> bool:
 def _plan_current_state_from_payload(root: Path, plan: str | None) -> str | None:
     raw = _plan_state_payload_from_name(root, plan)
     current_state = raw.get("current_state")
-    return current_state if isinstance(current_state, str) else None
+    if not isinstance(current_state, str):
+        return None
+    if current_state in {STATE_FINALIZED, STATE_EXECUTED, STATE_DONE} and _plan_has_live_active_step(raw):
+        active_step = raw.get("active_step")
+        active_phase = (
+            active_step.get("phase") or active_step.get("step")
+            if isinstance(active_step, Mapping)
+            else None
+        )
+        if isinstance(active_phase, str) and active_phase.strip():
+            return active_phase.strip()
+    return current_state
 
 
 def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any]:
@@ -3667,7 +3894,9 @@ def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any
         return {}
     try:
         plan_dir = resolve_plan_dir(root, plan)
-        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        from arnold_pipelines.megaplan._core.state import load_plan_from_dir
+
+        _, raw = load_plan_from_dir(plan_dir)
     except (
         CliError,
         FileNotFoundError,
@@ -3691,84 +3920,6 @@ def _plan_has_live_active_step(plan_state: Mapping[str, Any]) -> bool:
         or active_step.get("pid")
         or active_step.get("session_id")
     )
-
-
-def _canonical_run_state_for_stale_merged_pr_recovery(
-    plan_state: Mapping[str, Any],
-    *,
-    chain_state: ChainState | None = None,
-) -> CanonicalRunState | None:
-    if not isinstance(plan_state, Mapping) or not plan_state:
-        return None
-
-    evidence: dict[str, Any] = {"plan_state": dict(plan_state)}
-    has_signal = False
-
-    if chain_state is not None:
-        chain_payload: dict[str, Any] = {}
-        if isinstance(chain_state.last_state, str) and chain_state.last_state:
-            chain_payload["last_state"] = chain_state.last_state
-            if chain_state.last_state == "repairing":
-                evidence["repair_progress"] = {"present": True, "items": [{"status": "repairing"}]}
-                has_signal = True
-        if isinstance(chain_state.current_plan_name, str) and chain_state.current_plan_name:
-            chain_payload["current_plan_name"] = chain_state.current_plan_name
-        if chain_payload:
-            evidence["chain_state"] = chain_payload
-
-    active_step = plan_state.get("active_step")
-    if isinstance(active_step, Mapping):
-        heartbeat = {
-            "active": _plan_has_live_active_step(plan_state),
-            "phase": active_step.get("phase"),
-            "worker_pid": active_step.get("worker_pid") or active_step.get("pid"),
-            "session_id": active_step.get("session_id"),
-        }
-        if heartbeat["active"]:
-            evidence["active_step_heartbeat"] = heartbeat
-            has_signal = True
-
-    latest_failure = plan_state.get("latest_failure")
-    latest_gate_kind = ""
-    if isinstance(latest_failure, Mapping):
-        raw_kind = latest_failure.get("kind")
-        if isinstance(raw_kind, str) and raw_kind:
-            latest_gate_kind = raw_kind
-            lowered_kind = raw_kind.lower()
-            if lowered_kind in {"execution_blocked", "tasks_blocked"} or any(
-                token in lowered_kind
-                for token in (
-                    "awf018",
-                    "route_metadata_mismatch",
-                    "route_metadata",
-                    "route_binding",
-                    "missing_route",
-                    "missing_fallthrough_route",
-                    "stale_assertion",
-                    "fixture_refresh",
-                )
-            ):
-                has_signal = True
-
-    diagnostic_codes: dict[str, Any] = {}
-    resume_cursor = plan_state.get("resume_cursor")
-    if isinstance(resume_cursor, Mapping) and resume_cursor.get("phase") == "execute":
-        raw_retry_strategy = resume_cursor.get("retry_strategy")
-        if isinstance(raw_retry_strategy, str) and raw_retry_strategy:
-            lowered_strategy = raw_retry_strategy.lower()
-            if lowered_strategy in {"fresh_session", "retry", "retry_fresh"}:
-                diagnostic_codes["retry_strategy"] = "requeue"
-            else:
-                diagnostic_codes["retry_strategy"] = raw_retry_strategy
-            has_signal = True
-    if diagnostic_codes:
-        evidence["diagnostic_codes"] = diagnostic_codes
-    if latest_gate_kind:
-        evidence["event_cursors"] = {"latest_gate_kind": latest_gate_kind}
-
-    if not has_signal:
-        return None
-    return resolve_run_state(evidence)
 
 
 def _blocked_plan_replay_would_be_redundant(
@@ -3868,6 +4019,7 @@ def _reconcile_chain_from_ground_truth(
     }
     completed_by_label = _completed_records_by_label(state)
     reconciled_completed: list[dict[str, Any]] = []
+    removed_completed: dict[str, dict[str, Any]] = {}
 
     for milestone in spec.milestones:
         record = completed_by_label.get(milestone.label)
@@ -3889,6 +4041,9 @@ def _reconcile_chain_from_ground_truth(
                     f"[chain] completed record for {milestone.label} is not "
                     f"authoritative yet: PR #{pr_number} state={live_pr_state}\n"
                 )
+                removed = dict(record)
+                removed["pr_state"] = live_pr_state
+                removed_completed[milestone.label] = removed
                 continue
         reconciled_completed.append(record)
 
@@ -3912,6 +4067,25 @@ def _reconcile_chain_from_ground_truth(
             state.pr_number = None
             state.pr_state = None
             state.last_state = "done"
+    elif state.current_milestone_index > first_incomplete:
+        writer(
+            f"[chain] reconciled cursor index: {state.current_milestone_index} "
+            f"-> {first_incomplete} from completed milestones\n"
+        )
+        state.current_milestone_index = first_incomplete
+        if first_incomplete < len(spec.milestones):
+            milestone = spec.milestones[first_incomplete]
+            removed = removed_completed.get(milestone.label)
+            plan = removed.get("plan") if isinstance(removed, dict) else None
+            state.current_plan_name = plan if isinstance(plan, str) and plan else None
+            state.pr_number = _record_pr_number(removed)
+            pr_state = removed.get("pr_state") if isinstance(removed, dict) else None
+            state.pr_state = pr_state if isinstance(pr_state, str) else None
+            state.last_state = "authority_divergence"
+        else:
+            state.current_plan_name = None
+            state.pr_number = None
+            state.pr_state = None
 
     plan_name = state.current_plan_name
     plan_state = _plan_state_payload_from_name(root, plan_name)
@@ -3974,6 +4148,68 @@ def _reconcile_chain_from_ground_truth(
 
     current_plan_state = plan_state.get("current_state") if plan_state else None
     if (
+        bool(plan_name)
+        and active_milestone is not None
+        and current_plan_state == STATE_DONE
+        and active_milestone.label not in completed_labels
+        and (
+            not active_uses_pr
+            or (state.pr_number is not None and live_active_pr_state == "merged")
+        )
+    ):
+        _append_reconciled_completed_record(
+            root,
+            state,
+            plan_name=plan_name,
+            milestone=active_milestone,
+            pr_number=state.pr_number if active_uses_pr else None,
+            pr_state="merged" if active_uses_pr else None,
+            completion_reason="terminal plan state reconciled from ground truth",
+            writer=writer,
+        )
+        completed_labels.add(active_milestone.label)
+
+    reviewed_finalized_plan = (
+        bool(plan_name)
+        and bool(plan_state)
+        and _finalized_plan_has_successful_review(plan_state)
+    )
+    if reviewed_finalized_plan and active_milestone is not None:
+        if active_uses_pr and state.pr_number is not None:
+            if live_active_pr_state == "open" and state.last_state != STATE_AWAITING_PR_MERGE:
+                writer(
+                    f"[chain] plan {plan_name} is finalized with successful review but PR "
+                    f"#{state.pr_number} is open; waiting for merge\n"
+                )
+                state.last_state = STATE_AWAITING_PR_MERGE
+            elif (
+                live_active_pr_state == "merged"
+                and active_milestone.label not in completed_labels
+            ):
+                _append_reconciled_completed_record(
+                    root,
+                    state,
+                    plan_name=plan_name,
+                    milestone=active_milestone,
+                    pr_number=state.pr_number,
+                    pr_state="merged",
+                    completion_reason="reviewed finalized plan with merged PR",
+                    writer=writer,
+                )
+                completed_labels.add(active_milestone.label)
+        elif not active_uses_pr and active_milestone.label not in completed_labels:
+            _append_reconciled_completed_record(
+                root,
+                state,
+                plan_name=plan_name,
+                milestone=active_milestone,
+                pr_number=None,
+                pr_state=None,
+                completion_reason="reviewed finalized local plan",
+                writer=writer,
+            )
+            completed_labels.add(active_milestone.label)
+    if (
         active_uses_pr
         and state.pr_number is not None
         and current_plan_state == STATE_DONE
@@ -3995,10 +4231,11 @@ def _reconcile_chain_from_ground_truth(
                 f"-> {next_index}\n"
             )
             state.current_milestone_index = next_index
-            if next_index < len(spec.milestones):
-                state.current_plan_name = None
-                state.pr_number = None
-                state.pr_state = None
+            state.current_plan_name = None
+            state.pr_number = None
+            state.pr_state = None
+            if next_index >= len(spec.milestones):
+                state.last_state = "done"
 
     _append_reconciliation_audit(
         state,
@@ -4757,10 +4994,6 @@ def run_chain(
                     root, state.current_plan_name
                 )
                 if merged_pr_plan_state.get("current_state") != STATE_DONE:
-                    canonical_run_state = _canonical_run_state_for_stale_merged_pr_recovery(
-                        merged_pr_plan_state,
-                        chain_state=state,
-                    )
                     recovered_state, recovery_reason = (
                         _recover_stale_merged_pr_for_unfinished_plan(
                             root,
@@ -4768,7 +5001,6 @@ def run_chain(
                             state,
                             milestone,
                             merged_pr_plan_state,
-                            canonical_run_state=canonical_run_state,
                             writer=writer,
                         )
                     )
@@ -4997,10 +5229,6 @@ def run_chain(
                     root, state.current_plan_name
                 )
                 if merged_pr_plan_state.get("current_state") != STATE_DONE:
-                    canonical_run_state = _canonical_run_state_for_stale_merged_pr_recovery(
-                        merged_pr_plan_state,
-                        chain_state=state,
-                    )
                     recovered_state, recovery_reason = (
                         _recover_stale_merged_pr_for_unfinished_plan(
                             root,
@@ -5008,7 +5236,6 @@ def run_chain(
                             state,
                             milestone,
                             merged_pr_plan_state,
-                            canonical_run_state=canonical_run_state,
                             writer=writer,
                         )
                     )

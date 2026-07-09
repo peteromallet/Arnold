@@ -1,1 +1,1 @@
-/Users/peteromalley/Documents/Arnold/arnold_pipelines/megaplan/data/superfixer_debug_skill.md
+../../data/superfixer_debug_skill.md
