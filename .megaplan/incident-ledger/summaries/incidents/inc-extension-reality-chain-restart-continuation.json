@@ -1,0 +1,43 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 5,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-09T01:31:27.628133+00:00",
+  "incident_id": "inc-extension-reality-chain-restart-continuation",
+  "kind": "incident_summary",
+  "latest_actor": "repair_system",
+  "next_expected_event": null,
+  "outcome": "recovered",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-bef9405c197d"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:e9159fadbf2ab9aea3c218c2c12baf4a6a27950f637d665035bcbb97ba49e4b2",
+    "last_seq": 160,
+    "projection": "incidents"
+  },
+  "state": "verified_recovered",
+  "summary_text": "inc-extension-reality-chain-restart-continuation: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/extension-reality-chain-restart-continuation/arnold"
+}

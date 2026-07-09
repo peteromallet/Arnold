@@ -1,0 +1,22 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-09T01:31:27.631272+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-extension-reality-chain-restart-continuation",
+    "inc-progress-auditor-stage-metrics"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 6,
+  "owner_actor": "repair_system",
+  "problem_id": "problem-bef9405c197d",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:e9159fadbf2ab9aea3c218c2c12baf4a6a27950f637d665035bcbb97ba49e4b2",
+    "last_seq": 160,
+    "projection": "problems"
+  },
+  "status": "fixed",
+  "summary_text": "problem-bef9405c197d: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/progress-auditor-stage-metrics/Arnold"
+}

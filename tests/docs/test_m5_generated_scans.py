@@ -100,6 +100,10 @@ _FENCE_RE = re.compile(r"```python\n(.*?)\n```", re.DOTALL)
 
 def _is_archival_or_pending(path: Path) -> bool:
     rel = path.relative_to(REPO_ROOT)
+    if rel.parts[:3] == (".megaplan", "runtime", "editable-engine"):
+        return True
+    if rel.parts and rel.parts[0] == ".worktrees":
+        return True
     for prefix in ARCHIVAL_OR_PENDING_PATHS:
         if rel == prefix or str(rel).startswith(str(prefix) + "/"):
             return True
