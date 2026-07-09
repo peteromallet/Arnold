@@ -1126,7 +1126,6 @@ def _present_deleted_import_modules(repo_root: Path) -> list[str]:
 def _deleted_product_import_violations(repo_root: Path) -> dict[str, tuple[str, ...]]:
     product_roots = (repo_root / "arnold_pipelines",)
     violations: dict[str, tuple[str, ...]] = {}
-
     for root in product_roots:
         for source in sorted(root.rglob("*.py")):
             try:
