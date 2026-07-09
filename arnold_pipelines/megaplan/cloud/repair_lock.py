@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shlex
 import socket
+import subprocess
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -108,6 +110,11 @@ def inspect_repair_lock(
         if isinstance(pid, int):
             if not pid_probe(pid):
                 evidence["reasons"].append("owner_pid_not_live")
+            elif not _pid_matches_expected_repair_loop(owner, pid):
+                evidence["reasons"].append("owner_process_mismatch")
+                observed_command = _pid_command_text(pid)
+                if observed_command:
+                    evidence["observed_command"] = observed_command
         else:
             evidence["reasons"].append("owner_pid_missing")
 
@@ -274,6 +281,68 @@ def _default_is_pid_live(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _pid_matches_expected_repair_loop(owner: Mapping[str, Any], pid: int) -> bool:
+    session = str(owner.get("session") or "").strip()
+    owner_command = str(owner.get("command") or "").strip()
+    if not session or not owner_command:
+        return True
+    try:
+        owner_args = shlex.split(owner_command)
+    except ValueError:
+        owner_args = owner_command.split()
+    if not _args_match_repair_loop_session(owner_args, session):
+        return True
+    live_args = _pid_command_args(pid)
+    if not live_args:
+        return True
+    return _args_match_repair_loop_session(live_args, session)
+
+
+def _pid_command_args(pid: int) -> list[str]:
+    cmdline_path = Path(f"/proc/{pid}/cmdline")
+    try:
+        raw = cmdline_path.read_bytes()
+    except OSError:
+        raw = b""
+    if raw:
+        return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+    proc = subprocess.run(
+        ["ps", "-ww", "-o", "args=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return []
+    text = proc.stdout.strip()
+    if not text:
+        return []
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return text.split()
+
+
+def _pid_command_text(pid: int) -> str:
+    return " ".join(_pid_command_args(pid))
+
+
+def _args_match_repair_loop_session(args: list[str], session: str) -> bool:
+    def match_at(idx: int) -> bool:
+        if idx >= len(args):
+            return False
+        if Path(args[idx]).name != "arnold-repair-loop":
+            return False
+        return idx + 1 < len(args) and args[idx + 1] == session
+
+    for idx in range(len(args)):
+        if match_at(idx):
+            return True
+        if Path(args[idx]).name in {"bash", "sh"} and match_at(idx + 1):
+            return True
+    return False
 
 
 def _utc_now() -> str:

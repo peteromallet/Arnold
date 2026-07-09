@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,6 +167,40 @@ def test_active_repair_claim_reclaims_dead_owner_without_custom_probe(tmp_path: 
     assert reclaimed.claimed
     assert reclaimed.owner is not None
     assert reclaimed.owner["pid"] == 555
+
+
+def test_active_repair_claim_reclaims_live_pid_when_process_no_longer_matches_session(
+    tmp_path: Path,
+) -> None:
+    queue_dir = tmp_path / "repair-queue"
+    first = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:process-mismatch",
+        request_id="req-process-mismatch",
+        actor="trigger-a",
+        session="demo-session",
+        pid=os.getpid(),
+        command="arnold-repair-loop demo-session /workspace/project /workspace/project/.megaplan/chain.yaml",
+        started_at="2026-07-04T01:00:00+00:00",
+        is_pid_live=lambda pid: pid == os.getpid(),
+    )
+    assert first.claimed
+
+    reclaimed = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:process-mismatch",
+        request_id="req-process-mismatch",
+        actor="trigger-b",
+        session="demo-session",
+        pid=556,
+        command="arnold-repair-loop demo-session /workspace/project /workspace/project/.megaplan/chain.yaml",
+        is_pid_live=lambda pid: pid in {os.getpid(), 556},
+    )
+
+    assert reclaimed.claimed
+    assert reclaimed.owner is not None
+    assert reclaimed.owner["pid"] == 556
+    assert reclaimed.owner["actor"] == "trigger-b"
 
 
 def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path) -> None:
