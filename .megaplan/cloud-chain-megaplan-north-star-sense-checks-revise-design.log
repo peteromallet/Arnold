@@ -868,3 +868,4 @@ WARNING:root:Failed to generate context summary: Error code: 401 - {'error': {'m
   [tool] (｡◕‿◕｡) 📖 /workspace/megaplan-north-s...
   [done] ┊ 📖 read      ...s-20260709-1934/gate_output.json  1.5s (2.0s)
 [hermes-worker] Read JSON from template file: /workspace/megaplan-north-star-sense-checks-revise-design/arnold/.megaplan/plans/implement-north-star-actions-20260709-1934/gate_output.json
+Captured execution baseline: 0 pre-existing uncommitted paths. Unchanged paths will be excluded from ownership audits.
