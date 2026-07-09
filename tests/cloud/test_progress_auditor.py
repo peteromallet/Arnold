@@ -55,6 +55,13 @@ def _extract_gather_program() -> str:
     return text[py_start:py_end]
 
 
+def _extract_gather_function(name: str, next_name: str) -> str:
+    text = _extract_gather_program()
+    start = text.index(f"def {name}(")
+    end = text.index(f"\ndef {next_name}(", start)
+    return text[start:end]
+
+
 def _extract_auditor_function(name: str) -> str:
     text = _wrapper("arnold-progress-auditor")
     start = text.index(f"{name}() {{")
@@ -255,6 +262,28 @@ class TestGreenChecksNoFindings:
         assert "Arnold superfixer bug" in text
         assert "Fix the watchdog/repair-trigger/auditor source" in text
         assert "do not hand-unblock only this run" in text
+
+    def test_publication_attempt_ts_detects_github_issue_evidence(self) -> None:
+        namespace: dict[str, object] = {}
+        exec(
+            _extract_gather_function("_publication_attempt_ts", "_dedupe_refs"),
+            namespace,
+        )
+        publication_attempt_ts = namespace["_publication_attempt_ts"]
+
+        incident = {
+            "latest_actor": "watchdog",
+            "last_timestamp": "2026-07-08T20:33:41+00:00",
+            "evidence_refs": [
+                {
+                    "kind": "github.issue",
+                    "number": 176,
+                    "created_at": "2026-07-08T20:33:42+00:00",
+                }
+            ],
+        }
+
+        assert publication_attempt_ts(incident, {}) == "2026-07-08T20:33:42+00:00"
 
     def test_json_payload_includes_green_checks_when_findings_empty(self, tmp_path: Path) -> None:
         findings_data = {

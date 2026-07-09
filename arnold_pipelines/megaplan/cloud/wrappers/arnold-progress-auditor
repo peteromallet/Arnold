@@ -476,7 +476,8 @@ def _publication_attempt_ts(incident, problem):
     for ref in evidence_refs if isinstance(evidence_refs, list) else []:
         if not isinstance(ref, dict):
             continue
-        if str(ref.get("kind") or "").startswith("github_issue"):
+        kind = str(ref.get("kind") or "")
+        if kind in {"github.issue", "github_sync.publication_payload"} or kind.startswith("github_issue"):
             for key in ("ts", "recorded_at", "created_at", "timestamp_utc"):
                 value = ref.get(key)
                 if value:
