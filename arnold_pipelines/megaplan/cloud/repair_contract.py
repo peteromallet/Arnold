@@ -672,6 +672,7 @@ def classify_repair_dispatch(
             lock_evidence=lock_evidence,
             process_evidence=process_evidence,
             custody=custody,
+            current_target=target_payload,
         )
         if event_plan_dir is not None:
             legacy_decision = _classify_repair_dispatch_legacy(
@@ -762,6 +763,7 @@ def _classify_repair_dispatch_canonical(
     lock_evidence: Any,
     process_evidence: Mapping[str, Any] | None,
     custody: Mapping[str, Any],
+    current_target: Mapping[str, Any],
 ) -> RepairDispatchDecision:
     state = canonical_run_state.canonical_state
     if state is CanonicalState.COMPLETED:
@@ -851,10 +853,55 @@ def _classify_repair_dispatch_canonical(
             retry_strategy=retry_strategy,
             failure_kind=failure_kind,
         )
+    if state is CanonicalState.UNKNOWN:
+        if _is_known_repairable_shape(
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+            current_target=current_target,
+        ):
+            if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
+                return _make_dispatch_decision(
+                    decision=DISPATCH_DECISION_REPAIRING,
+                    dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+                    rationale=(
+                        "resolver enforcement: canonical unknown but known repairable shape already has active repair",
+                    ),
+                    blocker_id=blocker_id,
+                    request_id=request_id,
+                    custody_bucket=custody_bucket,
+                    current_state=current_state,
+                    retry_strategy=retry_strategy,
+                    failure_kind=failure_kind,
+                )
+            if request_id:
+                return _make_dispatch_decision(
+                    decision=DISPATCH_DECISION_L1,
+                    dispatch_intent=DISPATCH_INTENT_L1,
+                    rationale=(
+                        "resolver enforcement: canonical unknown but legacy evidence proves known repairable shape",
+                    ),
+                    blocker_id=blocker_id,
+                    request_id=request_id,
+                    custody_bucket=custody_bucket,
+                    current_state=current_state,
+                    retry_strategy=retry_strategy,
+                    failure_kind=failure_kind,
+                )
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+            rationale=("resolver enforcement: canonical unknown escalation",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
     if state in {
         CanonicalState.BROKEN_STATE_MACHINE,
         CanonicalState.STALE_DERIVED_STATE,
-        CanonicalState.UNKNOWN,
     }:
         state_label = state.name.lower().replace("_", "-")
         return _make_dispatch_decision(
