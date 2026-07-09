@@ -2473,11 +2473,6 @@ def _chain_completion_guard(
     plan_state = _read_plan_state_payload_from_dir(plan_dir)
     current_state = plan_state.get("current_state")
     current_state_note = ""
-    if _is_failed_no_next_step_blocked_execute(plan_state):
-        current_state = STATE_EXECUTED
-        current_state_note = (
-            "no_next_step after blocked execute was canonicalized to executed"
-        )
     is_merged_pr = _completion_record_is_merged_pr(record)
     if is_merged_pr and not implementation_milestone:
         return True, "merged PR milestone accepted without implementation checks"
@@ -2838,8 +2833,6 @@ def _recover_stale_merged_pr_for_unfinished_plan(
 
     current_state = plan_state.get("current_state")
     canonical_current_state = current_state
-    if _is_failed_no_next_step_blocked_execute(plan_state):
-        canonical_current_state = STATE_EXECUTED
     if current_state == STATE_DONE:
         return None, f"plan {plan_name} is already {STATE_DONE!r}"
     if not isinstance(canonical_current_state, str) or not canonical_current_state:
