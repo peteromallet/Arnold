@@ -16318,3 +16318,122 @@ def test_canonical_block_human_required_honors_flat_fields(tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
     assert "human_required: true" in result.stdout
     assert "gate: EXPLICIT_APPROVAL" in result.stdout
+
+
+# --- watchdog snapshot staleness hardening (watchdog-snapshot-staleness-fix.md) ---
+
+
+def test_scan_once_writes_heartbeat_and_early_snapshot_before_heavy_work() -> None:
+    """P2: scan_once touches the heartbeat and writes a best-effort snapshot
+    BEFORE repair_trigger_scan / git sync / pip refresh, so a hang later in the
+    sweep leaves the cache ~one sweep stale instead of frozen."""
+    text = _wrapper("arnold-watchdog")
+    body = text[text.index("scan_once() {"):]
+    i_scan = body.index('log "scan start')
+    i_hb = body.index("write_watchdog_heartbeat", i_scan)
+    i_early = body.index('write_status_snapshot "" "" "" notrack', i_hb)
+    i_repair = body.index("repair_trigger_scan", i_early)
+    assert i_scan < i_hb < i_early < i_repair
+
+
+def test_watchdog_bounds_sync_and_refresh_with_timeouts() -> None:
+    """P2/P3: network git ops and pip refresh are wrapped in bounded timeouts
+    (not CODEX_TIMEOUT=7200), with new tunable env defaults."""
+    text = _wrapper("arnold-watchdog")
+    assert 'timeout "$SYNC_TIMEOUT_SECS" git fetch origin "$SYNC_BRANCH" --prune' in text
+    assert 'timeout "$SYNC_TIMEOUT_SECS" git pull --ff-only origin "$SYNC_BRANCH"' in text
+    assert 'timeout "$SYNC_TIMEOUT_SECS" git push origin "$SYNC_BRANCH"' in text
+    assert (
+        'timeout "$INSTALL_REFRESH_TIMEOUT_SECS" python3 -m pip install --upgrade -e "$SRC_DIR[agent]"'
+        in text
+    )
+    assert "CLOUD_WATCHDOG_SYNC_TIMEOUT_SECS:-120" in text
+    assert "CLOUD_WATCHDOG_INSTALL_REFRESH_TIMEOUT_SECS:-300" in text
+    assert "CLOUD_WATCHDOG_SNAPSHOT_FAILURE_THRESHOLD:-3" in text
+
+
+def test_watchdog_snapshot_failure_escalation_is_structured() -> None:
+    """P2: swallowed write failures are replaced by a counted escalation that
+    leaves visible sidecars when writes keep failing."""
+    text = _wrapper("arnold-watchdog")
+    assert "record_snapshot_write_outcome" in text
+    assert "cloud-status.write-error.json" in text
+    assert "snapshot-failures.json" in text
+    # The old silent swallow must be gone.
+    assert '|| log "status snapshot write failed"' not in text
+
+
+def test_write_watchdog_heartbeat_writes_freshness_probe(tmp_path: Path) -> None:
+    """P2: write_watchdog_heartbeat drops an ISO-8601 UTC probe in STATUS_DIR."""
+    status_dir = tmp_path / "status"
+    program = (
+        "#!/usr/bin/env bash\nset -u\n"
+        + _extract_wrapper_function("write_watchdog_heartbeat")
+        + f'\nSTATUS_DIR="{status_dir}"\n'
+        'write_watchdog_heartbeat "$STATUS_DIR"\n'
+        'cat "$STATUS_DIR/watchdog.heartbeat"\n'
+    )
+    script = tmp_path / "hb.sh"
+    script.write_text(program)
+    res = subprocess.run(["bash", str(script)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert (status_dir / "watchdog.heartbeat").exists()
+    assert res.stdout.strip().endswith("Z")
+
+
+def test_record_snapshot_write_outcome_counts_and_escalates(tmp_path: Path) -> None:
+    """P2: consecutive failures bump a counter, write an error sidecar at the
+    threshold, and reset (clearing both) on the next success."""
+    status_dir = tmp_path / "status"
+    status_dir.mkdir()
+    program = (
+        "#!/usr/bin/env bash\nset -u\n"
+        + _extract_wrapper_function("record_snapshot_write_outcome")
+        + f'\nSTATUS_DIR="{status_dir}"\nSNAPSHOT_FAILURE_THRESHOLD=3\n'
+        'n1="$(record_snapshot_write_outcome "$STATUS_DIR" fail)"; '
+        'n2="$(record_snapshot_write_outcome "$STATUS_DIR" fail)"; '
+        'n3="$(record_snapshot_write_outcome "$STATUS_DIR" fail)"; '
+        'echo "counts=$n1,$n2,$n3"; '
+        '[[ -f "$STATUS_DIR/cloud-status.write-error.json" ]] && echo "err3=yes" || echo "err3=no"; '
+        'record_snapshot_write_outcome "$STATUS_DIR" ok; '
+        '[[ -f "$STATUS_DIR/cloud-status.write-error.json" ]] && echo "err_ok=yes" || echo "err_ok=no"; '
+        '[[ -f "$STATUS_DIR/snapshot-failures.json" ]] && echo "ctr_ok=yes" || echo "ctr_ok=no"\n'
+    )
+    script = tmp_path / "drv.sh"
+    script.write_text(program)
+    res = subprocess.run(["bash", str(script)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert "counts=1,2,3" in res.stdout
+    assert "err3=yes" in res.stdout   # threshold reached -> sidecar written
+    assert "err_ok=no" in res.stdout  # success resets -> sidecar cleared
+    assert "ctr_ok=no" in res.stdout  # success resets -> counter cleared
+
+
+def test_watchdog_ensure_systemd_unit_and_timer_exist() -> None:
+    """P3: a host systemd unit + 1-minute timer supervise the watchdog so a dead
+    tmux loop is revived instead of staying dead until next boot."""
+    service = _systemd_file("megaplan-watchdog-ensure.service")
+    assert "Type=oneshot" in service
+    assert "/usr/local/bin/ensure-megaplan-watchdog" in service
+    timer = _systemd_file("megaplan-watchdog-ensure.timer")
+    assert "OnUnitActiveSec=1min" in timer
+    assert "Unit=megaplan-watchdog-ensure.service" in timer
+    assert "WantedBy=timers.target" in timer
+
+
+def test_watchdog_bounds_first_checkout_clone_with_timeout() -> None:
+    """P2: the first-checkout `git clone` in the editable-source sync path is also
+    bounded, so it can't hang before the authoritative end-of-sweep write."""
+    text = _wrapper("arnold-watchdog")
+    assert 'timeout "$SYNC_TIMEOUT_SECS" git clone --branch "$SYNC_BRANCH"' in text
+
+
+def test_ensure_watchdog_restarts_on_stale_heartbeat() -> None:
+    """P3: ensure-megaplan-watchdog revives a HUNG watchdog (stale heartbeat), not
+    just a missing tmux session — the actual snapshot-staleness failure mode."""
+    text = _systemd_file("ensure-megaplan-watchdog")
+    assert "MEGAPLAN_WATCHDOG_STALE_HEARTBEAT_MIN" in text
+    assert "/workspace/.megaplan/status/watchdog.heartbeat" in text
+    assert "tmux kill-session -t watchdog" in text
+    # Still restarts cleanly when the session is genuinely missing.
+    assert "tmux new-session -d -s watchdog -c /workspace /usr/local/bin/arnold-watchdog" in text

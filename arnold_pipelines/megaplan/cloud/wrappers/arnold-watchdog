@@ -71,6 +71,13 @@ SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
+# Bounded timeouts so a hung git sync / pip refresh can't freeze a sweep before
+# the snapshot is written (watchdog-snapshot-staleness-fix.md P2). Do NOT reuse
+# CODEX_TIMEOUT (7200s) for these network/install steps.
+SYNC_TIMEOUT_SECS="${CLOUD_WATCHDOG_SYNC_TIMEOUT_SECS:-120}"
+INSTALL_REFRESH_TIMEOUT_SECS="${CLOUD_WATCHDOG_INSTALL_REFRESH_TIMEOUT_SECS:-300}"
+# Consecutive snapshot-write failures before we drop a visible write-error sidecar.
+SNAPSHOT_FAILURE_THRESHOLD="${CLOUD_WATCHDOG_SNAPSHOT_FAILURE_THRESHOLD:-3}"
 EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
 KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
@@ -1495,14 +1502,70 @@ PY
   rm -f "$report_tmp"
 }
 
+write_watchdog_heartbeat() {
+  # Touch a freshness probe at sweep START so the resident can detect a stalled
+  # watchdog even when a later step (repair_trigger_scan / git sync / pip refresh)
+  # hangs before the snapshot write completes (watchdog-snapshot-staleness-fix.md
+  # P2). Best-effort; never fails a sweep.
+  local status_dir="${1:-$STATUS_DIR}"
+  mkdir -p "$status_dir" 2>/dev/null || true
+  python3 - "$status_dir" <<'PY' 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ" > "$status_dir/watchdog.heartbeat" 2>/dev/null || true
+import datetime, pathlib, sys
+p = pathlib.Path(sys.argv[1]) / "watchdog.heartbeat"
+p.write_text(datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z") + "\n")
+PY
+}
+
+record_snapshot_write_outcome() {
+  # Track consecutive snapshot-write failures (watchdog-snapshot-staleness-fix.md
+  # P2): "ok" resets the counter and clears the error sidecar; "fail" bumps it,
+  # and once it reaches SNAPSHOT_FAILURE_THRESHOLD drops a visible
+  # cloud-status.write-error.json so consumers know the cache is frozen. Prints
+  # the failure count on "fail" (for logging); prints nothing on "ok".
+  local status_dir="${1:-$STATUS_DIR}"
+  local outcome="${2:-ok}"
+  local threshold="${SNAPSHOT_FAILURE_THRESHOLD:-3}"
+  python3 - "$status_dir" "$outcome" "$threshold" <<'PY' 2>/dev/null || true
+import datetime, json, pathlib, sys
+status_dir, outcome, threshold = sys.argv[1], sys.argv[2], int(sys.argv[3] or 3)
+base = pathlib.Path(status_dir)
+counter_path = base / "snapshot-failures.json"
+err_path = base / "cloud-status.write-error.json"
+now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+if outcome == "ok":
+    for p in (counter_path, err_path):
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+    sys.exit(0)
+try:
+    failures = json.loads(counter_path.read_text()).get("failures", 0) + 1 if counter_path.exists() else 1
+except Exception:
+    failures = 1
+counter_path.write_text(json.dumps({"failures": failures, "last_at": now}) + "\n")
+if failures >= threshold:
+    err_path.write_text(json.dumps({
+        "error": "cloud-status snapshot write has failed %d consecutive sweeps; cache may be frozen" % failures,
+        "failures": failures,
+        "at": now,
+    }) + "\n")
+print(failures)
+PY
+}
+
 write_status_snapshot() {
-  # Produce the canonical cloud-status.json after each sweep. Built from local
-  # observation only (marker dir + the report emit_report just wrote). Never let
-  # a snapshot failure break the watchdog sweep — log and move on.
+  # Produce the canonical cloud-status.json. Built from local observation only
+  # (marker dir + the report emit_report wrote). The 4th arg ("track" default vs
+  # "notrack") decides whether a failure counts toward escalation — the early
+  # best-effort write at sweep start uses "notrack" so only authoritative
+  # end-of-sweep write failures escalate. Never let a snapshot failure break the
+  # watchdog sweep — count/log and move on.
   local marker_dir="${1:-$MARKER_DIR}"
   local report_path="${2:-$REPORT_PATH}"
   local status_dir="${3:-$STATUS_DIR}"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$marker_dir" "$report_path" "$status_dir" <<'PY' 2>>"${LOG:-/dev/null}" || log "status snapshot write failed"
+  local track="${4:-track}"
+  if PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$marker_dir" "$report_path" "$status_dir" <<'PY' 2>>"${LOG:-/dev/null}"; then
 import sys
 from pathlib import Path
 
@@ -1516,6 +1579,16 @@ status_snapshot.build_and_write_snapshot(
     previous_path=status_dir / "cloud-status.previous.json",
 )
 PY
+    [[ "$track" != "notrack" ]] && record_snapshot_write_outcome "$status_dir" ok
+  else
+    if [[ "$track" != "notrack" ]]; then
+      local _failures
+      _failures="$(record_snapshot_write_outcome "$status_dir" fail)"
+      log "status snapshot write failed (${_failures:-?} consecutive; threshold ${SNAPSHOT_FAILURE_THRESHOLD:-3})"
+    else
+      log "status snapshot early write failed (best-effort; not counted)"
+    fi
+  fi
 }
 
 sync_cloud_runtime_wrappers() {
@@ -1545,10 +1618,10 @@ sync_cloud_runtime_wrappers() {
 refresh_editable_install() {
   if [[ -d "$SRC_DIR" && -f "$SRC_DIR/pyproject.toml" ]]; then
     log "refreshing Arnold editable install from $SRC_DIR"
-    python3 -m pip install --upgrade -e "$SRC_DIR[agent]" >> "$LOG" 2>&1 || return 1
+    timeout "$INSTALL_REFRESH_TIMEOUT_SECS" python3 -m pip install --upgrade -e "$SRC_DIR[agent]" >> "$LOG" 2>&1 || return 1
   elif [[ -x /usr/local/bin/mp-refresh-megaplan ]]; then
     log "refreshing Arnold install with mp-refresh-megaplan fallback"
-    MEGAPLAN_REF="$SYNC_BRANCH" /usr/local/bin/mp-refresh-megaplan >> "$LOG" 2>&1 || return 1
+    timeout "$INSTALL_REFRESH_TIMEOUT_SECS" env MEGAPLAN_REF="$SYNC_BRANCH" /usr/local/bin/mp-refresh-megaplan >> "$LOG" 2>&1 || return 1
   else
     log "mp-refresh-megaplan missing; skipping editable refresh"
   fi
@@ -1576,7 +1649,7 @@ ensure_editable_source_checkout() {
 
   log "cloning editable source checkout branch=$SYNC_BRANCH into $SRC_DIR"
   mkdir -p "$(dirname "$SRC_DIR")"
-  git clone --branch "$SYNC_BRANCH" "$(repo_url_with_token "$repo")" "$SRC_DIR" >> "$LOG" 2>&1
+  timeout "$SYNC_TIMEOUT_SECS" git clone --branch "$SYNC_BRANCH" "$(repo_url_with_token "$repo")" "$SRC_DIR" >> "$LOG" 2>&1
 }
 
 sync_skills_in_source() {
@@ -1666,7 +1739,7 @@ sync_editable_source_branch() {
   (
     cd "$SRC_DIR" &&
     git config --global --add safe.directory "$SRC_DIR" >/dev/null 2>&1 || true &&
-    git fetch origin "$SYNC_BRANCH" --prune &&
+    timeout "$SYNC_TIMEOUT_SECS" git fetch origin "$SYNC_BRANCH" --prune &&
     branch="$(git branch --show-current)" &&
     if [[ "$branch" != "$SYNC_BRANCH" ]]; then
       if [[ -n "$(git status --porcelain)" ]]; then
@@ -1675,7 +1748,7 @@ sync_editable_source_branch() {
       fi
       git checkout "$SYNC_BRANCH"
     fi &&
-    git pull --ff-only origin "$SYNC_BRANCH"
+    timeout "$SYNC_TIMEOUT_SECS" git pull --ff-only origin "$SYNC_BRANCH"
   ) >> "$LOG" 2>&1 || {
     log "editable source fetch/pull failed"
     report_item "$report_items" "editable-install" "sync" "sync_failed" "fetch/pull failed" "$SRC_DIR" "$SYNC_BRANCH"
@@ -1694,7 +1767,7 @@ sync_editable_source_branch() {
       cd "$SRC_DIR" &&
       git add -A -- arnold_pipelines/megaplan/skills &&
       git commit -m "Sync cloud editable install and skills" &&
-      git push origin "$SYNC_BRANCH"
+      timeout "$SYNC_TIMEOUT_SECS" git push origin "$SYNC_BRANCH"
     ) >> "$LOG" 2>&1 || {
       log "editable skill sync commit/push failed"
       report_item "$report_items" "editable-install" "sync" "sync_failed" "skill sync commit/push failed" "$SRC_DIR" "$SYNC_BRANCH"
@@ -7088,6 +7161,13 @@ EOF
 scan_once() {
   log "scan start marker_dir=$MARKER_DIR"
   maybe_reexec_updated_watchdog
+  # P2: heartbeat + an early snapshot write BEFORE the heavy/stall-prone work
+  # (repair_trigger_scan, git sync, pip refresh). If anything below hangs, the
+  # cache is at most ~one sweep stale instead of frozen indefinitely. The early
+  # write uses last sweep's report and is "notrack" (best-effort, not counted
+  # toward escalation); the authoritative write at sweep end still counts.
+  write_watchdog_heartbeat
+  write_status_snapshot "" "" "" notrack
   local report_items
   report_items="$(mktemp)"
   repair_trigger_scan
