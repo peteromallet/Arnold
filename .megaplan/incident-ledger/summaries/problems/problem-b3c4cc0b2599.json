@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-09T01:31:27.631020+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-demo-session"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 1,
+  "owner_actor": "immediate_repair",
+  "problem_id": "problem-b3c4cc0b2599",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:e9159fadbf2ab9aea3c218c2c12baf4a6a27950f637d665035bcbb97ba49e4b2",
+    "last_seq": 154,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-b3c4cc0b2599: repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-701/test_repair_loop_serializes_sa0/ws"
+}
