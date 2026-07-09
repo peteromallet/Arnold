@@ -1030,7 +1030,13 @@ class PlanningControlBinding:
             )
 
         if action == "recover-blocked":
-            if state["current_state"] != STATE_BLOCKED:
+            latest_failure = state.get("latest_failure")
+            aborted_with_blocked_failure = (
+                state["current_state"] == STATE_ABORTED
+                and isinstance(latest_failure, Mapping)
+                and latest_failure.get("state") == STATE_BLOCKED
+            )
+            if state["current_state"] != STATE_BLOCKED and not aborted_with_blocked_failure:
                 raise CliError(
                     "invalid_transition",
                     f"recover-blocked requires state '{STATE_BLOCKED}', got '{state['current_state']}'",
@@ -1058,7 +1064,6 @@ class PlanningControlBinding:
                     f"recover-blocked does not know how to resume phase {phase!r}",
                     extra={"resume_cursor": dict(resume_cursor)},
                 )
-            latest_failure = state.get("latest_failure")
             if isinstance(latest_failure, Mapping) and latest_failure.get("kind") == "authority_divergence":
                 plan_name = state.get("name") or "plan"
                 rerun_command = f"megaplan {phase} --plan {plan_name}"
