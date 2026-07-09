@@ -84,7 +84,7 @@ import json
 import os
 import sys
 from pathlib import Path
-Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], "request_id": os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", "")}}), encoding="utf-8")
+Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], "request_id": os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", ""), "claim_owner_pid": os.environ.get("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID", "")}}), encoding="utf-8")
 """,
         encoding="utf-8",
     )
@@ -249,6 +249,7 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     payload = _read_json_eventually(tmp_path / "repair-args.json")
     assert payload["argv"] == ["demo", str(workspace), str(spec)]
     assert payload["request_id"] == queued["request"]["request_id"]
+    assert payload["claim_owner_pid"].isdigit()
 
 
 def test_trigger_does_not_launch_when_request_claim_is_already_held(tmp_path: Path) -> None:
@@ -318,6 +319,7 @@ def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:
     payload = _read_json_eventually(tmp_path / "repair-args.json")
     assert payload["argv"] == ["demo", str(workspace), str(spec)]
     assert payload["request_id"] == queued["request"]["request_id"]
+    assert payload["claim_owner_pid"].isdigit()
 
 
 def test_trigger_coalesces_pending_duplicate_files_under_lock(tmp_path: Path) -> None:

@@ -264,6 +264,7 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
     env = dict(os.environ)
     env["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"] = request_id
     env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = blocker_id
+    env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
     env["ARNOLD_REPAIR_TRIGGER_DISPATCHED"] = "1"
     try:
         proc = subprocess.Popen(
