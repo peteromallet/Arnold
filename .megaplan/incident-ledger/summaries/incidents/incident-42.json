@@ -1,0 +1,142 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 38,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    }
+  ],
+  "generated_at": "2026-07-09T01:31:27.629186+00:00",
+  "incident_id": "incident-42",
+  "kind": "incident_summary",
+  "latest_actor": "meta_repair",
+  "next_expected_event": "repair_attempt.verification",
+  "outcome": "attempted",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "repeated_attempts_without_new_evidence",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-68a048c70af7"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:e9159fadbf2ab9aea3c218c2c12baf4a6a27950f637d665035bcbb97ba49e4b2",
+    "last_seq": 148,
+    "projection": "incidents"
+  },
+  "state": "repair_attempt",
+  "summary_text": "incident-42: repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
+}
