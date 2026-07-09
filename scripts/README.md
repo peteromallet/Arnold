@@ -31,4 +31,26 @@ python scripts/chain_done_gate.py \
   --blockers .megaplan/briefs/workflow-manifest-runtime/blockers.json
 
 python scripts/m6_purge_gate.py
+
+### Direct Grok (xAI) API usage example
+
+`test_grok_api_endpoint.py` demonstrates using your own `XAI_API_KEY` against the
+public Grok API **outside the grok CLI/TUI tool**.
+
+It always prints the endpoint details so you can copy them anywhere:
+
+- Endpoint: https://api.x.ai/v1
+- Model: grok-4.5
+- Auth: XAI_API_KEY (Bearer or api_key=)
+- Compatible with OpenAI SDK, curl, Cursor, etc.
+
+Run:
+```bash
+python scripts/test_grok_api_endpoint.py
+export XAI_API_KEY=...
+python scripts/test_grok_api_endpoint.py   # live call
+```
+
+See the script source for full comments + the two helper functions
+(`make_grok_client`, `call_model`) that are also unit-tested.
 ```
