@@ -11,10 +11,11 @@ The Arnold consolidation was executed to the intended clean end-state.
 
 - The reconciled code/runtime payload is `e6dc24b3c`
   (`Merge Arnold consolidation into main`).
-- `origin/main` and `origin/editible-install` are intentionally aligned. This
-  closeout document may advance both branches one documentation-only commit past
-  `e6dc24b3c`; the important invariant is that both durable branches point at
-  the same commit after the closeout push.
+- `origin/main` and `origin/editible-install` are intentionally aligned.
+  Follow-up closeout commits recovered two valuable local payloads found during
+  final cleanup: `cloud quickstart` and configured-spec worker fallback
+  progression. The invariant is that both durable branches point at the same
+  commit after each closeout push.
 - Local `main` tracks `origin/main`.
 - Local `editible-install` tracks `origin/editible-install`.
 - The Hetzner cloud checkout `/workspace/arnold` was reset to
@@ -46,6 +47,14 @@ while landing the cloud runtime, superfixer, extension-reality recovery, and S7
 native-parity payload that had previously been split across local/cloud/remote
 surfaces.
 
+Final cleanup also recovered local work that was initially present only in the
+archived dirty checkout:
+
+- `python -m arnold_pipelines.megaplan cloud quickstart`, matching the existing
+  megaplan-cloud skill documentation.
+- Multi-sprint North Star preflight/launch guardrails.
+- Configured fallback-chain progression for retryable worker failures.
+
 ## Verification
 
 Focused verification run before final branch cleanup:
@@ -59,6 +68,15 @@ pytest -q tests/cloud/test_repair_contract.py \
 python scripts/generate_arnold_docs.py --check
 # Arnold generated artifacts are up to date.
 
+pytest -q tests/arnold_pipelines/megaplan/test_cloud_quickstart.py
+# 7 passed
+
+pytest -q tests/arnold_pipelines/megaplan/test_worker_fanout_fallback.py \
+  tests/arnold_pipelines/megaplan/test_fallback_observability.py \
+  tests/arnold_pipelines/megaplan/test_fallback_chains_characterization.py \
+  tests/arnold_pipelines/megaplan/test_auto_native_dispatch.py
+# 74 passed
+
 pytest -q tests/cloud/test_watchdog_wrappers.py \
   tests/cloud/test_repair_trigger_wrapper.py \
   tests/cloud/test_meta_repair.py
@@ -71,6 +89,13 @@ pytest -q tests/cloud/test_watchdog_wrappers.py \
   tests/cloud/test_meta_repair.py \
   tests/test_chain_completion_guard.py
 # 653 passed
+
+pytest -q tests/cloud/test_repair_contract.py \
+  tests/cloud/test_watchdog_wrappers.py \
+  tests/cloud/test_repair_trigger_wrapper.py \
+  tests/cloud/test_status_snapshot.py \
+  tests/test_chain_completion_guard.py
+# 540 passed
 ```
 
 Cloud post-reset verification:
@@ -118,6 +143,7 @@ primary-untracked-before-clean.tgz
 remote-branches-to-clean.txt
 remote-branches-unique-logs.txt
 remaining-remote-side-branches-20260709.bundle
+cloud-stash-codex-temp-superfixer-rebase.patch
 ```
 
 The old local `main` checkout was patch-equivalent for its lone ahead commit,
@@ -195,13 +221,17 @@ committed:
 
 - `docs/megaplan/arnold-cloud-local-work-merge-strategy-brief.md`
 - `docs/superfixer/**`
-- `tests/arnold_pipelines/megaplan/test_cloud_quickstart.py`
 
 Reason: the merge strategy brief and superfixer notes were pre-closeout planning
-artifacts; the quickstart test was stale against the current CLI and failed
-locally because `cloud quickstart` is not registered in this code line and the
-preflight JSON shape has changed. All are recoverable from
-`primary-untracked-before-clean.tgz`.
+artifacts. They are recoverable from `primary-untracked-before-clean.tgz`.
+
+The quickstart test was initially archived because the implementation was
+missing from the reconciled branch. The final closeout recovered the matching
+implementation and restored the test.
+
+The cloud stash `codex-temp-superfixer-rebase` was archived to
+`cloud-stash-codex-temp-superfixer-rebase.patch`, then dropped from
+`/workspace/arnold`.
 
 ## Surviving Branches
 

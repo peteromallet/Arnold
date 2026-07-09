@@ -24,6 +24,7 @@ from typing import Any, Callable, Literal
 from arnold_pipelines.megaplan.audits.robustness import build_empty_template
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
 from arnold_pipelines.megaplan.fallback_chains import (
+    classify_retryability,
     configured_fallback_chain_for_phase,
     decode_phase_model_value,
     fallback_observability_fields,
@@ -63,6 +64,7 @@ from arnold_pipelines.megaplan._core import (
     schemas_root,
     touch_active_step,
 )
+from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.prompts import (
     _resolve_prompt_root,
     create_codex_prompt,
@@ -4399,13 +4401,18 @@ def _initial_fallback_metadata(
     agent: str,
     model: str | None,
     effort: str | None,
+    configured_specs: tuple[str, ...] | list[str] | str | None = None,
 ) -> dict[str, Any]:
-    configured = configured_fallback_chain_for_phase(getattr(args, "phase_model", None), step)
-    configured_specs = configured.specs if configured is not None else (_selected_step_spec(agent, model, effort),)
+    if configured_specs is not None:
+        ledger_fields = fallback_observability_fields(configured_specs)
+        normalized_specs = tuple(ledger_fields["configured_specs"])
+    else:
+        configured = configured_fallback_chain_for_phase(getattr(args, "phase_model", None), step)
+        normalized_specs = configured.specs if configured is not None else (_selected_step_spec(agent, model, effort),)
     return {
-        "configured_specs": configured_specs,
+        "configured_specs": normalized_specs,
         "attempt_index": 0,
-        "attempted_specs": (configured_specs[0],),
+        "attempted_specs": (normalized_specs[0],),
         "failed_attempt_reasons": (),
         "fallback_trigger": None,
     }
@@ -4417,6 +4424,145 @@ def _assign_worker_fallback_metadata(worker: WorkerResult, metadata: dict[str, A
     worker.attempted_specs = tuple(metadata["attempted_specs"])
     worker.failed_attempt_reasons = tuple(metadata["failed_attempt_reasons"])
     worker.fallback_trigger = metadata["fallback_trigger"]
+
+
+_CONFIGURED_SPEC_FALLBACK_CLASSES = frozenset(
+    {
+        "availability",
+        "infrastructure",
+        "auth",
+        "quota",
+        "rate_limit",
+        "unsupported_model",
+        "context_window",
+    }
+)
+
+
+def _configured_spec_failure_class(error: CliError) -> str:
+    external = error.extra.get("_external_error")
+    if external is not None:
+        return classify_retryability(external)
+    return classify_retryability(
+        {
+            "code": error.code,
+            "message": str(error),
+            "status_code": error.extra.get("status_code"),
+            "retryable": error.extra.get("retryable"),
+        }
+    )
+
+
+def _agent_mode_from_configured_spec(
+    spec: str,
+    *,
+    mode: str,
+    refreshed: bool,
+) -> AgentMode:
+    parsed = parse_agent_spec(spec)
+    resolved_model = parsed.model
+    if parsed.agent in ("claude", "codex") and not resolved_model:
+        resolved_model = resolved_default_model_for_agent(parsed.agent)
+    return AgentMode(
+        agent=parsed.agent,
+        mode=mode,
+        refreshed=refreshed,
+        model=parsed.model,
+        effort=parsed.effort,
+        resolved_model=resolved_model,
+    )
+
+
+def _configured_spec_worker_failure_class(worker: WorkerResult) -> str | None:
+    payload = worker.payload
+    if not isinstance(payload, dict) or payload.get("success") is not False:
+        return None
+    details = payload.get("details")
+    external = details.get("_external_error") if isinstance(details, dict) else None
+    if external is not None:
+        return classify_retryability(external)
+    return classify_retryability(
+        {
+            "code": payload.get("error"),
+            "message": payload.get("message"),
+        }
+    )
+
+
+def _advance_configured_spec_fallback(
+    fallback_metadata: dict[str, Any],
+    failure_class: str | None,
+    *,
+    mode: str,
+) -> tuple[AgentMode, dict[str, Any]] | None:
+    if failure_class not in _CONFIGURED_SPEC_FALLBACK_CLASSES:
+        return None
+    configured_specs = tuple(fallback_metadata["configured_specs"])
+    attempt_index = int(fallback_metadata["attempt_index"])
+    next_index = attempt_index + 1
+    if next_index >= len(configured_specs):
+        return None
+    next_spec = configured_specs[next_index]
+    next_mode = _agent_mode_from_configured_spec(
+        next_spec,
+        mode=mode,
+        refreshed=True,
+    )
+    next_metadata = {
+        "configured_specs": configured_specs,
+        "attempt_index": next_index,
+        "attempted_specs": (
+            *fallback_metadata["attempted_specs"],
+            next_spec,
+        ),
+        "failed_attempt_reasons": (
+            *fallback_metadata["failed_attempt_reasons"],
+            failure_class,
+        ),
+        "fallback_trigger": failure_class,
+    }
+    return next_mode, next_metadata
+
+
+def _patch_active_step_fallback_metadata(
+    plan_dir: Path,
+    state: PlanState,
+    metadata: dict[str, Any],
+    *,
+    agent: str,
+    mode: str,
+    model: str | None,
+) -> None:
+    active = state.get("active_step")
+    run_id = active.get("run_id") if isinstance(active, dict) else None
+    if not isinstance(run_id, str) or not run_id:
+        return
+    fields = fallback_observability_fields(
+        metadata["configured_specs"],
+        attempt_index=int(metadata["attempt_index"]),
+        attempted_specs=metadata["attempted_specs"],
+        failed_attempt_reasons=metadata["failed_attempt_reasons"],
+        fallback_trigger=metadata["fallback_trigger"],
+    )
+
+    def _mutate(current: dict[str, Any]) -> bool:
+        current_active = current.get("active_step")
+        if not isinstance(current_active, dict) or current_active.get("run_id") != run_id:
+            return False
+        current_active["agent"] = agent
+        current_active["mode"] = mode
+        if model:
+            current_active["model"] = model
+        current_active.update(fields)
+        current_active["last_activity_at"] = now_utc()
+        current_active["last_activity_kind"] = "fallback"
+        current_active["last_activity_detail"] = f"advanced to {fields['selected_spec']}"
+        return True
+
+    try:
+        write_plan_state(plan_dir, mode="patch-many", mutation=_mutate)
+    except Exception:
+        return
 
 
 def run_step_with_worker(
@@ -4695,6 +4841,29 @@ def run_step_with_worker(
                     },
                 )
                 worker = WorkerResult.from_agent_result(_dispatcher.dispatch(_request))
+            fallback_attempt = _advance_configured_spec_fallback(
+                fallback_metadata,
+                _configured_spec_worker_failure_class(worker),
+                mode=mode,
+            )
+            if fallback_attempt is not None:
+                next_mode, fallback_metadata = fallback_attempt
+                agent = next_mode.agent
+                mode = next_mode.mode
+                refreshed = next_mode.refreshed
+                model = next_mode.model
+                effort = next_mode.effort
+                resolved_model = next_mode.resolved_model
+                effective_refreshed = True
+                _patch_active_step_fallback_metadata(
+                    plan_dir,
+                    state,
+                    fallback_metadata,
+                    agent=agent,
+                    mode=mode,
+                    model=model,
+                )
+                continue
             _assign_worker_fallback_metadata(worker, fallback_metadata)
             if record_routing and (step != "execute" or ledger_step_label is not None):
                 actual_model = getattr(worker, "model_actual", None)
@@ -4717,9 +4886,32 @@ def run_step_with_worker(
                     attempted_specs=worker.attempted_specs,
                     failed_attempt_reasons=worker.failed_attempt_reasons,
                     fallback_trigger=worker.fallback_trigger,
-                )
+            )
             return worker, agent, mode, effective_refreshed
         except CliError as error:
+            fallback_attempt = _advance_configured_spec_fallback(
+                fallback_metadata,
+                _configured_spec_failure_class(error),
+                mode=mode,
+            )
+            if fallback_attempt is not None:
+                next_mode, fallback_metadata = fallback_attempt
+                agent = next_mode.agent
+                mode = next_mode.mode
+                refreshed = next_mode.refreshed
+                model = next_mode.model
+                effort = next_mode.effort
+                resolved_model = next_mode.resolved_model
+                effective_refreshed = True
+                _patch_active_step_fallback_metadata(
+                    plan_dir,
+                    state,
+                    fallback_metadata,
+                    agent=agent,
+                    mode=mode,
+                    model=model,
+                )
+                continue
             suppress_ambient_fallback = bool(
                 (worker_options or {}).get("_suppress_ambient_agent_fallback")
             )
