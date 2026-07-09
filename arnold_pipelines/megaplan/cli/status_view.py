@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.blocker_recovery import (
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
+    ExitKind,
     read_phase_result,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
@@ -243,6 +244,8 @@ def _phase_result_recovery_inputs(
     except Exception:
         return (), ()
     if phase_result is None:
+        return (), ()
+    if phase_result.exit_kind == ExitKind.success.value:
         return (), ()
     return phase_result.blocked_tasks, phase_result.deviations
 
@@ -998,15 +1001,22 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
             ]
             if (
                 state.get("current_state") == STATE_BLOCKED
-                and response.get("next_step") == "recover-blocked"
                 and blocker_recovery.get("has_terminal_blockers") is True
             ):
-                # Keep status pinned on the blocked state until an operator
-                # explicitly records non-terminal resolutions. Advertising
-                # recover-blocked here only causes auto loops to dispatch a
-                # helper that must fail immediately.
+                # Keep blocked status pinned until an operator/repairer chooses
+                # a real recovery action. Finalized plans still need their
+                # authored execute transition even when finalize emits
+                # pre-execute quality diagnostics.
                 response["next_step"] = None
                 response["valid_next"] = []
+                plan_name = state.get("name")
+                if isinstance(plan_name, str) and plan_name:
+                    response["suggested_recovery_commands"] = _unique_strings(
+                        [
+                            *response.get("suggested_recovery_commands", []),
+                            f"override replan --plan {plan_name} --reason <reason>",
+                        ]
+                    )
     external_resume_command = _external_error_resume_command(state)
     if external_resume_command is not None:
         response["external_error_recovery"] = {

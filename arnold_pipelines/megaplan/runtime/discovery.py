@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import re
 import sys
 import traceback
 import warnings
@@ -171,6 +172,14 @@ def _load_module_from_path(
 ) -> Any | None:
     """Import the module at *module_file* and return the module object."""
 
+    def _safe_module_component(raw: str) -> str:
+        candidate = re.sub(r"\W", "_", raw)
+        if not candidate:
+            return "_"
+        if candidate[0].isdigit():
+            candidate = f"_{candidate}"
+        return candidate
+
     if (
         package_prefix is not None
         and module_file.suffix == ".py"
@@ -193,9 +202,9 @@ def _load_module_from_path(
 
     # Out-of-tree (user) module: spec from file location.
     mod_name = (
-        f"arnold_pipelines.megaplan._user_pipelines.{module_file.stem}"
+        f"arnold_pipelines.megaplan._user_pipelines.{_safe_module_component(module_file.stem)}"
         if module_file.name != "__init__.py"
-        else f"arnold_pipelines.megaplan._user_pipelines.{module_file.parent.name}"
+        else f"arnold_pipelines.megaplan._user_pipelines.{_safe_module_component(module_file.parent.name)}"
     )
     spec = importlib.util.spec_from_file_location(mod_name, module_file)
     if spec is None or spec.loader is None:

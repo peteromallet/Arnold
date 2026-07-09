@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -20,8 +21,21 @@ _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
 
 SessionLiveProbe = Callable[[str], bool | None]
 PidLiveProbe = Callable[[int], bool | None]
-CIHealthCollector = Callable[..., dict[str, Any]]
 
+def _pid_is_live(pid: int, probe: PidLiveProbe | None = None) -> bool:
+    if pid <= 0:
+        return False
+    if probe is not None:
+        return bool(probe(pid))
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 def _fingerprint(path: Path) -> str:
     """Return hex digest of file content, or empty string when unavailable."""
@@ -50,9 +64,6 @@ def resolve_current_target(
     repair_data_dir: str | Path | None = None,
     session_is_live: SessionLiveProbe | None = None,
     pid_is_live: PidLiveProbe | None = None,
-    repo_root: str | Path | None = None,
-    base_branch: str = "main",
-    ci_health_collector: CIHealthCollector | None = None,
 ) -> dict[str, Any]:
     """Return a stable evidence record for the current repair target.
 
@@ -77,74 +88,51 @@ def resolve_current_target(
             "tmux_process": {},
             "needs_human": {},
             "repair_progress": {"present": False, "items": []},
-            "ci_health": _ci_health_unavailable(
-                reason="resolver_observe_disabled",
-                base_branch=base_branch,
-            ),
             "chain_log": {},
             "active_step_heartbeat": {},
-            "read_snapshot": {},
+            "resume_authority_failure": {},
             "sibling_sessions": [],
             "ignored_artifacts": [],
             "stale_evidence": [],
             "rationale": ["resolver observe disabled via ARNOLD_RESOLVER_OBSERVE"],
-            "diagnostic_codes": _empty_diagnostic_codes(),
         }
 
     markers_root = Path(marker_dir)
     data_root = Path(repair_data_dir) if repair_data_dir is not None else markers_root / "repair-data"
     marker_path = markers_root / f"{session}.json"
-    marker_probe = _safe_load_dict(marker_path)
-    workspace = _safe_path(marker_probe.get("workspace"))
-    remote_spec = _resolve_remote_spec(workspace, marker_probe.get("remote_spec"))
-    run_kind = _resolve_run_kind(marker_probe.get("run_kind"), remote_spec)
-    marker_plan_name = _safe_plan_name(marker_probe.get("plan_name"))
-
-    chain_state_path = _chain_state_path(workspace, remote_spec, run_kind)
-    chain_state_probe = _safe_load_dict(chain_state_path)
-    chain_current_plan = _safe_plan_name(chain_state_probe.get("current_plan_name"))
-
-    resolved_plan_name = chain_current_plan or marker_plan_name
-    plan_state_path = _plan_state_path(workspace, resolved_plan_name, run_kind)
-    needs_human_path = data_root / f"{session}.needs-human.json"
-    snapshot = _collect_read_coherent_snapshot(
-        marker_path=marker_path,
-        chain_state_path=chain_state_path,
-        plan_state_path=plan_state_path,
-        needs_human_path=needs_human_path,
-        chain_log_path=_chain_log_source_path(workspace, session),
-    )
-    marker = snapshot["marker"]
-    chain_state = snapshot["chain_state"]
-    plan_state = snapshot["plan_state"]
-    needs_human = snapshot["needs_human"]
-    event_cursors = snapshot["event_cursors"]
-    chain_log = snapshot["chain_log"]
-    read_snapshot = snapshot["read_snapshot"]
-
+    marker = _safe_load_dict(marker_path)
     workspace = _safe_path(marker.get("workspace"))
     remote_spec = _resolve_remote_spec(workspace, marker.get("remote_spec"))
     run_kind = _resolve_run_kind(marker.get("run_kind"), remote_spec)
     marker_plan_name = _safe_plan_name(marker.get("plan_name"))
+
+    chain_state_path = _chain_state_path(workspace, remote_spec, run_kind)
+    chain_state = _safe_load_dict(chain_state_path)
     chain_current_plan = _safe_plan_name(chain_state.get("current_plan_name"))
+
     resolved_plan_name = chain_current_plan or marker_plan_name
+    plan_state_path = _plan_state_path(workspace, resolved_plan_name, run_kind)
+    plan_state = _safe_load_dict(plan_state_path)
     plan_name = _safe_plan_name(plan_state.get("name")) or resolved_plan_name
+
+    needs_human_path = data_root / f"{session}.needs-human.json"
+    needs_human = _safe_load_dict(needs_human_path)
     needs_human_plans = _collect_needs_human_plan_refs(needs_human)
     repair_progress = _collect_sidecar_status(markers_root, session)
     tmux_process = _collect_tmux_process_evidence(marker, session, session_is_live, pid_is_live)
-    ci_health = _collect_ci_health_evidence(
-        repo_root=repo_root,
-        base_branch=base_branch,
-        collector=ci_health_collector or _default_ci_health_collector,
-    )
     siblings = _collect_sibling_sessions(
         markers_root,
         session=session,
         workspace=workspace,
         session_is_live=session_is_live,
     )
-    active_step_heartbeat = _collect_active_step_heartbeat(plan_state)
-    diagnostic_codes = _collect_diagnostic_codes(needs_human, event_cursors, plan_state)
+    event_cursors = _collect_event_cursors(plan_state_path, plan_state)
+    chain_log = _collect_chain_log_evidence(workspace, session, run_kind)
+    active_step_heartbeat = _collect_active_step_heartbeat(plan_state, pid_is_live=pid_is_live)
+    resume_authority_failure = _collect_resume_authority_failure(
+        plan_state_path,
+        plan_state,
+    )
 
     stale_evidence: list[dict[str, Any]] = []
     rationale: list[str] = []
@@ -158,37 +146,21 @@ def resolve_current_target(
         rationale.append("marker JSON missing")
 
     if remote_spec is None:
+        stale_evidence.append(_artifact(kind="spec_missing", path=_safe_text(marker.get("remote_spec"))))
         rationale.append("marker did not provide a usable remote spec")
     if workspace is None:
-        stale_evidence.append(_artifact(kind="missing_workspace", path=marker_path, workspace=""))
+        stale_evidence.append(_artifact(kind="workspace_missing", path=_safe_text(marker.get("workspace"))))
         rationale.append("marker did not provide a usable workspace")
-    elif not workspace.is_dir():
-        stale_evidence.append(
-            _artifact(
-                kind="missing_workspace",
-                path=workspace,
-                marker_path=str(marker_path),
-                workspace=str(workspace),
-            )
-        )
-        rationale.append("marker workspace path does not name an existing directory")
-
-    if read_snapshot.get("incoherent") is True:
-        torn_path = _safe_path(read_snapshot.get("events_path")) or marker_path
-        stale_evidence.append(
-            _artifact(
-                kind="torn_read_snapshot",
-                path=torn_path,
-                changed_tokens=list(read_snapshot.get("changed_tokens", [])),
-                changed_fingerprints=list(read_snapshot.get("changed_fingerprints", [])),
-                partial_events_read=bool(read_snapshot.get("partial_events_read")),
-                snapshot={
-                    "before": dict(read_snapshot.get("before", {})),
-                    "after": dict(read_snapshot.get("after", {})),
-                },
-            )
-        )
-        rationale.append("bounded read snapshot observed concurrent source drift")
+    elif not workspace.exists():
+        stale_evidence.append(_artifact(kind="workspace_missing", path=workspace))
+        rationale.append("marker workspace path does not exist")
+    if (
+        remote_spec is not None
+        and run_kind in {"chain", "epic_chain"}
+        and not remote_spec.exists()
+    ):
+        stale_evidence.append(_artifact(kind="spec_missing", path=remote_spec, run_kind=run_kind))
+        rationale.append("marker remote spec path does not exist")
 
     if chain_state_path is not None and not chain_state_path.exists():
         stale_evidence.append(_artifact(kind="missing_chain_state", path=chain_state_path))
@@ -209,6 +181,17 @@ def resolve_current_target(
             )
         )
         rationale.append("needs-human sidecar references an older plan")
+
+    if active_step_heartbeat.get("worker_pid") and not active_step_heartbeat.get("active"):
+        stale_evidence.append(
+            _artifact(
+                kind="stale_active_step_dead_pid",
+                path=plan_state_path,
+                plan_name=plan_name,
+                worker_pid=active_step_heartbeat.get("worker_pid"),
+            )
+        )
+        rationale.append("active_step worker PID is not live")
 
     plan_current_state = _safe_text(plan_state.get("current_state"))
     chain_last_state = _safe_text(chain_state.get("last_state"))
@@ -332,18 +315,15 @@ def resolve_current_target(
             "summary": _safe_text(needs_human.get("summary")),
             "plan_refs": needs_human_plans,
             "recorded_at": _safe_text(needs_human.get("recorded_at")),
-            "blocked_task_id": _extract_blocked_task_id(needs_human),
         },
         "repair_progress": repair_progress,
-        "ci_health": ci_health,
         "chain_log": chain_log,
         "active_step_heartbeat": active_step_heartbeat,
-        "read_snapshot": read_snapshot,
+        "resume_authority_failure": resume_authority_failure,
         "sibling_sessions": siblings,
         "ignored_artifacts": sorted(ignored_artifacts, key=_artifact_sort_key),
         "stale_evidence": sorted(stale_evidence, key=_artifact_sort_key),
         "rationale": sorted(set(rationale)),
-        "diagnostic_codes": diagnostic_codes,
     }
 
 
@@ -366,8 +346,6 @@ def _safe_plan_name(value: object) -> str:
 
 
 def _safe_path(value: object) -> Path | None:
-    if isinstance(value, Path):
-        return value
     text = _safe_text(value)
     return Path(text) if text else None
 
@@ -391,79 +369,6 @@ def _resolve_run_kind(value: object, remote_spec: Path | None) -> str:
     if remote_spec is not None and remote_spec.name == "epic-chain.yaml":
         return "epic_chain"
     return "unknown"
-
-
-def _default_ci_health_collector(
-    repo_root: Path | str,
-    *,
-    base_branch: str = "main",
-) -> dict[str, Any]:
-    from arnold_pipelines.megaplan.cloud.auditor_external_evidence import collect_ci_health
-
-    return collect_ci_health(repo_root, base_branch=base_branch)
-
-
-def _collect_ci_health_evidence(
-    *,
-    repo_root: str | Path | None,
-    base_branch: str,
-    collector: CIHealthCollector,
-) -> dict[str, Any]:
-    resolved_base_branch = _safe_text(base_branch) or "main"
-    resolved_repo_root = _safe_path(repo_root)
-    if resolved_repo_root is None:
-        return _ci_health_unavailable(
-            reason="repo_context_unavailable",
-            base_branch=resolved_base_branch,
-        )
-    try:
-        payload = collector(resolved_repo_root, base_branch=resolved_base_branch)
-    except FileNotFoundError:
-        return _ci_health_unavailable(
-            reason="gh_unavailable",
-            repo_root=resolved_repo_root,
-            base_branch=resolved_base_branch,
-        )
-    except Exception as exc:
-        return _ci_health_unavailable(
-            reason="ci_health_collection_failed",
-            repo_root=resolved_repo_root,
-            base_branch=resolved_base_branch,
-            error_type=exc.__class__.__name__,
-        )
-    if not isinstance(payload, Mapping):
-        return _ci_health_unavailable(
-            reason="ci_health_invalid_payload",
-            repo_root=resolved_repo_root,
-            base_branch=resolved_base_branch,
-        )
-
-    normalized = _stable_mapping(payload)
-    normalized.setdefault("status", "unavailable")
-    normalized.setdefault("available", normalized.get("status") != "unavailable")
-    normalized.setdefault("base_branch", resolved_base_branch)
-    normalized.setdefault("repo_root", str(resolved_repo_root))
-    normalized.setdefault("source", "current_target")
-    return normalized
-
-
-def _ci_health_unavailable(
-    *,
-    reason: str,
-    base_branch: str = "main",
-    repo_root: Path | None = None,
-    **extra: Any,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "status": "unavailable",
-        "available": False,
-        "source": "current_target",
-        "repo_root": str(repo_root) if repo_root is not None else "",
-        "base_branch": _safe_text(base_branch) or "main",
-        "reason": reason,
-    }
-    payload.update(extra)
-    return payload
 
 
 def _chain_state_path(workspace: Path | None, remote_spec: Path | None, run_kind: str) -> Path | None:
@@ -492,165 +397,21 @@ def _plan_state_path(workspace: Path | None, plan_name: str, run_kind: str) -> P
     return state_paths[0] if state_paths else None
 
 
-def _collect_read_coherent_snapshot(
-    *,
-    marker_path: Path,
-    chain_state_path: Path | None,
-    plan_state_path: Path | None,
-    needs_human_path: Path,
-    chain_log_path: Path | None,
-) -> dict[str, Any]:
-    events_path = plan_state_path.parent / "events.ndjson" if plan_state_path is not None else None
-    events_seq_path = plan_state_path.parent / ".events.seq" if plan_state_path is not None else None
-    source_paths = {
-        "marker": {"path": marker_path},
-        "chain_state": {"path": chain_state_path},
-        "plan_state": {"path": plan_state_path},
-        "needs_human": {"path": needs_human_path},
-        "events": {"path": events_path, "seq_path": events_seq_path},
-        "chain_log": {"path": chain_log_path},
-    }
-    before = _capture_source_versions(source_paths)
-    marker = _safe_load_dict(marker_path)
-    chain_state = _safe_load_dict(chain_state_path)
-    plan_state = _safe_load_dict(plan_state_path)
-    needs_human = _safe_load_dict(needs_human_path)
-    event_cursors, events_diag = _read_event_cursors(plan_state_path, plan_state)
-    chain_log = _chain_log_evidence_for_path(chain_log_path)
-    after = _capture_source_versions(source_paths)
-    read_snapshot = _build_read_snapshot(before, after, events_diag)
-    return {
-        "marker": marker,
-        "chain_state": chain_state,
-        "plan_state": plan_state,
-        "needs_human": needs_human,
-        "event_cursors": event_cursors,
-        "chain_log": chain_log,
-        "read_snapshot": read_snapshot,
-    }
-
-
-def _capture_source_versions(source_paths: Mapping[str, Mapping[str, Path | None]]) -> dict[str, dict[str, Any]]:
-    captured: dict[str, dict[str, Any]] = {}
-    for name, spec in source_paths.items():
-        path = spec.get("path")
-        seq_path = spec.get("seq_path")
-        captured[name] = _source_version(path, seq_path=seq_path)
-    return captured
-
-
-def _source_version(path: Path | None, *, seq_path: Path | None = None) -> dict[str, Any]:
-    fingerprint = _fingerprint(path) if path is not None else ""
-    mtime = _mtime(path) if path is not None else 0.0
-    present = bool(path and path.exists())
-    seq_token = _read_version_token(seq_path)
-    version_token = seq_token or _fallback_version_token(fingerprint, mtime)
-    version_token_source = "events_seq" if seq_token else "fingerprint_mtime" if present else "absent"
-    payload = {
-        "path": str(path) if path is not None else "",
-        "present": present,
-        "mtime": mtime,
-        "fingerprint": fingerprint,
-        "version_token": version_token,
-        "version_token_source": version_token_source,
-    }
-    if seq_path is not None:
-        payload["seq_path"] = str(seq_path)
-        payload["seq"] = seq_token
-    return payload
-
-
-def _fallback_version_token(fingerprint: str, mtime: float) -> str:
-    if not fingerprint and not mtime:
-        return ""
-    return f"{mtime:.9f}:{fingerprint}"
-
-
-def _read_version_token(path: Path | None) -> str:
-    if path is None:
-        return ""
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-
-def _build_read_snapshot(
-    before: Mapping[str, Mapping[str, Any]],
-    after: Mapping[str, Mapping[str, Any]],
-    events_diag: Mapping[str, Any],
-) -> dict[str, Any]:
-    changed_tokens: list[str] = []
-    changed_fingerprints: list[str] = []
-    for source_name in before:
-        before_meta = before.get(source_name, {})
-        after_meta = after.get(source_name, {})
-        if _safe_text(before_meta.get("version_token")) != _safe_text(after_meta.get("version_token")):
-            changed_tokens.append(source_name)
-        if _safe_text(before_meta.get("fingerprint")) != _safe_text(after_meta.get("fingerprint")):
-            changed_fingerprints.append(source_name)
-    partial_events_read = bool(events_diag.get("partial_torn_read"))
-    incoherent = bool(changed_tokens or changed_fingerprints or partial_events_read)
-    reasons: list[str] = []
-    if changed_tokens:
-        reasons.append("changed_version_tokens")
-    if changed_fingerprints:
-        reasons.append("changed_fingerprints")
-    if partial_events_read:
-        reasons.append("partial_events_read")
-    return {
-        "bounded": True,
-        "incoherent": incoherent,
-        "reasons": reasons,
-        "changed_tokens": sorted(changed_tokens),
-        "changed_fingerprints": sorted(changed_fingerprints),
-        "partial_events_read": partial_events_read,
-        "events_path": _safe_text(events_diag.get("events_path")),
-        "before": {name: dict(meta) for name, meta in before.items()},
-        "after": {name: dict(meta) for name, meta in after.items()},
-    }
-
-
 def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str, Any]) -> dict[str, Any]:
-    cursors, _ = _read_event_cursors(plan_state_path, plan_state)
-    return cursors
-
-
-def _read_event_cursors(
-    plan_state_path: Path | None, plan_state: Mapping[str, Any]
-) -> tuple[dict[str, Any], dict[str, Any]]:
     if plan_state_path is None:
-        empty = {
-            "events_path": "",
-            "events_present": False,
-            "line_count": 0,
-            "latest_gate_kind": "",
-            "resume_retry_strategy": "",
-            "mtime": 0.0,
-        }
-        return empty, {"events_path": "", "partial_torn_read": False}
+        return {"events_path": "", "events_present": False, "line_count": 0, "latest_gate_kind": "", "resume_retry_strategy": "", "mtime": 0.0}
     events_path = plan_state_path.parent / "events.ndjson"
     line_count = 0
     latest_gate_kind = ""
-    invalid_json_lines = 0
-    last_nonempty_invalid = False
-    text = ""
     if events_path.exists():
-        try:
-            text = events_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            text = ""
-        for line in text.splitlines():
+        for line in events_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             line_count += 1
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
-                invalid_json_lines += 1
-                last_nonempty_invalid = True
                 continue
-            last_nonempty_invalid = False
             if not isinstance(payload, dict):
                 continue
             kind = _safe_text(payload.get("kind"))
@@ -660,7 +421,7 @@ def _read_event_cursors(
     retry_strategy = ""
     if isinstance(resume_cursor, Mapping):
         retry_strategy = _safe_text(resume_cursor.get("retry_strategy"))
-    public = {
+    return {
         "events_path": str(events_path),
         "events_present": events_path.exists(),
         "line_count": line_count,
@@ -668,12 +429,61 @@ def _read_event_cursors(
         "resume_retry_strategy": retry_strategy,
         "mtime": _mtime(events_path),
     }
-    diag = {
-        "events_path": str(events_path),
-        "partial_torn_read": bool(text) and not text.endswith("\n") and last_nonempty_invalid,
-        "invalid_json_lines": invalid_json_lines,
-    }
-    return public, diag
+
+
+def _collect_resume_authority_failure(
+    plan_state_path: Path | None,
+    plan_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    if plan_state_path is None or not plan_state_path.exists() or not isinstance(plan_state, Mapping):
+        return {}
+    if _safe_text(plan_state.get("current_state")).lower() != "failed":
+        return {}
+    resume_cursor = plan_state.get("resume_cursor")
+    if not isinstance(resume_cursor, Mapping):
+        return {}
+    phase = _safe_text(resume_cursor.get("phase"))
+    if not phase:
+        return {}
+
+    try:
+        from arnold_pipelines.megaplan._core import topology as _topology
+        from arnold_pipelines.megaplan._core.workflow import (
+            _resume_execute_authority_failure,
+        )
+    except Exception:
+        return {}
+
+    try:
+        active_state = _topology.predecessors(phase, policy="resume")
+    except Exception:
+        return {}
+    if active_state != "executed":
+        return {}
+
+    try:
+        failure = _resume_execute_authority_failure(
+            plan_state_path.parent,
+            cursor=dict(resume_cursor),
+            guard="current_target_observe",
+        )
+    except Exception:
+        return {}
+    if not isinstance(failure, Mapping) or not failure:
+        return {}
+
+    plan_name = _safe_plan_name(plan_state.get("name")) or plan_state_path.parent.name
+    payload = _stable_mapping(failure)
+    payload["code"] = "resume_execute_authority_blocked"
+    payload["phase"] = phase
+    payload["plan_name"] = plan_name
+    payload["current_state"] = _safe_text(plan_state.get("current_state"))
+    if _safe_text(payload.get("reason")) == "execute_authority_diverged":
+        payload["recommended_action"] = "repair_execute_authority"
+        payload["suggested_commands"] = [
+            f"execute --plan {plan_name} --confirm-destructive --user-approved"
+        ]
+    return payload
 
 
 def _collect_tmux_process_evidence(
@@ -685,7 +495,7 @@ def _collect_tmux_process_evidence(
     pid = marker.get("pid")
     if not isinstance(pid, int):
         pid = marker.get("pane_pid")
-    pid_live = pid_is_live(pid) if isinstance(pid, int) and pid_is_live is not None else None
+    pid_live = _pid_is_live(pid, pid_is_live) if isinstance(pid, int) else None
     session_live = session_is_live(session) if session_is_live is not None else None
     if session_live is True or pid_live is True:
         live_status = "alive"
@@ -868,37 +678,35 @@ def _collect_chain_log_evidence(
     The canonical chain log lives at ``.megaplan/cloud-chain.log``; per-session
     variants (``cloud-chain-{session}.log``) are also inspected when available.
     """
-    del run_kind
-    return _chain_log_evidence_for_path(_chain_log_source_path(workspace, session))
-
-
-def _chain_log_source_path(workspace: Path | None, session: str) -> Path | None:
     if workspace is None:
-        return None
+        return {"path": "", "present": False, "mtime": 0.0, "size": 0, "fingerprint": ""}
     candidates: list[Path] = []
     if session:
         candidates.append(workspace / ".megaplan" / f"cloud-chain-{session}.log")
     candidates.append(workspace / ".megaplan" / "cloud-chain.log")
     for path in candidates:
         if path.exists():
-            return path
-    return candidates[-1] if candidates else None
-
-
-def _chain_log_evidence_for_path(path: Path | None) -> dict[str, Any]:
-    if path is None:
-        return {"path": "", "present": False, "mtime": 0.0, "size": 0, "fingerprint": ""}
+            return {
+                "path": str(path),
+                "present": True,
+                "mtime": _mtime(path),
+                "size": path.stat().st_size if path.exists() else 0,
+                "fingerprint": _fingerprint(path),
+            }
+    # No chain log found — return a stable empty record
     return {
-        "path": str(path),
-        "present": path.exists(),
-        "mtime": _mtime(path),
-        "size": path.stat().st_size if path.exists() else 0,
-        "fingerprint": _fingerprint(path),
+        "path": str(candidates[-1]) if candidates else "",
+        "present": False,
+        "mtime": 0.0,
+        "size": 0,
+        "fingerprint": "",
     }
 
 
 def _collect_active_step_heartbeat(
     plan_state: Mapping[str, Any],
+    *,
+    pid_is_live: PidLiveProbe | None = None,
 ) -> dict[str, Any]:
     """Extract active-step heartbeat evidence from plan state.
 
@@ -907,94 +715,25 @@ def _collect_active_step_heartbeat(
     """
     active_step = plan_state.get("active_step")
     if not isinstance(active_step, dict):
-        return {"active": False, "phase": "", "attempt": 0, "worker_pid": "", "started_at": ""}
+        return {"active": False, "phase": "", "attempt": 0, "worker_pid": "", "started_at": "", "pid_live": None}
+    raw_worker_pid = active_step.get("worker_pid")
+    worker_pid = _safe_text(raw_worker_pid)
+    if not worker_pid and isinstance(raw_worker_pid, int):
+        worker_pid = str(raw_worker_pid)
+    pid_live: bool | None = None
+    if worker_pid:
+        try:
+            pid_live = _pid_is_live(int(worker_pid), pid_is_live)
+        except (TypeError, ValueError):
+            pid_live = False
     return {
-        "active": bool(active_step.get("phase") or active_step.get("worker_pid")),
+        "active": bool(pid_live),
         "phase": _safe_text(active_step.get("phase")),
         "attempt": int(active_step.get("attempt") or 0),
-        "worker_pid": _safe_text(active_step.get("worker_pid")),
+        "worker_pid": worker_pid,
         "started_at": _safe_text(active_step.get("started_at")),
+        "pid_live": pid_live,
     }
-
-
-def _collect_diagnostic_codes(
-    needs_human: Mapping[str, Any],
-    event_cursors: Mapping[str, Any],
-    plan_state: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Extract structured diagnostic codes from already-gathered artifacts.
-
-    Does NOT scan artifacts for keyword-based blocker heuristics — it only
-    surfaces fields that are already present in the loaded payloads.
-    """
-    codes: list[str] = []
-
-    # Escalation label from needs-human sidecar (e.g. "BROKEN_STATE_MACHINE")
-    escalation_label = _safe_text(needs_human.get("escalation_label"))
-    if escalation_label:
-        codes.append(escalation_label)
-
-    # Event signatures from needs-human sidecar (e.g. "authority_divergence/head_mismatch x293")
-    event_signatures = needs_human.get("event_signatures")
-    if isinstance(event_signatures, list):
-        for sig in event_signatures:
-            if isinstance(sig, dict):
-                kind = _safe_text(sig.get("kind"))
-                count = sig.get("count")
-                if kind:
-                    label = f"{kind} x{count}" if isinstance(count, int) and count > 1 else kind
-                    codes.append(label)
-
-    # Latest gate kind from event cursors
-    latest_gate_kind = _safe_text(event_cursors.get("latest_gate_kind"))
-    if latest_gate_kind and latest_gate_kind not in codes:
-        codes.append(latest_gate_kind)
-
-    # Retry strategy from event cursors / plan state resume_cursor
-    retry_strategy = _safe_text(event_cursors.get("resume_retry_strategy"))
-    if not retry_strategy:
-        resume_cursor = plan_state.get("resume_cursor")
-        if isinstance(resume_cursor, Mapping):
-            retry_strategy = _safe_text(resume_cursor.get("retry_strategy"))
-    if retry_strategy and retry_strategy not in codes:
-        codes.append(retry_strategy)
-
-    # Discord status (can indicate pending/failed delivery)
-    discord_status = _safe_text(needs_human.get("discord_status"))
-
-    return {
-        "escalation_label": escalation_label,
-        "event_signature_labels": codes,
-        "discord_status": discord_status,
-        "latest_gate_kind": latest_gate_kind,
-        "retry_strategy": retry_strategy,
-    }
-
-
-def _empty_diagnostic_codes() -> dict[str, Any]:
-    return {
-        "escalation_label": "",
-        "event_signature_labels": [],
-        "discord_status": "",
-        "latest_gate_kind": "",
-        "retry_strategy": "",
-    }
-
-
-def _extract_blocked_task_id(needs_human: Mapping[str, Any]) -> str:
-    """Extract blocked_task_id from needs-human payload's current pointer.
-
-    The ``current`` sub-dict carries a ``blocked_task_id`` field populated
-    by the repair loop from the latest failure context.  This accessor
-    avoids importing the full repair_contract module.
-    """
-    current = needs_human.get("current")
-    if isinstance(current, Mapping):
-        task_id = current.get("blocked_task_id")
-        if isinstance(task_id, str) and task_id.strip():
-            return task_id.strip()
-    return ""
-
 
 def _artifact_sort_key(item: Mapping[str, Any]) -> tuple[str, str, str]:
     return (

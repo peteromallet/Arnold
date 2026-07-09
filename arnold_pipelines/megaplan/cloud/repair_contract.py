@@ -323,31 +323,6 @@ class RepairDispatchDecision:
     failure_kind: str = ""
 
 
-def _make_dispatch_decision(
-    *,
-    decision: RepairDispatchDecisionKind,
-    dispatch_intent: RepairDispatchIntent,
-    rationale: tuple[str, ...],
-    blocker_id: str,
-    request_id: str,
-    custody_bucket: str,
-    current_state: str,
-    retry_strategy: str,
-    failure_kind: str,
-) -> RepairDispatchDecision:
-    return RepairDispatchDecision(
-        decision=decision,
-        dispatch_intent=dispatch_intent,
-        rationale=rationale,
-        blocker_id=blocker_id,
-        request_id=request_id,
-        custody_bucket=custody_bucket,
-        current_state=current_state,
-        retry_strategy=retry_strategy,
-        failure_kind=failure_kind,
-    )
-
-
 def blocker_fingerprint_from_evidence(
     *,
     plan_state: Mapping[str, Any] | None = None,
@@ -472,6 +447,12 @@ def project_repair_custody(
         _as_text(_as_mapping(target_payload.get("marker")).get("session")),
         _as_text(target_payload.get("session")),
     )
+    target_current_refs = _as_mapping(target_payload.get("current_refs"))
+    current_plan_identity = _first_non_empty(
+        _as_text(target_current_refs.get("current_plan_name")),
+        _as_text(target_current_refs.get("chain_current_plan_name")),
+        _as_text(target_current_refs.get("marker_plan_name")),
+    )
 
     requests: list[RepairCustodyRequestRecord] = []
     for record in queue_requests:
@@ -479,13 +460,46 @@ def project_repair_custody(
         if target_session and request_session and request_session != target_session:
             continue
         problem_signature = _stable_mapping(_as_mapping(record.get("problem_signature")))
+        request_target = deepcopy(target_payload)
+        request_target_refs = _stable_mapping(_as_mapping(request_target.get("current_refs")))
+        request_target_record = _stable_mapping(_as_mapping(record.get("target")))
+        request_plan_identity = _first_non_empty(
+            _as_text(request_target_record.get("plan_name")),
+            _as_text(problem_signature.get("milestone_or_plan")),
+        )
+        if request_plan_identity:
+            request_target_refs["current_plan_name"] = request_plan_identity
+            request_target_refs["chain_current_plan_name"] = request_plan_identity
+        signature_state = _as_text(problem_signature.get("current_state"))
+        if signature_state:
+            request_target_refs["plan_current_state"] = signature_state
+        request_target["current_refs"] = request_target_refs
+        request_plan_state: dict[str, Any] = {}
+        if request_plan_identity:
+            request_plan_state["name"] = request_plan_identity
+        if signature_state:
+            request_plan_state["current_state"] = signature_state
+        signature_retry_strategy = _as_text(problem_signature.get("retry_strategy"))
+        if signature_retry_strategy:
+            request_plan_state["resume_cursor"] = {"retry_strategy": signature_retry_strategy}
+        signature_failure_kind = _as_text(problem_signature.get("failure_kind"))
+        signature_phase = _as_text(problem_signature.get("phase_or_step"))
+        signature_blocked_task_id = _as_text(problem_signature.get("blocked_task_id"))
+        if signature_failure_kind or signature_phase or signature_blocked_task_id:
+            request_plan_state["latest_failure"] = {
+                "kind": signature_failure_kind,
+                "phase": signature_phase,
+                "metadata": {"blocked_task_id": signature_blocked_task_id},
+            }
         request_fingerprint = blocker_fingerprint_from_evidence(
-            plan_state=plan_payload,
-            current_target=target_payload,
+            plan_state=request_plan_state,
+            current_target=request_target,
             problem_signature=problem_signature,
         )
         request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
         if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
+            continue
+        if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
             continue
         if blocker_id is None and request_blocker_id and blocker_id != request_blocker_id:
             blocker_id = request_blocker_id
@@ -552,7 +566,7 @@ def project_repair_custody(
         else:
             bucket = CUSTODY_BUCKET_BROKEN_SUPERFIXER
 
-    projection = {
+    projection: dict[str, Any] = {
         "blocker_id": blocker_id or "",
         "blocker_fingerprint": fingerprint,
         "custody_bucket": bucket,
@@ -572,14 +586,13 @@ def project_repair_custody(
     if observed_canonical is None and resolver_observe_enabled() and target_payload:
         observed_canonical = resolve_run_state(target_payload)
     if resolver_observe_enabled() and observed_canonical is not None:
-        canonical = observed_canonical
-        projection["canonical_state"] = canonical.canonical_state.name
-        projection["canonical_reason"] = canonical.reason
-        projection["canonical_human_required"] = canonical.human_required
+        projection["canonical_state"] = observed_canonical.canonical_state.name
+        projection["canonical_reason"] = observed_canonical.reason
+        projection["canonical_human_required"] = observed_canonical.human_required
         projection["canonical_human_gate"] = (
-            canonical.human_gate.name if canonical.human_gate is not None else None
+            observed_canonical.human_gate.name if observed_canonical.human_gate is not None else None
         )
-        projection["canonical_resolver"] = canonical.to_dict()
+        projection["canonical_resolver"] = observed_canonical.to_dict()
 
     return projection
 
@@ -602,8 +615,8 @@ def _custody_bucket_from_canonical_state(
 
 def classify_repair_dispatch(
     *,
-    canonical_run_state: CanonicalRunState | None,
-    event_plan_dir: Path,
+    canonical_run_state: CanonicalRunState | None = None,
+    event_plan_dir: Path | None = None,
     plan_state: Mapping[str, Any] | None = None,
     retry_strategy: str = "",
     latest_failure: Mapping[str, Any] | None = None,
@@ -647,8 +660,43 @@ def classify_repair_dispatch(
     terminal_outcomes = [
         value for value in (_as_list(custody.get("terminal_outcomes")) if custody else []) if _as_text(value)
     ]
+    if canonical_run_state is not None:
+        canonical_decision = _classify_repair_dispatch_canonical(
+            canonical_run_state=canonical_run_state,
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+            lock_evidence=lock_evidence,
+            process_evidence=process_evidence,
+            custody=custody,
+        )
+        if event_plan_dir is not None:
+            legacy_decision = _classify_repair_dispatch_legacy(
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=normalized_retry_strategy,
+                failure_kind=failure_kind,
+                current_target=target_payload,
+                human_blocker_classification=human_blocker_classification,
+                lock_evidence=lock_evidence,
+                process_evidence=process_evidence,
+                custody=custody,
+                terminal_outcomes=terminal_outcomes,
+            )
+            _emit_dispatch_drift_detected(
+                event_plan_dir=event_plan_dir,
+                canonical_run_state=canonical_run_state,
+                canonical_decision=canonical_decision,
+                legacy_decision=legacy_decision,
+            )
+        return canonical_decision
 
-    if canonical_run_state is None:
+    if event_plan_dir is not None:
         return _make_dispatch_decision(
             decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
             dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
@@ -661,19 +709,7 @@ def classify_repair_dispatch(
             failure_kind=failure_kind,
         )
 
-    canonical_decision = _classify_repair_dispatch_canonical(
-        canonical_run_state=canonical_run_state,
-        blocker_id=blocker_id,
-        request_id=request_id,
-        custody_bucket=custody_bucket,
-        current_state=current_state,
-        retry_strategy=normalized_retry_strategy,
-        failure_kind=failure_kind,
-        lock_evidence=lock_evidence,
-        process_evidence=process_evidence,
-        custody=custody,
-    )
-    legacy_decision = _classify_repair_dispatch_legacy(
+    return _classify_repair_dispatch_legacy(
         blocker_id=blocker_id,
         request_id=request_id,
         custody_bucket=custody_bucket,
@@ -687,13 +723,31 @@ def classify_repair_dispatch(
         custody=custody,
         terminal_outcomes=terminal_outcomes,
     )
-    _emit_dispatch_drift_detected(
-        event_plan_dir=event_plan_dir,
-        canonical_run_state=canonical_run_state,
-        canonical_decision=canonical_decision,
-        legacy_decision=legacy_decision,
+
+
+def _make_dispatch_decision(
+    *,
+    decision: RepairDispatchDecisionKind,
+    dispatch_intent: RepairDispatchIntent,
+    rationale: tuple[str, ...],
+    blocker_id: str,
+    request_id: str,
+    custody_bucket: str,
+    current_state: str,
+    retry_strategy: str,
+    failure_kind: str,
+) -> RepairDispatchDecision:
+    return RepairDispatchDecision(
+        decision=decision,
+        dispatch_intent=dispatch_intent,
+        rationale=rationale,
+        blocker_id=blocker_id,
+        request_id=request_id,
+        custody_bucket=custody_bucket,
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
     )
-    return canonical_decision
 
 
 def _classify_repair_dispatch_canonical(
@@ -842,11 +896,21 @@ def _classify_repair_dispatch_legacy(
     custody: Mapping[str, Any],
     terminal_outcomes: list[Any],
 ) -> RepairDispatchDecision:
-    if _is_terminal_dispatch_state(current_state, terminal_outcomes):
-        return _make_dispatch_decision(
+    known_repairable = _is_known_repairable_shape(
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
+        current_target=current_target,
+    )
+
+    rationale: list[str] = []
+
+    if _is_terminal_dispatch_state(current_state, terminal_outcomes) and not known_repairable:
+        rationale.append("plan or repair evidence is terminal")
+        return RepairDispatchDecision(
             decision=DISPATCH_DECISION_TERMINAL,
             dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-            rationale=("plan or repair evidence is terminal",),
+            rationale=tuple(rationale),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -857,10 +921,11 @@ def _classify_repair_dispatch_legacy(
 
     human_gate = _human_blocker_dispatch_gate(human_blocker_classification)
     if human_gate == DISPATCH_INTENT_HUMAN_REQUIRED:
-        return _make_dispatch_decision(
+        rationale.append("human-blocker classification gates repair dispatch")
+        return RepairDispatchDecision(
             decision=DISPATCH_DECISION_HUMAN_REQUIRED,
             dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
-            rationale=("human-blocker classification gates repair dispatch",),
+            rationale=tuple(rationale),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -869,10 +934,11 @@ def _classify_repair_dispatch_legacy(
             failure_kind=failure_kind,
         )
     if human_gate == DISPATCH_INTENT_BROKEN_SUPERFIXER:
-        return _make_dispatch_decision(
+        rationale.append("mechanical or contradictory needs-human evidence blocks dispatch")
+        return RepairDispatchDecision(
             decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
             dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
-            rationale=("mechanical or contradictory needs-human evidence blocks dispatch",),
+            rationale=tuple(rationale),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -882,10 +948,11 @@ def _classify_repair_dispatch_legacy(
         )
 
     if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
-        return _make_dispatch_decision(
+        rationale.append("active repair ownership or runtime evidence already exists")
+        return RepairDispatchDecision(
             decision=DISPATCH_DECISION_REPAIRING,
             dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-            rationale=("active repair ownership or runtime evidence already exists",),
+            rationale=tuple(rationale),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -894,17 +961,13 @@ def _classify_repair_dispatch_legacy(
             failure_kind=failure_kind,
         )
 
-    if _is_known_repairable_shape(
-        current_state=current_state,
-        retry_strategy=retry_strategy,
-        failure_kind=failure_kind,
-        current_target=current_target,
-    ):
+    if known_repairable:
         if request_id:
-            return _make_dispatch_decision(
+            rationale.append("known repairable blocker has active custody and no competing owner")
+            return RepairDispatchDecision(
                 decision=DISPATCH_DECISION_L1,
                 dispatch_intent=DISPATCH_INTENT_L1,
-                rationale=("known repairable blocker has active custody and no competing owner",),
+                rationale=tuple(rationale),
                 blocker_id=blocker_id,
                 request_id=request_id,
                 custody_bucket=custody_bucket,
@@ -912,10 +975,11 @@ def _classify_repair_dispatch_legacy(
                 retry_strategy=retry_strategy,
                 failure_kind=failure_kind,
             )
-        return _make_dispatch_decision(
+        rationale.append("known repairable blocker lacks an active request to dispatch")
+        return RepairDispatchDecision(
             decision=DISPATCH_DECISION_NO_ACTION,
             dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-            rationale=("known repairable blocker lacks an active request to dispatch",),
+            rationale=tuple(rationale),
             blocker_id=blocker_id,
             request_id="",
             custody_bucket=custody_bucket,
@@ -925,10 +989,11 @@ def _classify_repair_dispatch_legacy(
         )
 
     if current_state == "blocked" or retry_strategy == "manual_review":
-        return _make_dispatch_decision(
+        rationale.append("blocked or manual-review state is not a whitelisted repairable shape")
+        return RepairDispatchDecision(
             decision=DISPATCH_DECISION_HUMAN_REQUIRED,
             dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
-            rationale=("blocked or manual-review state is not a whitelisted repairable shape",),
+            rationale=tuple(rationale),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -937,10 +1002,11 @@ def _classify_repair_dispatch_legacy(
             failure_kind=failure_kind,
         )
 
-    return _make_dispatch_decision(
+    rationale.append("state and evidence do not map to a safe repair dispatch policy")
+    return RepairDispatchDecision(
         decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
         dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
-        rationale=("state and evidence do not map to a safe repair dispatch policy",),
+        rationale=tuple(rationale),
         blocker_id=blocker_id,
         request_id=request_id,
         custody_bucket=custody_bucket,
@@ -1074,11 +1140,13 @@ def save_repair_data(
 ) -> dict[str, Any]:
     """Validate, optionally redact, and atomically persist repair-data JSON.
 
-    When the repair-data outcome has changed meaningfully (or this is the
-    first write), an incident-ledger event is appended via
+    When the repair-data event signature has changed meaningfully (or this is
+    the first write), an incident-ledger event is appended via
     :mod:`arnold_pipelines.megaplan.cloud.incident_bridge`.  No-op saves
-    (same outcome as the previous payload) do **not** produce duplicate
-    events.
+    do **not** produce duplicate events. Repeated repair attempts with the
+    same outcome still emit a fresh ledger event when their attempt identity
+    changes. When *root* is omitted, the payload workspace is used as the
+    incident-ledger root before falling back to the current working directory.
     """
 
     prepared = redact_repair_data(payload, redactor=redactor)
@@ -1088,15 +1156,18 @@ def save_repair_data(
     # Snapshot the previous payload *before* overwriting so we can
     # decide whether this is a meaningful transition.
     # ------------------------------------------------------------------
-    previous_outcome = _read_previous_outcome(target)
+    previous_event_signature = _read_previous_event_signature(target)
 
     atomic_write_json(target, prepared)
     _update_session_index_from_repair_data(target, prepared, redactor=redactor)
 
-    # Only emit an incident event when the outcome actually changed.
-    current_outcome = str(prepared.get("outcome") or REPAIRING).strip() or REPAIRING
-    if previous_outcome is None or previous_outcome != current_outcome:
-        _emit_incident_bridge_event(prepared, root=root)
+    current_event_signature = _event_signature(prepared)
+    if previous_event_signature is None or previous_event_signature != current_event_signature:
+        workspace_root = root
+        if workspace_root is None:
+            candidate_root = str(prepared.get("workspace") or "").strip()
+            workspace_root = candidate_root or None
+        _emit_incident_bridge_event(prepared, root=workspace_root)
 
     return prepared
 
@@ -1330,13 +1401,23 @@ REPAIR_TIMEOUT = "repair_timeout"
 REPAIR_EXHAUSTED = "repair_exhausted"
 NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
+ENVIRONMENT_GONE = "environment_gone"  # wiped workspace/spec — ops concern, not repairable
 
 SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {COMPLETE, PROGRESSED, TRUE_HUMAN_BLOCKER}
 )
 
 NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
-    {LIVE_WITH_FRESH_ACTIVITY, PARTIAL_LIVENESS, REPAIRING, REPAIR_TIMEOUT, REPAIR_EXHAUSTED, NEEDS_HUMAN, DISCORD_ESCALATED}
+    {
+        LIVE_WITH_FRESH_ACTIVITY,
+        PARTIAL_LIVENESS,
+        REPAIRING,
+        REPAIR_TIMEOUT,
+        REPAIR_EXHAUSTED,
+        NEEDS_HUMAN,
+        DISCORD_ESCALATED,
+        ENVIRONMENT_GONE,
+    }
 )
 
 ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
@@ -1346,8 +1427,8 @@ def is_success_outcome(outcome: str) -> bool:
     """Return True when *outcome* is a terminal repair success.
 
     Only ``complete``, ``progressed``, and ``true_human_blocker`` are
-    considered success.  Liveness-only outcomes (``partial_liveness``)
-    and the legacy ``live_with_fresh_activity`` are explicitly excluded.
+    considered success. Liveness/activity-only outcomes are explicitly
+    excluded because they do not prove the original blocker cleared.
     """
     return outcome in SUCCESS_OUTCOMES
 
@@ -1904,8 +1985,8 @@ def _active_sessions_from_index(index_payload: Mapping[str, Any]) -> set[str]:
     return active
 
 
-def _read_previous_outcome(target: Path) -> str | None:
-    """Return the outcome string from a previous repair-data file, or *None*."""
+def _read_previous_payload(target: Path) -> dict[str, Any] | None:
+    """Return the previous repair-data payload, or *None* when unavailable."""
     try:
         if not target.exists():
             return None
@@ -1914,10 +1995,61 @@ def _read_previous_outcome(target: Path) -> str | None:
         return None
     if not isinstance(previous, dict):
         return None
-    outcome = previous.get("outcome")
-    if isinstance(outcome, str) and outcome.strip():
-        return outcome.strip()
-    return None
+    return previous
+
+
+def _repair_attempt_marker(payload: Mapping[str, Any]) -> str:
+    """Return a stable marker for distinguishing repeated repair attempts."""
+
+    for key in ("current_attempt_id", "repair_run_count"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            continue
+        marker = str(value).strip()
+        if marker:
+            return marker
+
+    attempt_ids = payload.get("attempt_ids")
+    if isinstance(attempt_ids, list) and attempt_ids:
+        marker = "|".join(str(item).strip() for item in attempt_ids if str(item).strip())
+        if marker:
+            return marker
+    return ""
+
+
+def _event_signature(payload: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Return the dedupe signature for repair-data incident emission."""
+
+    outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
+    marker = _repair_attempt_marker(payload)
+    if is_success_outcome(outcome):
+        return ("verified_recovered", outcome, marker)
+    if outcome == REPAIRING:
+        return ("repair_attempt", "attempted", marker)
+    return ("repair_attempt", outcome, marker)
+
+
+def _repair_attempt_event_id(payload: Mapping[str, Any], *, session_id: str | None) -> str:
+    """Return the incident-bridge attempt_id for repair attempt events."""
+
+    outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
+    normalized_outcome = "attempted" if outcome == REPAIRING else outcome
+    marker = _repair_attempt_marker(payload)
+    base = f"{session_id or 'unknown'}-{normalized_outcome}"
+    if marker:
+        return f"{base}-{marker}"
+    return base
+
+
+def _read_previous_event_signature(target: Path) -> tuple[str, str, str] | None:
+    """Return the previous incident-event signature, or *None* if unavailable."""
+
+    previous = _read_previous_payload(target)
+    if previous is None:
+        return None
+    return _event_signature(previous)
 
 
 def _emit_incident_bridge_event(
@@ -1967,7 +2099,7 @@ def _emit_incident_bridge_event(
             append_immediate_repair_attempt(
                 incident_id=incident_id,
                 summary=summary,
-                attempt_id=f"{session_id or 'unknown'}-{outcome}",
+                attempt_id=_repair_attempt_event_id(payload, session_id=session_id),
                 outcome="attempted",
                 evidence=evidence,
                 session_id=session_id,
@@ -1987,7 +2119,7 @@ def _emit_incident_bridge_event(
             append_immediate_repair_attempt(
                 incident_id=incident_id,
                 summary=summary,
-                attempt_id=f"{session_id or 'unknown'}-{outcome}",
+                attempt_id=_repair_attempt_event_id(payload, session_id=session_id),
                 outcome=outcome,
                 evidence=evidence,
                 session_id=session_id,
@@ -2581,11 +2713,26 @@ def _is_known_repairable_shape(
     failure_kind: str,
     current_target: Mapping[str, Any],
 ) -> bool:
+    if current_state == "failed" and retry_strategy == "repair_state" and failure_kind == "no_next_step":
+        return _has_current_target_evidence(current_target)
+    resume_authority_failure = _as_mapping(current_target.get("resume_authority_failure"))
+    if (
+        current_state == "failed"
+        and retry_strategy == "rerun_phase"
+        and failure_kind in {"phase_failed", "execution_blocked"}
+        and _as_text(resume_authority_failure.get("code")) == "resume_execute_authority_blocked"
+        and _as_text(resume_authority_failure.get("reason")) == "execute_authority_diverged"
+    ):
+        return _has_current_target_evidence(current_target)
     if current_state != "blocked":
         return False
     if retry_strategy != "manual_review":
         return False
-    if failure_kind not in {"blocked_recovery_not_resolved", "execution_blocked"}:
+    if failure_kind not in {
+        "blocked_recovery_not_resolved",
+        "execution_blocked",
+        "no_next_step_state_mapping_failure",
+    }:
         return False
     return _has_current_target_evidence(current_target)
 
@@ -2595,11 +2742,12 @@ def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
     current_refs = _as_mapping(target_payload.get("current_refs"))
     plan_state = _as_mapping(target_payload.get("plan_state"))
     chain_state = _as_mapping(target_payload.get("chain_state"))
+    authoritative_source = _as_text(target_payload.get("authoritative_source"))
     if _as_text(plan_state.get("fingerprint")):
         return True
     if _as_text(chain_state.get("fingerprint")):
         return True
-    if _as_text(target_payload.get("authoritative_source")) and _as_text(
+    if authoritative_source and authoritative_source != "marker" and _as_text(
         current_refs.get("current_plan_name")
     ):
         return True
@@ -2636,6 +2784,7 @@ __all__ = [
     "DISPATCH_INTENT_L1",
     "DISPATCH_INTENT_QUEUE_ONLY",
     "DISCORD_ESCALATED",
+    "ENVIRONMENT_GONE",
     "LIVE_WITH_FRESH_ACTIVITY",
     "NEEDS_HUMAN",
     "NON_SUCCESS_OUTCOMES",

@@ -88,3 +88,193 @@ def test_reconstruct_execute_payload_prefers_current_batch_output(tmp_path: Path
     ]
     assert "src/current.ts" in payload["files_changed"]
     assert "npm test -- current" in payload["commands_run"]
+
+
+def test_reconstruct_execute_payload_falls_back_when_current_batch_output_has_no_updates(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+
+    (plan_dir / "execution_batch_12.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T12",
+                        "status": "done",
+                        "executor_notes": "Recovered from audited checkpoint.",
+                        "files_changed": ["src/checkpoint.ts"],
+                        "commands_run": ["npm test -- checkpoint"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {
+                        "sense_check_id": "SC12",
+                        "executor_note": "Recovered checkpoint ack.",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execute_batch_13_output.json").write_text(
+        json.dumps(
+            {
+                "output": "[Reconstructed from tool calls] Made 0 tool calls, changed 3 files.",
+                "files_changed": ["src/reconstructed.ts"],
+                "commands_run": [],
+                "task_updates": [],
+                "sense_check_acknowledgments": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = _reconstruct_execute_payload(
+        messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "shell",
+                            "arguments": json.dumps(
+                                {"command": "python -m pytest tests/cloud/test_meta_repair.py -q"}
+                            ),
+                        }
+                    }
+                ],
+            }
+        ],
+        project_dir=project_dir,
+        plan_dir=plan_dir,
+    )
+
+    assert payload is not None
+    assert payload["task_updates"] == [
+        {
+            "task_id": "T12",
+            "status": "done",
+            "executor_notes": "Recovered from audited checkpoint.",
+            "files_changed": ["src/checkpoint.ts"],
+            "commands_run": ["npm test -- checkpoint"],
+        }
+    ]
+    assert payload["sense_check_acknowledgments"] == [
+        {"sense_check_id": "SC12", "executor_note": "Recovered checkpoint ack."}
+    ]
+    assert "src/reconstructed.ts" in payload["files_changed"]
+
+
+def test_reconstruct_execute_payload_falls_back_when_current_batch_updates_are_malformed(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+
+    (plan_dir / "execution_batch_12.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T12",
+                        "status": "done",
+                        "executor_notes": "Recovered from audited checkpoint.",
+                        "files_changed": ["src/checkpoint.ts"],
+                        "commands_run": ["npm test -- checkpoint"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {
+                        "sense_check_id": "SC12",
+                        "executor_note": "Recovered checkpoint ack.",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_13.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T5",
+                        "status": "pending",
+                        "executor_notes": "",
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC5", "executor_note": ""}
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execute_batch_13_output.json").write_text(
+        json.dumps(
+            {
+                "output": "",
+                "files_changed": [],
+                "commands_run": [],
+                "task_updates": [
+                    {
+                        "task_id": "T13",
+                        "status": "pending",
+                        "executor_notes": "",
+                        "files_changed": [],
+                        "commands_run": [],
+                        "auto_attributed_files": False,
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC13", "executor_note": ""}
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = _reconstruct_execute_payload(
+        messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "shell",
+                            "arguments": json.dumps({"command": "pytest -q tests/cloud/test_meta_repair.py"}),
+                        }
+                    }
+                ],
+            }
+        ],
+        project_dir=project_dir,
+        plan_dir=plan_dir,
+    )
+
+    assert payload is not None
+    assert payload["task_updates"] == [
+        {
+            "task_id": "T12",
+            "status": "done",
+            "executor_notes": "Recovered from audited checkpoint.",
+            "files_changed": ["src/checkpoint.ts"],
+            "commands_run": ["npm test -- checkpoint"],
+        }
+    ]
+    assert payload["sense_check_acknowledgments"] == [
+        {"sense_check_id": "SC12", "executor_note": "Recovered checkpoint ack."}
+    ]

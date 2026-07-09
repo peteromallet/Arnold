@@ -1,15 +1,260 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
+import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan import auto
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     ExitKind,
     PhaseResult,
     atomic_write_phase_result,
 )
+
+
+def test_read_state_data_reconciles_failed_no_next_after_finalize(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "failed",
+                "iteration": 1,
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [{"step": "finalize", "result": "success"}],
+                "meta": {},
+                "last_gate": {},
+                "latest_failure": {"kind": "no_next_step"},
+                "resume_cursor": {"phase": "status", "retry_strategy": "repair_state"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            PhaseResult(
+                phase="finalize",
+                invocation_id="test-finalize-success",
+                exit_kind="success",
+                artifacts_written=("finalize.json",),
+            ).to_dict()
+        ),
+        encoding="utf-8",
+    )
+
+    state = auto._read_state_data(plan_dir)
+
+    assert state is not None
+    assert state["current_state"] == "finalized"
+    assert state["latest_failure"] is None
+    assert "resume_cursor" not in state
+
+
+def test_chain_recovers_failed_plan_before_auto_drive(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "failed"}),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run_command(root: Path, cmd: list[str], **_kwargs) -> None:
+        commands.append(cmd)
+        assert root == tmp_path
+
+    monkeypatch.setattr(chain_module, "_run_command", fake_run_command)
+
+    chain_module._recover_failed_plan_before_drive(tmp_path, "demo", writer=lambda _: None)
+
+    assert commands == [
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "resume",
+            "--plan",
+            "demo",
+        ]
+    ]
+
+
+def test_chain_current_state_reconciles_failed_review_after_successful_execute(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "failed",
+                "iteration": 1,
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [{"step": "execute", "result": "success"}],
+                "meta": {},
+                "last_gate": {},
+                "latest_failure": {
+                    "kind": "phase_failed",
+                    "phase": "review",
+                    "message": (
+                        '{"success": false, "error": "invalid_transition", '
+                        '"message": "Cannot run \'review\' while current state is '
+                        '\'failed\'", "details": {"current_state": "failed"}}'
+                    ),
+                    "metadata": {
+                        "stderr": (
+                            '{"success": false, "error": "invalid_transition", '
+                            '"message": "Cannot run \'review\' while current state is '
+                            '\'failed\'", "details": {"current_state": "failed"}}'
+                        )
+                    },
+                },
+                "resume_cursor": {"phase": "review", "retry_strategy": "rerun_phase"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    atomic_write_phase_result(
+        plan_dir,
+        PhaseResult(
+            phase="execute",
+            invocation_id="test-execute-success",
+            exit_kind="success",
+            artifacts_written=("execution.json",),
+        ),
+    )
+
+    current_state = chain_module._plan_current_state_from_payload(tmp_path, "demo")
+
+    assert current_state == "executed"
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "executed"
+    assert state["latest_failure"] is None
+    assert "resume_cursor" not in state
+
+
+def test_git_text_normalizes_timeout_as_cli_error(monkeypatch, tmp_path: Path) -> None:
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=kwargs.get("args") or args[0],
+            timeout=kwargs["timeout"],
+            output="partial stdout",
+            stderr="partial stderr",
+        )
+
+    monkeypatch.setattr(auto.subprocess, "run", fake_run)
+
+    try:
+        auto._git_text(tmp_path, ["git", "push"], timeout=3)
+    except CliError as error:
+        assert error.code == "git_publish_timeout"
+        assert "git push timed out after 3 seconds" == error.message
+        assert error.extra["stdout"] == "partial stdout"
+        assert error.extra["stderr"] == "partial stderr"
+    else:
+        raise AssertionError("expected CliError")
+
+
+def test_publish_done_plan_records_push_timeout_without_raising(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    commands: list[list[str]] = []
+
+    def fake_git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
+        commands.append(list(argv))
+        if argv == ["git", "status", "--porcelain"]:
+            return " M changed.txt"
+        if argv == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return "feature"
+        if argv == ["git", "rev-parse", "HEAD"]:
+            return "abc1234567890"
+        if argv[:2] == ["git", "switch"] or argv[:2] == ["git", "add"]:
+            return ""
+        if argv[:2] == ["git", "commit"]:
+            return "committed"
+        if argv[:3] == ["git", "push", "--no-verify"]:
+            raise CliError("git_publish_timeout", "git push timed out after 180 seconds")
+        if argv[:4] == ["git", "ls-remote", "--heads", "origin"]:
+            return ""
+        if argv == ["git", "remote", "get-url", "origin"]:
+            return ""
+        raise AssertionError(f"unexpected git command: {argv}")
+
+    class Completed:
+        returncode = 1
+
+    monkeypatch.setattr(auto, "_git_text", fake_git_text)
+    monkeypatch.setattr(auto.subprocess, "run", lambda *args, **kwargs: Completed())
+
+    lines: list[str] = []
+    payload = auto._publish_done_plan(
+        plan="demo",
+        plan_dir=plan_dir,
+        root=tmp_path,
+        branch=None,
+        writer=lines.append,
+    )
+
+    assert payload is not None
+    assert payload["status"] == "publish_failed"
+    assert payload["reason"] == "git_publish_timeout"
+    assert payload["push_output"] == "git push timed out after 180 seconds"
+    assert "publish publish_failed" in lines[-1]
+    assert json.loads((plan_dir / "publish.json").read_text(encoding="utf-8")) == payload
+
+
+def test_publish_done_plan_accepts_push_timeout_when_remote_has_commit(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+
+    def fake_git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
+        if argv == ["git", "status", "--porcelain"]:
+            return " M changed.txt"
+        if argv == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return "feature"
+        if argv == ["git", "rev-parse", "HEAD"]:
+            return "abc1234567890"
+        if argv[:2] == ["git", "switch"] or argv[:2] == ["git", "add"]:
+            return ""
+        if argv[:2] == ["git", "commit"]:
+            return "committed"
+        if argv[:3] == ["git", "push", "--no-verify"]:
+            raise CliError("git_publish_timeout", "git push timed out after 180 seconds")
+        if argv[:4] == ["git", "ls-remote", "--heads", "origin"]:
+            return "abc1234567890\trefs/heads/megaplan/demo"
+        if argv == ["git", "remote", "get-url", "origin"]:
+            return "git@github.com:example/repo.git"
+        raise AssertionError(f"unexpected git command: {argv}")
+
+    class Completed:
+        returncode = 1
+
+    monkeypatch.setattr(auto, "_git_text", fake_git_text)
+    monkeypatch.setattr(auto.subprocess, "run", lambda *args, **kwargs: Completed())
+
+    payload = auto._publish_done_plan(
+        plan="demo",
+        plan_dir=plan_dir,
+        root=tmp_path,
+        branch=None,
+        writer=lambda _: None,
+    )
+
+    assert payload is not None
+    assert payload["status"] == "pushed"
+    assert payload["reason"] == "remote_verified_after_push_error"
+    assert payload["push_output"] == "git push timed out after 180 seconds"
 
 
 def test_drive_forwards_live_phase_model_to_phase_subprocess(
@@ -59,6 +304,36 @@ def test_drive_forwards_live_phase_model_to_phase_subprocess(
         "execute=hermes:deepseek:deepseek-v4-pro",
     ]
 
+
+def test_execute_compat_consumes_phase_model_flag() -> None:
+    from arnold_pipelines.megaplan.cli import (
+        _consume_execute_compat_flags,
+        _normalize_execute_compat_argv,
+        build_parser,
+    )
+
+    argv = _normalize_execute_compat_argv(
+        [
+            "execute",
+            "--confirm-destructive",
+            "--user-approved",
+            "--retry-blocked-tasks",
+            "--plan",
+            "demo",
+            "--phase-model",
+            "execute=codex:gpt-5.5",
+            "--fresh",
+        ]
+    )
+    args, remaining = build_parser().parse_known_args(argv)
+
+    remaining = _consume_execute_compat_flags(args, remaining)
+
+    assert remaining == []
+    assert args.confirm_destructive is True
+    assert args.user_approved is True
+    assert args.retry_blocked_tasks is True
+    assert args.phase_model == ["execute=codex:gpt-5.5"]
 
 def test_drive_clears_stale_latest_failure_before_phase_redispatch(
     monkeypatch,
@@ -298,7 +573,7 @@ def test_drive_keeps_quality_failure_on_terminal_quality_block(
     assert state["resume_cursor"] == {"phase": "review", "retry_strategy": "manual_review"}
 
 
-def test_drive_preflights_resume_clarify_state_mismatch(
+def test_drive_blocked_resume_clarify_without_prep_clarification_fails_in_override(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -321,7 +596,22 @@ def test_drive_preflights_resume_clarify_state_mismatch(
         }
 
     def fake_run_planning_phase(args, **kwargs):
-        raise AssertionError("resume-clarify should be rejected before dispatch")
+        assert args == ["override", "resume-clarify", "--plan", "demo"]
+        return (
+            1,
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "invalid_transition",
+                    "message": (
+                        "resume-clarify can only resume a prep-sourced "
+                        "clarification halt; use verify-human for "
+                        "criteria-verification awaiting_human states"
+                    ),
+                }
+            ),
+            "",
+        )
 
     monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
     monkeypatch.setattr(auto, "_status", fake_status)
@@ -333,18 +623,18 @@ def test_drive_preflights_resume_clarify_state_mismatch(
 
     assert outcome.status == "blocked"
     assert outcome.final_state == "blocked"
-    assert outcome.iterations == 1
+    assert outcome.iterations == 2
     assert outcome.last_phase == "resume-clarify"
-    assert outcome.blocking_reasons == ["control_binding_mismatch"]
-    assert "resume-clarify requires state 'awaiting_human_verify', got 'blocked'" in outcome.reason
+    assert outcome.blocking_reasons == ["invalid_transition_loop"]
+    assert "resume-clarify can only resume a prep-sourced clarification halt" in outcome.reason
     failure = captured_failures[-1]
-    assert failure["kind"] == "control_binding_mismatch"
+    assert failure["kind"] == "invalid_transition_loop"
     assert failure["phase"] == "resume-clarify"
     assert failure["resume_cursor"] == {
         "phase": "resume-clarify",
         "retry_strategy": "repair_control_binding",
     }
-    assert failure["metadata"]["required_state"] == "awaiting_human_verify"
+    assert failure["metadata"]["required_state"] is None
     assert failure["metadata"]["actual_state"] == "blocked"
 
 
@@ -468,6 +758,67 @@ def test_drive_auto_approve_resumes_prep_clarification(
     assert notes[-1]["source"] == "auto_approve_prep_clarification"
     assert "structured params" in notes[-1]["note"]
     assert state["meta"]["overrides"][-1]["action"] == "auto-resume-clarify"
+
+
+def test_drive_allows_blocked_prep_resume_clarify(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "clarification": {
+                    "source": "prep",
+                    "questions": ["Is the prerequisite complete?"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status_calls = 0
+    commands: list[list[str]] = []
+
+    def fake_status(plan: str, **kwargs):
+        nonlocal status_calls
+        status_calls += 1
+        assert plan == "demo"
+        if status_calls == 1:
+            return {
+                "state": "blocked",
+                "next_step": "override resume-clarify",
+                "valid_next": ["override resume-clarify"],
+                "progress": {},
+            }
+        return {
+            "state": "prepped",
+            "next_step": None,
+            "valid_next": [],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        commands.append(list(args))
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state["current_state"] = "prepped"
+        state.pop("clarification", None)
+        (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        return 0, json.dumps({"success": True, "state": "prepped"}), ""
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=2, poll_sleep=0)
+
+    assert outcome.status == "failed"
+    assert outcome.final_state == "prepped"
+    assert commands == [["override", "resume-clarify", "--plan", "demo"]]
 
 
 def test_drive_internal_error_log_prefers_latest_failure_over_warning_stderr(

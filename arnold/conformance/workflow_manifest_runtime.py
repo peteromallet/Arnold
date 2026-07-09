@@ -75,6 +75,8 @@ def scan_neutral_product_imports(paths: Iterable[Path]) -> dict[str, tuple[str, 
     for path in sorted(paths):
         if path.suffix != ".py" or not path.exists():
             continue
+        if path.name.startswith(".") or any(part.startswith(".") for part in path.parts):
+            continue
         module = _module_name(path)
         if not module.startswith(NEUTRAL_PACKAGE_PREFIXES):
             continue

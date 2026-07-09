@@ -328,6 +328,55 @@ class TestOverrideFallbackChains:
             "plan=claude:claude-opus-4-7",
         ]
 
+    def test_set_profile_persists_profile_tier_models(self, tmp_path: Path) -> None:
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {"project_dir": str(tmp_path), "profile": "old", "vendor": "codex"},
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+        }
+        args = argparse.Namespace(profile="partnered-5", reason="switch")
+
+        response = _override_set_profile(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        assert state["config"]["profile"] == "partnered-5"
+        assert "tier_models" in state["config"]
+        assert state["config"]["tier_models"]["execute"]["4"]
+        assert state["config"]["tier_models"]["critique"]["4"]
+
+    def test_set_profile_clears_stale_replay_state(self, tmp_path: Path) -> None:
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {"project_dir": str(tmp_path), "profile": "old", "vendor": "codex"},
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+            "active_step": {
+                "phase": "plan",
+                "agent": "hermes",
+                "model": "zhipu:glm-5.2",
+                "worker_pid": 123,
+            },
+            "latest_failure": {
+                "kind": "phase_failed",
+                "phase": "plan",
+                "message": "401 auth",
+            },
+            "resume_cursor": {"phase": "plan", "retry_strategy": "rerun_phase"},
+        }
+        args = argparse.Namespace(profile="partnered-5", reason="switch")
+
+        response = _override_set_profile(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        assert "active_step" not in state
+        assert "latest_failure" not in state
+        assert "resume_cursor" not in state
+
     def test_set_model_replaces_encoded_chain_with_scalar_spec(self, tmp_path: Path) -> None:
         state = {
             "name": "demo",

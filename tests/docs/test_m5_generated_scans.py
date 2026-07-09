@@ -25,6 +25,12 @@ ACTIVE_DOC_PATHS = (
     Path("docs/arnold/m6-deletion-list.md"),
 )
 
+GENERATED_SCAN_EXCLUDED_PREFIXES = (
+    Path(".megaplan/runtime"),
+    Path(".megaplan/worker_tmp"),
+    Path(".worktrees"),
+)
+
 # Docs/files that intentionally contain legacy API examples or old command
 # strings and are tracked for migration in later phases.
 ARCHIVAL_OR_PENDING_PATHS = (
@@ -95,6 +101,14 @@ _FENCE_RE = re.compile(r"```python\n(.*?)\n```", re.DOTALL)
 def _is_archival_or_pending(path: Path) -> bool:
     rel = path.relative_to(REPO_ROOT)
     for prefix in ARCHIVAL_OR_PENDING_PATHS:
+        if rel == prefix or str(rel).startswith(str(prefix) + "/"):
+            return True
+    return False
+
+
+def _is_generated_scan_path(path: Path) -> bool:
+    rel = path.relative_to(REPO_ROOT)
+    for prefix in GENERATED_SCAN_EXCLUDED_PREFIXES:
         if rel == prefix or str(rel).startswith(str(prefix) + "/"):
             return True
     return False
@@ -191,6 +205,8 @@ def test_skills_and_composed_rules_are_scanned() -> None:
     violations: list[str] = []
     for path in skill_paths + composed_paths:
         if path.suffix not in {".md", ".json", ".yaml", ".yml"}:
+            continue
+        if _is_generated_scan_path(path):
             continue
         if _is_archival_or_pending(path):
             continue

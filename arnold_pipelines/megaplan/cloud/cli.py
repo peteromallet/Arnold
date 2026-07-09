@@ -38,6 +38,7 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 load_spec = load_cloud_spec
+CLOUD_STATUS_CLI_MAX_AGE_S = 5 * 60
 
 # Cloud deployments always drive phases via subprocess (remote SSH exec);
 # the substrate is pinned here so the cloud CLI explicitly declares its
@@ -488,11 +489,15 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             next_step = payload.get("next_step")
             if not isinstance(next_step, str) or not next_step:
                 raise CliError("invalid_status", "Remote status did not include a next_step")
-            from arnold_pipelines.megaplan.auto import _phase_command
+            plan_name = getattr(args, "plan", None)
+            if payload.get("state") == "failed" and isinstance(plan_name, str) and plan_name:
+                argv = ["resume", "--plan", plan_name]
+            else:
+                from arnold_pipelines.megaplan.auto import _phase_command
 
-            argv = list(_phase_command(next_step, substrate=cloud_substrate))
-            if getattr(args, "plan", None):
-                argv.extend(["--plan", args.plan])
+                argv = list(_phase_command(next_step, substrate=cloud_substrate))
+                if plan_name:
+                    argv.extend(["--plan", plan_name])
             command = f"cd {shlex.quote(resume_workspace)} && arnold {shlex.join(argv)}"
             result = provider.ssh_exec(command)
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
@@ -2037,9 +2042,14 @@ def _megaplan_refresh_command(
         "    fi",
         "  else",
         '    if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
-        '      echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"',
+        '      echo "[megaplan-refresh] source checkout has local commits not contained in origin/$REF; attempting push"',
         '      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
-        "      exit 20",
+        '      if git -C "$SRC" push origin "$REF"; then',
+        '        git -C "$SRC" fetch origin "$REF"',
+        '      else',
+        '        echo "[megaplan-refresh] refusing editable install refresh: $SRC has unpushed local commits not contained in origin/$REF"',
+        "        exit 20",
+        "      fi",
         "    fi",
         '    git -C "$SRC" pull --ff-only origin "$REF"',
         '    export MEGAPLAN_RUNTIME_SRC="$SRC"',
@@ -4521,9 +4531,26 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
     if not isinstance(snapshot, dict):
         sys.stderr.write("cloud status: box snapshot malformed; falling back to legacy remote listing\n")
         return _run_cloud_chains(spec, provider, args=args)
+    stale_reason = _cloud_status_snapshot_stale_reason(snapshot)
+    if stale_reason:
+        sys.stderr.write(
+            f"cloud status: box snapshot stale ({stale_reason}); "
+            "falling back to legacy remote listing\n"
+        )
+        return _run_cloud_chains(spec, provider, args=args)
     _emit_cloud_status_human(snapshot, compact=compact)
     sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
     return 0
+
+
+def _cloud_status_snapshot_stale_reason(snapshot: Mapping[str, Any]) -> str | None:
+    generated = status_snapshot._parse_iso(snapshot.get("generated_at"))
+    if generated is None:
+        return "missing generated_at"
+    age = (datetime.now(timezone.utc) - generated).total_seconds()
+    if age > CLOUD_STATUS_CLI_MAX_AGE_S:
+        return f"{int(age)}s old, limit {CLOUD_STATUS_CLI_MAX_AGE_S}s"
+    return None
 
 
 def _run_cloud_chains(spec: CloudSpec, provider, *, args: argparse.Namespace | None = None) -> int:

@@ -1295,22 +1295,28 @@ def _planned_task_changed_files(payload: dict[str, Any]) -> list[str]:
 
 
 def _repo_pytest_path_args(command: str) -> list[str]:
-    """Extract repository pytest selectors from one shell command."""
+    """Extract repository test path selectors from one shell command."""
     try:
         parts = shlex.split(command)
     except ValueError:
         return []
 
-    pytest_index: int | None = None
+    runner_index: int | None = None
+    runner_kind: str | None = None
     for index, part in enumerate(parts):
         if part == "pytest" or part.endswith("/pytest"):
-            pytest_index = index
+            runner_index = index
+            runner_kind = "pytest"
             break
-    if pytest_index is None:
+        if part == "node" and index + 1 < len(parts) and parts[index + 1] == "--test":
+            runner_index = index + 1
+            runner_kind = "node_test"
+            break
+    if runner_index is None:
         return []
 
     paths: list[str] = []
-    for part in parts[pytest_index + 1 :]:
+    for part in parts[runner_index + 1 :]:
         if not part or part.startswith("-"):
             continue
         path = part.strip().lstrip("./")
@@ -1321,11 +1327,14 @@ def _repo_pytest_path_args(command: str) -> list[str]:
             or path_part.endswith(".py")
         ):
             paths.append(path)
+            continue
+        if runner_kind == "node_test" and path_part.endswith((".mjs", ".cjs", ".js")):
+            paths.append(path)
     return paths
 
 
 def _planned_task_pytest_command(payload: dict[str, Any]) -> str | None:
-    """Build one scoped pytest command from finalize task validation commands."""
+    """Build one scoped test command from finalize task validation commands."""
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
         return None
@@ -1349,6 +1358,8 @@ def _planned_task_pytest_command(payload: dict[str, Any]) -> str | None:
 
     if not paths:
         return None
+    if all(path.endswith((".mjs", ".cjs", ".js")) for path in paths):
+        return "node --test " + " ".join(shlex.quote(path) for path in paths)
     return "pytest " + " ".join(shlex.quote(path) for path in paths)
 
 
@@ -1374,6 +1385,8 @@ def _scoped_command_from_blast_radius(radius: dict[str, Any]) -> str | None:
         paths.append(path)
     if not paths:
         return None
+    if all(path.endswith((".mjs", ".cjs", ".js")) for path in paths):
+        return "node --test " + " ".join(shlex.quote(path) for path in paths)
     return "pytest " + " ".join(shlex.quote(path) for path in paths)
 
 

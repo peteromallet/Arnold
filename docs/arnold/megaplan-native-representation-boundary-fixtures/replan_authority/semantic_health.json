@@ -1,0 +1,16 @@
+{
+  "authority_record_count": 1,
+  "boundary_id": "replan_authority",
+  "external_effect_refs": [],
+  "fixture_id": "replan_authority",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/replan_authority/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/replan_authority/boundary_receipts/replan_authority.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "replan_authority"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

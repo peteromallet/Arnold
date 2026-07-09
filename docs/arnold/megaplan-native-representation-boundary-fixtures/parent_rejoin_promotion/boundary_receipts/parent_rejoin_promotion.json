@@ -1,0 +1,13 @@
+{
+  "boundary_id": "parent_rejoin_promotion",
+  "history_ref": "parent_rejoin_completed",
+  "invocation_id": "inv-parent_rejoin_promotion",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s3.parent_rejoin.1",
+  "state_observation": {
+    "current_state": "critiqued"
+  },
+  "workflow_id": "megaplan-review"
+}

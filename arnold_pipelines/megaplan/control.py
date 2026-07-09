@@ -24,12 +24,11 @@ from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan._core import save_state, slugify
 from arnold_pipelines.megaplan._core.workflow import resume_plan
-from arnold_pipelines.megaplan.feature_flags import control_interface_routing_on
 from arnold_pipelines.megaplan.auto import drive as drive_auto
 from arnold_pipelines.megaplan.runtime.process import megaplan_engine_env
-from arnold.control.interface import ControlTransition, RunStateView
-from arnold_pipelines.megaplan.control_interface import apply_transition
-from arnold_pipelines.megaplan.handlers import handle_init, handle_override
+from arnold.control.interface import RunStateView
+from arnold_pipelines.megaplan.control_interface import apply_transition, build_override_transition_request
+from arnold_pipelines.megaplan.handlers import handle_init
 from arnold_pipelines.megaplan.orchestration.progress import ProgressContext, ProgressEmitter
 from arnold_pipelines.megaplan.schemas import ControlMessage, Sprint
 from arnold_pipelines.megaplan.store import Store
@@ -58,6 +57,13 @@ class ControlTarget:
 
 
 ControlHandler = Callable[[ControlTarget, ControlMessage], Mapping[str, Any] | None]
+
+
+def _drop_next_step_authority(response: Mapping[str, Any]) -> dict[str, Any]:
+    sanitized = dict(response)
+    sanitized.pop("next_step", None)
+    sanitized.pop("next_step_runtime", None)
+    return sanitized
 
 
 class ControlTargetResolver:
@@ -375,14 +381,27 @@ def _target_result(target: ControlTarget) -> dict[str, Any]:
 
 def _default_handlers(store: Store) -> dict[str, ControlHandler]:
     return {
-        "run_sprint": lambda target, message: run_sprint_control_handler(target, message, store=store),
-        "resume_plan": lambda target, message: resume_plan_control_handler(target, message, store=store),
-        "approve_gate": lambda target, message: approve_gate_control_handler(target, message, store=store),
-        "reject_gate": lambda target, message: reject_gate_control_handler(target, message, store=store),
+        "run_sprint": lambda target, message: _run_sprint_control_event_request_adapter(
+            target, message, store=store
+        ),
+        "resume_plan": lambda target, message: _resume_plan_control_event_request_adapter(
+            target, message, store=store
+        ),
+        "approve_gate": lambda target, message: _approve_gate_control_event_request_adapter(
+            target, message, store=store
+        ),
+        "reject_gate": lambda target, message: _reject_gate_control_event_request_adapter(
+            target, message, store=store
+        ),
     }
 
 
-def run_sprint_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
+def _run_sprint_control_event_request_adapter(
+    target: ControlTarget,
+    message: ControlMessage,
+    *,
+    store: Store,
+) -> dict[str, Any]:
     if target.intent != "run_sprint" or target.epic_id is None or target.sprint_id is None:
         raise CliError("invalid_control_target", "run_sprint handler requires a resolved sprint target")
     sprint = store.load_sprint(target.sprint_id)
@@ -427,7 +446,18 @@ def run_sprint_control_handler(target: ControlTarget, message: ControlMessage, *
     }
 
 
-def resume_plan_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
+def run_sprint_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
+    """Legacy entry-point name retained as an event-request adapter."""
+
+    return _run_sprint_control_event_request_adapter(target, message, store=store)
+
+
+def _resume_plan_control_event_request_adapter(
+    target: ControlTarget,
+    message: ControlMessage,
+    *,
+    store: Store,
+) -> dict[str, Any]:
     del message
     if target.intent != "resume_plan" or target.plan is None:
         raise CliError("invalid_control_target", "resume_plan handler requires a resolved plan target")
@@ -445,28 +475,30 @@ def resume_plan_control_handler(target: ControlTarget, message: ControlMessage, 
     return details
 
 
-def approve_gate_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
+def resume_plan_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
+    """Legacy entry-point name retained as an event-request adapter."""
+
+    return _resume_plan_control_event_request_adapter(target, message, store=store)
+
+
+def _approve_gate_control_event_request_adapter(
+    target: ControlTarget,
+    message: ControlMessage,
+    *,
+    store: Store,
+) -> dict[str, Any]:
     if target.intent != "approve_gate" or target.plan is None or target.gate_id is None:
         raise CliError("invalid_control_target", "approve_gate handler requires a resolved gate target")
     payload = target.payload or {}
     reason = _payload_text(payload, "reason", "Approved from control message.")
-    if control_interface_routing_on():
-        response = _apply_gate_control_transition(
-            target,
-            message,
-            action="force-proceed",
-            payload={"user_approved": True, "reason": reason},
-        )
-    else:
-        response = handle_override(
-            target.project_root,
-            _override_args(
-                plan=target.plan,
-                action="force-proceed",
-                reason=reason,
-                user_approved=True,
-            ),
-        )
+    response = _apply_gate_control_request(
+        target,
+        message,
+        action="force-proceed",
+        payload={"user_approved": True},
+        reason=reason,
+    )
+    response = _drop_next_step_authority(response)
     event = _gate_resolved(target, store, decision="approved", summary=str(response.get("summary") or "Gate approved"))
     details: dict[str, Any] = {
         "gate": response,
@@ -479,30 +511,33 @@ def approve_gate_control_handler(target: ControlTarget, message: ControlMessage,
     return details
 
 
-def reject_gate_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
+def approve_gate_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
+    """Legacy entry-point name retained as an event-request adapter."""
+
+    return _approve_gate_control_event_request_adapter(target, message, store=store)
+
+
+def _reject_gate_control_event_request_adapter(
+    target: ControlTarget,
+    message: ControlMessage,
+    *,
+    store: Store,
+) -> dict[str, Any]:
     if target.intent != "reject_gate" or target.plan is None or target.gate_id is None:
         raise CliError("invalid_control_target", "reject_gate handler requires a resolved gate target")
     payload = target.payload or {}
     reason = _payload_text(payload, "reason", "Gate rejected from control message.")
     note = _payload_text(payload, "note", reason)
-    if control_interface_routing_on():
-        response = _apply_gate_control_transition(
-            target,
-            message,
-            action="add-note",
-            payload={"note": note, "source": "user", "reason": reason},
-        )
-    else:
-        response = handle_override(
-            target.project_root,
-            _override_args(
-                plan=target.plan,
-                action="add-note",
-                note=note,
-                reason=reason,
-                source="user",
-            ),
-        )
+    response = _apply_gate_control_request(
+        target,
+        message,
+        action="add-note",
+        payload={},
+        note=note,
+        reason=reason,
+        source="user",
+    )
+    response = _drop_next_step_authority(response)
     event = _gate_resolved(target, store, decision="rejected", summary=str(response.get("summary") or "Gate rejected"))
     return {
         "gate": response,
@@ -510,12 +545,21 @@ def reject_gate_control_handler(target: ControlTarget, message: ControlMessage, 
     }
 
 
-def _apply_gate_control_transition(
+def reject_gate_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
+    """Legacy entry-point name retained as an event-request adapter."""
+
+    return _reject_gate_control_event_request_adapter(target, message, store=store)
+
+
+def _apply_gate_control_request(
     target: ControlTarget,
     message: ControlMessage,
     *,
     action: str,
     payload: Mapping[str, Any],
+    reason: str,
+    note: str | None = None,
+    source: str = "control_message",
 ) -> dict[str, Any]:
     if target.plan is None or target.plan_dir is None:
         raise CliError("invalid_control_target", "gate control requires a resolved filesystem plan")
@@ -524,13 +568,20 @@ def _apply_gate_control_transition(
     from arnold_pipelines.megaplan.handlers.override import _emit_routed_override_events, _routed_override_response
 
     state = read_plan_state_cached(target.plan_dir, mode="authority")
-    transition = ControlTransition(
-        op="override",
-        target_id=action,
-        payload={
+    transition = build_override_transition_request(
+        action,
+        params={
             **dict(payload),
             "root": str(target.project_root),
             "plan_dir": str(target.plan_dir),
+        },
+        actor=message.actor_id,
+        source=source,
+        reason=reason,
+        note=note,
+        metadata={
+            "control_intent": target.intent,
+            "control_message_id": message.id,
         },
         idempotency_key=f"control-message:{message.id}:{action}",
     )
@@ -557,18 +608,20 @@ def _apply_gate_control_transition(
     args = _override_args(
         plan=target.plan,
         action=action,
-        reason=str(payload.get("reason") or ""),
-        note=payload.get("note") if isinstance(payload.get("note"), str) else None,
-        source=str(payload.get("source") or "user"),
+        reason=reason,
+        note=note,
+        source=source,
         user_approved=bool(payload.get("user_approved", False)),
     )
     _emit_routed_override_events(action, plan_dir=target.plan_dir, state=persisted_state, args=args)
-    return _routed_override_response(
-        action,
-        plan_dir=target.plan_dir,
-        state=persisted_state,
-        args=args,
-        artifacts=dict(result.artifacts),
+    return _drop_next_step_authority(
+        _routed_override_response(
+            action,
+            plan_dir=target.plan_dir,
+            state=persisted_state,
+            args=args,
+            artifacts=dict(result.artifacts),
+        )
     )
 
 

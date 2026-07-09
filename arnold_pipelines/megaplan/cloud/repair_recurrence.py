@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -81,6 +82,103 @@ def _as_path(value: object) -> Path | None:
     if not text:
         return None
     return Path(text)
+
+
+def _has_entries(value: object) -> bool:
+    if isinstance(value, list):
+        return any(bool(_as_text(item)) for item in value)
+    return bool(_as_text(value))
+
+
+def _plan_identity(context: Mapping[str, Any]) -> str:
+    plan_failure = _as_dict(context.get("plan_latest_failure"))
+    chain_state = _as_dict(context.get("chain_state_summary"))
+    return _as_text(
+        chain_state.get("current_plan_name")
+        or plan_failure.get("plan_name")
+        or _as_dict(context.get("plan_runtime_state")).get("plan_name")
+    )
+
+
+def _read_json_file(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _empty_pending_batch_task_ids(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    if _has_entries(payload.get("files_changed")) or _has_entries(payload.get("commands_run")):
+        return ()
+    raw_tasks = payload.get("task_updates")
+    if not isinstance(raw_tasks, list):
+        raw_tasks = payload.get("tasks")
+    if not isinstance(raw_tasks, list) or not raw_tasks:
+        return ()
+    task_ids: list[str] = []
+    for raw_task in raw_tasks:
+        task = _as_dict(raw_task)
+        if not task:
+            return ()
+        if _as_text(task.get("status")).lower() != "pending":
+            return ()
+        if _has_entries(task.get("files_changed")) or _has_entries(task.get("commands_run")):
+            return ()
+        task_id = _as_text(task.get("task_id") or task.get("id"))
+        if task_id:
+            task_ids.append(task_id)
+    return tuple(task_ids)
+
+
+def _empty_execute_batch_summary(context: Mapping[str, Any]) -> dict[str, Any]:
+    attempt_context = _as_dict(context.get("execute_attempt_context"))
+    plan = _plan_identity(context)
+    if not plan:
+        return {}
+    for section_name in ("execute_batch_output", "execution_batch"):
+        section = _as_dict(attempt_context.get(section_name))
+        payload = _read_json_file(_as_path(section.get("path")))
+        task_ids = _empty_pending_batch_task_ids(payload)
+        if task_ids:
+            return {
+                "plan": plan,
+                "section": section_name,
+                "path": _as_text(section.get("path")),
+                "task_ids": list(task_ids),
+            }
+    return {}
+
+
+def _normalize_empty_batch_summary(value: object) -> dict[str, Any]:
+    item = _as_dict(value)
+    plan = _as_text(item.get("plan"))
+    task_ids = tuple(
+        _as_text(task_id)
+        for task_id in _as_list(item.get("task_ids"))
+        if _as_text(task_id)
+    )
+    if not plan or not task_ids:
+        return {}
+    return {
+        "plan": plan,
+        "task_ids": task_ids,
+        "section": _as_text(item.get("section")),
+        "path": _as_text(item.get("path")),
+    }
+
+
+def _empty_batch_summary_for_attempt(attempt: Mapping[str, Any]) -> dict[str, Any]:
+    advancement_summary = _normalize_empty_batch_summary(
+        _as_dict(attempt.get("advancement_snapshot")).get("execute_empty_batch")
+    )
+    if advancement_summary:
+        return advancement_summary
+    return _normalize_empty_batch_summary(
+        _empty_execute_batch_summary(_as_dict(attempt.get("failure_context")))
+    )
 
 
 def _parse_when(value: object) -> datetime | None:
@@ -280,10 +378,25 @@ def _history_last_step(execute_attempt_context: Mapping[str, Any]) -> str:
     return ""
 
 
+def _mechanical_redrive_only_context(context: Mapping[str, Any]) -> bool:
+    stale_state = _as_dict(context.get("stale_state"))
+    if _as_text(stale_state.get("classification")) != "NO LATEST FAILURE":
+        return False
+    if _as_text(stale_state.get("recommended_action")) != "mechanical re-drive only":
+        return False
+    plan_failure = _as_dict(context.get("plan_latest_failure"))
+    return not any(
+        _as_text(plan_failure.get(key))
+        for key in ("kind", "message", "state", "recorded_at", "phase")
+    )
+
+
 def build_problem_signature(failure_context: Mapping[str, Any]) -> dict[str, str]:
     """Return the controlled-field signature used for recurrence identity."""
 
     context = _as_dict(failure_context)
+    if _mechanical_redrive_only_context(context):
+        return {field: "" for field in PROBLEM_SIGNATURE_FIELDS}
     plan_failure = _as_dict(context.get("plan_latest_failure"))
     chain_state = _as_dict(context.get("chain_state_summary"))
     plan_runtime = _as_dict(context.get("plan_runtime_state"))
@@ -321,6 +434,9 @@ def build_problem_signature(failure_context: Mapping[str, Any]) -> dict[str, str
 
 
 def _event_signature_field(context: Mapping[str, Any], plan_failure: Mapping[str, Any]) -> str:
+    phase_result_signature = _phase_result_signature_field(context, plan_failure)
+    if phase_result_signature:
+        return phase_result_signature
     events_path = _as_text(
         plan_failure.get("events_path")
         or plan_failure.get("plan_events_path")
@@ -342,6 +458,52 @@ def _event_signature_field(context: Mapping[str, Any], plan_failure: Mapping[str
     kind = _as_text(first.get("kind"))
     reason = _as_text(first.get("reason"))
     return f"{kind}/{reason}" if kind else ""
+
+
+def _phase_result_signature_field(
+    context: Mapping[str, Any],
+    plan_failure: Mapping[str, Any],
+) -> str:
+    phase_result = _as_dict(_as_dict(context.get("execute_attempt_context")).get("phase_result"))
+    if not phase_result:
+        plan_dir = _resolve_plan_dir(context, workspace=_as_path(context.get("workspace")))
+        if plan_dir is not None:
+            phase_result_path = plan_dir / "phase_result.json"
+            try:
+                loaded = json.loads(phase_result_path.read_text(encoding="utf-8"))
+            except Exception:
+                loaded = {}
+            phase_result = _as_dict(loaded)
+    if not phase_result:
+        return ""
+    exit_kind = _as_text(phase_result.get("exit_kind"))
+    phase = _as_text(phase_result.get("phase")) or _as_text(plan_failure.get("phase"))
+    if not exit_kind:
+        return ""
+    blocked_tasks = [
+        _as_text(_as_dict(item).get("task_id") or _as_dict(item).get("id"))
+        for item in _as_list(phase_result.get("blocked_tasks"))
+    ]
+    blocked_tasks = [item for item in blocked_tasks if item]
+    if blocked_tasks:
+        detail = blocked_tasks[0]
+    else:
+        detail = _phase_result_deviation_token(_as_list(phase_result.get("deviations")))
+    parts = ["phase_result", phase, exit_kind, detail]
+    return "/".join(part for part in parts if part)
+
+
+def _phase_result_deviation_token(deviations: list[Any]) -> str:
+    for item in deviations:
+        deviation = _as_dict(item)
+        kind = _as_text(deviation.get("kind"))
+        message = _as_text(deviation.get("message"))
+        code_match = re.search(r"\bAWF\d{3}(?:_[A-Z0-9_]+)?\b", message)
+        if code_match:
+            return f"{kind}:{code_match.group(0)}" if kind else code_match.group(0)
+        if kind:
+            return kind
+    return ""
 
 
 def signature_tuple(signature: Mapping[str, Any]) -> tuple[str, ...]:
@@ -398,6 +560,7 @@ def build_advancement_snapshot(
             },
         },
         "plan_activity": plan_activity,
+        "execute_empty_batch": _empty_execute_batch_summary(context),
     }
 
 
@@ -479,7 +642,13 @@ def update_session_repair_snapshot(
     recent_dispatches: list[str]
     if advanced:
         recent_dispatches = [dispatched_at]
+        last_advancement_at = dispatched_at
     else:
+        last_advancement_at = _as_text(previous.get("last_advancement_at"))
+        if not last_advancement_at and bool(previous.get("advancement_since_last_dispatch")):
+            # Backward compatibility for pre-epoch progress sidecars that
+            # recorded advancement but did not yet persist the explicit epoch.
+            last_advancement_at = _as_text(previous.get("updated_at"))
         cutoff = (_parse_when(dispatched_at) or datetime.now(timezone.utc)) - timedelta(
             seconds=max(int(window_seconds), 0)
         )
@@ -497,10 +666,23 @@ def update_session_repair_snapshot(
         "no_advance_dispatches": recent_dispatches,
         "no_advance_count": no_advance_count,
         "advancement_since_last_dispatch": advanced,
+        "last_advancement_at": last_advancement_at,
         "window_seconds": int(window_seconds),
         "min_dispatches": int(min_dispatches),
         "layer2_recurrence": no_advance_count >= int(min_dispatches),
     }
+
+
+def _attempt_is_after_epoch(
+    attempt: Mapping[str, Any],
+    epoch: datetime | None,
+) -> bool:
+    if epoch is None:
+        return True
+    when = _parse_when(attempt.get("dispatched_at") or attempt.get("timestamp"))
+    if when is None:
+        return True
+    return when > epoch
 
 
 def evaluate_recurrence(
@@ -513,18 +695,22 @@ def evaluate_recurrence(
         for field in PROBLEM_SIGNATURE_FIELDS
     }
     current_key = signature_tuple(normalized_signature)
-    prior_attempts = attempts or []
+    snapshot = _as_dict(session_snapshot)
+    advancement_epoch = _parse_when(snapshot.get("last_advancement_at"))
+    prior_attempts = [
+        attempt
+        for attempt in (attempts or [])
+        if isinstance(attempt, Mapping)
+        and _attempt_is_after_epoch(attempt, advancement_epoch)
+    ]
     matching_attempt_ids: list[int] = []
     for attempt in prior_attempts:
-        if not isinstance(attempt, Mapping):
-            continue
         prior_signature = _as_dict(attempt.get("problem_signature"))
         if signature_tuple(prior_signature) != current_key:
             continue
         attempt_id = _as_int(attempt.get("attempt_id"))
         if attempt_id is not None:
             matching_attempt_ids.append(attempt_id)
-    snapshot = _as_dict(session_snapshot)
     no_advance_count = _as_int(snapshot.get("no_advance_count")) or 0
     min_dispatches = _as_int(snapshot.get("min_dispatches")) or 0
     layer1_detected = bool(matching_attempt_ids)
@@ -538,18 +724,37 @@ def evaluate_recurrence(
     # on a non-empty signature so the breaker never trips on bootstrap/garbage.
     prior_by_id = sorted(
         (
-            attempt
-            for attempt in prior_attempts
-            if isinstance(attempt, Mapping)
-            and _as_int(attempt.get("attempt_id")) is not None
+            attempt for attempt in prior_attempts if _as_int(attempt.get("attempt_id")) is not None
         ),
         key=lambda a: _as_int(a["attempt_id"]),  # type: ignore[index]
     )
-    layer3_detected = False
+    same_signature_detected = False
     if prior_by_id and any(current_key):
         last_signature = _as_dict(prior_by_id[-1].get("problem_signature"))
         if last_signature and signature_tuple(last_signature) == current_key:
-            layer3_detected = True
+            same_signature_detected = True
+
+    empty_batch_streak: list[dict[str, Any]] = []
+    current_empty_batch = _normalize_empty_batch_summary(
+        _as_dict(_as_dict(snapshot.get("current")).get("execute_empty_batch"))
+    )
+    if current_empty_batch:
+        empty_batch_streak.append(current_empty_batch)
+        seen_task_sets = {current_empty_batch["task_ids"]}
+        for attempt in reversed(prior_by_id):
+            prior_empty_batch = _empty_batch_summary_for_attempt(attempt)
+            if not prior_empty_batch:
+                break
+            if prior_empty_batch["plan"] != current_empty_batch["plan"]:
+                break
+            task_ids = prior_empty_batch["task_ids"]
+            if task_ids in seen_task_sets:
+                break
+            seen_task_sets.add(task_ids)
+            empty_batch_streak.append(prior_empty_batch)
+    empty_batch_threshold = max(_as_int(snapshot.get("min_dispatches")) or 3, 2)
+    empty_batch_detected = len(empty_batch_streak) >= empty_batch_threshold
+    layer3_detected = same_signature_detected or empty_batch_detected
 
     return {
         "detected": layer1_detected or layer2_detected,
@@ -569,7 +774,15 @@ def evaluate_recurrence(
         },
         "layer3": {
             "detected": layer3_detected,
-            "consecutive_same_signature": layer3_detected,
+            "consecutive_same_signature": same_signature_detected,
+            "empty_batch_streak": {
+                "detected": empty_batch_detected,
+                "count": len(empty_batch_streak),
+                "min_dispatches": empty_batch_threshold,
+                "task_id_batches": [
+                    list(item["task_ids"]) for item in empty_batch_streak
+                ],
+            },
             "breaker_signature": normalized_signature if layer3_detected else {},
         },
     }

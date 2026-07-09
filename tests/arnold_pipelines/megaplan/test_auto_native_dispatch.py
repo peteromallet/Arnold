@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold.execution.operations import OperationResult
+from arnold.execution.operations import OperationKind, OperationRequest
 from arnold.pipeline.native.ir import NativeProgram
 
 from arnold_pipelines.megaplan import auto
@@ -139,6 +140,25 @@ def test_run_planning_phase_keeps_override_on_control_dispatch(
     assert override_calls == [
         ["override", "force-proceed", "--plan", "demo", "--reason", "test"]
     ]
+
+
+def test_builtin_megaplan_registry_supports_override_apply() -> None:
+    from arnold_pipelines.megaplan.registry import (
+        dispatch_operation_for,
+        supported_operations_for,
+    )
+    from arnold_pipelines.megaplan.runtime.discovery import CANONICAL_BUILTIN_PIPELINE
+
+    supported = supported_operations_for(CANONICAL_BUILTIN_PIPELINE)
+
+    assert OperationKind.OVERRIDE_APPLY in supported
+    result = dispatch_operation_for(
+        CANONICAL_BUILTIN_PIPELINE,
+        OperationRequest(kind=OperationKind.OVERRIDE_APPLY, payload={}),
+    )
+    assert result.ok is False
+    assert result.errors[0] == "invalid_request"
+    assert "payload.state" in result.errors[1]
 
 
 def test_compiled_native_phase_functions_execute_handler_payload(

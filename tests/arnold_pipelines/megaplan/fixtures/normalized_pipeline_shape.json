@@ -1,12 +1,47 @@
 {
+  "capabilities": [
+    {
+      "id": "megaplan:planning",
+      "required": true,
+      "route": "default"
+    },
+    {
+      "id": "human:gate",
+      "required": false,
+      "route": "default"
+    },
+    {
+      "id": "human:review",
+      "required": false,
+      "route": "default"
+    }
+  ],
+  "counts": {
+    "capabilities": 3,
+    "routes": 23,
+    "steps": 14
+  },
   "fixture_schema": "arnold.megaplan.normalized_pipeline_shape.v1",
-  "source": "arnold_pipelines.megaplan.pipeline:build_pipeline",
   "hash_neutral": true,
+  "ordered_step_ids": [
+    "prep",
+    "plan",
+    "critique",
+    "gate",
+    "revise",
+    "tiebreaker_researcher",
+    "tiebreaker_challenger",
+    "tiebreaker_synthesis",
+    "tiebreaker_decision",
+    "finalize",
+    "execute",
+    "review",
+    "halt",
+    "override"
+  ],
   "pipeline": {
     "id": "megaplan",
-    "version": "m4-phase3",
     "metadata": {
-      "product": "megaplan",
       "max_critique_iterations": 4,
       "policy_refs": [
         "megaplan:default",
@@ -14,532 +49,813 @@
         "megaplan:robustness",
         "megaplan:artifact-contract",
         "megaplan:suspension"
-      ]
+      ],
+      "product": "megaplan"
     },
     "policy": {
-      "timing": {
-        "timeout_seconds": 300.0
-      },
       "suspension_routes": [
         {
-          "route_id": "gate:human",
-          "capability_id": "human:gate"
+          "capability_id": "human:gate",
+          "route_id": "gate:human"
         },
         {
-          "route_id": "review:human",
-          "capability_id": "human:review"
+          "capability_id": "human:review",
+          "route_id": "review:human"
         },
         {
-          "route_id": "revise:loop",
           "capability_id": "megaplan:planning",
-          "reentry_id": "revise:loop"
+          "reentry_id": "revise:loop",
+          "route_id": "revise:loop"
         },
         {
-          "route_id": "tiebreaker:loop",
           "capability_id": "megaplan:planning",
-          "reentry_id": "tiebreaker:loop"
+          "reentry_id": "tiebreaker:loop",
+          "route_id": "tiebreaker:loop"
         },
         {
-          "route_id": "execute:resume",
           "capability_id": "megaplan:planning",
-          "reentry_id": "execute:resume"
-        }
-      ]
-    }
-  },
-  "counts": {
-    "steps": 12,
-    "routes": 23,
-    "capabilities": 3
-  },
-  "ordered_step_ids": [
-    "prep",
-    "plan",
-    "critique",
-    "gate",
-    "revise",
-    "tiebreaker_run",
-    "tiebreaker_decide",
-    "finalize",
-    "execute",
-    "review",
-    "halt",
-    "override"
-  ],
-  "steps": [
-    {
-      "id": "prep",
-      "kind": "megaplan:prep",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "prep_payload"
+          "reentry_id": "execute:resume",
+          "route_id": "execute:resume"
         }
       ],
+      "timing": {
+        "timeout_seconds": 300.0
+      }
+    },
+    "version": "m4-phase3"
+  },
+  "routes": [
+    {
+      "condition_ref": null,
+      "id": "prep:plan",
+      "label": "default",
+      "metadata": {},
+      "source": "prep",
+      "target": "plan"
+    },
+    {
+      "condition_ref": null,
+      "id": "plan:critique",
+      "label": "default",
+      "metadata": {},
+      "source": "plan",
+      "target": "critique"
+    },
+    {
+      "condition_ref": null,
+      "id": "critique:gate",
+      "label": "default",
+      "metadata": {},
+      "source": "critique",
+      "target": "gate"
+    },
+    {
+      "condition_ref": "gate.gate_route_signal.eq.proceed",
+      "id": "gate:finalize",
+      "label": "proceed",
+      "metadata": {},
+      "source": "gate",
+      "target": "finalize"
+    },
+    {
+      "condition_ref": "gate.gate_route_signal.eq.iterate",
+      "id": "gate:revise",
+      "label": "iterate",
+      "metadata": {},
+      "source": "gate",
+      "target": "revise"
+    },
+    {
+      "condition_ref": "gate.gate_route_signal.eq.tiebreaker",
+      "id": "gate:tiebreaker",
+      "label": "tiebreaker",
+      "metadata": {},
+      "source": "gate",
+      "target": "tiebreaker_researcher"
+    },
+    {
+      "condition_ref": "gate.gate_route_signal.eq.escalate",
+      "id": "gate:override",
+      "label": "escalate",
+      "metadata": {},
+      "source": "gate",
+      "target": "override"
+    },
+    {
+      "condition_ref": "gate.gate_route_signal.eq.abort",
+      "id": "gate:halt",
+      "label": "abort",
+      "metadata": {},
+      "source": "gate",
+      "target": "halt"
+    },
+    {
+      "condition_ref": "gate.gate_route_signal.eq.suspend",
+      "id": "gate:suspend",
+      "label": "suspend",
+      "metadata": {},
+      "source": "gate",
+      "target": "halt"
+    },
+    {
+      "condition_ref": "gate.gate_route_signal.eq.blocked_preflight",
+      "id": "gate:blocked",
+      "label": "blocked_preflight",
+      "metadata": {},
+      "source": "gate",
+      "target": "override"
+    },
+    {
+      "condition_ref": "gate.gate_route_signal.eq.force_proceed",
+      "id": "gate:force_proceed",
+      "label": "force_proceed",
+      "metadata": {},
+      "source": "gate",
+      "target": "finalize"
+    },
+    {
+      "condition_ref": null,
+      "id": "finalize:execute",
+      "label": "default",
+      "metadata": {},
+      "source": "finalize",
+      "target": "execute"
+    },
+    {
+      "condition_ref": null,
+      "id": "execute:review",
+      "label": "default",
+      "metadata": {},
+      "source": "execute",
+      "target": "review"
+    },
+    {
+      "condition_ref": null,
+      "id": "tiebreaker_researcher:challenger",
+      "label": "default",
+      "metadata": {},
+      "source": "tiebreaker_researcher",
+      "target": "tiebreaker_challenger"
+    },
+    {
+      "condition_ref": null,
+      "id": "tiebreaker_challenger:synthesis",
+      "label": "default",
+      "metadata": {},
+      "source": "tiebreaker_challenger",
+      "target": "tiebreaker_synthesis"
+    },
+    {
+      "condition_ref": null,
+      "id": "tiebreaker_synthesis:decision",
+      "label": "default",
+      "metadata": {},
+      "source": "tiebreaker_synthesis",
+      "target": "tiebreaker_decision"
+    },
+    {
+      "condition_ref": "proceed",
+      "id": "tiebreaker_decision:finalize",
+      "label": "proceed",
+      "metadata": {},
+      "source": "tiebreaker_decision",
+      "target": "finalize"
+    },
+    {
+      "condition_ref": "tiebreaker:loop",
+      "id": "tiebreaker_decision:critique",
+      "label": "iterate",
+      "metadata": {},
+      "source": "tiebreaker_decision",
+      "target": "revise"
+    },
+    {
+      "condition_ref": "escalate",
+      "id": "tiebreaker_decision:override",
+      "label": "escalate",
+      "metadata": {},
+      "source": "tiebreaker_decision",
+      "target": "override"
+    },
+    {
+      "condition_ref": "tiebreaker:replan",
+      "id": "tiebreaker_decision:revise_replan",
+      "label": "replan",
+      "metadata": {},
+      "source": "tiebreaker_decision",
+      "target": "revise"
+    },
+    {
+      "condition_ref": "tiebreaker_override.override_result.eq.force_proceed",
+      "id": "override:finalize",
+      "label": "force_proceed",
+      "metadata": {},
+      "source": "override",
+      "target": "finalize"
+    },
+    {
+      "condition_ref": "tiebreaker_override.override_result.eq.replan",
+      "id": "override:revise",
+      "label": "replan",
+      "metadata": {},
+      "source": "override",
+      "target": "revise"
+    },
+    {
+      "condition_ref": "override.override_result.eq.abort",
+      "id": "override:halt",
+      "label": "abort",
+      "metadata": {},
+      "source": "override",
+      "target": "halt"
+    }
+  ],
+  "source": "arnold_pipelines.megaplan.pipeline:build_pipeline",
+  "steps": [
+    {
       "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep",
+      "id": "prep",
+      "inputs": [
+        {
+          "name": "brief",
+          "value_ref": "param:brief"
+        }
+      ],
+      "kind": "megaplan:prep",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_PREP",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep",
+        "source_form": "function",
+        "terminal": false
+      },
+      "outputs": [
+        {
+          "name": "prep_signal"
+        }
+      ],
       "policy": {
         "timing": {
           "timeout_seconds": 300.0
         }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep",
-      "terminal": false,
       "subpipeline": null,
-      "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep"
-      }
+      "terminal": false
     },
     {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan",
       "id": "plan",
-      "kind": "megaplan:plan",
       "inputs": [
         {
           "name": "prep_payload",
-          "value_ref": "prep.prep_payload"
+          "value_ref": "output:prep_signal"
         }
       ],
+      "kind": "megaplan:plan",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_PLAN",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan",
+        "source_form": "function",
+        "terminal": false
+      },
       "outputs": [
         {
           "name": "plan_payload"
         }
       ],
-      "capabilities": [],
       "policy": {
         "timing": {
           "timeout_seconds": 300.0
         }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan",
-      "terminal": false,
       "subpipeline": null,
-      "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan"
-      }
+      "terminal": false
     },
     {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
       "id": "critique",
-      "kind": "megaplan:critique",
       "inputs": [
         {
-          "name": "plan_payload",
-          "value_ref": "plan.plan_payload"
+          "name": "items",
+          "value_ref": "megaplan.policy.critique_lenses"
         }
       ],
+      "kind": "megaplan:critique",
+      "metadata": {
+        "call_site_path": "critique-fanout",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
+        "items_ref": "megaplan.policy.critique_lenses",
+        "iteration_coordinate": "{item_id}",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:CRITIQUE_PANEL_WORKFLOW",
+        "parallel_map": true,
+        "path_template": "critique/{item_id}",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_CRITIQUE",
+        "source_form": "function"
+      },
       "outputs": [
         {
           "name": "critique_payload"
         }
       ],
-      "capabilities": [],
       "policy": {
         "timing": {
           "timeout_seconds": 300.0
         }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
-      "terminal": false,
       "subpipeline": null,
-      "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique"
-      }
+      "terminal": false
     },
     {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate",
       "id": "gate",
-      "kind": "megaplan:gate",
       "inputs": [
         {
           "name": "critique_payload",
-          "value_ref": "critique.critique_payload"
+          "value_ref": "output:critique_payload"
         }
       ],
+      "kind": "megaplan:gate",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_GATE",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate",
+        "source_form": "function",
+        "terminal": false
+      },
       "outputs": [
         {
-          "name": "gate_payload"
-        },
-        {
-          "name": "recommendation"
+          "name": "gate_route_signal"
         }
       ],
-      "capabilities": [],
       "policy": {
-        "timing": {
-          "timeout_seconds": 300.0
-        },
         "control_transitions": [
           {
+            "policy_ref": "megaplan:gate",
+            "target_ref": "finalize",
             "transition_id": "gate:proceed",
             "transition_type": "override",
-            "trigger_ref": "gate.recommendation",
-            "target_ref": "finalize",
-            "policy_ref": "megaplan:gate"
+            "trigger_ref": "gate.recommendation"
           },
           {
+            "policy_ref": "megaplan:gate",
+            "target_ref": "revise",
             "transition_id": "gate:iterate",
             "transition_type": "override",
-            "trigger_ref": "gate.recommendation",
-            "target_ref": "revise",
-            "policy_ref": "megaplan:gate"
+            "trigger_ref": "gate.recommendation"
           },
           {
+            "policy_ref": "megaplan:gate",
+            "target_ref": "tiebreaker_researcher",
             "transition_id": "gate:tiebreaker",
             "transition_type": "override",
-            "trigger_ref": "gate.recommendation",
-            "target_ref": "tiebreaker_run",
-            "policy_ref": "megaplan:gate"
+            "trigger_ref": "gate.recommendation"
           },
           {
+            "policy_ref": "megaplan:gate",
+            "target_ref": "override",
             "transition_id": "gate:escalate",
             "transition_type": "escalation",
-            "trigger_ref": "gate.recommendation",
-            "target_ref": "override",
-            "policy_ref": "megaplan:gate"
+            "trigger_ref": "gate.recommendation"
           },
           {
+            "policy_ref": "megaplan:gate",
+            "target_ref": "halt",
             "transition_id": "gate:abort",
             "transition_type": "override",
-            "trigger_ref": "gate.recommendation",
-            "target_ref": "halt",
-            "policy_ref": "megaplan:gate"
+            "trigger_ref": "gate.recommendation"
           }
         ],
         "suspension_routes": [
           {
-            "route_id": "gate:human",
-            "capability_id": "human:gate"
+            "capability_id": "human:gate",
+            "route_id": "gate:human"
           }
-        ]
+        ],
+        "timing": {
+          "timeout_seconds": 300.0
+        }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate",
-      "terminal": false,
       "subpipeline": null,
-      "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate"
-      }
+      "terminal": false
     },
     {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
       "id": "revise",
-      "kind": "megaplan:revise",
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "gate.gate_payload"
+          "value_ref": "output:rework_review_route_signal"
         }
       ],
+      "kind": "megaplan:revise",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_REVISE",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
+        "max_iterations": 4,
+        "source_form": "function",
+        "terminal": false
+      },
       "outputs": [
         {
           "name": "revise_payload"
         }
       ],
-      "capabilities": [],
       "policy": {
         "loop": {
           "max_iterations": 4,
           "until_ref": "critique_gate_pass"
         },
-        "timing": {
-          "timeout_seconds": 300.0
-        },
         "suspension_routes": [
           {
-            "route_id": "revise:loop",
             "capability_id": "megaplan:planning",
-            "reentry_id": "revise:loop"
+            "reentry_id": "revise:loop",
+            "route_id": "revise:loop"
           }
-        ]
+        ],
+        "timing": {
+          "timeout_seconds": 300.0
+        }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
-      "terminal": false,
       "subpipeline": null,
-      "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
-        "max_iterations": 4
-      }
+      "terminal": false
     },
     {
-      "id": "tiebreaker_run",
-      "kind": "megaplan:tiebreaker_run",
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+      "id": "tiebreaker_researcher",
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "gate.gate_payload"
+          "value_ref": "output:gate_route_signal"
         }
       ],
+      "kind": "megaplan:tiebreaker_researcher",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_RESEARCHER",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "source_form": "function",
+        "terminal": false
+      },
+      "outputs": [
+        {
+          "name": "research_findings"
+        }
+      ],
+      "policy": {
+        "timing": {
+          "timeout_seconds": 300.0
+        }
+      },
+      "subpipeline": null,
+      "terminal": false
+    },
+    {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+      "id": "tiebreaker_challenger",
+      "inputs": [
+        {
+          "name": "research_findings",
+          "value_ref": "output:research_findings"
+        }
+      ],
+      "kind": "megaplan:tiebreaker_challenger",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_CHALLENGER",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "source_form": "function",
+        "terminal": false
+      },
+      "outputs": [
+        {
+          "name": "challenge_findings"
+        }
+      ],
+      "policy": {
+        "timing": {
+          "timeout_seconds": 300.0
+        }
+      },
+      "subpipeline": null,
+      "terminal": false
+    },
+    {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+      "id": "tiebreaker_synthesis",
+      "inputs": [
+        {
+          "name": "research_findings",
+          "value_ref": "output:research_findings"
+        },
+        {
+          "name": "challenge_findings",
+          "value_ref": "output:challenge_findings"
+        }
+      ],
+      "kind": "megaplan:tiebreaker_synthesis",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_SYNTHESIS",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "source_form": "function",
+        "terminal": false
+      },
       "outputs": [
         {
           "name": "tiebreaker_payload"
         }
       ],
-      "capabilities": [],
       "policy": {
         "timing": {
           "timeout_seconds": 300.0
         }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
-      "terminal": false,
       "subpipeline": null,
-      "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run"
-      }
+      "terminal": false
     },
     {
-      "id": "tiebreaker_decide",
-      "kind": "megaplan:tiebreaker_decide",
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide",
+      "id": "tiebreaker_decision",
       "inputs": [
         {
           "name": "tiebreaker_payload",
-          "value_ref": "tiebreaker_run.tiebreaker_payload"
+          "value_ref": "output:tiebreaker_payload"
         }
       ],
+      "kind": "megaplan:tiebreaker_decision",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_DECISION",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide",
+        "source_form": "function",
+        "terminal": false
+      },
       "outputs": [
         {
           "name": "decision"
         }
       ],
-      "capabilities": [],
       "policy": {
+        "control_transitions": [
+          {
+            "policy_ref": "megaplan:tiebreaker",
+            "target_ref": "revise",
+            "transition_id": "tiebreaker:iterate",
+            "transition_type": "override",
+            "trigger_ref": "tiebreaker_decision.decision"
+          },
+          {
+            "policy_ref": "megaplan:tiebreaker",
+            "target_ref": "finalize",
+            "transition_id": "tiebreaker:proceed",
+            "transition_type": "override",
+            "trigger_ref": "tiebreaker_decision.decision"
+          },
+          {
+            "policy_ref": "megaplan:tiebreaker",
+            "target_ref": "override",
+            "transition_id": "tiebreaker:escalate",
+            "transition_type": "escalation",
+            "trigger_ref": "tiebreaker_decision.decision"
+          },
+          {
+            "policy_ref": "megaplan:tiebreaker",
+            "target_ref": "revise",
+            "transition_id": "tiebreaker:replan",
+            "transition_type": "override",
+            "trigger_ref": "tiebreaker_decision.decision"
+          }
+        ],
         "loop": {
           "max_iterations": 4,
           "until_ref": "tiebreaker_resolved"
         },
-        "timing": {
-          "timeout_seconds": 300.0
-        },
-        "control_transitions": [
-          {
-            "transition_id": "tiebreaker:iterate",
-            "transition_type": "override",
-            "trigger_ref": "tiebreaker_decide.decision",
-            "target_ref": "critique",
-            "policy_ref": "megaplan:tiebreaker"
-          },
-          {
-            "transition_id": "tiebreaker:proceed",
-            "transition_type": "override",
-            "trigger_ref": "tiebreaker_decide.decision",
-            "target_ref": "finalize",
-            "policy_ref": "megaplan:tiebreaker"
-          },
-          {
-            "transition_id": "tiebreaker:escalate",
-            "transition_type": "escalation",
-            "trigger_ref": "tiebreaker_decide.decision",
-            "target_ref": "override",
-            "policy_ref": "megaplan:tiebreaker"
-          }
-        ],
         "suspension_routes": [
           {
-            "route_id": "tiebreaker:loop",
             "capability_id": "megaplan:planning",
-            "reentry_id": "tiebreaker:loop"
+            "reentry_id": "tiebreaker:loop",
+            "route_id": "tiebreaker:loop"
           }
-        ]
+        ],
+        "timing": {
+          "timeout_seconds": 300.0
+        }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide",
-      "terminal": false,
       "subpipeline": null,
-      "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide"
-      }
+      "terminal": false
     },
     {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
       "id": "finalize",
-      "kind": "megaplan:finalize",
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "gate.gate_payload"
+          "value_ref": "output:gate_route_signal"
         }
       ],
+      "kind": "megaplan:finalize",
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_FINALIZE",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
+        "policy_refs": [
+          "megaplan:default",
+          "megaplan:finalize",
+          "megaplan:artifact-contract"
+        ],
+        "source_form": "function",
+        "terminal": false
+      },
       "outputs": [
         {
           "name": "finalize_payload"
         }
       ],
-      "capabilities": [],
       "policy": {
         "timing": {
           "timeout_seconds": 300.0
         }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
-      "terminal": false,
       "subpipeline": null,
-      "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
-        "policy_refs": [
-          "megaplan:default",
-          "megaplan:artifact-contract"
-        ]
-      }
+      "terminal": false
     },
     {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
       "id": "execute",
-      "kind": "megaplan:execute",
       "inputs": [
         {
-          "name": "finalize_payload",
-          "value_ref": "finalize.finalize_payload"
+          "name": "items",
+          "value_ref": "megaplan.execute.batches"
         }
       ],
-      "outputs": [
-        {
-          "name": "execute_payload"
-        }
-      ],
-      "capabilities": [],
-      "policy": {
-        "timing": {
-          "timeout_seconds": 300.0
-        },
-        "suspension_routes": [
-          {
-            "route_id": "execute:resume",
-            "capability_id": "megaplan:planning",
-            "reentry_id": "execute:resume"
-          }
-        ]
-      },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
-      "terminal": false,
-      "subpipeline": null,
+      "kind": "megaplan:execute",
       "metadata": {
+        "call_site_path": "execute-batches",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
+        "items_ref": "megaplan.execute.batches",
+        "iteration_coordinate": "{index}",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:EXECUTE_BATCH_WORKFLOW",
+        "parallel_map": true,
+        "path_template": "execute/{index}",
         "policy_refs": [
           "megaplan:execute",
           "megaplan:model-routing",
           "megaplan:artifact-contract",
           "megaplan:suspension"
-        ]
-      }
-    },
-    {
-      "id": "review",
-      "kind": "megaplan:review",
-      "inputs": [
-        {
-          "name": "execute_payload",
-          "value_ref": "execute.execute_payload"
-        }
-      ],
+        ],
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_EXECUTE",
+        "source_form": "function"
+      },
       "outputs": [
         {
-          "name": "review_payload"
+          "name": "execute_payload"
         }
       ],
-      "capabilities": [],
       "policy": {
-        "timing": {
-          "timeout_seconds": 300.0
-        },
-        "control_transitions": [
-          {
-            "transition_id": "review:rework",
-            "transition_type": "fallback",
-            "trigger_ref": "review.verdict",
-            "target_ref": "revise",
-            "policy_ref": "megaplan:review"
-          },
-          {
-            "transition_id": "review:done",
-            "transition_type": "override",
-            "trigger_ref": "review.verdict",
-            "target_ref": "halt",
-            "policy_ref": "megaplan:review"
-          },
-          {
-            "transition_id": "review:blocked",
-            "transition_type": "escalation",
-            "trigger_ref": "review.verdict",
-            "target_ref": "override",
-            "policy_ref": "megaplan:review"
-          },
-          {
-            "transition_id": "review:force_proceeded",
-            "transition_type": "override",
-            "trigger_ref": "review.verdict",
-            "target_ref": "halt",
-            "policy_ref": "megaplan:review"
-          },
-          {
-            "transition_id": "review:deferred_human",
-            "transition_type": "fallback",
-            "trigger_ref": "review.verdict",
-            "target_ref": "halt",
-            "policy_ref": "megaplan:review"
-          }
-        ],
         "suspension_routes": [
           {
-            "route_id": "review:human",
-            "capability_id": "human:review"
+            "capability_id": "megaplan:planning",
+            "reentry_id": "execute:resume",
+            "route_id": "execute:resume"
           }
-        ]
+        ],
+        "timing": {
+          "timeout_seconds": 300.0
+        }
       },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review",
-      "terminal": false,
       "subpipeline": null,
+      "terminal": false
+    },
+    {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review",
+      "id": "review",
+      "inputs": [
+        {
+          "name": "items",
+          "value_ref": "output:execute_payload"
+        }
+      ],
+      "kind": "megaplan:review",
       "metadata": {
+        "call_site_path": "review-fan-in",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review",
+        "items_ref": "execute_payload",
+        "iteration_coordinate": "{item_id}",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:REVIEW_PANEL_WORKFLOW",
+        "parallel_map": true,
+        "path_template": "review/{item_id}",
         "policy_refs": [
           "megaplan:review",
           "megaplan:artifact-contract",
           "megaplan:suspension"
-        ]
-      }
+        ],
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_REVIEW",
+        "source_form": "function"
+      },
+      "outputs": [
+        {
+          "name": "review_route_signal"
+        }
+      ],
+      "policy": {
+        "control_transitions": [
+          {
+            "policy_ref": "megaplan:review",
+            "target_ref": "execute",
+            "transition_id": "review:rework",
+            "transition_type": "fallback",
+            "trigger_ref": "review.verdict"
+          },
+          {
+            "policy_ref": "megaplan:review",
+            "target_ref": "halt",
+            "transition_id": "review:done",
+            "transition_type": "override",
+            "trigger_ref": "review.verdict"
+          },
+          {
+            "policy_ref": "megaplan:review",
+            "target_ref": "override",
+            "transition_id": "review:blocked",
+            "transition_type": "escalation",
+            "trigger_ref": "review.verdict"
+          },
+          {
+            "policy_ref": "megaplan:review",
+            "target_ref": "halt",
+            "transition_id": "review:force_proceeded",
+            "transition_type": "override",
+            "trigger_ref": "review.verdict"
+          },
+          {
+            "policy_ref": "megaplan:review",
+            "target_ref": "halt",
+            "transition_id": "review:deferred_human",
+            "transition_type": "fallback",
+            "trigger_ref": "review.verdict"
+          }
+        ],
+        "suspension_routes": [
+          {
+            "capability_id": "human:review",
+            "route_id": "review:human"
+          }
+        ],
+        "timing": {
+          "timeout_seconds": 300.0
+        }
+      },
+      "subpipeline": null,
+      "terminal": false
     },
     {
+      "capabilities": [],
+      "handler_ref": null,
       "id": "halt",
+      "inputs": [
+        {
+          "name": "review_payload",
+          "value_ref": "output:review_route_signal"
+        }
+      ],
       "kind": "megaplan:halt",
-      "inputs": [],
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_HALT",
+        "source_form": "function",
+        "terminal": true
+      },
       "outputs": [
         {
           "name": "status"
         }
       ],
-      "capabilities": [],
       "policy": {
         "timing": {
           "timeout_seconds": 300.0
         }
       },
-      "handler_ref": null,
-      "terminal": true,
       "subpipeline": null,
-      "metadata": {
-        "terminal": true
-      }
+      "terminal": true
     },
     {
+      "capabilities": [],
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override",
       "id": "override",
-      "kind": "megaplan:override",
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "gate.gate_payload"
+          "value_ref": "output:review_route_signal"
         }
       ],
-      "outputs": [
-        {
-          "name": "override_result"
-        }
-      ],
-      "capabilities": [],
-      "policy": {
-        "timing": {
-          "timeout_seconds": 300.0
-        }
-      },
-      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override",
-      "terminal": false,
-      "subpipeline": null,
+      "kind": "megaplan:override",
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_OVERRIDE",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override",
-        "policy_refs": [
-          "megaplan:override",
-          "megaplan:model-routing"
-        ],
         "override_actions": [
           "abort",
           "add-note",
@@ -552,211 +868,26 @@
           "set-profile",
           "set-robustness",
           "set-vendor"
-        ]
-      }
-    }
-  ],
-  "capabilities": [
-    {
-      "id": "megaplan:planning",
-      "route": "default",
-      "required": true
-    },
-    {
-      "id": "human:gate",
-      "route": "default",
-      "required": false
-    },
-    {
-      "id": "human:review",
-      "route": "default",
-      "required": false
-    }
-  ],
-  "routes": [
-    {
-      "id": "prep:plan",
-      "source": "prep",
-      "target": "plan",
-      "label": "default",
-      "condition_ref": null,
-      "metadata": {}
-    },
-    {
-      "id": "plan:critique",
-      "source": "plan",
-      "target": "critique",
-      "label": "default",
-      "condition_ref": null,
-      "metadata": {}
-    },
-    {
-      "id": "critique:gate",
-      "source": "critique",
-      "target": "gate",
-      "label": "default",
-      "condition_ref": null,
-      "metadata": {}
-    },
-    {
-      "id": "gate:finalize",
-      "source": "gate",
-      "target": "finalize",
-      "label": "proceed",
-      "condition_ref": "proceed",
-      "metadata": {}
-    },
-    {
-      "id": "gate:revise",
-      "source": "gate",
-      "target": "revise",
-      "label": "iterate",
-      "condition_ref": "iterate",
-      "metadata": {}
-    },
-    {
-      "id": "gate:tiebreaker",
-      "source": "gate",
-      "target": "tiebreaker_run",
-      "label": "tiebreaker",
-      "condition_ref": "tiebreaker",
-      "metadata": {}
-    },
-    {
-      "id": "gate:override",
-      "source": "gate",
-      "target": "override",
-      "label": "escalate",
-      "condition_ref": "escalate",
-      "metadata": {}
-    },
-    {
-      "id": "gate:halt",
-      "source": "gate",
-      "target": "halt",
-      "label": "abort",
-      "condition_ref": "abort",
-      "metadata": {}
-    },
-    {
-      "id": "gate:suspend",
-      "source": "gate",
-      "target": "halt",
-      "label": "suspend",
-      "condition_ref": "suspend",
-      "metadata": {}
-    },
-    {
-      "id": "gate:blocked",
-      "source": "gate",
-      "target": "override",
-      "label": "blocked_preflight",
-      "condition_ref": "blocked",
-      "metadata": {}
-    },
-    {
-      "id": "gate:force_proceed",
-      "source": "gate",
-      "target": "finalize",
-      "label": "force_proceed",
-      "condition_ref": "force_proceed",
-      "metadata": {}
-    },
-    {
-      "id": "revise:critique",
-      "source": "revise",
-      "target": "critique",
-      "label": "default",
-      "condition_ref": "revise:loop",
-      "metadata": {}
-    },
-    {
-      "id": "tiebreaker_run:decide",
-      "source": "tiebreaker_run",
-      "target": "tiebreaker_decide",
-      "label": "default",
-      "condition_ref": null,
-      "metadata": {}
-    },
-    {
-      "id": "tiebreaker_decide:critique",
-      "source": "tiebreaker_decide",
-      "target": "critique",
-      "label": "iterate",
-      "condition_ref": "tiebreaker:loop",
-      "metadata": {}
-    },
-    {
-      "id": "tiebreaker_decide:finalize",
-      "source": "tiebreaker_decide",
-      "target": "finalize",
-      "label": "proceed",
-      "condition_ref": "proceed",
-      "metadata": {}
-    },
-    {
-      "id": "tiebreaker_decide:override",
-      "source": "tiebreaker_decide",
-      "target": "override",
-      "label": "escalate",
-      "condition_ref": "escalate",
-      "metadata": {}
-    },
-    {
-      "id": "finalize:execute",
-      "source": "finalize",
-      "target": "execute",
-      "label": "default",
-      "condition_ref": null,
-      "metadata": {}
-    },
-    {
-      "id": "execute:review",
-      "source": "execute",
-      "target": "review",
-      "label": "default",
-      "condition_ref": null,
-      "metadata": {}
-    },
-    {
-      "id": "review:halt",
-      "source": "review",
-      "target": "halt",
-      "label": "default",
-      "condition_ref": "pass",
-      "metadata": {}
-    },
-    {
-      "id": "review:revise",
-      "source": "review",
-      "target": "revise",
-      "label": "rework",
-      "condition_ref": "rework",
-      "metadata": {}
-    },
-    {
-      "id": "override:halt",
-      "source": "override",
-      "target": "halt",
-      "label": "abort",
-      "condition_ref": "abort",
-      "metadata": {}
-    },
-    {
-      "id": "override:finalize",
-      "source": "override",
-      "target": "finalize",
-      "label": "force_proceed",
-      "condition_ref": "force_proceed",
-      "metadata": {}
-    },
-    {
-      "id": "override:revise",
-      "source": "override",
-      "target": "revise",
-      "label": "replan",
-      "condition_ref": "replan",
-      "metadata": {}
+        ],
+        "policy_refs": [
+          "megaplan:override",
+          "megaplan:model-routing"
+        ],
+        "source_form": "function",
+        "terminal": false
+      },
+      "outputs": [
+        {
+          "name": "override_result"
+        }
+      ],
+      "policy": {
+        "timing": {
+          "timeout_seconds": 300.0
+        }
+      },
+      "subpipeline": null,
+      "terminal": false
     }
   ]
 }

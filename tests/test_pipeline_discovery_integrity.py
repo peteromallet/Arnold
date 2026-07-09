@@ -272,6 +272,32 @@ def test_discover_python_pipelines_back_compat_return_shape(tmp_path: Path):
         assert isinstance(path, Path)
 
 
+def test_discover_python_pipelines_tolerates_hidden_non_identifier_user_module(tmp_path: Path):
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    hidden = user_dir / "._auto.py"
+    hidden.write_text(
+        "name = 'hidden-auto'\n"
+        "description = 'hidden file'\n"
+        "default_profile = None\n"
+        "supported_modes = ('native',)\n"
+        "driver = ('native', 'test')\n"
+        "entrypoint = 'build_pipeline'\n"
+        "arnold_api_version = '1.0'\n"
+        "capabilities = ('test',)\n"
+        "def build_pipeline():\n"
+        "    from arnold_pipelines.megaplan.step_types import Pipeline\n"
+        "    return Pipeline(stages={}, entry='done')\n",
+        encoding="utf-8",
+    )
+
+    scan_roots = [(user_dir, None)]
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
+        result = discover_python_pipelines()
+
+    assert result == []
+
+
 def test_manifest_discovery_default_ignores_m6_alias_value(tmp_path: Path, monkeypatch):
     user_dir = tmp_path / "pipelines"
     user_dir.mkdir()

@@ -1147,6 +1147,8 @@ def _is_excluded_from_generic_arnold_scan(root: Path, path: Path) -> bool:
     relative_parts = path.relative_to(root).parts
     if "__pycache__" in relative_parts or "tests" in relative_parts:
         return True
+    if path.name.startswith(".") or any(part.startswith(".") for part in relative_parts):
+        return True
     return False
 
 

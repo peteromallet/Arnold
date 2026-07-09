@@ -14,6 +14,9 @@ from __future__ import annotations
 from typing import Any
 
 from arnold_pipelines.megaplan._compatibility import build_compatibility_shell
+from arnold_pipelines.megaplan.planning.operations import (
+    operation_registry as planning_operation_registry,
+)
 from arnold_pipelines.megaplan.workflows.planning import build_pipeline
 
 
@@ -22,7 +25,14 @@ def build_and_compile_pipeline(**kwargs: Any) -> Any:
     return build_compatibility_shell(build_pipeline(**kwargs))
 
 
+def operation_registry() -> Any:
+    """Expose the canonical planning operation surface for builtin dispatch."""
+
+    return planning_operation_registry()
+
+
 __all__ = [
     "build_and_compile_pipeline",
     "build_pipeline",
+    "operation_registry",
 ]

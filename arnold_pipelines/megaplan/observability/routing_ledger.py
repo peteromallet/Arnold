@@ -118,6 +118,14 @@ def record_step_routing(
         )
         lock_path = plan_dir / _LOCK_FILE
         ledger_path = plan_dir / LEDGER_FILE
+        if not plan_dir.is_dir():
+            log.debug(
+                "Skipping routing ledger write for missing plan directory %s (%s/%s)",
+                plan_dir,
+                phase,
+                step_label,
+            )
+            return
         line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
         with lock_path.open("a+", encoding="utf-8") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)

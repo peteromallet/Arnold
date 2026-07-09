@@ -8,6 +8,7 @@ from typing import Any
 
 from arnold.execution import ExecutionRegistries, ExecutionState, run
 from arnold.execution.backend import NodeOutcome, NodeState
+from arnold.execution.registries import EffectRegistry
 from arnold.kernel import read_event_journal
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.source_compiler import lower_workflow_file
@@ -33,6 +34,41 @@ class _BranchSequenceBackend(FakeBackend):
         if sequence:
             return sequence.pop(0)
         return super()._select_branch(coordinate, node, edges, context)
+
+
+class _NoopEffectHandler:
+    def execute(
+        self,
+        effect_id: str,
+        *,
+        route: str,
+        payload: dict[str, Any],
+        idempotency_key: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "effect_id": effect_id,
+            "route": route,
+            "idempotency_key": idempotency_key,
+        }
+
+
+def _registries() -> ExecutionRegistries:
+    effects = EffectRegistry()
+    handler = _NoopEffectHandler()
+    for effect_id in (
+        "artifact.execute.checkpoint",
+        "artifact.execute.receipt",
+        "artifact.review.output",
+        "artifact.review.receipt",
+        "override.add_note",
+        "override.set_model",
+        "override.set_profile",
+        "override.set_robustness",
+        "override.set_vendor",
+    ):
+        effects.register(effect_id, handler)
+    return ExecutionRegistries(effects=effects)
 
 
 def _manifest():
@@ -68,7 +104,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -81,7 +117,6 @@ class TestCompositionalWorkflowScenarios:
             "finalize",
             "execute",
             "review",
-            "halt",
         ]
 
     def test_iterate_route_reaches_revise_before_looping(self, tmp_path: Path) -> None:
@@ -95,26 +130,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
-            backend=backend,
-        )
-
-        assert result.state is ExecutionState.COMPLETED
-        assert _completed_node_refs(tmp_path) == ["prep", "plan", "critique", "gate", "revise"]
-        assert _branch_selections(tmp_path)["revise"] == "revise:critique"
-
-    def test_tiebreaker_path_promotes_back_to_finalize(self, tmp_path: Path) -> None:
-        backend = _BranchSequenceBackend(
-            sequences={
-                "gate": ["gate:tiebreaker"],
-                "tiebreaker_decide": ["tiebreaker_decide:finalize"],
-            }
-        )
-
-        result = run(
-            _manifest(),
-            artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -124,12 +140,40 @@ class TestCompositionalWorkflowScenarios:
             "plan",
             "critique",
             "gate",
-            "tiebreaker_run",
-            "tiebreaker_decide",
+            "revise",
+            "revise",
+            "revise",
+            "revise",
+        ]
+
+    def test_tiebreaker_path_promotes_back_to_finalize(self, tmp_path: Path) -> None:
+        backend = _BranchSequenceBackend(
+            sequences={
+                "gate": ["gate:tiebreaker"],
+                "tiebreaker_decision": ["tiebreaker_decision:finalize"],
+            }
+        )
+
+        result = run(
+            _manifest(),
+            artifact_root=tmp_path,
+            registries=_registries(),
+            backend=backend,
+        )
+
+        assert result.state is ExecutionState.COMPLETED
+        assert _completed_node_refs(tmp_path) == [
+            "prep",
+            "plan",
+            "critique",
+            "gate",
+            "tiebreaker_researcher",
+            "tiebreaker_challenger",
+            "tiebreaker_synthesis",
+            "tiebreaker_decision",
             "finalize",
             "execute",
             "review",
-            "halt",
         ]
 
     def test_escalation_path_routes_through_override_then_force_proceed(self, tmp_path: Path) -> None:
@@ -143,7 +187,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -157,7 +201,6 @@ class TestCompositionalWorkflowScenarios:
             "finalize",
             "execute",
             "review",
-            "halt",
         ]
 
     def test_execute_review_rework_path_returns_to_revise(self, tmp_path: Path) -> None:
@@ -172,7 +215,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -185,7 +228,6 @@ class TestCompositionalWorkflowScenarios:
             "finalize",
             "execute",
             "review",
-            "revise",
         ]
 
     def test_human_gate_continue_resumes_into_proceed_path(self, tmp_path: Path) -> None:
@@ -200,7 +242,7 @@ class TestCompositionalWorkflowScenarios:
         first = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=suspend_backend,
         )
 
@@ -215,14 +257,14 @@ class TestCompositionalWorkflowScenarios:
         second = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=resume_backend,
             resume_cursor=first.resume_cursor,
         )
 
         assert second.state is ExecutionState.COMPLETED
         assert any(event.kind == "node_resumed" for event in read_event_journal(tmp_path))
-        assert _completed_node_refs(tmp_path)[-4:] == ["finalize", "execute", "review", "halt"]
+        assert _completed_node_refs(tmp_path)[-3:] == ["finalize", "execute", "review"]
 
     def test_abort_path_stops_at_halt(self, tmp_path: Path) -> None:
         backend = _BranchSequenceBackend(sequences={"gate": ["gate:halt"]})
@@ -230,7 +272,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -290,18 +332,19 @@ class TestMegaplanRoutingValidatorCompatibility:
         assert "routes" in topology, "routing_topology must have 'routes' key"
 
     def test_topology_node_count_matches_canonical_steps(self) -> None:
-        """The 12 canonical Megaplan steps must each appear as a node
+        """The 14 canonical Megaplan steps must each appear as a node
         in the routing topology."""
         program = self._native_program()
         nodes = program.routing_topology["nodes"]
 
-        assert len(nodes) == 12, (
-            f"Expected 12 topology nodes, got {len(nodes)}"
+        assert len(nodes) == 14, (
+            f"Expected 14 topology nodes, got {len(nodes)}"
         )
         node_names = {n["name"] for n in nodes}
         expected = {
             "prep", "plan", "critique", "gate", "revise",
-            "tiebreaker_run", "tiebreaker_decide", "finalize",
+            "tiebreaker_researcher", "tiebreaker_challenger",
+            "tiebreaker_synthesis", "tiebreaker_decision", "finalize",
             "execute", "review", "halt", "override",
         }
         assert node_names == expected, (
@@ -313,7 +356,7 @@ class TestMegaplanRoutingValidatorCompatibility:
 
     def test_gate_route_carriers_in_topology(self) -> None:
         """Gate must expose proceed (→finalize), iterate (→revise),
-        tiebreaker (→tiebreaker_run), escalate (→override), abort
+        tiebreaker (→tiebreaker_researcher), escalate (→override), abort
         (→halt), and suspend (→halt) route carriers."""
         program = self._native_program()
         routes = program.routing_topology["routes"]
@@ -324,7 +367,7 @@ class TestMegaplanRoutingValidatorCompatibility:
         expected = {
             ("proceed", "finalize"),
             ("iterate", "revise"),
-            ("tiebreaker", "tiebreaker_run"),
+            ("tiebreaker", "tiebreaker_researcher"),
             ("escalate", "override"),
             ("abort", "halt"),
             ("suspend", "halt"),
@@ -351,12 +394,12 @@ class TestMegaplanRoutingValidatorCompatibility:
     # ── tiebreaker route carriers ─────────────────────────────────────
 
     def test_tiebreaker_route_carriers_in_topology(self) -> None:
-        """Tiebreaker_decide must expose proceed (→finalize) and
+        """Tiebreaker_decision must expose proceed (→finalize) and
         escalate (→override) route carriers."""
         program = self._native_program()
         routes = program.routing_topology["routes"]
 
-        tb_routes = [r for r in routes if r["source"] == "tiebreaker_decide"]
+        tb_routes = [r for r in routes if r["source"] == "tiebreaker_decision"]
         tb_labels = {(r["label"], r["target"]) for r in tb_routes}
 
         assert ("proceed", "finalize") in tb_labels, (
@@ -369,16 +412,12 @@ class TestMegaplanRoutingValidatorCompatibility:
     # ── review route carriers ─────────────────────────────────────────
 
     def test_review_route_carriers_in_topology(self) -> None:
-        """Review must expose rework (→revise) route carrier."""
+        """Review rework is represented by authored dynamic maps, not a top-level route."""
         program = self._native_program()
         routes = program.routing_topology["routes"]
 
         review_routes = [r for r in routes if r["source"] == "review"]
-        review_labels = {(r["label"], r["target"]) for r in review_routes}
-
-        assert ("rework", "revise") in review_labels, (
-            f"Review missing 'rework → revise' carrier; got {review_labels}"
-        )
+        assert review_routes == []
 
     # ── override route carriers ───────────────────────────────────────
 
@@ -401,12 +440,12 @@ class TestMegaplanRoutingValidatorCompatibility:
     # ── workflow.pypeline semantic stability ──────────────────────────
 
     def test_workflow_dsl_compiles_to_same_canonical_steps(self) -> None:
-        """workflow.pypeline must still compile to the same 12 canonical DSL
+        """workflow.pypeline must still compile to the same 14 canonical DSL
         steps — proving no semantic rewrite was needed for this milestone."""
         pipeline = build_pipeline()
         steps = pipeline.steps
-        assert len(steps) == 12, (
-            f"Canonical DSL must have 12 steps; got {len(steps)}"
+        assert len(steps) == 14, (
+            f"Canonical DSL must have 14 steps; got {len(steps)}"
         )
 
     def test_compatibility_shell_instruction_count_matches_dsl(self) -> None:
@@ -450,9 +489,22 @@ class TestMegaplanRoutingValidatorCompatibility:
             "critique-fanout",
             "execute-batches",
             "review-fan-in",
-            "tiebreaker-execute-batches",
+            "review-rework-execute-batches",
+            "review-rework-fan-in",
+            "tiebreaker_execute_batches",
+            "tiebreaker_review_fan_in",
+            "tiebreaker-review-rework-execute-batches",
+            "tiebreaker-review-rework-fan-in",
+            "tiebreaker_override_execute_batches",
+            "tiebreaker_override_review_fan_in",
+            "tiebreaker-override-review-rework-execute-batches",
+            "tiebreaker-override-review-rework-fan-in",
+            "override_execute_batches",
+            "override_review_fan_in",
+            "override-review-rework-execute-batches",
+            "override-review-rework-fan-in",
         ]
-        assert child_workflow_ids == ["tiebreaker"]
+        assert child_workflow_ids == []
 
     def test_canonical_authored_contracts_expose_review_and_execute_hidden_routes(self) -> None:
         execute_contract = _resolve_component(

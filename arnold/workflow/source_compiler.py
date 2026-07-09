@@ -25,6 +25,9 @@ import hashlib
 import re
 import sys
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
+from functools import lru_cache
+from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol, Sequence
@@ -63,8 +66,25 @@ from arnold.workflow.diagnostics import (
     RESERVED_AUTHORING_INTRINSICS,
     diagnostic_spec,
 )
+from arnold.workflow.boundary_evidence import (
+    BoundaryContract,
+    BoundaryReceipt,
+    SemanticFinding,
+    boundary_contract_missing_topology_detail_keys,
+)
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.refs import is_manifest_hash, is_ref
+from arnold.workflow.semantic_evidence import (
+    S5_FINALIZE_ARTIFACTS_ROW_ID,
+    S5_FINALIZE_FALLBACK_ROW_ID,
+    S5_FINAL_PROJECTION_ROW_ID,
+    S5_REVIEW_CAP_AUTHORITY_ROW_ID,
+    S5_REVIEW_CHILD_OUTPUTS_ROW_ID,
+    S5_REVIEW_HUMAN_VERIFICATION_ROW_ID,
+    S5_REVIEW_REDUCER_PROMOTION_ROW_ID,
+    S5_REVIEW_REWORK_EFFECTS_ROW_ID,
+    SemanticEvidence,
+)
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
 _SUPPORTED_SOURCE_SUFFIXES = frozenset({".py", ".pypeline"})
@@ -77,6 +97,45 @@ _SUPPORTED_WORKFLOW_CONTROL_POLICY_TYPES = frozenset(
 _INVALID_REF = object()
 _LOWERED_STEP_METADATA_KEYS = frozenset({"handler_ref", "terminal"})
 _MANIFEST_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_ALLOWED_OUTCOME_MODULES = frozenset({"arnold_pipelines.megaplan.outcomes"})
+_MEGAPLAN_COMPONENT_MODULE = "arnold_pipelines.megaplan.workflows.components"
+_MEGAPLAN_REVIEW_PANEL_EXPORTS = frozenset(
+    {"REVIEW_PANEL_WORKFLOW", "SOURCE_REVIEW_PANEL_WORKFLOW"}
+)
+_MEGAPLAN_REVIEW_REDUCER_EXPORTS = frozenset({"REVIEW", "SOURCE_REVIEW", "AUTHORING_REVIEW"})
+_MEGAPLAN_EXECUTE_BATCH_EXPORTS = frozenset(
+    {"EXECUTE_BATCH_WORKFLOW", "SOURCE_EXECUTE_BATCH_WORKFLOW"}
+)
+_MEGAPLAN_EXECUTE_REDUCER_EXPORTS = frozenset({"EXECUTE", "SOURCE_EXECUTE", "AUTHORING_EXECUTE"})
+_MEGAPLAN_FINALIZE_EXPORTS = frozenset({"FINALIZE", "SOURCE_FINALIZE", "AUTHORING_FINALIZE"})
+_MEGAPLAN_REVIEW_POLICY_EXPORT = "REVIEW_POLICY"
+_MEGAPLAN_FINALIZE_POLICY_EXPORT = "FINALIZE_POLICY"
+_MEGAPLAN_REVIEW_WORKFLOW_EXPORT = "SOURCE_REVIEW_PANEL_WORKFLOW"
+_MEGAPLAN_AUTHORING_SOURCE_FILE = "workflow.pypeline"
+_MEGAPLAN_DECLARED_STEP_INTERFACES_EXPORT = "DECLARED_STEP_INTERFACES"
+_MEGAPLAN_DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS_EXPORT = "DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS"
+_MEGAPLAN_WORKFLOW_ID_BY_TOPOLOGY_EXPORT = {
+    "SOURCE_EXECUTE_BATCH_WORKFLOW": "execute_batch",
+    "SOURCE_REVIEW_PANEL_WORKFLOW": "review_panel",
+    "SOURCE_TIEBREAKER_WORKFLOW": "tiebreaker_child",
+}
+_MEGAPLAN_S5_REVIEW_ROW_IDS = frozenset(
+    {
+        S5_REVIEW_CHILD_OUTPUTS_ROW_ID,
+        S5_REVIEW_REDUCER_PROMOTION_ROW_ID,
+        S5_REVIEW_REWORK_EFFECTS_ROW_ID,
+        S5_REVIEW_CAP_AUTHORITY_ROW_ID,
+        S5_REVIEW_HUMAN_VERIFICATION_ROW_ID,
+    }
+)
+_MEGAPLAN_S5_ROW_IDS = frozenset(
+    {
+        *_MEGAPLAN_S5_REVIEW_ROW_IDS,
+        S5_FINALIZE_ARTIFACTS_ROW_ID,
+        S5_FINALIZE_FALLBACK_ROW_ID,
+        S5_FINAL_PROJECTION_ROW_ID,
+    }
+)
 
 
 class SourceCompileError(ValueError):
@@ -109,6 +168,7 @@ class ImportBinding:
     kind: str
     source_span: SourceSpan
     component: ComponentContract | None = None
+    outcome_type: type[StrEnum] | None = None
 
     @property
     def component_ref(self) -> str:
@@ -465,9 +525,24 @@ class ParsedWorkflowSource:
 
 @dataclass(frozen=True)
 class CheckWorkflowSourceResult:
-    """Result carrier for source validation."""
+    """Result carrier for source validation.
+
+    Boundary contracts and evidence fields (`boundary_evidence`) are
+    observability-only: they report whether durable side effects exist for
+    implemented front-half rows, but they never own, alter, or substitute
+    for product route topology.  Route selection remains the exclusive
+    province of source-level route declarations and runtime signal handlers;
+    boundary evidence cannot create, satisfy, or mask the absence of a
+    source-level row.
+    """
 
     parsed_source: ParsedWorkflowSource
+    evidence: tuple[SemanticEvidence, ...] = ()
+    boundary_evidence: tuple[BoundaryReceipt | SemanticFinding, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", tuple(self.evidence))
+        object.__setattr__(self, "boundary_evidence", tuple(self.boundary_evidence))
 
     @property
     def diagnostics(self) -> tuple[AuthoringDiagnostic, ...]:
@@ -512,6 +587,14 @@ class _LoopBackedgeBinding:
 
 
 @dataclass(frozen=True)
+class _ImplementedFrontHalfRow:
+    row_id: str
+    phase: str
+    source_span: SourceSpan
+    component_ref: str
+
+
+@dataclass(frozen=True)
 class StaticComponentResolver:
     """Concrete resolver that imports module-level authoring component exports."""
 
@@ -541,9 +624,19 @@ def check_workflow_file(
     source_path: str | Path,
     *,
     resolver: ComponentResolver | None = None,
+    evidence: Sequence[SemanticEvidence] | None = None,
+    boundary_contracts: Sequence[BoundaryContract] = (),
+    boundary_evidence: Sequence[BoundaryReceipt | SemanticFinding] = (),
 ) -> CheckWorkflowSourceResult:
     path = Path(source_path)
-    return check_workflow_source(path.read_text(encoding="utf-8"), source_path=path, resolver=resolver)
+    return check_workflow_source(
+        path.read_text(encoding="utf-8"),
+        source_path=path,
+        resolver=resolver,
+        evidence=evidence,
+        boundary_contracts=boundary_contracts,
+        boundary_evidence=boundary_evidence,
+    )
 
 
 def check_workflow_source(
@@ -551,10 +644,1234 @@ def check_workflow_source(
     *,
     source_path: str | Path | None = None,
     resolver: ComponentResolver | None = None,
+    evidence: Sequence[SemanticEvidence] | None = (),
+    boundary_contracts: Sequence[BoundaryContract] = (),
+    boundary_evidence: Sequence[BoundaryReceipt | SemanticFinding] = (),
 ) -> CheckWorkflowSourceResult:
-    return CheckWorkflowSourceResult(
-        parsed_source=parse_workflow_source(source, source_path=source_path, resolver=resolver)
+    """Validate workflow source and optionally check boundary contracts/evidence.
+
+    Parameters
+    ----------
+    source:
+        Workflow source text (Python-shaped AST).
+    source_path:
+        Optional path for diagnostic source spans.  When omitted diagnostics
+        reference ``<workflow-source>``.
+    resolver:
+        Optional component resolver.
+    evidence:
+        Optional row-level ``SemanticEvidence`` records.  The source-checking API
+        is strict by default and emits AWF245 for implemented front-half rows
+        missing matching evidence.  ``check_workflow_file`` passes ``None`` by
+        default to preserve legacy source-only validation for file callers.
+    boundary_contracts:
+        ``BoundaryContract`` records describing expected durable side effects
+        for each front-half row.  Missing contracts produce AWF246.
+    boundary_evidence:
+        ``BoundaryReceipt`` or ``SemanticFinding`` records carrying durable
+        side-effect observations.  Missing evidence produces AWF247; orphan
+        evidence (no matching source row) produces AWF248; stale/incoherent
+        evidence produces AWF249.
+
+    Notes
+    -----
+    Boundary contracts and evidence are **observability-only**: they report
+    whether durable effects exist but never own, alter, or substitute for
+    product route topology.  Route selection is the exclusive province of
+    source-level route declarations and runtime handlers.
+    """
+    parsed_source = parse_workflow_source(source, source_path=source_path, resolver=resolver)
+    evidence_records = tuple(evidence or ())
+    boundary_contract_records = tuple(boundary_contracts)
+    boundary_evidence_records = tuple(boundary_evidence)
+    row_evidence_diagnostics = (
+        _row_evidence_diagnostics(parsed_source, evidence_records)
+        if evidence is not None
+        else ()
     )
+    boundary_diagnostics = _boundary_evidence_diagnostics(
+        parsed_source,
+        boundary_contract_records,
+        boundary_evidence_records,
+    )
+    tiebreaker_shape_diagnostics = _tiebreaker_shape_diagnostics(parsed_source)
+    megaplan_topology_diagnostics = _megaplan_review_finalize_diagnostics(parsed_source)
+    if (
+        row_evidence_diagnostics
+        or boundary_diagnostics
+        or tiebreaker_shape_diagnostics
+        or megaplan_topology_diagnostics
+    ):
+        parsed_source = replace(
+            parsed_source,
+            diagnostics=(
+                *parsed_source.diagnostics,
+                *row_evidence_diagnostics,
+                *boundary_diagnostics,
+                *tiebreaker_shape_diagnostics,
+                *megaplan_topology_diagnostics,
+            ),
+        )
+    return CheckWorkflowSourceResult(
+        parsed_source=parsed_source,
+        evidence=evidence_records,
+        boundary_evidence=boundary_evidence_records,
+    )
+
+
+def _row_evidence_diagnostics(
+    parsed_source: ParsedWorkflowSource,
+    evidence: Sequence[SemanticEvidence],
+) -> tuple[AuthoringDiagnostic, ...]:
+    implemented_rows = _implemented_front_half_rows(parsed_source.workflow)
+    if not implemented_rows:
+        return ()
+    evidenced_row_ids = {record.row_id for record in evidence if record.row_id}
+    diagnostics: list[AuthoringDiagnostic] = []
+    for row in implemented_rows:
+        if row.row_id in evidenced_row_ids:
+            continue
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+                (
+                    f"implemented front-half row {row.row_id!r} lacks matching SemanticEvidence "
+                    f"for phase {row.phase!r}"
+                ),
+                source_span=row.source_span,
+                component_ref=row.component_ref,
+                details={
+                    "row_id": row.row_id,
+                    "phase": row.phase,
+                },
+            )
+        )
+    return tuple(diagnostics)
+
+
+# ── S3 tiebreaker row IDs ──────────────────────────────────────────────────
+# These are the four tiebreaker phases that must all be source-visible
+# when any tiebreaker is present in the workflow source.
+
+_S3_TIEBREAKER_REQUIRED_ROW_IDS: tuple[str, ...] = (
+    "s3.tiebreaker_researcher.1",
+    "s3.tiebreaker_challenger.1",
+    "s3.tiebreaker_synthesis.1",
+    "s3.tiebreaker_decision.1",
+)
+
+_S3_TIEBREAKER_REQUIRED_ROW_SET: frozenset[str] = frozenset(_S3_TIEBREAKER_REQUIRED_ROW_IDS)
+
+# Component ref suffix for the legacy single-call TIEBREAKER_WORKFLOW wrapper.
+_TIEBREAKER_WORKFLOW_COMPONENT_REF = (
+    "arnold_pipelines.megaplan.workflows.components:SOURCE_TIEBREAKER_WORKFLOW"
+)
+
+
+def _collect_tiebreaker_workflow_calls(
+    block: "ParsedSourceBlock",
+) -> list[str]:
+    """Collect component_refs where SOURCE_TIEBREAKER_WORKFLOW is called."""
+    calls: list[str] = []
+    for statement in block.statements:
+        if isinstance(statement, ParsedSubflowCall):
+            if statement.component_ref == _TIEBREAKER_WORKFLOW_COMPONENT_REF:
+                calls.append(statement.component_ref)
+        elif isinstance(statement, ParsedNestedWorkflowCall):
+            if statement.component_ref == _TIEBREAKER_WORKFLOW_COMPONENT_REF:
+                calls.append(statement.component_ref)
+        elif isinstance(statement, ParsedStepCall):
+            if statement.component_ref == _TIEBREAKER_WORKFLOW_COMPONENT_REF:
+                calls.append(statement.component_ref)
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                calls.extend(_collect_tiebreaker_workflow_calls(arm.body))
+        elif isinstance(statement, ParsedLoopBlock):
+            calls.extend(_collect_tiebreaker_workflow_calls(statement.body))
+    return calls
+
+
+def _tiebreaker_shape_diagnostics(
+    parsed_source: "ParsedWorkflowSource",
+) -> tuple["AuthoringDiagnostic", ...]:
+    """Emit AWF252 when a tiebreaker is present but not all four phases are source-visible.
+
+    A valid tiebreaker must have four individually authored step calls
+    (researcher, challenger, synthesis, decision), each backed by structured
+    semantic evidence.  A single TIEBREAKER_WORKFLOW subworkflow call or
+    handler wrapper is not sufficient.
+    """
+    workflow = parsed_source.workflow
+    if workflow is None:
+        return ()
+
+    implemented_rows = _implemented_front_half_rows(workflow)
+    implemented_s3_row_ids = {
+        row.row_id
+        for row in implemented_rows
+        if row.row_id in _S3_TIEBREAKER_REQUIRED_ROW_SET
+    }
+
+    # If no S3 tiebreaker rows are present at all, check for the old
+    # single-call wrapper pattern.
+    if not implemented_s3_row_ids:
+        tiebreaker_wf_calls = _collect_tiebreaker_workflow_calls(workflow.source_block)
+        if tiebreaker_wf_calls:
+            return (
+                _diagnostic(
+                    DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION,
+                    (
+                        "SOURCE_TIEBREAKER_WORKFLOW single-call wrapper detected "
+                        "without source-visible researcher/challenger/synthesis/decision "
+                        "phases; replace the wrapper with four individually authored "
+                        "step calls"
+                    ),
+                    source_span=workflow.source_span,
+                    component_ref=_TIEBREAKER_WORKFLOW_COMPONENT_REF,
+                    details={
+                        "missing_phases": list(_S3_TIEBREAKER_REQUIRED_ROW_IDS),
+                        "detected_component": _TIEBREAKER_WORKFLOW_COMPONENT_REF,
+                    },
+                ),
+            )
+        return ()
+
+    # If we have some S3 rows, all four must be present.
+    missing_row_ids = sorted(_S3_TIEBREAKER_REQUIRED_ROW_SET - implemented_s3_row_ids)
+    if not missing_row_ids:
+        # All four phases are present — no shape violation.
+        return ()
+
+    diagnostics: list[AuthoringDiagnostic] = []
+    for row_id in missing_row_ids:
+        phase = row_id.replace("s3.", "").replace(".1", "")
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION,
+                (
+                    f"tiebreaker phase {phase!r} (row {row_id!r}) is missing from "
+                    f"source; all four phases (researcher, challenger, synthesis, "
+                    f"decision) must be source-visible with row-level evidence"
+                ),
+                source_span=workflow.source_span,
+                details={
+                    "missing_row_id": row_id,
+                    "missing_phase": phase,
+                    "implemented_s3_rows": sorted(implemented_s3_row_ids),
+                },
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _normalized_component_export_name(value: str) -> str:
+    export_name = value.rsplit(":", 1)[-1]
+    if export_name.startswith("SOURCE_"):
+        export_name = export_name.removeprefix("SOURCE_")
+    if export_name.startswith("AUTHORING_"):
+        export_name = export_name.removeprefix("AUTHORING_")
+    return export_name
+
+
+def _normalized_topology_id(value: str) -> str:
+    return value.replace("_", "-")
+
+
+def _component_ref_matches_exports(component_ref: str, exports: set[str] | frozenset[str]) -> bool:
+    return _normalized_component_export_name(component_ref) in {
+        _normalized_component_export_name(export_name) for export_name in exports
+    }
+
+
+def _collect_parallel_map_calls(block: ParsedSourceBlock) -> tuple[ParsedParallelMapCall, ...]:
+    calls: list[ParsedParallelMapCall] = []
+    for statement in block.statements:
+        if isinstance(statement, ParsedParallelMapCall):
+            calls.append(statement)
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                calls.extend(_collect_parallel_map_calls(arm.body))
+        elif isinstance(statement, ParsedLoopBlock):
+            calls.extend(_collect_parallel_map_calls(statement.body))
+    return tuple(calls)
+
+
+def _component_calls_for_exports(
+    block: ParsedSourceBlock,
+    exports: set[str] | frozenset[str],
+) -> tuple[ParsedStepCall | ParsedSubflowCall | ParsedNestedWorkflowCall, ...]:
+    calls: list[ParsedStepCall | ParsedSubflowCall | ParsedNestedWorkflowCall] = []
+    for statement in block.statements:
+        if isinstance(statement, (ParsedStepCall, ParsedSubflowCall, ParsedNestedWorkflowCall)):
+            if _component_ref_matches_exports(statement.component_ref, exports):
+                calls.append(statement)
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                calls.extend(_component_calls_for_exports(arm.body, exports))
+        elif isinstance(statement, ParsedLoopBlock):
+            calls.extend(_component_calls_for_exports(statement.body, exports))
+    return tuple(calls)
+
+
+def _step_calls_for_exports(
+    block: ParsedSourceBlock,
+    exports: set[str] | frozenset[str],
+) -> tuple[ParsedStepCall, ...]:
+    calls: list[ParsedStepCall] = []
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall) and _component_ref_matches_exports(
+            statement.component_ref,
+            exports,
+        ):
+            calls.append(statement)
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                calls.extend(_step_calls_for_exports(arm.body, exports))
+        elif isinstance(statement, ParsedLoopBlock):
+            calls.extend(_step_calls_for_exports(statement.body, exports))
+    return tuple(calls)
+
+
+def _review_parallel_map_calls(block: ParsedSourceBlock) -> tuple[ParsedParallelMapCall, ...]:
+    return tuple(
+        call
+        for call in _collect_parallel_map_calls(block)
+        if _component_ref_matches_exports(call.mapper_ref, _MEGAPLAN_REVIEW_PANEL_EXPORTS)
+    )
+
+
+def _visible_review_fan_in_call(
+    calls: Sequence[ParsedParallelMapCall],
+) -> ParsedParallelMapCall | None:
+    for call in calls:
+        if (
+            _normalized_topology_id(call.id).endswith("review-fan-in")
+            and _component_ref_matches_exports(call.reducer_ref, _MEGAPLAN_REVIEW_REDUCER_EXPORTS)
+            and call.path_template == "review/{item_id}"
+        ):
+            return call
+    return None
+
+
+def _visible_review_rework_cycle_call(
+    block: ParsedSourceBlock,
+) -> ParsedParallelMapCall | None:
+    execute_calls = [
+        call
+        for call in _collect_parallel_map_calls(block)
+        if _normalized_topology_id(call.id).endswith("review-rework-execute-batches")
+        and _component_ref_matches_exports(call.mapper_ref, _MEGAPLAN_EXECUTE_BATCH_EXPORTS)
+        and _component_ref_matches_exports(call.reducer_ref, _MEGAPLAN_EXECUTE_REDUCER_EXPORTS)
+    ]
+    review_calls = [
+        call
+        for call in _review_parallel_map_calls(block)
+        if _normalized_topology_id(call.id).endswith("review-rework-fan-in")
+        and _component_ref_matches_exports(call.reducer_ref, _MEGAPLAN_REVIEW_REDUCER_EXPORTS)
+    ]
+    if execute_calls and review_calls:
+        return review_calls[0]
+    return None
+
+
+@lru_cache(maxsize=1)
+def _megaplan_authoring_source_path() -> Path | None:
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return None
+    module_file = getattr(module, "__file__", None)
+    if not isinstance(module_file, str):
+        return None
+    source_path = Path(module_file).with_name(_MEGAPLAN_AUTHORING_SOURCE_FILE)
+    return source_path if source_path.is_file() else None
+
+
+@lru_cache(maxsize=1)
+def _megaplan_literal_source_declarations() -> Mapping[str, Any]:
+    source_path = _megaplan_authoring_source_path()
+    if source_path is None:
+        return MappingProxyType({})
+    try:
+        module = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    except Exception:
+        return MappingProxyType({})
+
+    declarations: dict[str, Any] = {}
+    for node in module.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (ValueError, SyntaxError):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                declarations[target.id] = value
+    return MappingProxyType(declarations)
+
+
+def _megaplan_declared_step_interfaces() -> Mapping[str, Mapping[str, Any]]:
+    declared = _megaplan_literal_source_declarations().get(
+        _MEGAPLAN_DECLARED_STEP_INTERFACES_EXPORT,
+        {},
+    )
+    return declared if isinstance(declared, Mapping) else MappingProxyType({})
+
+
+def _megaplan_declared_workflow_topology_contracts() -> Mapping[str, Mapping[str, Any]]:
+    declared = _megaplan_literal_source_declarations().get(
+        _MEGAPLAN_DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS_EXPORT,
+        {},
+    )
+    return declared if isinstance(declared, Mapping) else MappingProxyType({})
+
+
+def _megaplan_step_declared_interface(component: StepComponent) -> Mapping[str, Any]:
+    if component.provenance.module != _MEGAPLAN_COMPONENT_MODULE:
+        return MappingProxyType({})
+    step_id = component.id.removeprefix("megaplan:")
+    declared = _megaplan_declared_step_interfaces().get(step_id, {})
+    return declared if isinstance(declared, Mapping) else MappingProxyType({})
+
+
+def _megaplan_export_metadata(export_name: str) -> Mapping[str, Any]:
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return MappingProxyType({})
+    export = getattr(module, export_name, None)
+    metadata = getattr(export, "metadata", None)
+    return metadata if isinstance(metadata, Mapping) else MappingProxyType({})
+
+
+def _megaplan_policy_route_surface(export_name: str) -> Mapping[str, Any]:
+    route_surface = _megaplan_export_metadata(export_name).get("route_surface")
+    return route_surface if isinstance(route_surface, Mapping) else MappingProxyType({})
+
+
+def _megaplan_workflow_topology_contract(export_name: str) -> Mapping[str, Any]:
+    workflow_id = _MEGAPLAN_WORKFLOW_ID_BY_TOPOLOGY_EXPORT.get(export_name)
+    if workflow_id is not None:
+        declared = _megaplan_declared_workflow_topology_contracts().get(workflow_id, {})
+        if isinstance(declared, Mapping):
+            return declared
+    topology_contract = _megaplan_export_metadata(export_name).get("topology_contract")
+    return topology_contract if isinstance(topology_contract, Mapping) else MappingProxyType({})
+
+
+def _megaplan_review_topology_contract() -> Mapping[str, Any]:
+    return _megaplan_workflow_topology_contract(_MEGAPLAN_REVIEW_WORKFLOW_EXPORT)
+
+
+def _megaplan_workflow_fanout_contract(export_name: str) -> Mapping[str, Any]:
+    topology_contract = _megaplan_workflow_topology_contract(export_name)
+    fanout_contract = topology_contract.get("fanout_contract")
+    return fanout_contract if isinstance(fanout_contract, Mapping) else MappingProxyType({})
+
+
+def _megaplan_workflow_fan_in_contract(export_name: str) -> Mapping[str, Any]:
+    topology_contract = _megaplan_workflow_topology_contract(export_name)
+    fan_in_contract = topology_contract.get("fan_in_contract")
+    return fan_in_contract if isinstance(fan_in_contract, Mapping) else MappingProxyType({})
+
+
+def _review_topology_contract_owns_cap_thresholds(contract: Mapping[str, Any]) -> bool:
+    disallowed_keys = {
+        "cap_thresholds",
+        "max_review_rework_cycles",
+        "max_rework_cycles",
+        "review_cap_threshold",
+        "rework_cycle_cap",
+    }
+    for key, value in contract.items():
+        lowered_key = str(key).lower()
+        if lowered_key in disallowed_keys or lowered_key.endswith("_threshold"):
+            return True
+        if lowered_key == "retry_and_cap" and isinstance(value, Mapping):
+            for nested_key, nested_value in value.items():
+                nested_lowered = str(nested_key).lower()
+                if nested_lowered in disallowed_keys or nested_lowered.endswith("_threshold"):
+                    return True
+                if isinstance(nested_value, Mapping):
+                    return True
+        elif isinstance(value, Mapping) and _review_topology_contract_owns_cap_thresholds(value):
+            return True
+    return False
+
+
+def _megaplan_surface_ref_exists(surface_ref: str) -> bool:
+    if not surface_ref or "." not in surface_ref:
+        return False
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return False
+    current: Any = module
+    for segment in surface_ref.split("."):
+        if isinstance(current, Mapping):
+            current = current.get(segment, _INVALID_REF)
+        else:
+            current = getattr(current, segment, _INVALID_REF)
+        if current is _INVALID_REF:
+            return False
+    return True
+
+
+def _megaplan_policy_transition_exists(policy_export: str, transition_id: str) -> bool:
+    if not transition_id:
+        return False
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return False
+    policy = getattr(module, policy_export, None)
+    config = getattr(policy, "config", None)
+    if not isinstance(config, Mapping):
+        return False
+    transitions = config.get("control_transitions", ())
+    if not isinstance(transitions, Sequence):
+        return False
+    return any(
+        isinstance(transition, Mapping)
+        and transition.get("transition_id") == transition_id
+        for transition in transitions
+    )
+
+
+def _megaplan_review_finalize_diagnostics(
+    parsed_source: "ParsedWorkflowSource",
+) -> tuple["AuthoringDiagnostic", ...]:
+    workflow = parsed_source.workflow
+    if workflow is None:
+        return ()
+
+    review_parallel_maps = _review_parallel_map_calls(workflow.source_block)
+    direct_review_calls = _component_calls_for_exports(
+        workflow.source_block,
+        _MEGAPLAN_REVIEW_PANEL_EXPORTS,
+    )
+    finalize_calls = _step_calls_for_exports(
+        workflow.source_block,
+        _MEGAPLAN_FINALIZE_EXPORTS,
+    )
+    if not review_parallel_maps and not direct_review_calls and not finalize_calls:
+        return ()
+
+    diagnostics: list[AuthoringDiagnostic] = []
+    visible_review_fan_in = _visible_review_fan_in_call(review_parallel_maps)
+    if review_parallel_maps and visible_review_fan_in is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.SINGLE_HANDLER_WRAPPER,
+                (
+                    "review fanout must expose a source-visible review-fan-in parallel_map "
+                    "with REVIEW_PANEL_WORKFLOW child calls and SOURCE/AUTHORING_REVIEW reducer"
+                ),
+                source_span=review_parallel_maps[0].source_span,
+                component_ref=review_parallel_maps[0].mapper_ref,
+            )
+        )
+    if direct_review_calls and visible_review_fan_in is None:
+        first_call = direct_review_calls[0]
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.SINGLE_HANDLER_WRAPPER,
+                (
+                    "review fanout must remain source-visible as parallel_map fan-in plus "
+                    "reducer; direct REVIEW_PANEL_WORKFLOW call detected"
+                ),
+                source_span=first_call.source_span,
+                component_ref=first_call.component_ref,
+            )
+        )
+
+    if review_parallel_maps:
+        review_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_REVIEW_POLICY_EXPORT)
+        review_topology_contract = _megaplan_review_topology_contract()
+        if (
+            not isinstance(review_policy_surface.get("cap_thresholds"), Mapping)
+            or not isinstance(review_policy_surface.get("blocked_and_advisory_outcomes"), Mapping)
+            or not isinstance(review_policy_surface.get("force_proceed_authority"), Mapping)
+            or _review_topology_contract_owns_cap_thresholds(review_topology_contract)
+        ):
+            anchor = visible_review_fan_in or review_parallel_maps[0]
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.HANDLER_PURITY_VIOLATION,
+                    (
+                        "review cap thresholds and cap-exhausted authority must be declared "
+                        "on REVIEW_POLICY, not hidden in handler-owned review topology metadata"
+                    ),
+                    source_span=anchor.source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_REVIEW_POLICY_EXPORT}",
+                )
+            )
+
+    if finalize_calls:
+        finalize_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_FINALIZE_POLICY_EXPORT)
+        fallback_routes = finalize_policy_surface.get("fallback_routes")
+        projection_routes = finalize_policy_surface.get("final_projection_routes")
+        if (
+            not isinstance(fallback_routes, Mapping)
+            or "plan_contract_revise_needed" not in fallback_routes
+            or not isinstance(projection_routes, Mapping)
+            or "revise_fallback" not in projection_routes
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.HANDLER_PURITY_VIOLATION,
+                    (
+                        "finalize fallback must be visible in FINALIZE_POLICY route surfaces "
+                        "instead of relying on hidden handler fallback logic"
+                    ),
+                    source_span=finalize_calls[0].source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_FINALIZE_POLICY_EXPORT}",
+                )
+            )
+
+    return tuple(diagnostics)
+
+
+def _boundary_evidence_diagnostics(
+    parsed_source: ParsedWorkflowSource,
+    boundary_contracts: Sequence[BoundaryContract],
+    boundary_evidence: Sequence[BoundaryReceipt | SemanticFinding],
+) -> tuple[AuthoringDiagnostic, ...]:
+    """Check implemented front-half rows against boundary contracts and evidence.
+
+    This function is a **read-only observer**: it inspects whether durable
+    side effects (receipts, semantic-health findings, contracts) exist for
+    each implemented front-half row, but it never owns, produces, or modifies
+    product route topology.  A missing contract produces AWF246, missing
+    evidence produces AWF247, orphan evidence (no matching source row)
+    produces AWF248, and stale/incoherent evidence produces AWF249 — none
+    of these diagnostics create or substitute for a source-level row.
+    """
+    if not boundary_contracts and not boundary_evidence:
+        return ()
+
+    implemented_rows = _implemented_boundary_rows(parsed_source.workflow)
+    implemented_by_row_id = {row.row_id: row for row in implemented_rows}
+    contracts_by_row_id = {
+        contract.row_id: contract
+        for contract in boundary_contracts
+        if contract.row_id
+    }
+    contracts_by_boundary_id = {
+        contract.boundary_id: contract for contract in boundary_contracts
+    }
+
+    receipt_index: dict[str, list[BoundaryReceipt]] = {}
+    finding_index: dict[str, list[SemanticFinding]] = {}
+    orphan_boundary_evidence: list[BoundaryReceipt | SemanticFinding] = []
+
+    for record in boundary_evidence:
+        contract = _boundary_contract_for_record(
+            record,
+            contracts_by_boundary_id=contracts_by_boundary_id,
+            contracts_by_row_id=contracts_by_row_id,
+        )
+        if contract is None or contract.row_id not in implemented_by_row_id:
+            orphan_boundary_evidence.append(record)
+            continue
+        if isinstance(record, BoundaryReceipt):
+            receipt_index.setdefault(contract.boundary_id, []).append(record)
+        else:
+            finding_index.setdefault(contract.boundary_id, []).append(record)
+
+    diagnostics: list[AuthoringDiagnostic] = []
+    for row in implemented_rows:
+        contract = contracts_by_row_id.get(row.row_id)
+        if contract is None:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+                    (
+                        f"implemented front-half row {row.row_id!r} lacks a matching "
+                        f"BoundaryContract for phase {row.phase!r}"
+                    ),
+                    source_span=row.source_span,
+                    component_ref=row.component_ref,
+                    details={
+                        "row_id": row.row_id,
+                        "phase": row.phase,
+                    },
+                )
+            )
+            continue
+
+        topology_issues = _boundary_topology_issues(
+            contract=contract,
+            row=row,
+            parsed_source=parsed_source,
+        )
+        if topology_issues:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+                    (
+                        f"boundary evidence for contract {contract.boundary_id!r} lacks a "
+                        f"matching source-visible topology carrier for row {row.row_id!r}"
+                    ),
+                    source_span=row.source_span,
+                    component_ref=row.component_ref,
+                    details={
+                        "boundary_id": contract.boundary_id,
+                        "row_id": row.row_id,
+                        "phase": row.phase,
+                        "topology_issues": tuple(topology_issues),
+                    },
+                )
+            )
+            continue
+
+        boundary_findings = tuple(finding_index.get(contract.boundary_id, ()))
+        if boundary_findings:
+            diagnostics.extend(
+                _boundary_finding_diagnostics(
+                    row=row,
+                    contract=contract,
+                    findings=boundary_findings,
+                )
+            )
+            continue
+
+        boundary_receipts = tuple(receipt_index.get(contract.boundary_id, ()))
+        if not boundary_receipts:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                    (
+                        f"implemented front-half row {row.row_id!r} requires durable boundary "
+                        f"evidence for contract {contract.boundary_id!r}"
+                    ),
+                    source_span=row.source_span,
+                    component_ref=row.component_ref,
+                    details={
+                        "boundary_id": contract.boundary_id,
+                        "row_id": row.row_id,
+                        "phase": row.phase,
+                    },
+                )
+            )
+            continue
+
+        receipt_issues = _boundary_receipt_issues(
+            contract=contract,
+            row=row,
+            receipts=boundary_receipts,
+        )
+        if receipt_issues:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                    (
+                        f"durable boundary evidence for contract {contract.boundary_id!r} is "
+                        f"stale or incoherent with implemented row {row.row_id!r}"
+                    ),
+                    source_span=row.source_span,
+                    component_ref=row.component_ref,
+                    details={
+                        "boundary_id": contract.boundary_id,
+                        "row_id": row.row_id,
+                        "phase": row.phase,
+                        "receipt_issues": tuple(receipt_issues),
+                    },
+                )
+            )
+
+    for record in orphan_boundary_evidence:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+                _boundary_orphan_message(record),
+                source_span=_boundary_anchor_source_span(parsed_source),
+                details=_boundary_orphan_details(record),
+            )
+        )
+
+    return tuple(diagnostics)
+
+
+def _boundary_topology_issues(
+    *,
+    contract: BoundaryContract,
+    row: _ImplementedFrontHalfRow,
+    parsed_source: ParsedWorkflowSource,
+) -> tuple[str, ...]:
+    if contract.row_id not in _MEGAPLAN_S5_ROW_IDS:
+        return ()
+
+    issues = list(boundary_contract_missing_topology_detail_keys(contract))
+    if issues:
+        return tuple(issues)
+
+    details = contract.details
+    review_parallel_maps = _review_parallel_map_calls(parsed_source.workflow.source_block) if parsed_source.workflow else ()
+    review_fan_in = _visible_review_fan_in_call(review_parallel_maps)
+    review_rework = _visible_review_rework_cycle_call(parsed_source.workflow.source_block) if parsed_source.workflow else None
+    review_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_REVIEW_POLICY_EXPORT)
+    finalize_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_FINALIZE_POLICY_EXPORT)
+
+    if contract.row_id == S5_REVIEW_CHILD_OUTPUTS_ROW_ID:
+        if review_fan_in is None:
+            issues.append("review_fan_in_missing")
+        if details.get("fan_in_ref") != "review-fan-in":
+            issues.append("fan_in_ref")
+        if not _megaplan_surface_ref_exists(str(details.get("evidence_surface_ref"))):
+            issues.append("evidence_surface_ref")
+    elif contract.row_id == S5_REVIEW_REDUCER_PROMOTION_ROW_ID:
+        if review_fan_in is None:
+            issues.append("review_reducer_missing")
+        else:
+            expected_reducer = _normalized_component_export_name(str(details.get("reducer_ref")))
+            actual_reducer = _normalized_component_export_name(review_fan_in.reducer_ref)
+            if expected_reducer != actual_reducer:
+                issues.append("reducer_ref")
+    elif contract.row_id == S5_REVIEW_REWORK_EFFECTS_ROW_ID:
+        if review_rework is None:
+            issues.append("review_rework_topology_missing")
+        if not _megaplan_surface_ref_exists(str(details.get("evidence_surface_ref"))):
+            issues.append("evidence_surface_ref")
+    elif contract.row_id == S5_REVIEW_CAP_AUTHORITY_ROW_ID:
+        if not isinstance(review_policy_surface.get("cap_thresholds"), Mapping):
+            issues.append("cap_thresholds")
+        if not isinstance(review_policy_surface.get("force_proceed_authority"), Mapping):
+            issues.append("force_proceed_authority")
+        if _review_topology_contract_owns_cap_thresholds(_megaplan_review_topology_contract()):
+            issues.append("handler_owned_cap_thresholds")
+    elif contract.row_id == S5_REVIEW_HUMAN_VERIFICATION_ROW_ID:
+        if not isinstance(review_policy_surface.get("human_verification"), Mapping):
+            issues.append("human_verification")
+    elif contract.row_id == S5_FINALIZE_ARTIFACTS_ROW_ID:
+        if not isinstance(finalize_policy_surface.get("canonical_artifacts"), Mapping):
+            issues.append("canonical_artifacts")
+    elif contract.row_id == S5_FINALIZE_FALLBACK_ROW_ID:
+        if not _megaplan_surface_ref_exists(str(details.get("evidence_surface_ref"))):
+            issues.append("evidence_surface_ref")
+        if not _megaplan_policy_transition_exists(
+            _MEGAPLAN_FINALIZE_POLICY_EXPORT,
+            str(details.get("projection_ref")),
+        ):
+            issues.append("projection_ref")
+    elif contract.row_id == S5_FINAL_PROJECTION_ROW_ID:
+        if not _megaplan_surface_ref_exists(str(details.get("evidence_surface_ref"))):
+            issues.append("evidence_surface_ref")
+        if not isinstance(finalize_policy_surface.get("final_projection_routes"), Mapping):
+            issues.append("final_projection_routes")
+    return tuple(issues)
+
+
+def _boundary_contract_for_record(
+    record: BoundaryReceipt | SemanticFinding,
+    *,
+    contracts_by_boundary_id: Mapping[str, BoundaryContract],
+    contracts_by_row_id: Mapping[str, BoundaryContract],
+) -> BoundaryContract | None:
+    if isinstance(record, SemanticFinding):
+        return contracts_by_boundary_id.get(record.boundary_id)
+    contract = contracts_by_boundary_id.get(record.boundary_id)
+    if contract is not None:
+        return contract
+    if record.row_id is None:
+        return None
+    return contracts_by_row_id.get(record.row_id)
+
+
+def _boundary_finding_diagnostics(
+    *,
+    row: _ImplementedFrontHalfRow,
+    contract: BoundaryContract,
+    findings: Sequence[SemanticFinding],
+) -> tuple[AuthoringDiagnostic, ...]:
+    diagnostics: list[AuthoringDiagnostic] = []
+    findings_by_code: dict[DiagnosticCode, list[SemanticFinding]] = {}
+    for finding in findings:
+        if finding.diagnostic_code is None:
+            continue
+        if finding.diagnostic_code not in {
+            DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+            DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+            DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+            DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+        }:
+            continue
+        findings_by_code.setdefault(finding.diagnostic_code, []).append(finding)
+
+    for code in (
+        DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+        DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+        DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+    ):
+        code_findings = findings_by_code.get(code)
+        if not code_findings:
+            continue
+        diagnostics.append(
+            _diagnostic(
+                code,
+                (
+                    f"boundary finding(s) for contract {contract.boundary_id!r} report "
+                    f"{code.value}"
+                ),
+                source_span=row.source_span,
+                component_ref=row.component_ref,
+                details={
+                    "boundary_id": contract.boundary_id,
+                    "row_id": row.row_id,
+                    "phase": row.phase,
+                    "finding_ids": tuple(finding.finding_id for finding in code_findings),
+                    "finding_descriptions": tuple(
+                        finding.description for finding in code_findings
+                    ),
+                },
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _boundary_receipt_issues(
+    *,
+    contract: BoundaryContract,
+    row: _ImplementedFrontHalfRow,
+    receipts: Sequence[BoundaryReceipt],
+) -> tuple[str, ...]:
+    issues: list[str] = []
+    required_artifacts = set(contract.required_artifacts)
+    expected_state_delta = dict(contract.expected_state_delta)
+    expected_history_entry = contract.expected_history_entry
+
+    for receipt in receipts:
+        if receipt.workflow_id != contract.workflow_id:
+            issues.append(
+                f"workflow_id mismatch: expected {contract.workflow_id!r}, got {receipt.workflow_id!r}"
+            )
+        if receipt.row_id not in (None, row.row_id):
+            issues.append(
+                f"row_id mismatch: expected {row.row_id!r}, got {receipt.row_id!r}"
+            )
+        missing_artifacts = sorted(required_artifacts.difference(receipt.artifact_refs))
+        if missing_artifacts:
+            issues.append(
+                f"missing artifacts: {', '.join(repr(artifact) for artifact in missing_artifacts)}"
+            )
+        for key, expected_value in expected_state_delta.items():
+            observed_value = receipt.state_observation.get(key)
+            if observed_value != expected_value:
+                issues.append(
+                    f"state mismatch for {key!r}: expected {expected_value!r}, got {observed_value!r}"
+                )
+        if expected_history_entry is not None and receipt.history_ref != expected_history_entry:
+            issues.append(
+                f"history mismatch: expected {expected_history_entry!r}, got {receipt.history_ref!r}"
+            )
+        if contract.phase_result_required and not receipt.phase_result_ref:
+            issues.append("missing phase_result_ref")
+        if contract.authority_required and not receipt.authority_records:
+            issues.append("missing authority_records")
+        if _boundary_details_mark_stale(receipt.details):
+            issues.append("receipt details report stale or expired observations")
+
+    return tuple(dict.fromkeys(issues))
+
+
+def _boundary_details_mark_stale(details: Mapping[str, Any]) -> bool:
+    stale_strings = {
+        "expired",
+        "false",
+        "invalid",
+        "missing",
+        "old",
+        "outdated",
+        "stale",
+    }
+    fresh_strings = {"current", "fresh", "ok", "pass", "passed", "true", "valid"}
+    for key, value in details.items():
+        lowered_key = str(key).lower()
+        if isinstance(value, Mapping):
+            if _boundary_details_mark_stale(value):
+                return True
+            continue
+        if isinstance(value, (list, tuple)):
+            if any(
+                _boundary_details_mark_stale({"value": item})
+                if isinstance(item, Mapping)
+                else _boundary_scalar_marks_stale(lowered_key, item, stale_strings, fresh_strings)
+                for item in value
+            ):
+                return True
+            continue
+        if _boundary_scalar_marks_stale(lowered_key, value, stale_strings, fresh_strings):
+            return True
+    return False
+
+
+def _boundary_scalar_marks_stale(
+    key: str,
+    value: Any,
+    stale_strings: set[str],
+    fresh_strings: set[str],
+) -> bool:
+    if "stale" in key or "expired" in key:
+        return bool(value)
+    if "fresh" in key:
+        if isinstance(value, bool):
+            return not value
+        if isinstance(value, str):
+            lowered = value.lower()
+            if lowered in fresh_strings:
+                return False
+            if lowered in stale_strings:
+                return True
+    if "freshness" in key and isinstance(value, str):
+        lowered = value.lower()
+        if lowered in fresh_strings:
+            return False
+        if lowered in stale_strings:
+            return True
+    return False
+
+
+def _boundary_anchor_source_span(parsed_source: ParsedWorkflowSource) -> SourceSpan:
+    workflow = parsed_source.workflow
+    if workflow is not None:
+        return workflow.source_span
+    return SourceSpan(
+        path=parsed_source.source_path,
+        start_line=1,
+        start_column=1,
+        end_line=1,
+        end_column=1,
+    )
+
+
+def _boundary_orphan_message(record: BoundaryReceipt | SemanticFinding) -> str:
+    if isinstance(record, BoundaryReceipt):
+        return (
+            f"boundary receipt for {record.boundary_id!r} does not have matching "
+            "source topology in the supplied workflow"
+        )
+    return (
+        f"boundary finding for {record.boundary_id!r} does not have matching "
+        "source topology in the supplied workflow"
+    )
+
+
+def _boundary_orphan_details(
+    record: BoundaryReceipt | SemanticFinding,
+) -> Mapping[str, Any]:
+    if isinstance(record, BoundaryReceipt):
+        return {
+            "boundary_id": record.boundary_id,
+            "row_id": record.row_id,
+            "evidence_kind": "boundary_receipt",
+        }
+    return {
+        "boundary_id": record.boundary_id,
+        "finding_id": record.finding_id,
+        "diagnostic_code": (
+            record.diagnostic_code.value
+            if record.diagnostic_code is not None
+            else None
+        ),
+        "evidence_kind": "semantic_finding",
+    }
+
+
+def _implemented_front_half_rows(
+    workflow: WorkflowDeclaration | None,
+) -> tuple[_ImplementedFrontHalfRow, ...]:
+    if workflow is None:
+        return ()
+    row_specs = _front_half_row_specs()
+    if not row_specs:
+        return ()
+    implemented_by_row_id: dict[str, _ImplementedFrontHalfRow] = {}
+    _collect_front_half_rows(workflow.source_block, row_specs, implemented_by_row_id)
+    return tuple(implemented_by_row_id.values())
+
+
+def _collect_front_half_rows(
+    block: ParsedSourceBlock,
+    row_specs: Mapping[str, tuple[str, str]],
+    implemented_by_row_id: dict[str, _ImplementedFrontHalfRow],
+) -> None:
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall):
+            row_spec = row_specs.get(statement.component_ref)
+            if row_spec is not None:
+                row_id, phase = row_spec
+                implemented_by_row_id.setdefault(
+                    row_id,
+                    _ImplementedFrontHalfRow(
+                        row_id=row_id,
+                        phase=phase,
+                        source_span=statement.source_span,
+                        component_ref=statement.component_ref,
+                    ),
+                )
+        elif isinstance(statement, ParsedParallelMapCall):
+            row_spec = row_specs.get(statement.reducer_ref)
+            if row_spec is not None:
+                row_id, phase = row_spec
+                implemented_by_row_id.setdefault(
+                    row_id,
+                    _ImplementedFrontHalfRow(
+                        row_id=row_id,
+                        phase=phase,
+                        source_span=statement.source_span,
+                        component_ref=statement.reducer_ref,
+                    ),
+                )
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                _collect_front_half_rows(arm.body, row_specs, implemented_by_row_id)
+        elif isinstance(statement, ParsedLoopBlock):
+            _collect_front_half_rows(statement.body, row_specs, implemented_by_row_id)
+
+
+def _front_half_row_specs() -> Mapping[str, tuple[str, str]]:
+    try:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS
+    except ImportError:
+        return MappingProxyType({})
+
+    front_half_phases = frozenset(
+        {
+            "prep",
+            "plan",
+            "critique",
+            "gate",
+            "revise",
+            "tiebreaker_researcher",
+            "tiebreaker_challenger",
+            "tiebreaker_synthesis",
+            "tiebreaker_decision",
+        }
+    )
+    row_specs: dict[str, tuple[str, str]] = {}
+    for contract in BOUNDARY_CONTRACTS:
+        if contract.phase is None or contract.row_id is None:
+            continue
+        if contract.phase.value not in front_half_phases:
+            continue
+        phase_name = contract.phase.value.upper()
+        # Prefixed exports (SOURCE_*, AUTHORING_*) plus the bare export name
+        # so that components like TIEBREAKER_RESEARCHER (which don't follow
+        # the SOURCE_/AUTHORING_ convention) are still detected.
+        for export_name in (f"SOURCE_{phase_name}", f"AUTHORING_{phase_name}", phase_name):
+            row_specs[
+                f"arnold_pipelines.megaplan.workflows.components:{export_name}"
+            ] = (contract.row_id, contract.phase.value)
+    return MappingProxyType(row_specs)
+
+
+def _implemented_boundary_rows(
+    workflow: WorkflowDeclaration | None,
+) -> tuple[_ImplementedFrontHalfRow, ...]:
+    if workflow is None:
+        return ()
+    implemented_by_row_id = {
+        row.row_id: row for row in _implemented_front_half_rows(workflow)
+    }
+    for row in _implemented_s5_boundary_rows(workflow):
+        implemented_by_row_id.setdefault(row.row_id, row)
+    return tuple(implemented_by_row_id.values())
+
+
+def _implemented_s5_boundary_rows(
+    workflow: WorkflowDeclaration,
+) -> tuple[_ImplementedFrontHalfRow, ...]:
+    rows: list[_ImplementedFrontHalfRow] = []
+    review_parallel_maps = _review_parallel_map_calls(workflow.source_block)
+    review_fan_in = _visible_review_fan_in_call(review_parallel_maps)
+    review_rework = _visible_review_rework_cycle_call(workflow.source_block)
+    finalize_calls = _step_calls_for_exports(workflow.source_block, _MEGAPLAN_FINALIZE_EXPORTS)
+    review_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_REVIEW_POLICY_EXPORT)
+    finalize_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_FINALIZE_POLICY_EXPORT)
+    review_topology_contract = _megaplan_review_topology_contract()
+
+    if review_fan_in is not None:
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_CHILD_OUTPUTS_ROW_ID,
+                phase="review",
+                source_span=review_fan_in.source_span,
+                component_ref=review_fan_in.mapper_ref,
+            )
+        )
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_REDUCER_PROMOTION_ROW_ID,
+                phase="review",
+                source_span=review_fan_in.source_span,
+                component_ref=review_fan_in.reducer_ref,
+            )
+        )
+    if review_rework is not None and isinstance(review_policy_surface.get("rework_cycle"), Mapping):
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_REWORK_EFFECTS_ROW_ID,
+                phase="review",
+                source_span=review_rework.source_span,
+                component_ref=review_rework.reducer_ref,
+            )
+        )
+    if (
+        review_fan_in is not None
+        and isinstance(review_policy_surface.get("cap_thresholds"), Mapping)
+        and isinstance(review_policy_surface.get("blocked_and_advisory_outcomes"), Mapping)
+        and isinstance(review_policy_surface.get("force_proceed_authority"), Mapping)
+        and not _review_topology_contract_owns_cap_thresholds(review_topology_contract)
+    ):
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_CAP_AUTHORITY_ROW_ID,
+                phase="review",
+                source_span=review_fan_in.source_span,
+                component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_REVIEW_POLICY_EXPORT}",
+            )
+        )
+    if review_fan_in is not None and isinstance(review_policy_surface.get("human_verification"), Mapping):
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_HUMAN_VERIFICATION_ROW_ID,
+                phase="review",
+                source_span=review_fan_in.source_span,
+                component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_REVIEW_POLICY_EXPORT}",
+            )
+        )
+    if finalize_calls:
+        finalize_source_span = finalize_calls[0].source_span
+        if isinstance(finalize_policy_surface.get("canonical_artifacts"), Mapping):
+            rows.append(
+                _ImplementedFrontHalfRow(
+                    row_id=S5_FINALIZE_ARTIFACTS_ROW_ID,
+                    phase="finalize",
+                    source_span=finalize_source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_FINALIZE_POLICY_EXPORT}",
+                )
+            )
+        if isinstance(finalize_policy_surface.get("fallback_routes"), Mapping):
+            rows.append(
+                _ImplementedFrontHalfRow(
+                    row_id=S5_FINALIZE_FALLBACK_ROW_ID,
+                    phase="finalize",
+                    source_span=finalize_source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_FINALIZE_POLICY_EXPORT}",
+                )
+            )
+        if isinstance(finalize_policy_surface.get("final_projection_routes"), Mapping):
+            rows.append(
+                _ImplementedFrontHalfRow(
+                    row_id=S5_FINAL_PROJECTION_ROW_ID,
+                    phase="finalize",
+                    source_span=finalize_source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_FINALIZE_POLICY_EXPORT}",
+                )
+            )
+    return tuple(rows)
 
 
 def lower_workflow_file(
@@ -765,6 +2082,26 @@ def _parse_imports(
                         import_ref=import_ref,
                         kind="intrinsic",
                         source_span=source_span_for_node(source_path, statement),
+                    )
+                    continue
+                outcome_type = _resolve_outcome_import(module_name, alias.name)
+                if outcome_type is not None:
+                    if alias.asname is not None and alias.asname != alias.name:
+                        diagnostics.append(
+                            _diagnostic(
+                                DiagnosticCode.RESERVED_INTRINSIC_SHADOWING,
+                                "outcome enum imports cannot be aliased in workflow source",
+                                source_span=source_span_for_node(source_path, statement),
+                                import_ref=import_ref,
+                            )
+                        )
+                        continue
+                    imports[local_name] = ImportBinding(
+                        local_name=local_name,
+                        import_ref=import_ref,
+                        kind="outcome",
+                        source_span=source_span_for_node(source_path, statement),
+                        outcome_type=outcome_type,
                     )
                     continue
                 if local_name in RESERVED_AUTHORING_INTRINSICS:
@@ -1689,6 +3026,7 @@ def _parse_branch_block(
             condition = _parse_branch_condition(
                 test,
                 source_path,
+                imports,
                 local_outputs,
                 diagnostics,
             )
@@ -2069,6 +3407,7 @@ def _branch_arms(statement: ast.If) -> tuple[tuple[ast.AST | None, Sequence[ast.
 def _parse_branch_condition(
     test: ast.AST,
     source_path: str,
+    imports: Mapping[str, ImportBinding],
     local_outputs: Mapping[str, SourceSpan],
     diagnostics: list[AuthoringDiagnostic],
 ) -> ParsedBranchCondition | None:
@@ -2089,12 +3428,27 @@ def _parse_branch_condition(
         return None
 
     comparator = test.comparators[0]
-    if not isinstance(comparator, ast.Constant) or not isinstance(comparator.value, str):
+    literal = _branch_comparator_literal(comparator, source_path, imports, diagnostics)
+    if literal is None:
         diagnostics.append(
             _diagnostic(
                 DiagnosticCode.DYNAMIC_ROUTING_CONDITION,
                 "branch route comparisons must use a literal string target",
                 source_span=source_span_for_node(source_path, test),
+            )
+        )
+        return None
+    if (
+        isinstance(comparator, ast.Constant)
+        and isinstance(comparator.value, str)
+        and _is_megaplan_canonical_source(source_path)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.RAW_STRING_ROUTE_BRANCH,
+                "canonical Megaplan route branches must use closed outcome enum members",
+                source_span=source_span_for_node(source_path, comparator),
+                details={"literal": comparator.value},
             )
         )
         return None
@@ -2113,9 +3467,66 @@ def _parse_branch_condition(
 
     return ParsedBranchCondition(
         decision_output=decision_output,
-        literal=comparator.value,
+        literal=literal,
         source_span=source_span_for_node(source_path, test),
     )
+
+
+def _resolve_outcome_import(module_name: str | None, qualname: str) -> type[StrEnum] | None:
+    if module_name not in _ALLOWED_OUTCOME_MODULES:
+        return None
+    try:
+        module = import_module(module_name)
+    except Exception:
+        return None
+    value = getattr(module, qualname, None)
+    if isinstance(value, type) and issubclass(value, StrEnum):
+        return value
+    return None
+
+
+def _branch_comparator_literal(
+    comparator: ast.AST,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> str | None:
+    if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+        return comparator.value
+    if not isinstance(comparator, ast.Attribute) or not isinstance(comparator.value, ast.Name):
+        return None
+    binding = imports.get(comparator.value.id)
+    if binding is None or binding.kind != "outcome" or binding.outcome_type is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.UNKNOWN_OUTCOME_TYPE,
+                "branch route comparison references an unknown outcome type",
+                source_span=source_span_for_node(source_path, comparator.value),
+                details={"name": comparator.value.id},
+            )
+        )
+        return None
+    try:
+        member = binding.outcome_type[comparator.attr]
+    except KeyError:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.INVALID_OUTCOME_MEMBER,
+                "branch route comparison references an invalid outcome member",
+                source_span=source_span_for_node(source_path, comparator),
+                details={
+                    "outcome_type": binding.import_ref.qualname,
+                    "member": comparator.attr,
+                },
+            )
+        )
+        return None
+    return str(member.value)
+
+
+def _is_megaplan_canonical_source(source_path: str) -> bool:
+    normalized = source_path.replace("\\", "/")
+    return normalized.endswith("arnold_pipelines/megaplan/workflows/workflow.pypeline")
 
 
 def _assignment_output_bindings(
@@ -3740,13 +5151,26 @@ def _lower_step_call(
 
 
 def _lower_step_metadata(step: ParsedStepCall) -> dict[str, Any]:
+    declared = _megaplan_step_declared_interface(step.component)
     metadata: dict[str, Any] = {}
     for key in _LOWERED_STEP_METADATA_KEYS:
-        value = step.component.metadata.get(key)
+        value = declared.get(key, step.component.metadata.get(key))
         if key == "handler_ref" and isinstance(value, str) and value:
             metadata[key] = value
         elif key == "terminal" and isinstance(value, bool):
             metadata[key] = value
+    policy_refs = declared.get("policy_refs")
+    if isinstance(policy_refs, Sequence) and not isinstance(policy_refs, (str, bytes)):
+        normalized = tuple(str(item) for item in policy_refs if isinstance(item, str) and item)
+        if normalized:
+            metadata["policy_refs"] = normalized
+    override_actions = declared.get("override_actions")
+    if isinstance(override_actions, Sequence) and not isinstance(override_actions, (str, bytes)):
+        normalized = tuple(
+            str(item) for item in override_actions if isinstance(item, str) and item
+        )
+        if normalized:
+            metadata["override_actions"] = normalized
     return metadata
 
 
@@ -3754,7 +5178,11 @@ def _lower_step_capabilities(
     step: ParsedStepCall,
     diagnostics: list[AuthoringDiagnostic],
 ) -> tuple[Capability, ...]:
-    raw_capabilities = step.component.metadata.get("capability_requirements", ())
+    declared = _megaplan_step_declared_interface(step.component)
+    raw_capabilities = declared.get(
+        "capability_requirements",
+        step.component.metadata.get("capability_requirements", ()),
+    )
     if raw_capabilities in (None, ()):
         return ()
     if (

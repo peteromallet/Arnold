@@ -1,0 +1,28 @@
+{
+  "artifact_refs": [
+    "finalize.json"
+  ],
+  "authority_records": [],
+  "boundary_id": "final_projection",
+  "capability_effects": [
+    "artifact",
+    "external_effect",
+    "phase_result",
+    "receipt",
+    "state_history"
+  ],
+  "external_effect_refs": [],
+  "fixture_id": "final_projection",
+  "path_hashes": {
+    "phase_result_path": "sha256:12d800bab9ff3eff0462f53ee2f88bf38b0b6cfa77ff5e02b00607bcbf6e638f",
+    "receipt_path": "sha256:dc7c971871cf0841d87923c95b7007502b000dadf8cf21923fa7e4ef7049f44f",
+    "semantic_health_path": "sha256:2044bb743f279c133166b370d74f918c6fd08b6095e0b90b47e4e54aafd30e7f",
+    "state_path": "sha256:32f22e94a4e00205d783998d6ca9925ffd8afd62a952d0498c5524c45e154079"
+  },
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/final_projection/phase_result.json",
+  "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/final_projection",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/final_projection/boundary_receipts/final_projection.json",
+  "reducer_promotion": false,
+  "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/final_projection/semantic_health.json",
+  "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/final_projection/state.json"
+}

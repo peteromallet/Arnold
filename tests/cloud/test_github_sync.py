@@ -185,6 +185,47 @@ def test_sync_persistent_problems_records_publish_failures_in_ledger(tmp_path: P
     assert payload["next_expected_event"] == "github_sync.retry"
 
 
+def test_sync_persistent_problems_retries_without_missing_labels(tmp_path: Path) -> None:
+    projections = _projections(_problem_projection(), _incident_projection())
+
+    with patch("arnold_pipelines.megaplan.cloud.github_sync.github_cli.create_issue") as create_issue:
+        create_issue.side_effect = [
+            {
+                "ok": False,
+                "error": "could not add label: 'incident-control-plane' not found",
+                "fix_command": "gh auth login",
+            },
+            {
+                "ok": True,
+                "evidence_ref": {
+                    "kind": "github.issue",
+                    "repo": "acme/repo",
+                    "number": 42,
+                    "url": "https://github.com/acme/repo/issues/42",
+                    "action": "created",
+                },
+            },
+        ]
+
+        result = sync_persistent_problems(
+            config=GitHubSyncConfig(repo="acme/repo", repo_path=tmp_path),
+            root=tmp_path,
+            projections=projections,
+        )
+
+    assert result["failed"] == []
+    assert result["published"][0]["issue_number"] == 42
+    assert create_issue.call_args_list[0].kwargs["labels"] == ["incident-control-plane", "persistent-problem"]
+    assert create_issue.call_args_list[1].kwargs["labels"] == ["persistent-problem"]
+
+    payload = _read_ledger_events(tmp_path)[-1]["payload"]
+    assert payload["type"] == "github_sync.issue_published"
+    assert payload["links"]["label_fallback"] == {
+        "omitted_labels": ["incident-control-plane"],
+        "applied_labels": ["persistent-problem"],
+    }
+
+
 def test_sync_persistent_problems_uses_configurable_thresholds(tmp_path: Path) -> None:
     projections = _projections(_problem_projection(occurrence_count=3), _incident_projection())
 

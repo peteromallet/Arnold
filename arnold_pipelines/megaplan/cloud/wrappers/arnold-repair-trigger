@@ -28,6 +28,8 @@ TERMINAL_DECISIONS = {"coalesced", "stale", "superseded", "dispatched"}
 STALE_EVIDENCE_KINDS = {
     "invalid_marker_json",
     "missing_marker_json",
+    "workspace_missing",
+    "spec_missing",
     "stale_marker_plan_ref",
     "stale_needs_human_plan_ref",
 }
@@ -183,6 +185,16 @@ def _scan_under_lock(
         )
         if dispatch_candidate is None and disposition["decision"] == "actionable":
             dispatch_candidate = {**record, **disposition, "_resolved_target": target}
+        elif enabled and disposition["dispatch_decision"] == "repairing" and disposition.get("blocker_id"):
+            _emit(
+                {
+                    "event": "repair_trigger_claim",
+                    "status": "already_claimed",
+                    "request_id": request_id,
+                    "blocker_id": disposition["blocker_id"],
+                    "evidence": {},
+                }
+            )
 
     if dispatch_candidate is None:
         _emit({"event": "repair_trigger", "status": "no_actionable_requests", "enabled": enabled})
@@ -267,6 +279,7 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
     env = dict(os.environ)
     env["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"] = request_id
     env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = blocker_id
+    env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
     env["ARNOLD_REPAIR_TRIGGER_DISPATCHED"] = "1"
     try:
         proc = subprocess.Popen(
@@ -351,17 +364,26 @@ def _classify_request(
         current_refs["current_plan_name"] = current_plan_name
     if current_plan_name and not target_plan.get("name"):
         target_plan["name"] = current_plan_name
-    if not target_plan.get("present") and current_plan_name:
-        target_plan["present"] = True
-    remote_spec = Path(str(current_refs.get("remote_spec") or ""))
-    if remote_spec.exists() and not target_plan.get("fingerprint"):
-        target_plan["fingerprint"] = "sha256:" + hashlib.sha256(remote_spec.read_bytes()).hexdigest()
     normalized_target = dict(target)
     normalized_target["current_refs"] = current_refs
     normalized_target["plan_state"] = target_plan
     retry_strategy = str(resume_cursor.get("retry_strategy") or "")
     if not retry_strategy and str(signature.get("failure_kind") or "") == "blocked_recovery_not_resolved":
         retry_strategy = "manual_review"
+    if normalized_target.get("authoritative_source") == "chain_state":
+        diagnostic_codes = dict(normalized_target.get("diagnostic_codes") or {})
+        labels = list(diagnostic_codes.get("event_signature_labels") or [])
+        failure_kind_token = str(signature.get("failure_kind") or "")
+        if failure_kind_token and failure_kind_token not in labels:
+            labels.append(failure_kind_token)
+        if failure_kind_token == "blocked_recovery_not_resolved" and "execution_blocked" not in labels:
+            labels.append("execution_blocked")
+        diagnostic_codes["event_signature_labels"] = labels
+        if retry_strategy:
+            diagnostic_codes["retry_strategy"] = retry_strategy
+        if failure_kind_token:
+            diagnostic_codes["latest_failure_kind"] = failure_kind_token
+        normalized_target["diagnostic_codes"] = diagnostic_codes
     plan_state = {
         "name": current_plan_name,
         "current_state": str(current_refs.get("plan_current_state") or signature.get("current_state") or ""),
@@ -373,11 +395,15 @@ def _classify_request(
         },
     }
     workspace_raw = str(current_refs.get("workspace") or "")
-    event_plan_dir = marker_dir / ".dispatch-events" / (session or "_unknown-session")
-    if workspace_raw and current_plan_name:
+    event_plan_dir = None
+    if normalized_target.get("authoritative_source") == "chain_state" and workspace_raw and current_plan_name:
         event_plan_dir = Path(workspace_raw) / ".megaplan" / "plans" / current_plan_name
     try:
-        canonical_run_state = resolve_run_state(normalized_target or {})
+        canonical_run_state = (
+            resolve_run_state(normalized_target or {})
+            if normalized_target.get("authoritative_source") == "chain_state"
+            else None
+        )
     except Exception:
         canonical_run_state = None
     projection = project_repair_custody(

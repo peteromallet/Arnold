@@ -234,7 +234,7 @@ package code.
 ### What The Package Owns
 
 The package module owns:
-- **Topology** — the declared workflow graph, executable units, and branch points.
+- **Topology** - the declared workflow, step, and decision call structure.
 - **Stable identity** — the `id=` values on every invocable and call site.
 - **Declared schemas** — `inputs` and `outputs` at every invocable boundary.
 - **Policy references** — named policy objects bound at call sites.

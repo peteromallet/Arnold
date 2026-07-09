@@ -3,6 +3,228 @@ target_report: docs/arnold/megaplan-native-representation-report.md
 alignment_plan: docs/arnold/megaplan-native-representation-alignment-plan.md
 traceability: docs/arnold/megaplan-native-representation-traceability.yaml
 regeneration_rule: Golden traces generated from these scenarios must not be rebaselined without semantic diff review and reviewer approval.
+split_outcome_categories:
+  - prep
+  - gate
+  - cap
+  - tiebreaker
+  - execute
+  - approval
+  - review
+  - no_review
+  - override
+split_outcome_refresh_rule: Refresh split-outcome hashes only when the referenced deterministic tests or fixtures change under reviewer-approved semantic diff review.
+split_outcome_authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline and named native workflow code remain the only route authority.
+split_outcome_records:
+  - id: prep-suspend-resume
+    path_classes: [prep]
+    scenario_refs: [D1-prep-plan]
+    row_ids: [prep-clarification-gate, human-decision-suspension]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
+        case_ids: [D1-prep-plan]
+      - path: tests/arnold_pipelines/megaplan/test_compositional_workflow.py
+        case_ids: [test_human_gate_continue_resumes_into_proceed_path]
+    expected_outcomes:
+      - blocking_questions_suspend
+      - resume_clarify
+      - no_pre_resume_plan_artifact
+    deterministic_fixture_paths:
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D1-prep-plan/events.ndjson
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D1-prep-plan/checkpoint.json
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D1-prep-plan/stages.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/workflows/planning.py
+    route_authority: false
+  - id: gate-reprompt-downgrade
+    path_classes: [gate]
+    scenario_refs: [D3-gate-preflight, D4-gate-revise]
+    row_ids: [gate-preflight-normalization, gate-signal-reprompt, gate-flag-debt-fallback]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
+        case_ids: [D3-gate-preflight, D4-gate-revise]
+      - path: tests/arnold_pipelines/megaplan/test_compositional_workflow.py
+        case_ids:
+          - test_iterate_route_reaches_revise_before_looping
+          - test_abort_path_stops_at_halt
+    expected_outcomes:
+      - malformed_payload_recovery
+      - unresolved_flag_reprompt
+      - high_complexity_downgrade
+      - iterate_to_revise
+    deterministic_fixture_paths:
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D3-gate-preflight/events.ndjson
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D3-gate-preflight/checkpoint.json
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D4-gate-revise/events.ndjson
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D4-gate-revise/checkpoint.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/handlers/gate.py
+    route_authority: false
+  - id: cap-exhaustion-distinctions
+    path_classes: [cap]
+    scenario_refs: [D4-gate-revise, D10-review-caps]
+    row_ids: [typed-loop-outcomes, review-retry-cap-outcomes, execute-review-rework-loop]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_handler_behaviors.py
+        case_ids:
+          - test_resolve_review_outcome_emits_rework_signal
+          - test_newly_failing_deterministic_check_is_blocking
+          - test_review_approval_fails_when_finalize_tasks_lack_execute_authority
+      - path: tests/arnold_pipelines/megaplan/test_native_golden_manifest.py
+        case_ids:
+          - test_review_needs_rework_has_loop_config
+          - test_review_needs_rework_has_cap_exhaustion_artifacts
+    expected_outcomes:
+      - repeated_failure_cap
+      - request_rework
+      - blocking_deterministic_failure
+    deterministic_fixture_paths:
+      - tests/arnold_pipelines/megaplan/fixtures/golden_artifacts/review_needs_rework.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/handlers/review.py
+    route_authority: false
+  - id: tiebreaker-rejoin-and-escalate
+    path_classes: [tiebreaker]
+    scenario_refs: [D5-tiebreaker]
+    row_ids: [tiebreaker-subworkflow, path-addressed-checkpoints, human-decision-suspension]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_handler_behaviors.py
+        case_ids:
+          - test_proceed_decision_positions_for_gate_finalize_path
+          - test_iterate_signal_from_replan_positions_for_revise_rejoin
+          - test_escalate_decision_routes_to_awaiting_human
+          - test_tiebreaker_replan_rejoins_ordinary_path_and_does_not_bypass_finalize
+      - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
+        case_ids: [D5-tiebreaker]
+    expected_outcomes:
+      - proceed
+      - iterate
+      - escalate_to_human
+      - replan_route
+    deterministic_fixture_paths:
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D5-tiebreaker/events.ndjson
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D5-tiebreaker/checkpoint.json
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D5-tiebreaker/state.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
+    route_authority: false
+  - id: execute-batch-resume
+    path_classes: [execute]
+    scenario_refs: [D7-execute-dag, D12-runtime-trace]
+    row_ids: [execute-dependency-batches, path-addressed-checkpoints, autodrive-event-liveness]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py
+        case_ids:
+          - test_batch_two_of_four_block_resume_reruns_only_blocked_batch
+          - test_partial_failure_resume_preserves_success_outputs_and_evidence_refs
+          - test_batch_ordering_and_s4_paths_are_deterministic
+      - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
+        case_ids: [D7-execute-dag]
+    expected_outcomes:
+      - dependency_ordering
+      - partial_failure_resume
+      - stable_batch_paths
+    deterministic_fixture_paths:
+      - tests/arnold_pipelines/megaplan/fixtures/golden_artifacts/execute_failure_resume.json
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D7-execute-dag/events.ndjson
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D7-execute-dag/checkpoint.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/execute/policy.py
+    route_authority: false
+  - id: approval-gate-split-outcomes
+    path_classes: [approval]
+    scenario_refs: [D8-execute-gates]
+    row_ids: [execute-approval-gates, human-decision-suspension]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py
+        case_ids: [test_destructive_approval_split_outcomes_are_policy_visible]
+      - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
+        case_ids: [D8-execute-gates]
+    expected_outcomes:
+      - approved
+      - denied_missing_confirm
+      - denied_missing_approval
+      - approval_resume
+    deterministic_fixture_paths:
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D8-execute-gates/events.ndjson
+      - tests/arnold_pipelines/megaplan/fixtures/native_goldens/D8-execute-gates/checkpoint.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/execute/policy.py
+    route_authority: false
+  - id: review-rework-and-human-verify
+    path_classes: [review]
+    scenario_refs: [D10-review-caps]
+    row_ids: [execute-review-rework-loop, review-retry-cap-outcomes]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_handler_behaviors.py
+        case_ids:
+          - test_resolve_review_outcome_emits_rework_signal
+          - test_resolve_review_outcome_emits_deferred_human_signal
+          - test_raw_review_output_needs_rework_cannot_be_normalized_to_approved
+    expected_outcomes:
+      - needs_rework
+      - deferred_human
+      - raw_rework_preserved
+    deterministic_fixture_paths:
+      - tests/arnold_pipelines/megaplan/fixtures/golden_artifacts/review_needs_rework.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/handlers/review.py
+    route_authority: false
+  - id: no-review-terminal
+    path_classes: [no_review]
+    scenario_refs: [D8-execute-gates, D13-policy-platform]
+    row_ids: [execute-approval-gates, timeout-deadline-policy]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py
+        case_ids: [test_bare_and_light_no_review_terminal_split_outcomes]
+      - path: tests/arnold_pipelines/megaplan/test_path_resume_proofs.py
+        case_ids:
+          - test_non_protected_execute_routes_declare_no_review_to_done_contract
+          - test_execute_terminal_projection_helpers_follow_source_policy_routes
+    expected_outcomes:
+      - terminate_done
+      - terminate_awaiting_human
+      - not_applicable_without_no_review
+    deterministic_fixture_paths:
+      - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_no_review_terminal/manifest.json
+      - docs/arnold/megaplan-native-representation-boundary-fixtures/execute_no_review_terminal/semantic_health.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/execute/policy.py
+    route_authority: false
+  - id: override-force-proceed-and-replan
+    path_classes: [override]
+    scenario_refs: [D11-human-control]
+    row_ids: [override-action-surface, human-decision-suspension, model-routing-policy]
+    executable_modules:
+      - path: tests/arnold_pipelines/megaplan/test_handler_behaviors.py
+        case_ids:
+          - test_build_override_action_output_preserves_force_proceed_priority
+          - test_override_replan_rejoins_ordinary_planning_path
+          - test_override_replan_then_gate_finalize_does_not_bypass_finalize
+      - path: tests/arnold_pipelines/megaplan/test_semantic_health.py
+        case_ids:
+          - test_active_override_without_receipt_generates_missing_authority_finding
+          - test_override_authority_rejects_smuggled_declared_target_ref
+    expected_outcomes:
+      - force_proceed
+      - replan
+      - abort_authority_missing_receipt
+      - resume_clarify_authority_scope
+    deterministic_fixture_paths:
+      - docs/arnold/megaplan-native-representation-boundary-fixtures/override_force_proceed_authority/manifest.json
+      - docs/arnold/megaplan-native-representation-boundary-fixtures/override_resume_clarify_authority/manifest.json
+    source_warrant_paths:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/handlers/override.py
+    route_authority: false
 scenarios:
   - id: D1-prep-plan
     slice: Prep/Plan

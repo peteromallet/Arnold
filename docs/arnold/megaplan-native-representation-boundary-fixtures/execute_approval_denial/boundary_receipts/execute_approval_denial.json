@@ -1,0 +1,13 @@
+{
+  "boundary_id": "execute_approval_denial",
+  "history_ref": "execute_approval_denied",
+  "invocation_id": "inv-execute_approval_denial",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s4.execute.1",
+  "state_observation": {
+    "current_state": "executed"
+  },
+  "workflow_id": "megaplan-review"
+}

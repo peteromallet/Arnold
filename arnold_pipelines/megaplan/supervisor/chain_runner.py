@@ -15,7 +15,11 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold_pipelines.megaplan._core import read_json, resolve_plan_dir
+from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
+    read_json,
+    resolve_plan_dir,
+)
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold.control.interface import ControlBinding, RunStateView
@@ -53,7 +57,9 @@ from arnold_pipelines.megaplan.supervisor.state import (
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     effective_execute_completed_task_ids,
 )
+from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.user_actions import action_resolution_status
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,
@@ -861,7 +867,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
     project_dir = Path(raw_project_dir) if isinstance(raw_project_dir, str) and raw_project_dir else None
     batches = sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
     )
     if not batches:
@@ -984,6 +990,30 @@ def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
     )
 
 
+def _has_unresolved_execute_user_actions(plan_dir: Path) -> tuple[bool, str | None]:
+    finalize_payload = read_json(plan_dir / "finalize.json", default={})
+    if not isinstance(finalize_payload, dict):
+        return False, None
+    user_actions = finalize_payload.get("user_actions")
+    if not isinstance(user_actions, list) or not user_actions:
+        return False, None
+    state_payload = read_json(plan_dir / "state.json", default={})
+    if not isinstance(state_payload, dict):
+        state_payload = {}
+    resolutions = effective_user_action_resolutions(plan_dir, state_payload)
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id")
+        if not isinstance(action_id, str) or not action_id:
+            continue
+        status = action_resolution_status(action, resolutions)
+        if status.get("resolution") in {"satisfied", "accepted_blocked", "waived"}:
+            continue
+        return True, action_id
+    return False, None
+
+
 def _recover_blocked_execute_if_tasks_done(
     root: Path,
     plan_name: str,
@@ -992,6 +1022,18 @@ def _recover_blocked_execute_if_tasks_done(
 ) -> bool:
     plan_dir = _plan_dir(root, plan_name)
     if _latest_execute_result(plan_dir) != "blocked":
+        return False
+    has_unresolved_user_actions, action_id = _has_unresolved_execute_user_actions(plan_dir)
+    if has_unresolved_user_actions:
+        reason = (
+            f"unresolved user action {action_id}"
+            if action_id
+            else "unresolved execute user action"
+        )
+        writer(
+            f"[supervisor-chain] execute result=blocked for {plan_name}; "
+            f"treating as real block: {reason}\n"
+        )
         return False
 
     all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)

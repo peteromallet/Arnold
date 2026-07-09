@@ -85,6 +85,25 @@ AUTOMATION_TERMINAL_STATES: frozenset[str] = TERMINAL_STATES | frozenset(
     }
 )
 
+# Canonical forward-progression ladder for a single plan, in the order the
+# orchestrator drives the phases (prep -> plan -> critique -> gate -> finalize
+# -> execute -> review -> done). ``STATE_INITIALIZED`` is the pre-ladder start
+# (no stage completed yet); problem/waiting states (blocked, failed, aborted,
+# paused, cancelled, awaiting_*, tiebreaker_*) sit off the ladder. Each rung is
+# one completed stage — used by status consumers to estimate a coarse "% through
+# the in-flight plan" (completed rungs / total rungs). The order mirrors the
+# ``require_state`` guards in the phase handlers (plan/critique/execute/review).
+PLAN_PROGRESSION_RUNGS: tuple[str, ...] = (
+    STATE_PREPPED,
+    STATE_PLANNED,
+    STATE_CRITIQUED,
+    STATE_GATED,
+    STATE_FINALIZED,
+    STATE_EXECUTED,
+    STATE_REVIEWED,
+    STATE_DONE,
+)
+
 
 def validate_plan_current_state(value: Any) -> str:
     """Return a canonical plan state or raise for invalid persisted state."""
@@ -97,6 +116,7 @@ def validate_plan_current_state(value: Any) -> str:
 __all__ = [
     "AUTOMATION_TERMINAL_STATES",
     "CANONICAL_PLAN_STATES",
+    "PLAN_PROGRESSION_RUNGS",
     "PlanCurrentState",
     "STATE_ABORTED",
     "STATE_AWAITING_HUMAN",

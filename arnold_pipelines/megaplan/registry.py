@@ -462,26 +462,44 @@ def operation_registry_for(name: str) -> OperationRegistry:
     name = canonical_pipeline_name(name)
     _ensure_builtin_pipelines_registered()
     try:
-        return _GLOBAL_REGISTRY.operation_registry_for(name)
+        registry = _GLOBAL_REGISTRY.operation_registry_for(name)
     except RuntimeError:
         if name == CANONICAL_BUILTIN_PIPELINE:
             from arnold_pipelines.megaplan.pipelines.planning import operation_registry
 
             return operation_registry()
         raise
+    if name == CANONICAL_BUILTIN_PIPELINE:
+        try:
+            supported = registry.supported_operations()
+        except Exception:
+            supported = frozenset()
+        if not _coerce_supported_operations(supported):
+            from arnold_pipelines.megaplan.pipelines.planning import operation_registry
+
+            registry = operation_registry()
+            _GLOBAL_REGISTRY._operation_registries[name] = registry
+    return registry
 
 
 def supported_operations_for(name: str) -> frozenset[OperationKind]:
     name = canonical_pipeline_name(name)
     _ensure_builtin_pipelines_registered()
     try:
-        return _GLOBAL_REGISTRY.supported_operations_for(name)
+        supported = _GLOBAL_REGISTRY.supported_operations_for(name)
     except RuntimeError:
         if name == CANONICAL_BUILTIN_PIPELINE:
             from arnold_pipelines.megaplan.pipelines.planning import operation_registry
 
             return operation_registry().supported_operations()
         raise
+    if name == CANONICAL_BUILTIN_PIPELINE and not supported:
+        from arnold_pipelines.megaplan.pipelines.planning import operation_registry
+
+        registry = operation_registry()
+        _GLOBAL_REGISTRY._operation_registries[name] = registry
+        return registry.supported_operations()
+    return supported
 
 
 def _unsupported_operation_result(kind: object) -> OperationResult:

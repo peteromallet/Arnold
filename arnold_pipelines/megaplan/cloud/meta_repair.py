@@ -85,6 +85,10 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.DISCORD_DELIVERY_FAILURE: 6,
 }
 
+_META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES | frozenset(
+    {LIVE_WITH_FRESH_ACTIVITY}
+)
+
 
 def trigger_priority(trigger: MetaRepairTrigger) -> int:
     """Return the canonical ordering priority for *trigger* (1-6)."""
@@ -511,7 +515,10 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
-    if repair_outcome and is_success_outcome(repair_outcome):
+    if repair_outcome and (
+        is_success_outcome(repair_outcome)
+        or repair_outcome in _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES
+    ):
         rationale.append(
             "ordinary repair already reached a terminal success outcome "
             f"({repair_outcome}); skipping meta-repair dispatch"
@@ -672,19 +679,35 @@ def _repair_evidence_superseded_by_current_target(
     if isinstance(active_step, Mapping) and bool(active_step.get("active")):
         return ""
 
-    plan_state = current_target_observation.get("plan_state")
-    chain_state = current_target_observation.get("chain_state")
-    chain_log = current_target_observation.get("chain_log")
-    has_proof = any(
-        isinstance(record, Mapping) and bool(record.get("present"))
-        for record in (plan_state, chain_state, chain_log)
-    )
-    if not has_proof:
-        return ""
+    stale_evidence = current_target_observation.get("stale_evidence")
+    stale_kinds = {
+        _meta_safe_text(item.get("kind"))
+        for item in stale_evidence
+        if isinstance(item, Mapping)
+    } if isinstance(stale_evidence, Sequence) else set()
 
     current_refs = current_target_observation.get("current_refs")
     if not isinstance(current_refs, Mapping):
         current_refs = {}
+    current_run_kind = _meta_safe_text(current_refs.get("run_kind")).lower()
+
+    has_runtime_proof = _current_target_has_runtime_proof(current_target_observation)
+    if "workspace_missing" in stale_kinds:
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            "workspace is missing for the recorded repair target"
+        )
+    if (
+        "spec_missing" in stale_kinds
+        and current_run_kind in {"chain", "epic_chain"}
+        and not has_runtime_proof
+    ):
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            "chain spec is missing and no live chain/plan artifacts remain"
+        )
+    if not has_runtime_proof:
+        return ""
 
     current_plan_name = _meta_safe_text(
         current_refs.get("current_plan_name")
@@ -725,6 +748,16 @@ def _repair_evidence_superseded_by_current_target(
         plan_runtime_state.get("current_state")
     )
     repair_state = repair_state.lower()
+    repair_kind = _meta_safe_text(
+        current_signature.get("failure_kind")
+    ) or _meta_safe_text(
+        failure_context.get("failure_classification")
+    )
+    repair_phase = _meta_safe_text(
+        current_signature.get("phase_or_step")
+    ) or _meta_safe_text(
+        latest_failure.get("phase")
+    )
 
     if repair_plan_name and current_plan_name and repair_plan_name != current_plan_name:
         return (
@@ -735,6 +768,10 @@ def _repair_evidence_superseded_by_current_target(
     stale_states = {"blocked", "authority_divergence", "failed", "manual_review", "awaiting_human"}
     recovered_plan_states = {"finalized", "done", "complete", "completed"}
     recovered_chain_states = {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}
+    target_has_recovery_shape = (
+        current_plan_state in recovered_plan_states
+        or current_chain_state in recovered_chain_states
+    )
     if repair_state in stale_states:
         if current_plan_state in recovered_plan_states:
             return (
@@ -746,6 +783,39 @@ def _repair_evidence_superseded_by_current_target(
                 "current-target observation supersedes stale recurring repair evidence: "
                 f"repair-data state={repair_state} but live chain state is {current_chain_state}"
             )
+
+    repair_outcome = _meta_safe_text(repair_data.get("outcome")).lower()
+    running_outcomes = {"running", "repairing", "recurring_retry_pending"}
+    if (
+        repair_outcome
+        and repair_outcome not in _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES
+        and repair_outcome not in running_outcomes
+        and target_has_recovery_shape
+        and _failure_context_is_mechanical_redrive_only(failure_context)
+    ):
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            f"repair outcome is {repair_outcome} but live target is already recovered "
+            "and failure context shows no latest failure"
+        )
+
+    observation_plan_state = current_target_observation.get("plan_state")
+    live_status = _load_current_target_status(
+        observation_plan_state.get("path")
+        if isinstance(observation_plan_state, Mapping)
+        else None
+    )
+    if (
+        repair_kind == "blocked_state_or_recovery_error"
+        and repair_phase == "execute"
+        and repair_state == "finalized"
+        and current_plan_state == "finalized"
+        and _status_proves_terminal_blocker_without_retry(live_status)
+    ):
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            "live status is finalized with terminal blockers and no execute retry path"
+        )
 
     repair_outcome = _meta_safe_text(repair_data.get("outcome")).lower()
     running_outcomes = {"running", "repairing", "recurring_retry_pending"}
@@ -769,6 +839,58 @@ def _repair_evidence_superseded_by_current_target(
             )
 
     return ""
+
+
+def stale_repair_evidence_reason(
+    *,
+    evidence: Mapping[str, Any] | None,
+    current_target_observation: Mapping[str, Any] | None,
+) -> str:
+    """Return a rationale when current-target state makes repair evidence stale."""
+
+    return _repair_evidence_superseded_by_current_target(
+        evidence=evidence,
+        current_target_observation=current_target_observation,
+    )
+
+
+def _current_target_has_runtime_proof(current_target_observation: Mapping[str, Any]) -> bool:
+    active_step = current_target_observation.get("active_step_heartbeat")
+    if isinstance(active_step, Mapping) and bool(active_step.get("active")):
+        return True
+
+    tmux_process = current_target_observation.get("tmux_process")
+    if isinstance(tmux_process, Mapping) and _meta_safe_text(tmux_process.get("live_status")) == "alive":
+        return True
+
+    for key in ("plan_state", "chain_state"):
+        record = current_target_observation.get(key)
+        if isinstance(record, Mapping) and bool(record.get("present")):
+            return True
+
+    # Historical logs can survive after the target is gone; do not treat them
+    # as proof that another repair/meta-repair attempt is warranted.
+    return False
+
+
+def _failure_context_is_mechanical_redrive_only(
+    failure_context: Mapping[str, Any],
+) -> bool:
+    stale_state = failure_context.get("stale_state")
+    if not isinstance(stale_state, Mapping):
+        stale_state = {}
+    if _meta_safe_text(stale_state.get("classification")) != "NO LATEST FAILURE":
+        return False
+    if _meta_safe_text(stale_state.get("recommended_action")) != "mechanical re-drive only":
+        return False
+
+    latest_failure = failure_context.get("plan_latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        latest_failure = {}
+    return not any(
+        _meta_safe_text(latest_failure.get(key))
+        for key in ("kind", "message", "state", "recorded_at", "phase")
+    )
 
 
 def _meta_safe_text(value: Any) -> str:
@@ -847,6 +969,42 @@ def _latest_current_target_epoch(current_target_observation: Mapping[str, Any]) 
             if latest is None or mtime > latest:
                 latest = mtime
     return latest
+
+
+def _load_current_target_status(plan_state_path: str | Path | None) -> Mapping[str, Any] | None:
+    if not isinstance(plan_state_path, (str, Path)) or not str(plan_state_path):
+        return None
+    try:
+        state_path = Path(plan_state_path)
+        from arnold_pipelines.megaplan._core import read_json
+        from arnold_pipelines.megaplan.cli.status_view import _build_status_payload
+
+        state = read_json(state_path)
+        if not isinstance(state, dict):
+            return None
+        status = _build_status_payload(state_path.parent, state)
+        return status if isinstance(status, Mapping) else None
+    except Exception:
+        return None
+
+
+def _status_proves_terminal_blocker_without_retry(status: Mapping[str, Any] | None) -> bool:
+    if not isinstance(status, Mapping):
+        return False
+    if status.get("next_step") is not None:
+        return False
+    valid_next = status.get("valid_next")
+    if isinstance(valid_next, Sequence) and any(str(item).strip() for item in valid_next):
+        return False
+    blocker_recovery = status.get("blocker_recovery")
+    if not isinstance(blocker_recovery, Mapping):
+        return False
+    if blocker_recovery.get("has_terminal_blockers") is not True:
+        return False
+    active_step = status.get("active_step")
+    if isinstance(active_step, Mapping) and bool(active_step.get("active")):
+        return False
+    return True
 
 
 def _truncate_prompt_text(text: str, *, max_chars: int) -> str:
@@ -1379,7 +1537,7 @@ def verify_retrigger_success(
     accepted = (
         retriggered
         and (retrigger_result is None or retrigger_result.returncode == 0)
-        and normalized_outcome in SUCCESS_OUTCOMES
+        and normalized_outcome in _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES
     )
 
     rejection_reason = ""
@@ -1394,7 +1552,7 @@ def verify_retrigger_success(
         rejection_reason = "partial_liveness is not a terminal success"
     elif normalized_outcome == REPAIRING:
         rejection_reason = "repairing is not a verified terminal success"
-    elif normalized_outcome not in SUCCESS_OUTCOMES:
+    elif normalized_outcome not in _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES:
         rejection_reason = f"outcome {normalized_outcome!r} is outside SUCCESS_OUTCOMES"
 
     verification_record = build_verification_record(
@@ -1449,7 +1607,7 @@ def derive_meta_repair_effective_outcome(
 
     if accepted:
         return outcome or normalized_verdict
-    if outcome and outcome not in SUCCESS_OUTCOMES:
+    if outcome and outcome not in _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES:
         return outcome
     return "verifier_rejected"
 
@@ -1547,6 +1705,7 @@ __all__ = [
     "persist_meta_repair_record",
     "remaining_meta_budget_secs",
     "retrigger_ordinary_repair",
+    "stale_repair_evidence_reason",
     "trigger_priority",
     "verify_retrigger_success",
 ]

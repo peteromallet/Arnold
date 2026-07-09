@@ -458,6 +458,36 @@ def test_sync_chain_last_state_refreshes_from_current_plan_state(tmp_path: Path)
     assert any("awaiting_human -> finalized" in message for message in messages)
 
 
+def test_sync_chain_last_state_prefers_active_step_phase_over_terminal_projection(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"m7-plan","current_state":"finalized","active_step":{"phase":"execute"},"meta":{}}',
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+    state = ChainState(
+        current_milestone_index=6,
+        current_plan_name="m7-plan",
+        last_state="awaiting_human",
+    )
+
+    synced = _sync_chain_last_state_from_plan(
+        tmp_path,
+        spec_path,
+        state,
+        writer=messages.append,
+    )
+
+    assert synced.last_state == "execute"
+    assert load_chain_state(spec_path).last_state == "execute"
+    assert any("awaiting_human -> execute" in message for message in messages)
+
+
 def test_record_chain_last_state_after_plan_run_prefers_live_plan_state(
     tmp_path: Path,
 ) -> None:
@@ -495,6 +525,110 @@ def test_record_chain_last_state_after_plan_run_prefers_live_plan_state(
     assert any("awaiting_human -> finalized" in message for message in messages)
 
 
+def test_record_chain_last_state_after_plan_run_keeps_execute_phase_visible(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"m7-plan","current_state":"finalized","latest_failure":null,'
+        '"active_step":{"phase":"execute"}}',
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+    state = ChainState(
+        current_milestone_index=6,
+        current_plan_name="m7-plan",
+        last_state="awaiting_human",
+    )
+
+    synced = _record_chain_last_state_after_plan_run(
+        tmp_path,
+        spec_path,
+        state,
+        DriverOutcome(
+            status="blocked",
+            plan="m7-plan",
+            final_state="blocked",
+            iterations=1,
+            reason="execute worker stopped",
+        ),
+        writer=messages.append,
+    )
+
+    assert synced.last_state == "execute"
+    assert load_chain_state(spec_path).last_state == "execute"
+    assert any("blocked -> execute" in message for message in messages)
+
+
+def test_run_chain_syncs_last_state_after_each_child_phase(tmp_path: Path) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan_state(tmp_path, current_state="initialized", active_step=None)
+    messages: list[str] = []
+
+    def fake_drive(
+        root: Path,
+        spec_path_arg: Path,
+        plan_name: str,
+        spec: ChainSpec,
+        *,
+        on_phase_complete,
+        writer,
+    ) -> DriverOutcome:
+        assert spec_path_arg == spec_path
+        _write_plan_state(
+            root,
+            plan_name=plan_name,
+            current_state="planned",
+            active_step=None,
+        )
+        on_phase_complete("plan", 0, "", "")
+        return DriverOutcome(
+            status="stalled",
+            plan=plan_name,
+            final_state="stalled",
+            iterations=1,
+            reason="stop after phase callback",
+        )
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch("arnold_pipelines.megaplan.chain._dirty_worktree_paths", return_value=[]),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
+        patch("arnold_pipelines.megaplan.chain._ensure_milestone_pr", return_value=122),
+        patch("arnold_pipelines.megaplan.chain._commit_and_push_phase"),
+        patch("arnold_pipelines.megaplan.chain._init_plan", return_value="m7-plan"),
+        patch("arnold_pipelines.megaplan.chain._write_chain_policy_into_plan_meta"),
+        patch("arnold_pipelines.megaplan.chain._attach_chain_anchors_to_plan"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            fake_drive,
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=messages.append,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    assert result["status"] == "stopped"
+    saved = load_chain_state(spec_path)
+    assert saved.last_state == "planned"
+
+
 def test_reconcile_leaves_finalized_open_pr_for_execute_resume(
     tmp_path: Path,
 ) -> None:
@@ -530,6 +664,55 @@ def test_reconcile_leaves_finalized_open_pr_for_execute_resume(
     assert audit["pr_number"] == 122
     assert audit["pr_state"] == "open"
     assert not any("waiting for merge" in message for message in messages)
+
+
+def test_reconcile_reviewed_finalized_plan_waits_for_open_pr_merge(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "m7-plan",
+                "current_state": "finalized",
+                "latest_failure": None,
+                "active_step": None,
+                "meta": {"chain_policy": {"milestone_label": "m7"}},
+                "history": [
+                    {"step": "execute", "result": "blocked"},
+                    {"step": "review", "result": "success"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="finalized",
+        pr_number=122,
+        pr_state="open",
+    )
+
+    with patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"):
+        reconciled = _reconcile_chain_from_ground_truth(
+            tmp_path,
+            spec_path,
+            spec,
+            state,
+            writer=lambda _message: None,
+            push_enabled=True,
+        )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.completed == []
+    assert reconciled.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.last_state == STATE_AWAITING_PR_MERGE
 
 
 def test_reconcile_revalidates_completed_prs_from_live_github(
@@ -612,6 +795,93 @@ def test_reconcile_clears_stale_active_state_when_completed_milestone_is_termina
     assert saved.last_state == "done"
 
 
+def test_reconcile_appends_missing_completed_record_for_terminal_merged_pr_plan(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    _write_plan_state(tmp_path, current_state="done")
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="initialized",
+        pr_number=122,
+        pr_state="open",
+        completed=[],
+    )
+
+    messages: list[str] = []
+    with patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"):
+        reconciled = _reconcile_chain_from_ground_truth(
+            tmp_path,
+            spec_path,
+            spec,
+            state,
+            writer=messages.append,
+            push_enabled=True,
+        )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert reconciled.last_state == "done"
+    assert reconciled.completed == [
+        {
+            "label": "m7",
+            "plan": "m7-plan",
+            "status": "done",
+            "pr_number": 122,
+            "pr_state": "merged",
+        }
+    ]
+    assert saved.current_milestone_index == 1
+    assert saved.current_plan_name is None
+    assert saved.last_state == "done"
+    assert saved.completed == reconciled.completed
+    assert any("reconciled terminal plan m7-plan into completed milestone m7" in msg for msg in messages)
+
+
+def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    _write_plan_state(tmp_path, current_state="done")
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="initialized",
+        completed=[],
+    )
+
+    reconciled = _reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        spec,
+        state,
+        writer=lambda _message: None,
+        push_enabled=False,
+    )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert reconciled.last_state == "done"
+    assert reconciled.completed == [
+        {
+            "label": "m7",
+            "plan": "m7-plan",
+            "status": "done",
+            "pr_number": None,
+            "pr_state": None,
+        }
+    ]
+    assert saved.current_milestone_index == 1
+    assert saved.current_plan_name is None
+    assert saved.last_state == "done"
+    assert saved.completed == reconciled.completed
+
+
 def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     tmp_path: Path,
 ) -> None:
@@ -664,7 +934,7 @@ def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     drive.assert_called_once()
     assert result["status"] == "stopped"
     saved = load_chain_state(spec_path)
-    assert saved.last_state == "finalized"
+    assert saved.last_state == "execute"
     assert saved.pr_state == "open"
 
 

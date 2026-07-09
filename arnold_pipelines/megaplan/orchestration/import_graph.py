@@ -25,6 +25,28 @@ DEFAULT_IGNORE_DIRS = frozenset({
 })
 
 
+def _is_valid_module_segment(segment: str) -> bool:
+    return bool(segment) and segment.isidentifier()
+
+
+def _module_parts_for_path(
+    rel_path: str,
+    *,
+    package_roots: tuple[str, ...] = (),
+) -> tuple[str, ...] | None:
+    rel_path = _strip_package_root(rel_path, package_roots)
+    path = Path(rel_path)
+    without_suffix = path.with_suffix("")
+    parts = list(without_suffix.parts)
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    if any(part.startswith(".") for part in parts):
+        return None
+    if any(not _is_valid_module_segment(part) for part in parts):
+        return None
+    return tuple(parts)
+
+
 @dataclass(frozen=True)
 class ImportResolution:
     """Tests that transitively import changed files through repo-local modules."""
@@ -69,6 +91,9 @@ class ImportGraph:
             except ValueError:
                 continue
             if any(part in ignore_dirs for part in rel_path.parts):
+                continue
+            rel_posix = rel_path.as_posix()
+            if _module_parts_for_path(rel_posix) is None:
                 continue
             py_files.append(path)
 
@@ -209,12 +234,9 @@ def _module_name_for_path(
     *,
     package_roots: tuple[str, ...] = (),
 ) -> str:
-    rel_path = _strip_package_root(rel_path, package_roots)
-    path = Path(rel_path)
-    without_suffix = path.with_suffix("")
-    parts = list(without_suffix.parts)
-    if parts and parts[-1] == "__init__":
-        parts = parts[:-1]
+    parts = _module_parts_for_path(rel_path, package_roots=package_roots)
+    if parts is None:
+        raise ValueError(f"path {rel_path!r} is not importable as a Python module")
     return ".".join(parts)
 
 

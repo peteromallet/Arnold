@@ -76,6 +76,15 @@ from arnold.manifest.manifests import (
     compute_manifest_hash,
     compute_topology_hash,
 )
+from arnold.workflow.boundary_evidence import (
+    AuthorityRecord,
+    BoundaryContract,
+    BoundaryOutcome,
+    BoundaryPhase,
+    BoundaryReceipt,
+    FindingSeverity,
+    SemanticFinding,
+)
 from arnold.workflow.validation import (
     ManifestValidationError,
     ManifestValidationIssue,
@@ -85,10 +94,16 @@ from arnold.workflow.validation import (
 )
 
 __all__ = [
+    "AuthorityRecord",
+    "BoundaryContract",
+    "BoundaryOutcome",
+    "BoundaryPhase",
+    "BoundaryReceipt",
     "Capability",
     "CompileDiagnosticError",
     "EdgeRef",
     "ExpressionRef",
+    "FindingSeverity",
     "HookRef",
     "INTERNAL_EXPORTS",
     "ImportRef",
@@ -102,6 +117,7 @@ __all__ = [
     "Pipeline",
     "Route",
     "RefDiagnosticError",
+    "SemanticFinding",
     "SourceRef",
     "SourceSpan",
     "SourceCompilationError",

@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/megaplan/pipelines/planning
-- manifest_hash: sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add
+- manifest_hash: sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -25,7 +25,7 @@ Provenance:
 | Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.planning:build_pipeline`|
 | Contract | workflow|
 | Load state | workflow|
-| Identity | sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add|
+| Identity | sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96|
 
 ## Builder Surface
 
@@ -92,8 +92,8 @@ class TiebreakerStep(StepMixinProperty):
 ```yaml
 edge_count: 23
 id: megaplan
-manifest_hash: sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add
-node_count: 12
+manifest_hash: sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96
+node_count: 14
 possible_routes:
 - condition_ref: null
   label: default
@@ -107,47 +107,47 @@ possible_routes:
   label: default
   source: finalize
   target: execute
-- condition_ref: blocked
+- condition_ref: gate.gate_route_signal.eq.blocked_preflight
   label: blocked_preflight
   source: gate
   target: override
-- condition_ref: proceed
+- condition_ref: gate.gate_route_signal.eq.proceed
   label: proceed
   source: gate
   target: finalize
-- condition_ref: force_proceed
+- condition_ref: gate.gate_route_signal.eq.force_proceed
   label: force_proceed
   source: gate
   target: finalize
-- condition_ref: abort
+- condition_ref: gate.gate_route_signal.eq.abort
   label: abort
   source: gate
   target: halt
-- condition_ref: escalate
+- condition_ref: gate.gate_route_signal.eq.escalate
   label: escalate
   source: gate
   target: override
-- condition_ref: iterate
+- condition_ref: gate.gate_route_signal.eq.iterate
   label: iterate
   source: gate
   target: revise
-- condition_ref: suspend
+- condition_ref: gate.gate_route_signal.eq.suspend
   label: suspend
   source: gate
   target: halt
-- condition_ref: tiebreaker
+- condition_ref: gate.gate_route_signal.eq.tiebreaker
   label: tiebreaker
   source: gate
-  target: tiebreaker_run
-- condition_ref: force_proceed
+  target: tiebreaker_researcher
+- condition_ref: tiebreaker_override.override_result.eq.force_proceed
   label: force_proceed
   source: override
   target: finalize
-- condition_ref: abort
+- condition_ref: override.override_result.eq.abort
   label: abort
   source: override
   target: halt
-- condition_ref: replan
+- condition_ref: tiebreaker_override.override_result.eq.replan
   label: replan
   source: override
   target: revise
@@ -159,34 +159,34 @@ possible_routes:
   label: default
   source: prep
   target: plan
-- condition_ref: pass
+- condition_ref: null
   label: default
-  source: review
-  target: halt
-- condition_ref: rework
-  label: rework
-  source: review
-  target: revise
-- condition_ref: revise:loop
-  label: default
-  source: revise
-  target: critique
+  source: tiebreaker_challenger
+  target: tiebreaker_synthesis
 - condition_ref: tiebreaker:loop
   label: iterate
-  source: tiebreaker_decide
-  target: critique
+  source: tiebreaker_decision
+  target: revise
 - condition_ref: proceed
   label: proceed
-  source: tiebreaker_decide
+  source: tiebreaker_decision
   target: finalize
 - condition_ref: escalate
   label: escalate
-  source: tiebreaker_decide
+  source: tiebreaker_decision
   target: override
+- condition_ref: tiebreaker:replan
+  label: replan
+  source: tiebreaker_decision
+  target: revise
 - condition_ref: null
   label: default
-  source: tiebreaker_run
-  target: tiebreaker_decide
+  source: tiebreaker_researcher
+  target: tiebreaker_challenger
+- condition_ref: null
+  label: default
+  source: tiebreaker_synthesis
+  target: tiebreaker_decision
 suspension_point_count: 10
 topology_summary:
   edge_count: 23
@@ -194,7 +194,9 @@ topology_summary:
   - prep
   exit_nodes:
   - halt
-  node_count: 12
+  - review
+  - revise
+  node_count: 14
 unresolved_inputs: {}
 ```
 

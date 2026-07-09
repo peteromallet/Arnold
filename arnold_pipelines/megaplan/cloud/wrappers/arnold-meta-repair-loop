@@ -37,11 +37,18 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
-WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
-
 MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_META_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-/workspace/arnold}"
+SELF_PATH="${MEGAPLAN_META_SELF_PATH:-${BASH_SOURCE[0]:-$0}}"
+if command -v readlink >/dev/null 2>&1; then
+  SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
+fi
+WRAPPER_REPO_ROOT="$(cd "$(dirname "$SELF_PATH")/../../../.." 2>/dev/null && pwd || printf '%s' /)"
+if [[ ! -f "$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop" ]] \
+  && [[ -f "$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop" ]]; then
+  WRAPPER_REPO_ROOT="$ARNOLD_SRC"
+fi
 LAUNCHER="${MEGAPLAN_META_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
 SUBAGENT_SKILL="${MEGAPLAN_META_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek:deepseek-v4-pro}"
@@ -53,6 +60,10 @@ META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"
 META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
 SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
+REPAIR_LOOP_FALLBACK="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+if [[ ! -f "$REPAIR_LOOP_BIN" && -f "$REPAIR_LOOP_FALLBACK" ]]; then
+  REPAIR_LOOP_BIN="$REPAIR_LOOP_FALLBACK"
+fi
 REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"
 RUN_DIR="${MEGAPLAN_META_RUN_DIR:-/workspace/.megaplan/meta-runs}"
 BRIEF_PREFLIGHT_MAX_CHARS="${MEGAPLAN_META_BRIEF_PREFLIGHT_MAX_CHARS:-900000}"
@@ -154,18 +165,20 @@ log "recursion guard: $RECURSION_OUTPUT"
 # ---- classify failure + build redacted prompt via Python handoff -------------
 classification_and_prompt() {
   local force_emergency="${1:-0}"
-  FORCE_EMERGENCY="$force_emergency" PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'PY'
+  FORCE_EMERGENCY="$force_emergency" PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$MARKER_DIR" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'PY'
 import json, os, sys
 
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     MetaRepairClassification,
     MetaRepairTrigger,
     build_meta_repair_prompt,
     evaluate_meta_repair_triggers,
     load_redacted_evidence,
+    stale_repair_evidence_reason,
 )
 
-session, repair_data_dir, repair_data_path, enabled, watchdog_trigger = sys.argv[1:6]
+session, repair_data_dir, repair_data_path, marker_dir, enabled, watchdog_trigger = sys.argv[1:7]
 force_emergency = os.environ.get("FORCE_EMERGENCY") == "1"
 
 # Evaluate triggers without loading full evidence initially;
@@ -179,17 +192,34 @@ if watchdog_trigger:
 
 if trigger is not None:
     evidence = load_redacted_evidence(session, repair_data_dir=repair_data_dir)
-    classification = MetaRepairClassification(
-        session=session,
-        trigger=trigger,
-        rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
-        evidence=evidence,
-    )
-    prompt = build_meta_repair_prompt(
-        classification,
+    current_target_observation = resolve_current_target(
+        session,
+        marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
-        force_emergency=force_emergency,
     )
+    stale_reason = stale_repair_evidence_reason(
+        evidence=evidence,
+        current_target_observation=current_target_observation,
+    )
+    if stale_reason:
+        classification = MetaRepairClassification(
+            session=session,
+            trigger=None,
+            rationale=(stale_reason,),
+            evidence=evidence,
+        )
+    else:
+        classification = MetaRepairClassification(
+            session=session,
+            trigger=trigger,
+            rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
+            evidence=evidence,
+        )
+        prompt = build_meta_repair_prompt(
+            classification,
+            repair_data_dir=repair_data_dir,
+            force_emergency=force_emergency,
+        )
 else:
     classification, prompt = evaluate_meta_repair_triggers(
         session,

@@ -86,15 +86,36 @@ MEGAPLAN_REF="$${MEGAPLAN_REF:-${MEGAPLAN_REF}}"
 MEGAPLAN_REPO="$${MEGAPLAN_REPO:-${MEGAPLAN_REPO}}"
 MEGAPLAN_INSTALL_SPEC_OVERRIDE="$${MEGAPLAN_INSTALL_SPEC_OVERRIDE:-${MEGAPLAN_INSTALL_SPEC_OVERRIDE}}"
 
+mp_pip_retry() {
+  # Retry a pip install up to 3x with backoff. A transient network/git blip must
+  # not crash-loop the whole container on boot; only a persistently-failing
+  # install (3 consecutive failures) propagates failure so the box still
+  # surfaces a real break instead of silently running stale code.
+  local label="$$1"; shift
+  local attempt
+  for attempt in 1 2 3; do
+    echo "[install $$attempt/3] $$label"
+    if pip install --upgrade --force-reinstall --no-cache-dir "$$@" 2>&1 | tail -3; then
+      return 0
+    fi
+    if [[ $$attempt -lt 3 ]]; then
+      echo "[install $$attempt/3] $$label failed; retrying in $$((attempt*10))s..."
+      sleep "$$((attempt*10))"
+    fi
+  done
+  echo "[install] FAILED after 3 attempts: $$label"
+  return 1
+}
+
 mp_install_megaplan() {
   local explicit_spec="$${MEGAPLAN_INSTALL_SPEC:-$${MEGAPLAN_INSTALL_SPEC_OVERRIDE:-}}"
   if [[ -n "$$explicit_spec" ]]; then
     if [[ "$$explicit_spec" == *git+* ]] && [[ -n "$$MEGAPLAN_REF" ]]; then
       echo "Installing/upgrading arnold from explicit git spec at ref $$MEGAPLAN_REF"
-      pip install --upgrade --force-reinstall --no-cache-dir "$$explicit_spec@$$MEGAPLAN_REF" 2>&1 | tail -3
+      mp_pip_retry "explicit git spec @ $$MEGAPLAN_REF" "$$explicit_spec@$$MEGAPLAN_REF"
     else
       echo "Installing/upgrading arnold from explicit spec"
-      pip install --upgrade --force-reinstall --no-cache-dir "$$explicit_spec" 2>&1 | tail -3
+      mp_pip_retry "explicit spec" "$$explicit_spec"
     fi
     return
   fi
@@ -106,7 +127,7 @@ mp_install_megaplan() {
     fi
     local spec="arnold[agent] @ git+$$repo"
     echo "Installing/upgrading arnold from repo at ref $$MEGAPLAN_REF"
-    pip install --upgrade --force-reinstall --no-cache-dir "$$spec@$$MEGAPLAN_REF" 2>&1 | tail -3
+    mp_pip_retry "arnold from repo @ $$MEGAPLAN_REF" "$$spec@$$MEGAPLAN_REF"
     return
   fi
 
@@ -114,7 +135,7 @@ mp_install_megaplan() {
     echo "MEGAPLAN_REF=$$MEGAPLAN_REF ignored because no git source is configured — set megaplan.repo (or a git+ megaplan.install_spec) in cloud.yaml to install from source at this ref."
   fi
   echo "Installing/upgrading arnold: arnold[agent]"
-  pip install --upgrade --force-reinstall --no-cache-dir "arnold[agent]" 2>&1 | tail -3
+  mp_pip_retry "arnold[agent]" "arnold[agent]"
 }
 
 {
@@ -123,6 +144,7 @@ mp_install_megaplan() {
   printf 'MEGAPLAN_REF=$${MEGAPLAN_REF:-%q}\n' "$$MEGAPLAN_REF"
   printf 'MEGAPLAN_REPO=$${MEGAPLAN_REPO:-%q}\n' "$$MEGAPLAN_REPO"
   printf 'MEGAPLAN_INSTALL_SPEC_OVERRIDE=$${MEGAPLAN_INSTALL_SPEC_OVERRIDE:-%q}\n' "$$MEGAPLAN_INSTALL_SPEC_OVERRIDE"
+  declare -f mp_pip_retry
   declare -f mp_install_megaplan
   echo 'mp_install_megaplan "$$@"'
 } > /usr/local/bin/mp-refresh-megaplan

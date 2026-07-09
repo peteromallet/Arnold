@@ -19,15 +19,16 @@ from pathlib import Path
 
 import pytest
 
+import arnold_pipelines.megaplan.cloud.meta_repair as meta_repair_module
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     META_REPAIR_BUDGET_SECS,
     MetaRepairClassification,
     MetaRepairRecord,
     MetaRepairTrigger,
+    RetriggerExecutionResult,
     build_meta_repair_prompt,
     classify_repair_system_failure,
     compute_meta_deadline,
-    derive_meta_repair_effective_outcome,
     evaluate_meta_repair_triggers,
     is_model_tool_launch_failure_status,
     is_meta_budget_exhausted,
@@ -36,10 +37,13 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     persist_meta_repair_record,
     remaining_meta_budget_secs,
     trigger_priority,
+    verify_retrigger_success,
 )
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     COMPLETE,
+    DISCORD_ESCALATED,
+    LIVE_WITH_FRESH_ACTIVITY,
     NEEDS_HUMAN,
     PARTIAL_LIVENESS,
     REPAIR_EXHAUSTED,
@@ -187,6 +191,165 @@ class TestClassifyPersistentRecurringRetry:
         assert result.trigger is None
         assert result.should_dispatch is False
         assert "supersedes stale recurring repair evidence" in result.rationale[0]
+
+    def test_recurring_retry_skips_stale_repair_data_when_chain_spec_is_gone(self) -> None:
+        result = classify_repair_system_failure(
+            session="s7c",
+            evidence={
+                "repair_data": {
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "blocked",
+                    }
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "marker",
+                "current_refs": {
+                    "run_kind": "chain",
+                    "current_plan_name": "",
+                    "chain_current_plan_name": "",
+                    "plan_current_state": "",
+                    "chain_last_state": "",
+                },
+                "plan_state": {"present": False},
+                "chain_state": {"present": False},
+                "chain_log": {"present": False},
+                "active_step_heartbeat": {"active": False},
+                "stale_evidence": [{"kind": "spec_missing"}],
+            },
+            failure_kinds=["phase_failed", "phase_failed", "phase_failed"],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "chain spec is missing" in result.rationale[0]
+
+    def test_recurring_retry_skips_stale_repair_data_when_only_chain_log_remains(self) -> None:
+        result = classify_repair_system_failure(
+            session="s7d",
+            evidence={
+                "repair_data": {
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "blocked",
+                    }
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "marker",
+                "current_refs": {
+                    "run_kind": "chain",
+                    "current_plan_name": "",
+                    "chain_current_plan_name": "",
+                    "plan_current_state": "",
+                    "chain_last_state": "",
+                },
+                "plan_state": {"present": False},
+                "chain_state": {"present": False},
+                "chain_log": {"present": True},
+                "active_step_heartbeat": {"active": False},
+                "tmux_process": {"live_status": "unknown"},
+                "stale_evidence": [{"kind": "spec_missing"}],
+            },
+            failure_kinds=["phase_failed", "phase_failed", "phase_failed"],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "chain spec is missing" in result.rationale[0]
+
+    def test_recurring_retry_skips_stale_execute_loop_when_live_status_has_no_retry_path(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            meta_repair_module,
+            "_load_current_target_status",
+            lambda _path: {
+                "state": "finalized",
+                "next_step": None,
+                "valid_next": [],
+                "active_step": None,
+                "blocker_recovery": {
+                    "has_terminal_blockers": True,
+                },
+            },
+        )
+
+        result = classify_repair_system_failure(
+            session="s7d",
+            evidence={
+                "repair_data": {
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "finalized",
+                        "failure_kind": "blocked_state_or_recovery_error",
+                        "phase_or_step": "execute",
+                    }
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "chain_state",
+                "current_refs": {
+                    "current_plan_name": "demo-plan",
+                    "plan_current_state": "finalized",
+                    "chain_last_state": "finalized",
+                },
+                "plan_state": {"present": True, "path": "/tmp/demo/state.json"},
+                "chain_state": {"present": True},
+                "active_step_heartbeat": {"active": False},
+            },
+            failure_kinds=[
+                "blocked_state_or_recovery_error",
+                "blocked_state_or_recovery_error",
+                "blocked_state_or_recovery_error",
+            ],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "no execute retry path" in result.rationale[0]
+
+    def test_recurring_retry_skips_terminal_non_success_when_live_target_is_done(
+        self,
+    ) -> None:
+        result = classify_repair_system_failure(
+            session="s7e",
+            evidence={
+                "repair_data": {
+                    "outcome": DISCORD_ESCALATED,
+                    "current_failure_context": {
+                        "stale_state": {
+                            "classification": "NO LATEST FAILURE",
+                            "recommended_action": "mechanical re-drive only",
+                        },
+                        "plan_latest_failure": {
+                            "current_state": "done",
+                        },
+                        "plan_runtime_state": {
+                            "current_state": "done",
+                        },
+                    },
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "plan_state",
+                "current_refs": {
+                    "current_plan_name": "demo-plan",
+                    "plan_current_state": "done",
+                    "chain_last_state": "done",
+                },
+                "plan_state": {"present": True},
+                "chain_state": {"present": True},
+                "active_step_heartbeat": {"active": False},
+            },
+            failure_kinds=["blocked_state_or_recovery_error"] * 3,
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "repair outcome is discord_escalated" in result.rationale[0]
 
 
 class TestClassifyStateInspectionFailure:
@@ -375,16 +538,16 @@ class TestNonTriggerCases:
         assert result.should_dispatch is False
         assert "terminal success outcome" in result.rationale[0]
 
-    def test_liveness_outcome_no_longer_suppresses_stale_launch_failure(self) -> None:
+    def test_success_outcome_suppresses_stale_launch_failure(self) -> None:
         result = classify_repair_system_failure(
-            session="s19-liveness-launch",
-            repair_outcome=PARTIAL_LIVENESS,
+            session="s19-success-launch",
+            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
             has_model_tool_launch_error=True,
             partial_liveness_ticks=4,
         )
-        # partial_liveness is non-success; model/tool launch failure still fires
-        assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
-        assert result.should_dispatch is True
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "terminal success outcome" in result.rationale[0]
 
     def test_still_repairing_no_trigger(self) -> None:
         result = classify_repair_system_failure(
@@ -471,14 +634,13 @@ class TestClassificationPriority:
         )
         assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
 
-    def test_liveness_outcome_no_longer_beats_launch_failure(self) -> None:
+    def test_success_outcome_beats_launch_failure(self) -> None:
         result = classify_repair_system_failure(
-            session="s27-liveness",
-            repair_outcome=PARTIAL_LIVENESS,
+            session="s27-success",
+            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
             has_model_tool_launch_error=True,
         )
-        # partial_liveness is non-success; launch failure fires
-        assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
+        assert result.trigger is None
 
 
 # ---------------------------------------------------------------------------
@@ -821,7 +983,7 @@ class TestEvaluateMetaRepairTriggers:
         assert classification.should_dispatch is False
         assert prompt is None
 
-    def test_partial_liveness_no_longer_suppresses_stale_launch_trigger(
+    def test_live_with_fresh_activity_suppresses_stale_launch_trigger(
         self, tmp_path: Path
     ) -> None:
         repair_root = _make_session_dir(tmp_path, "eval-s2-live-launch")
@@ -831,7 +993,7 @@ class TestEvaluateMetaRepairTriggers:
                     "session": "eval-s2-live-launch",
                     "workspace": "/workspace/test-project",
                     "plan_name": "test-plan",
-                    "outcome": PARTIAL_LIVENESS,
+                    "outcome": LIVE_WITH_FRESH_ACTIVITY,
                     "attempts": [
                         {
                             "attempt_id": 1,
@@ -845,7 +1007,7 @@ class TestEvaluateMetaRepairTriggers:
         classification, prompt = evaluate_meta_repair_triggers(
             session="eval-s2-live-launch",
             repair_data_dir=repair_root,
-            repair_outcome=PARTIAL_LIVENESS,
+            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
             has_model_tool_launch_error=True,
             current_target_observation={
                 "authoritative_source": "chain_state",
@@ -861,9 +1023,9 @@ class TestEvaluateMetaRepairTriggers:
             },
             load_evidence=True,
         )
-        # partial_liveness is non-success; stale launch failure triggers meta-repair
-        assert classification.should_dispatch is True
-        assert classification.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
+        assert classification.should_dispatch is False
+        assert classification.trigger is None
+        assert prompt is None
 
     def test_loads_evidence_when_requested(self, tmp_path: Path) -> None:
         repair_root = _make_session_dir(tmp_path, "eval-s3")
@@ -1424,32 +1586,6 @@ class TestMetaRepairRecordShape:
 
 
 class TestPersistMetaRepairRecord:
-    @pytest.mark.parametrize(
-        ("verdict", "install_sync_status", "verification", "expected"),
-        [
-            ("FIXED", "applied", {"accepted": True, "outcome": COMPLETE}, COMPLETE),
-            ("FIXED", "applied", {"accepted": False, "outcome": PARTIAL_LIVENESS}, PARTIAL_LIVENESS),
-            ("FIXED", "applied", {"accepted": False, "outcome": COMPLETE}, "verifier_rejected"),
-            ("FIXED", "failed", {"accepted": False, "outcome": COMPLETE}, "install_sync_failed"),
-            ("NO_FIX", "", {}, "NO_FIX"),
-        ],
-    )
-    def test_derive_effective_outcome_requires_verifier_acceptance(
-        self,
-        verdict: str,
-        install_sync_status: str,
-        verification: dict[str, object],
-        expected: str,
-    ) -> None:
-        assert (
-            derive_meta_repair_effective_outcome(
-                verdict=verdict,
-                install_sync_status=install_sync_status,
-                post_retrigger_verification=verification,
-            )
-            == expected
-        )
-
     def test_persist_creates_meta_directory_and_file(self, tmp_path: Path) -> None:
         repair_dir = tmp_path / "repair-data"
         repair_dir.mkdir(parents=True)
@@ -1684,6 +1820,42 @@ class TestMetaRepairTimeout:
         assert loaded.outcome == "meta_repair_timeout"
         assert loaded.subagent_results["codex"]["analysis"] == "budget_exhausted"
         assert loaded.tests[0]["result"] == "skipped"
+
+
+class TestRetriggerVerification:
+    def test_live_with_fresh_activity_is_accepted_success(self) -> None:
+        result = verify_retrigger_success(
+            retriggered=True,
+            retrigger_result=RetriggerExecutionResult(
+                command=("arnold-repair-loop", "demo-session"),
+                returncode=0,
+                stdout="ok",
+                stderr="",
+                lock_released=True,
+            ),
+            post_retrigger_verification={"outcome": LIVE_WITH_FRESH_ACTIVITY},
+        )
+
+        assert result["accepted"] is True
+        assert result["outcome"] == LIVE_WITH_FRESH_ACTIVITY
+        assert result["rejection_reason"] == ""
+
+    def test_partial_liveness_remains_rejected(self) -> None:
+        result = verify_retrigger_success(
+            retriggered=True,
+            retrigger_result=RetriggerExecutionResult(
+                command=("arnold-repair-loop", "demo-session"),
+                returncode=0,
+                stdout="ok",
+                stderr="",
+                lock_released=True,
+            ),
+            post_retrigger_verification={"outcome": PARTIAL_LIVENESS},
+        )
+
+        assert result["accepted"] is False
+        assert result["outcome"] == PARTIAL_LIVENESS
+        assert "not a terminal success" in result["rejection_reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -2134,3 +2306,50 @@ class TestPolicyEndToEnd:
         assert result.allowed is False, (
             "Commit gate must be off by default even when no recursion exists"
         )
+
+
+def test_repair_evidence_superseded_terminal_blocker_does_not_crash(tmp_path):
+    from arnold_pipelines.megaplan.cloud.meta_repair import (
+        _repair_evidence_superseded_by_current_target,
+    )
+
+    status_path = tmp_path / "state.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "next_step": None,
+                "valid_next": [],
+                "blocker_recovery": {"has_terminal_blockers": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence = {
+        "repair_data": {
+            "current_signature": {
+                "failure_kind": "blocked_state_or_recovery_error",
+                "phase_or_step": "execute",
+            },
+            "current_failure_context": {
+                "plan_runtime_state": {"current_state": "finalized"},
+            },
+        }
+    }
+    observation = {
+        "authoritative_source": "chain_state",
+        "current_refs": {
+            "current_plan_name": "plan-a",
+            "plan_current_state": "finalized",
+            "chain_last_state": "finalized",
+        },
+        "plan_state": {"path": str(status_path)},
+        "chain_state": {"present": True},
+    }
+
+    reason = _repair_evidence_superseded_by_current_target(
+        evidence=evidence,
+        current_target_observation=observation,
+    )
+
+    assert isinstance(reason, str)

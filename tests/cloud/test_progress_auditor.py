@@ -55,6 +55,13 @@ def _extract_gather_program() -> str:
     return text[py_start:py_end]
 
 
+def _extract_gather_function(name: str, next_name: str) -> str:
+    text = _extract_gather_program()
+    start = text.index(f"def {name}(")
+    end = text.index(f"\ndef {next_name}(", start)
+    return text[start:end]
+
+
 def _extract_auditor_function(name: str) -> str:
     text = _wrapper("arnold-progress-auditor")
     start = text.index(f"{name}() {{")
@@ -509,6 +516,28 @@ class TestGreenChecksNoFindings:
         assert "Arnold superfixer bug" in text
         assert "Fix the watchdog/repair-trigger/auditor source" in text
         assert "do not hand-unblock only this run" in text
+
+    def test_publication_attempt_ts_detects_github_issue_evidence(self) -> None:
+        namespace: dict[str, object] = {}
+        exec(
+            _extract_gather_function("_publication_attempt_ts", "_dedupe_refs"),
+            namespace,
+        )
+        publication_attempt_ts = namespace["_publication_attempt_ts"]
+
+        incident = {
+            "latest_actor": "watchdog",
+            "last_timestamp": "2026-07-08T20:33:41+00:00",
+            "evidence_refs": [
+                {
+                    "kind": "github.issue",
+                    "number": 176,
+                    "created_at": "2026-07-08T20:33:42+00:00",
+                }
+            ],
+        }
+
+        assert publication_attempt_ts(incident, {}) == "2026-07-08T20:33:42+00:00"
 
     def test_json_payload_includes_green_checks_when_findings_empty(self, tmp_path: Path) -> None:
         findings_data = {
@@ -2222,6 +2251,80 @@ class TestLiveSignalFiltering:
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
 
+    def test_meta_repair_summary_ignores_partial_liveness_for_live_active_step_after_finalize(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "finalized",
+                    "iteration": 1,
+                    "latest_failure": None,
+                    "active_step": {"phase": "execute", "attempt": 1},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "between_milestones",
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        sidecar_events = tmp_path / "repair-data.d" / "events"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        sidecar_events.mkdir(parents=True, exist_ok=True)
+        (repair_root / "index.json").write_text(json.dumps({}), encoding="utf-8")
+        (sidecar_events / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "session": "demo-session",
+                        "run_kind": "chain",
+                        "plan_name": "demo-plan",
+                        "health": "alive",
+                        "outcome": "partial_liveness",
+                        "recorded_at": f"2026-07-03T22:0{idx}:00+00:00",
+                    }
+                )
+                + "\n"
+                for idx in range(4)
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert findings["findings"] == []
+        assert len(findings["green_checks"]) == 1
+        assert findings["green_checks"][0]["plan"] == "demo-plan"
+
     def test_gather_flags_watchdog_complete_chain_health_disagreement(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
@@ -2540,6 +2643,179 @@ class TestLiveSignalFiltering:
         assert findings["findings"] == []
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
+
+    def test_meta_repair_summary_ignores_partial_liveness_when_watchdog_reports_session_alive(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "arnold"
+        megaplan_dir = workspace / ".megaplan"
+        plan_dir = megaplan_dir / "plans" / "demo-plan"
+        chain_dir = megaplan_dir / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "done",
+                    "iteration": 1,
+                    "latest_failure": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "next-plan",
+                    "last_state": "between_milestones",
+                    "completed": [{"label": "m1-demo", "plan": "demo-plan", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        sidecar_events = tmp_path / "repair-data.d" / "events"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        sidecar_events.mkdir(parents=True, exist_ok=True)
+        (repair_root / "index.json").write_text(json.dumps({}), encoding="utf-8")
+        (sidecar_events / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "session": "demo-session",
+                        "run_kind": "chain",
+                        "plan_name": "demo-plan",
+                        "health": "alive",
+                        "outcome": "partial_liveness",
+                        "recorded_at": f"2026-07-04T12:1{idx}:00+00:00",
+                    }
+                )
+                + "\n"
+                for idx in range(6)
+            ),
+            encoding="utf-8",
+        )
+
+        watchdog_report = tmp_path / "watchdog-report.json"
+        watchdog_archive = tmp_path / "watchdog-reports"
+        watchdog_archive.mkdir(parents=True, exist_ok=True)
+        watchdog_payload = {
+            "timestamp_utc": "2026-07-04T13:40:00+00:00",
+            "items": [
+                {
+                    "session": "demo-session",
+                    "action": "observe",
+                    "status": "alive",
+                    "message": "session already alive",
+                    "workspace": str(workspace),
+                }
+            ],
+            "issues": [
+                {
+                    "session": "other-session",
+                    "action": "observe",
+                    "status": "needs_human",
+                    "message": "unrelated issue",
+                    "workspace": "/workspace/other/arnold",
+                }
+            ],
+        }
+        watchdog_report.write_text(json.dumps(watchdog_payload), encoding="utf-8")
+        (watchdog_archive / "20260704T134100Z.json").write_text(json.dumps(watchdog_payload), encoding="utf-8")
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={
+                "MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root),
+                "MEGAPLAN_AUDIT_WATCHDOG_REPORT": str(watchdog_report),
+                "MEGAPLAN_AUDIT_WATCHDOG_REPORT_ARCHIVE_DIR": str(watchdog_archive),
+            },
+        )
+
+        assert findings["findings"] == []
+        assert len(findings["green_checks"]) == 1
+        assert findings["green_checks"][0]["plan"] == "demo-plan"
+
+    def test_collect_watchdog_report_refs_prefer_exact_session_match_over_workspace_basename(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "arnold"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "iteration": 1,
+                    "latest_failure": {
+                        "kind": "phase_failed",
+                        "message": "boom",
+                        "recorded_at": "2026-07-03T16:00:00+00:00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        watchdog_report = tmp_path / "watchdog-report.json"
+        watchdog_report.write_text(
+            json.dumps(
+                {
+                    "timestamp_utc": "2026-07-04T13:40:00+00:00",
+                    "items": [
+                        {
+                            "session": "demo-session",
+                            "action": "observe",
+                            "status": "alive",
+                            "message": "session already alive",
+                            "workspace": str(workspace),
+                        }
+                    ],
+                    "issues": [
+                        {
+                            "session": "other-session",
+                            "action": "observe",
+                            "status": "needs_human",
+                            "message": "wrongly matched before exact-session filtering",
+                            "workspace": "/workspace/other/arnold",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_WATCHDOG_REPORT": str(watchdog_report)},
+        )
+
+        assert len(findings["findings"]) == 1
+        assert findings["findings"][0]["prior_watchdog_report_refs"][0]["matched_status"] == "alive"
 
 
 class TestRootCausePatternsJsonSchema:
