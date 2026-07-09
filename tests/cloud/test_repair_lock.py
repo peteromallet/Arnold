@@ -130,6 +130,39 @@ def test_repair_lock_context_manager_releases_on_success_and_exception(tmp_path:
     assert not lock_dir.exists()
 
 
+def test_acquire_repair_lock_uses_default_pid_liveness_probe(tmp_path: Path) -> None:
+    lock_dir = tmp_path / "demo-session.lock"
+    lock_dir.mkdir()
+    owner_path = repair_lock.owner_metadata_path(lock_dir)
+    owner_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "target_id": "target-stale",
+                "pid": 99_999_999,
+                "command": "arnold-repair-loop --session demo-session",
+                "started_at": "2026-07-01T18:00:00+00:00",
+                "cwd": "/workspace/project",
+                "timeout_seconds": None,
+                "hostname": "worker-a",
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    result = repair_lock.acquire_repair_lock(
+        lock_dir,
+        session="demo-session",
+        target_id="target-new",
+        pid=444,
+    )
+
+    assert result.stale
+    assert result.stale_evidence is not None
+    assert "owner_pid_not_live" in result.stale_evidence["reasons"]
+
+
 def test_release_repair_lock_refuses_mismatched_owner(tmp_path: Path) -> None:
     lock_dir = tmp_path / "demo-session.lock"
     acquired = repair_lock.acquire_repair_lock(
