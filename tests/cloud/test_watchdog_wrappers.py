@@ -3284,8 +3284,12 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
     # repair on one session cannot block the tick from scanning/reporting the
     # other sessions.
     assert "dispatch_kimi_repair()" in text
-    assert 'setsid bash -c \'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"\'' in text
-    assert 'PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"' in text
+    assert 'setsid bash -c \'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; exec "$2" "$3" "$4" "$5"\'' in text
+    assert 'PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"' in text
+    assert 'PRIMARY_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-repair-loop"' in text
+    assert 'PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"' in text
+    assert 'if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then' in text
+    assert 'PRIMARY_REPAIR_BIN="$PRIMARY_REPAIR_FALLBACK_BIN"' in text
     assert "kimi_dispatch_marker_set" in text
     assert "mechanical_relaunch_attempted_previously" in text
     assert "kimi_dispatch_failed_previously" in text
@@ -14345,7 +14349,11 @@ def test_meta_repair_dispatch_defaults_structural() -> None:
     assert 'PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"' in watchdog_text
 
     # META_REPAIR_BIN default
-    assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"' in watchdog_text
+    assert 'META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"' in watchdog_text
+    assert 'META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"' in watchdog_text
+    assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"' in watchdog_text
+    assert 'if [[ ! -x "$META_REPAIR_BIN" && -x "$META_REPAIR_FALLBACK_BIN" ]]; then' in watchdog_text
+    assert 'META_REPAIR_BIN="$META_REPAIR_FALLBACK_BIN"' in watchdog_text
 
     # dispatch_meta_repair function
     assert "dispatch_meta_repair() {" in watchdog_text

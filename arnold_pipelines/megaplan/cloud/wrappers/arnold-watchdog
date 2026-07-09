@@ -74,9 +74,19 @@ SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
 EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
 KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
-PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"
 KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
-META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"
+PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+PRIMARY_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-repair-loop"
+PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"
+if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then
+  PRIMARY_REPAIR_BIN="$PRIMARY_REPAIR_FALLBACK_BIN"
+fi
+META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"
+META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"
+if [[ ! -x "$META_REPAIR_BIN" && -x "$META_REPAIR_FALLBACK_BIN" ]]; then
+  META_REPAIR_BIN="$META_REPAIR_FALLBACK_BIN"
+fi
 REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
