@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,8 @@ except ImportError:
 EXPECTED_SCHEMA = "arnold.megaplan_native_representation.conformance.v1"
 EXPECTED_TARGET_REPORT = "docs/arnold/megaplan-native-representation-report.md"
 EXPECTED_TRACEABILITY = "docs/arnold/megaplan-native-representation-traceability.yaml"
+EXPECTED_EVIDENCE_BUNDLE = "docs/arnold/megaplan-native-representation-evidence.yaml"
+EXPECTED_EVIDENCE_SCHEMA = "arnold.megaplan_native_representation.evidence_bundle.v1"
 VALID_STATUSES = {"implemented", "deferred"}
 REQUIRED_ROW_FIELDS = {"id", "status", "semantic_carrier", "proof_categories", "proof_artifacts"}
 IMPLEMENTED_REQUIRED_ROW_FIELDS = {"carrier_evidence"}
@@ -30,6 +34,80 @@ DEFERRED_SEMANTIC_CARRIERS = {"explicit_deferral"}
 CANONICAL_SOURCE_SUFFIXES = {".pypeline"}
 PURE_PHASE_BODY_SUFFIXES = {".py"}
 POLICY_CARRIER_SUFFIXES = {".pypeline", ".py", ".yaml", ".yml", ".json", ".md"}
+APPROVED_IMPLEMENTED_EVIDENCE_KINDS = {"source_checker"}
+BOUNDARY_RECEIPT_REQUIRED_EFFECTS = {"receipt", "authority"}
+BOUNDARY_PHASE_RESULT_REQUIRED_EFFECTS = {"state_history", "phase_result"}
+BOUNDARY_SEMANTIC_HEALTH_STATUS = "healthy"
+
+
+@dataclass(frozen=True)
+class EvidenceSourceSpan:
+    path: str
+    start_line: int
+    end_line: int
+
+
+@dataclass(frozen=True)
+class CarrierCheckerEvidence:
+    row_id: str
+    semantic_carrier: str
+    kind: str
+    checker: str
+    carrier_path: str
+    carrier_sha256: str
+    proof_artifact_path: str
+    proof_artifact_sha256: str
+    source_span: EvidenceSourceSpan | None
+    policy_object: str | None
+
+
+@dataclass(frozen=True)
+class BoundaryContractEvidence:
+    row_id: str
+    contract_id: str
+    covered_effects: tuple[str, ...]
+    contract_path: str
+    contract_sha256: str
+    source_span: EvidenceSourceSpan | None
+    policy_object: str | None
+
+
+@dataclass(frozen=True)
+class BoundaryReceiptEvidence:
+    row_id: str
+    contract_id: str
+    covered_effects: tuple[str, ...]
+    receipt_path: str
+    receipt_sha256: str
+
+
+@dataclass(frozen=True)
+class BoundarySemanticHealthEvidence:
+    row_id: str
+    contract_id: str
+    covered_effects: tuple[str, ...]
+    proof_artifact_path: str
+    proof_artifact_sha256: str
+    status: str
+
+
+@dataclass(frozen=True)
+class BoundaryPhaseResultEvidence:
+    row_id: str
+    contract_id: str
+    covered_effects: tuple[str, ...]
+    phase_result_path: str
+    phase_result_sha256: str
+
+
+@dataclass(frozen=True)
+class EvidenceBundle:
+    schema: str
+    records: tuple[CarrierCheckerEvidence, ...]
+    boundary_contract_records: tuple[BoundaryContractEvidence, ...]
+    boundary_receipt_records: tuple[BoundaryReceiptEvidence, ...]
+    boundary_semantic_health_records: tuple[BoundarySemanticHealthEvidence, ...]
+    boundary_phase_result_records: tuple[BoundaryPhaseResultEvidence, ...]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -110,6 +188,370 @@ def _validate_carrier_evidence_shape(
             )
 
 
+def _sha256(path: Path) -> str:
+    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def _require_sha256(value: Any, *, field: str) -> str:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        raise ValueError(f"evidence_bundle {field} must be a sha256:<hex> string")
+    digest = value.removeprefix("sha256:")
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        raise ValueError(f"evidence_bundle {field} must be a sha256:<hex> string")
+    return value
+
+
+def _require_non_empty_string(value: Any, *, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"evidence_bundle {field} must be a non-empty string")
+    return value.strip()
+
+
+def _parse_source_span(value: Any) -> EvidenceSourceSpan:
+    if not isinstance(value, dict):
+        raise ValueError("evidence_bundle source_span must be a mapping")
+    path = value.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("evidence_bundle source_span.path must be a non-empty string")
+    normalized_path = _normalize_repo_path(path, field="source_span.path", row_id="<evidence>")
+    start_line = value.get("start_line")
+    end_line = value.get("end_line")
+    if not isinstance(start_line, int) or start_line < 1:
+        raise ValueError("evidence_bundle source_span.start_line must be an integer >= 1")
+    if not isinstance(end_line, int) or end_line < start_line:
+        raise ValueError("evidence_bundle source_span.end_line must be an integer >= start_line")
+    return EvidenceSourceSpan(
+        path=normalized_path,
+        start_line=start_line,
+        end_line=end_line,
+    )
+
+
+def _is_historical_conformance_report(path: str) -> bool:
+    candidate = Path(path)
+    if candidate.parent != Path("docs/arnold"):
+        return False
+    name = candidate.name
+    return "conformance-report" in name or name == "megaplan-native-representation-report.md"
+
+
+def _parse_evidence_record(value: Any) -> CarrierCheckerEvidence:
+    if not isinstance(value, dict):
+        raise ValueError("evidence_bundle records entries must be mappings")
+    row_id = value.get("row_id")
+    if not isinstance(row_id, str) or not row_id.strip():
+        raise ValueError("evidence_bundle row_id must be a non-empty string")
+    semantic_carrier = value.get("semantic_carrier")
+    if not isinstance(semantic_carrier, str) or not semantic_carrier.strip():
+        raise ValueError(f"evidence_bundle row {row_id!r} semantic_carrier must be a non-empty string")
+    kind = value.get("kind")
+    if not isinstance(kind, str) or kind not in APPROVED_IMPLEMENTED_EVIDENCE_KINDS:
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} kind must be one of "
+            f"{sorted(APPROVED_IMPLEMENTED_EVIDENCE_KINDS)}"
+        )
+    checker = value.get("checker")
+    if not isinstance(checker, str) or not checker.strip():
+        raise ValueError(f"evidence_bundle row {row_id!r} checker must be a non-empty string")
+    carrier_path = _normalize_repo_path(
+        value.get("carrier_path"),
+        field="carrier_path",
+        row_id=row_id,
+    )
+    proof_artifact_path = _normalize_repo_path(
+        value.get("proof_artifact_path"),
+        field="proof_artifact_path",
+        row_id=row_id,
+    )
+    if _is_historical_conformance_report(carrier_path):
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} carrier_path {carrier_path!r} cannot use a "
+            "historical conformance report as authority"
+        )
+    if _is_historical_conformance_report(proof_artifact_path):
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} proof_artifact_path {proof_artifact_path!r} cannot "
+            "use a historical conformance report as authority"
+        )
+    carrier_sha256 = _require_sha256(
+        value.get("carrier_sha256"),
+        field=f"rows[{row_id}].carrier_sha256",
+    )
+    proof_artifact_sha256 = _require_sha256(
+        value.get("proof_artifact_sha256"),
+        field=f"rows[{row_id}].proof_artifact_sha256",
+    )
+    source_span_value = value.get("source_span")
+    source_span = _parse_source_span(source_span_value) if source_span_value is not None else None
+    policy_object_value = value.get("policy_object")
+    if policy_object_value is not None and (
+        not isinstance(policy_object_value, str) or not policy_object_value.strip()
+    ):
+        raise ValueError(f"evidence_bundle row {row_id!r} policy_object must be a non-empty string")
+    policy_object = policy_object_value.strip() if isinstance(policy_object_value, str) else None
+    if source_span is None and policy_object is None:
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} must include source_span or policy_object"
+        )
+    if semantic_carrier != "declared_policy" and source_span is None:
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} carrier {semantic_carrier!r} requires source_span"
+        )
+    if source_span is not None and source_span.path != carrier_path:
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} source_span.path {source_span.path!r} must match "
+            f"carrier_path {carrier_path!r}"
+        )
+    return CarrierCheckerEvidence(
+        row_id=row_id,
+        semantic_carrier=semantic_carrier,
+        kind=kind,
+        checker=checker.strip(),
+        carrier_path=carrier_path,
+        carrier_sha256=carrier_sha256,
+        proof_artifact_path=proof_artifact_path,
+        proof_artifact_sha256=proof_artifact_sha256,
+        source_span=source_span,
+        policy_object=policy_object,
+    )
+
+
+def _parse_boundary_covered_effects(value: Any, *, row_id: str, contract_id: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} contract {contract_id!r} covered_effects must be "
+            "a non-empty list[str]"
+        )
+    effects: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(
+                f"evidence_bundle row {row_id!r} contract {contract_id!r} covered_effects must "
+                "contain non-empty strings"
+            )
+        effect = item.strip()
+        if effect not in effects:
+            effects.append(effect)
+    return tuple(effects)
+
+
+def _parse_boundary_contract_record(value: Any) -> BoundaryContractEvidence:
+    if not isinstance(value, dict):
+        raise ValueError("evidence_bundle boundary_contract_records entries must be mappings")
+    row_id = _require_non_empty_string(value.get("row_id"), field="boundary_contract_records.row_id")
+    contract_id = _require_non_empty_string(
+        value.get("contract_id"),
+        field=f"boundary_contract_records[{row_id}].contract_id",
+    )
+    covered_effects = _parse_boundary_covered_effects(
+        value.get("covered_effects"),
+        row_id=row_id,
+        contract_id=contract_id,
+    )
+    contract_path = _normalize_repo_path(
+        value.get("contract_path"),
+        field="contract_path",
+        row_id=row_id,
+    )
+    if _is_historical_conformance_report(contract_path):
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} contract {contract_id!r} contract_path "
+            f"{contract_path!r} cannot use a historical conformance report as authority"
+        )
+    contract_sha256 = _require_sha256(
+        value.get("contract_sha256"),
+        field=f"boundary_contract_records[{row_id}].contract_sha256",
+    )
+    source_span_value = value.get("source_span")
+    source_span = _parse_source_span(source_span_value) if source_span_value is not None else None
+    policy_object_value = value.get("policy_object")
+    if policy_object_value is not None and (
+        not isinstance(policy_object_value, str) or not policy_object_value.strip()
+    ):
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} contract {contract_id!r} policy_object must be a "
+            "non-empty string"
+        )
+    policy_object = policy_object_value.strip() if isinstance(policy_object_value, str) else None
+    if source_span is None and policy_object is None:
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} contract {contract_id!r} must include source_span "
+            "or policy_object"
+        )
+    if source_span is not None and source_span.path != contract_path:
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} contract {contract_id!r} source_span.path "
+            f"{source_span.path!r} must match contract_path {contract_path!r}"
+        )
+    return BoundaryContractEvidence(
+        row_id=row_id,
+        contract_id=contract_id,
+        covered_effects=covered_effects,
+        contract_path=contract_path,
+        contract_sha256=contract_sha256,
+        source_span=source_span,
+        policy_object=policy_object,
+    )
+
+
+def _parse_boundary_receipt_record(value: Any) -> BoundaryReceiptEvidence:
+    if not isinstance(value, dict):
+        raise ValueError("evidence_bundle boundary_receipt_records entries must be mappings")
+    row_id = _require_non_empty_string(value.get("row_id"), field="boundary_receipt_records.row_id")
+    contract_id = _require_non_empty_string(
+        value.get("contract_id"),
+        field=f"boundary_receipt_records[{row_id}].contract_id",
+    )
+    covered_effects = _parse_boundary_covered_effects(
+        value.get("covered_effects"),
+        row_id=row_id,
+        contract_id=contract_id,
+    )
+    receipt_path = _normalize_repo_path(
+        value.get("receipt_path"),
+        field="receipt_path",
+        row_id=row_id,
+    )
+    if _is_historical_conformance_report(receipt_path):
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} contract {contract_id!r} receipt_path "
+            f"{receipt_path!r} cannot use a historical conformance report as authority"
+        )
+    receipt_sha256 = _require_sha256(
+        value.get("receipt_sha256"),
+        field=f"boundary_receipt_records[{row_id}].receipt_sha256",
+    )
+    return BoundaryReceiptEvidence(
+        row_id=row_id,
+        contract_id=contract_id,
+        covered_effects=covered_effects,
+        receipt_path=receipt_path,
+        receipt_sha256=receipt_sha256,
+    )
+
+
+def _parse_boundary_semantic_health_record(value: Any) -> BoundarySemanticHealthEvidence:
+    if not isinstance(value, dict):
+        raise ValueError("evidence_bundle boundary_semantic_health_records entries must be mappings")
+    row_id = _require_non_empty_string(
+        value.get("row_id"),
+        field="boundary_semantic_health_records.row_id",
+    )
+    contract_id = _require_non_empty_string(
+        value.get("contract_id"),
+        field=f"boundary_semantic_health_records[{row_id}].contract_id",
+    )
+    covered_effects = _parse_boundary_covered_effects(
+        value.get("covered_effects"),
+        row_id=row_id,
+        contract_id=contract_id,
+    )
+    proof_artifact_path = _normalize_repo_path(
+        value.get("proof_artifact_path"),
+        field="proof_artifact_path",
+        row_id=row_id,
+    )
+    if _is_historical_conformance_report(proof_artifact_path):
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} contract {contract_id!r} proof_artifact_path "
+            f"{proof_artifact_path!r} cannot use a historical conformance report as authority"
+        )
+    proof_artifact_sha256 = _require_sha256(
+        value.get("proof_artifact_sha256"),
+        field=f"boundary_semantic_health_records[{row_id}].proof_artifact_sha256",
+    )
+    status = _require_non_empty_string(
+        value.get("status"),
+        field=f"boundary_semantic_health_records[{row_id}].status",
+    )
+    return BoundarySemanticHealthEvidence(
+        row_id=row_id,
+        contract_id=contract_id,
+        covered_effects=covered_effects,
+        proof_artifact_path=proof_artifact_path,
+        proof_artifact_sha256=proof_artifact_sha256,
+        status=status,
+    )
+
+
+def _parse_boundary_phase_result_record(value: Any) -> BoundaryPhaseResultEvidence:
+    if not isinstance(value, dict):
+        raise ValueError("evidence_bundle boundary_phase_result_records entries must be mappings")
+    row_id = _require_non_empty_string(
+        value.get("row_id"),
+        field="boundary_phase_result_records.row_id",
+    )
+    contract_id = _require_non_empty_string(
+        value.get("contract_id"),
+        field=f"boundary_phase_result_records[{row_id}].contract_id",
+    )
+    covered_effects = _parse_boundary_covered_effects(
+        value.get("covered_effects"),
+        row_id=row_id,
+        contract_id=contract_id,
+    )
+    phase_result_path = _normalize_repo_path(
+        value.get("phase_result_path"),
+        field="phase_result_path",
+        row_id=row_id,
+    )
+    if _is_historical_conformance_report(phase_result_path):
+        raise ValueError(
+            f"evidence_bundle row {row_id!r} contract {contract_id!r} phase_result_path "
+            f"{phase_result_path!r} cannot use a historical conformance report as authority"
+        )
+    phase_result_sha256 = _require_sha256(
+        value.get("phase_result_sha256"),
+        field=f"boundary_phase_result_records[{row_id}].phase_result_sha256",
+    )
+    return BoundaryPhaseResultEvidence(
+        row_id=row_id,
+        contract_id=contract_id,
+        covered_effects=covered_effects,
+        phase_result_path=phase_result_path,
+        phase_result_sha256=phase_result_sha256,
+    )
+
+
+def _load_evidence_bundle(path: Path) -> EvidenceBundle:
+    payload = _load_yaml(path)
+    schema = payload.get("schema")
+    if schema != EXPECTED_EVIDENCE_SCHEMA:
+        raise ValueError(f"evidence_bundle schema must be {EXPECTED_EVIDENCE_SCHEMA!r}")
+    records = payload.get("records")
+    if not isinstance(records, list):
+        raise ValueError("evidence_bundle records must be a list")
+    boundary_contract_records = payload.get("boundary_contract_records", [])
+    if not isinstance(boundary_contract_records, list):
+        raise ValueError("evidence_bundle boundary_contract_records must be a list")
+    boundary_receipt_records = payload.get("boundary_receipt_records", [])
+    if not isinstance(boundary_receipt_records, list):
+        raise ValueError("evidence_bundle boundary_receipt_records must be a list")
+    boundary_semantic_health_records = payload.get("boundary_semantic_health_records", [])
+    if not isinstance(boundary_semantic_health_records, list):
+        raise ValueError("evidence_bundle boundary_semantic_health_records must be a list")
+    boundary_phase_result_records = payload.get("boundary_phase_result_records", [])
+    if not isinstance(boundary_phase_result_records, list):
+        raise ValueError("evidence_bundle boundary_phase_result_records must be a list")
+    return EvidenceBundle(
+        schema=schema,
+        records=tuple(_parse_evidence_record(record) for record in records),
+        boundary_contract_records=tuple(
+            _parse_boundary_contract_record(record) for record in boundary_contract_records
+        ),
+        boundary_receipt_records=tuple(
+            _parse_boundary_receipt_record(record) for record in boundary_receipt_records
+        ),
+        boundary_semantic_health_records=tuple(
+            _parse_boundary_semantic_health_record(record)
+            for record in boundary_semantic_health_records
+        ),
+        boundary_phase_result_records=tuple(
+            _parse_boundary_phase_result_record(record) for record in boundary_phase_result_records
+        ),
+    )
+
+
 def _machine_report_contract(traceability: dict[str, Any]) -> dict[str, Any]:
     gate = traceability.get("final_conformance_gate")
     if not isinstance(gate, dict):
@@ -163,17 +605,122 @@ def _suffix_contract(contract: dict[str, Any]) -> dict[str, set[str]]:
     return suffixes
 
 
+def _validate_boundary_path_hash(path: str, expected_sha256: str, *, repo_root: Path) -> bool:
+    target = repo_root / path
+    return target.is_file() and _sha256(target) == expected_sha256
+
+
+def _coherent_boundary_contract_record(
+    records: list[BoundaryContractEvidence],
+    *,
+    required_effects: set[str],
+    allowed_effects: set[str],
+    repo_root: Path,
+) -> bool:
+    for record in records:
+        covered_effects = set(record.covered_effects)
+        if not covered_effects <= allowed_effects:
+            continue
+        if not required_effects <= covered_effects:
+            continue
+        if not _validate_boundary_path_hash(
+            record.contract_path,
+            record.contract_sha256,
+            repo_root=repo_root,
+        ):
+            continue
+        return True
+    return False
+
+
+def _coherent_boundary_receipt_record(
+    records: list[BoundaryReceiptEvidence],
+    *,
+    required_effects: set[str],
+    allowed_effects: set[str],
+    repo_root: Path,
+) -> bool:
+    for record in records:
+        covered_effects = set(record.covered_effects)
+        if not covered_effects <= allowed_effects:
+            continue
+        if not required_effects <= covered_effects:
+            continue
+        if not _validate_boundary_path_hash(
+            record.receipt_path,
+            record.receipt_sha256,
+            repo_root=repo_root,
+        ):
+            continue
+        return True
+    return False
+
+
+def _coherent_boundary_semantic_health_record(
+    records: list[BoundarySemanticHealthEvidence],
+    *,
+    required_effects: set[str],
+    allowed_effects: set[str],
+    repo_root: Path,
+) -> bool:
+    for record in records:
+        covered_effects = set(record.covered_effects)
+        if not covered_effects <= allowed_effects:
+            continue
+        if not required_effects <= covered_effects:
+            continue
+        if record.status != BOUNDARY_SEMANTIC_HEALTH_STATUS:
+            continue
+        if not _validate_boundary_path_hash(
+            record.proof_artifact_path,
+            record.proof_artifact_sha256,
+            repo_root=repo_root,
+        ):
+            continue
+        return True
+    return False
+
+
+def _coherent_boundary_phase_result_record(
+    records: list[BoundaryPhaseResultEvidence],
+    *,
+    required_effects: set[str],
+    allowed_effects: set[str],
+    repo_root: Path,
+) -> bool:
+    for record in records:
+        covered_effects = set(record.covered_effects)
+        if not covered_effects <= allowed_effects:
+            continue
+        if not required_effects <= covered_effects:
+            continue
+        if not _validate_boundary_path_hash(
+            record.phase_result_path,
+            record.phase_result_sha256,
+            repo_root=repo_root,
+        ):
+            continue
+        return True
+    return False
+
+
 def validate_conformance_ledger(
     *,
     repo_root: Path,
     conformance_path: Path,
     traceability_path: Path,
+    evidence_bundle_path: Path | None = None,
 ) -> list[str]:
     """Return validation errors for a final conformance YAML ledger."""
     errors: list[str] = []
     try:
         conformance = _load_yaml(conformance_path)
         traceability = _load_yaml(traceability_path)
+        evidence_bundle = _load_evidence_bundle(
+            evidence_bundle_path
+            if evidence_bundle_path is not None
+            else repo_root / EXPECTED_EVIDENCE_BUNDLE
+        )
         machine_report = _machine_report_contract(traceability)
         expected_target_report = _traceability_target_report(traceability)
         valid_statuses = _string_set_from_contract(
@@ -210,6 +757,32 @@ def validate_conformance_ledger(
     except ValueError as exc:
         return [str(exc)]
 
+    records_by_row_id: dict[str, list[CarrierCheckerEvidence]] = {}
+    for record in evidence_bundle.records:
+        records_by_row_id.setdefault(record.row_id, []).append(record)
+    boundary_contract_records_by_key: dict[tuple[str, str], list[BoundaryContractEvidence]] = {}
+    for record in evidence_bundle.boundary_contract_records:
+        boundary_contract_records_by_key.setdefault((record.row_id, record.contract_id), []).append(record)
+    boundary_receipt_records_by_key: dict[tuple[str, str], list[BoundaryReceiptEvidence]] = {}
+    for record in evidence_bundle.boundary_receipt_records:
+        boundary_receipt_records_by_key.setdefault((record.row_id, record.contract_id), []).append(record)
+    boundary_semantic_health_records_by_key: dict[
+        tuple[str, str], list[BoundarySemanticHealthEvidence]
+    ] = {}
+    for record in evidence_bundle.boundary_semantic_health_records:
+        boundary_semantic_health_records_by_key.setdefault(
+            (record.row_id, record.contract_id),
+            [],
+        ).append(record)
+    boundary_phase_result_records_by_key: dict[
+        tuple[str, str], list[BoundaryPhaseResultEvidence]
+    ] = {}
+    for record in evidence_bundle.boundary_phase_result_records:
+        boundary_phase_result_records_by_key.setdefault(
+            (record.row_id, record.contract_id),
+            [],
+        ).append(record)
+
     expected_schema = machine_report.get("schema", EXPECTED_SCHEMA)
     if conformance.get("schema") != expected_schema:
         errors.append(f"schema must be {expected_schema!r}")
@@ -224,7 +797,17 @@ def validate_conformance_ledger(
         trace_rows = []
     expected_ids = []
     traceability_proof_categories: dict[str, list[str]] = {}
+    traceability_boundary_effects: dict[str, tuple[str, ...]] = {}
+    traceability_boundary_contract_ids: dict[str, tuple[str, ...]] = {}
     allowed_proof_categories: set[str] = set()
+    raw_boundary_effect_values = traceability.get("boundary_effect_values", [])
+    if not isinstance(raw_boundary_effect_values, list) or not all(
+        isinstance(item, str) and item.strip() for item in raw_boundary_effect_values
+    ):
+        errors.append("traceability boundary_effect_values must be a list[str]")
+        allowed_boundary_effects: set[str] = set()
+    else:
+        allowed_boundary_effects = {item.strip() for item in raw_boundary_effect_values}
     for row in trace_rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             continue
@@ -241,6 +824,44 @@ def validate_conformance_ledger(
             proof_categories = []
         traceability_proof_categories[row_id] = proof_categories
         allowed_proof_categories.update(proof_categories)
+        boundary_effects_value = row.get("boundary_effects_required")
+        boundary_contract_ids_value = row.get("boundary_contract_ids")
+        if boundary_effects_value is None:
+            if boundary_contract_ids_value is not None:
+                errors.append(
+                    f"traceability row {row_id!r} boundary_contract_ids requires "
+                    "boundary_effects_required"
+                )
+            continue
+        try:
+            boundary_effects = tuple(
+                _label_list(
+                    boundary_effects_value,
+                    field="boundary_effects_required",
+                    row_id=row_id,
+                )
+            )
+            unknown_effects = sorted(set(boundary_effects) - allowed_boundary_effects)
+            if unknown_effects:
+                errors.append(
+                    f"traceability row {row_id!r} boundary_effects_required contains unknown "
+                    f"effects: {', '.join(unknown_effects)}"
+                )
+            traceability_boundary_effects[row_id] = boundary_effects
+        except ValueError as exc:
+            errors.append(str(exc))
+            boundary_effects = ()
+        try:
+            contract_ids = tuple(
+                _label_list(
+                    boundary_contract_ids_value,
+                    field="boundary_contract_ids",
+                    row_id=row_id,
+                )
+            )
+            traceability_boundary_contract_ids[row_id] = contract_ids
+        except ValueError as exc:
+            errors.append(str(exc))
 
     rows = conformance.get("rows")
     if not isinstance(rows, list):
@@ -363,6 +984,101 @@ def validate_conformance_ledger(
                     row_id=row_id,
                     suffixes=carrier_suffixes,
                 )
+                matching_records = records_by_row_id.get(row_id, [])
+                if not matching_records:
+                    errors.append(
+                        f"row {row_id!r} implemented rows require current checker evidence in "
+                        f"{evidence_bundle_path or (repo_root / EXPECTED_EVIDENCE_BUNDLE)}"
+                    )
+                for carrier_path in carrier_paths:
+                    if _is_historical_conformance_report(carrier_path):
+                        errors.append(
+                            f"row {row_id!r} carrier_evidence path {carrier_path!r} cannot use a "
+                            "historical conformance report as authority"
+                        )
+                        continue
+                    path_records = [
+                        record
+                        for record in matching_records
+                        if record.semantic_carrier == carrier and record.carrier_path == carrier_path
+                    ]
+                    if not path_records:
+                        errors.append(
+                            f"row {row_id!r} carrier_evidence path {carrier_path!r} lacks matching "
+                            "current checker evidence"
+                        )
+                        continue
+                    row_proof_paths = set(proof_paths)
+                    matched = False
+                    for record in path_records:
+                        if record.proof_artifact_path not in row_proof_paths:
+                            continue
+                        carrier_target = repo_root / record.carrier_path
+                        proof_target = repo_root / record.proof_artifact_path
+                        if _sha256(carrier_target) != record.carrier_sha256:
+                            continue
+                        if _sha256(proof_target) != record.proof_artifact_sha256:
+                            continue
+                        matched = True
+                        break
+                    if not matched:
+                        errors.append(
+                            f"row {row_id!r} carrier_evidence path {carrier_path!r} lacks current "
+                            "checker evidence with matching hashes and proof artifacts"
+                        )
+                required_boundary_effects = set(traceability_boundary_effects.get(row_id, ()))
+                if required_boundary_effects:
+                    contract_ids = traceability_boundary_contract_ids.get(row_id, ())
+                    if not contract_ids:
+                        errors.append(
+                            f"row {row_id!r} traceability metadata must declare boundary_contract_ids"
+                        )
+                    receipt_effects = required_boundary_effects & BOUNDARY_RECEIPT_REQUIRED_EFFECTS
+                    phase_result_effects = (
+                        required_boundary_effects & BOUNDARY_PHASE_RESULT_REQUIRED_EFFECTS
+                    )
+                    for contract_id in contract_ids:
+                        key = (row_id, contract_id)
+                        if not _coherent_boundary_contract_record(
+                            boundary_contract_records_by_key.get(key, []),
+                            required_effects=required_boundary_effects,
+                            allowed_effects=allowed_boundary_effects,
+                            repo_root=repo_root,
+                        ):
+                            errors.append(
+                                f"row {row_id!r} contract {contract_id!r} lacks coherent "
+                                "boundary contract evidence"
+                            )
+                        if not _coherent_boundary_semantic_health_record(
+                            boundary_semantic_health_records_by_key.get(key, []),
+                            required_effects=required_boundary_effects,
+                            allowed_effects=allowed_boundary_effects,
+                            repo_root=repo_root,
+                        ):
+                            errors.append(
+                                f"row {row_id!r} contract {contract_id!r} lacks coherent "
+                                "boundary semantic-health evidence"
+                            )
+                        if receipt_effects and not _coherent_boundary_receipt_record(
+                            boundary_receipt_records_by_key.get(key, []),
+                            required_effects=receipt_effects,
+                            allowed_effects=allowed_boundary_effects,
+                            repo_root=repo_root,
+                        ):
+                            errors.append(
+                                f"row {row_id!r} contract {contract_id!r} lacks coherent "
+                                "boundary receipt evidence"
+                            )
+                        if phase_result_effects and not _coherent_boundary_phase_result_record(
+                            boundary_phase_result_records_by_key.get(key, []),
+                            required_effects=phase_result_effects,
+                            allowed_effects=allowed_boundary_effects,
+                            repo_root=repo_root,
+                        ):
+                            errors.append(
+                                f"row {row_id!r} contract {contract_id!r} lacks coherent "
+                                "boundary phase/result evidence"
+                            )
             except ValueError as exc:
                 errors.append(str(exc))
 
@@ -386,6 +1102,11 @@ def main(argv: list[str] | None = None) -> int:
         default=EXPECTED_TRACEABILITY,
         help="Path to megaplan-native-representation-traceability.yaml",
     )
+    parser.add_argument(
+        "--evidence-bundle",
+        default=EXPECTED_EVIDENCE_BUNDLE,
+        help="Path to megaplan-native-representation-evidence.yaml",
+    )
     parser.add_argument("--repo-root", default=".", help="Repository root")
     args = parser.parse_args(argv)
 
@@ -396,11 +1117,15 @@ def main(argv: list[str] | None = None) -> int:
     traceability_path = Path(args.traceability)
     if not traceability_path.is_absolute():
         traceability_path = repo_root / traceability_path
+    evidence_bundle_path = Path(args.evidence_bundle)
+    if not evidence_bundle_path.is_absolute():
+        evidence_bundle_path = repo_root / evidence_bundle_path
 
     errors = validate_conformance_ledger(
         repo_root=repo_root,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
     if errors:
         for error in errors:
