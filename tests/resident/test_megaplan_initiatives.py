@@ -354,3 +354,105 @@ def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_containe
     assert on_disk.exists()
     written = json.loads(on_disk.read_text(encoding="utf-8"))
     assert any(s["session"] == "live" for s in written["sessions"])
+
+
+def test_megaplan_resident_hot_context_builds_fresh_with_markers_without_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P0: marker-dir presence (not the trust env var) triggers a fresh build, so
+    a resident that lost MEGAPLAN_TRUSTED_CONTAINER on a manual restart still
+    serves live per-turn data. Without the env var it must NOT clobber the shared
+    cache."""
+    import json
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    marker_dir = tmp_path / "cloud-sessions"
+    marker_dir.mkdir()
+    ws = tmp_path / "live"
+    ws.mkdir()
+    (marker_dir / "live.json").write_text(
+        json.dumps(
+            {
+                "session": "live",
+                "workspace": str(ws),
+                "remote_spec": "/spec/live",
+                "started_at": "2026-07-04T20:00:00Z",
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
+    monkeypatch.setattr(status_snapshot, "DEFAULT_WATCHDOG_REPORT", tmp_path / "absent-report.json")
+    on_disk = tmp_path / "cloud-status.json"
+
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=on_disk),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    context = asyncio.run(profile.load_hot_context("c"))
+
+    snap = context["cloud_status_snapshot"]
+    assert snap is not None
+    assert context["cloud_status_degraded"] is None
+    # Fresh build reflects the live marker even without the trust env var...
+    assert any(s["session"] == "live" for s in snap["sessions"])
+    # ...visibility reports the actual trust/marker state.
+    assert context["resident_runtime"]["has_local_markers"] is True
+    assert context["resident_runtime"]["trusted_container"] is False
+    # Without the trust env var, the shared cache must NOT be written.
+    assert not on_disk.exists()
+
+
+def test_megaplan_resident_hot_context_sanitizes_stale_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1: a present-but-stale cache snapshot is sanitized — sessions/summary
+    stripped and a stale_banner attached — so the resident cannot cite frozen
+    numbers as authoritative, and plan_activity_summary marks it degraded."""
+    import json
+    from datetime import datetime, timedelta, timezone
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    project = tmp_path / "project"
+    project.mkdir()
+    old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat().replace("+00:00", "Z")
+    snapshot_path = tmp_path / "cloud-status.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "generated_at": old,
+                "source": "cloud-local-observer",
+                "summary": {"running": 1, "blocked": 0, "repairing": 0, "complete": 0, "attention": 0},
+                "sessions": [{"session": "frozen", "status": "running", "current_plan": "m1"}],
+                "degraded": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    # No marker dir on a laptop/CLI host -> cache-read path is taken.
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", tmp_path / "no-cloud-sessions")
+
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=snapshot_path),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("c"))
+
+    snap = context["cloud_status_snapshot"]
+    assert snap is not None
+    assert snap["sessions"] == []                # stale numbers withheld
+    assert snap["summary"]["running"] == 0
+    assert snap["stale_banner"]
+    assert "WATCHDOG STALE" in snap["stale_banner"]
+    assert context["cloud_status_degraded"] is not None
+    assert context["plan_activity_summary"]["degraded"] is True

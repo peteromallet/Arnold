@@ -81,6 +81,22 @@ def is_trusted_container() -> bool:
         return False
     return DEFAULT_MARKER_DIR.exists()
 
+
+def has_local_markers(marker_dir: Path | None = None) -> bool:
+    """True when the canonical cloud-session marker directory is present.
+
+    This is the on-box signal independent of the trust env var: when the marker
+    dir exists, a fresh local snapshot can be built from it with no SSH. Unlike
+    :func:`is_trusted_container`, this does NOT require
+    ``MEGAPLAN_TRUSTED_CONTAINER=1`` — so a resident that lost the env var on a
+    manual restart still reads live markers instead of a stale cache (see
+    ``docs/arnold/watchdog-snapshot-staleness-fix.md`` P0). The canonical path is
+    absolute (``/workspace/.megaplan/cloud-sessions``), so a laptop/CLI checkout
+    with only a relative ``.megaplan`` cannot falsely trip it.
+    """
+    directory = Path(marker_dir) if marker_dir else DEFAULT_MARKER_DIR
+    return directory.is_dir()
+
 # A session whose latest activity is older than this is not "running" on
 # activity alone; it must have a live process or be under active repair.
 STALE_ACTIVITY_S = 30 * 60
@@ -287,6 +303,18 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         return {
             "degraded": True,
             "reason": "no cloud status snapshot available",
+            "active_working": [],
+            "should_be_working_but_needs_attention": [],
+            "recently_completed": [],
+        }
+    # A sanitized stale snapshot (P1) carries a stale_banner and intentionally
+    # empty buckets; surface it as degraded with the banner so consumers never
+    # read "0 running" off a frozen view as "nothing is running".
+    if snapshot.get("stale_banner"):
+        return {
+            "degraded": True,
+            "reason": snapshot.get("stale_reason") or "snapshot stale",
+            "stale_banner": snapshot.get("stale_banner"),
             "active_working": [],
             "should_be_working_but_needs_attention": [],
             "recently_completed": [],

@@ -21,9 +21,26 @@ if [[ "$running" != "true" ]]; then
   fi
 fi
 
+# The watchdog tmux session may EXIST yet be HUNG — the snapshot-staleness
+# failure mode: the loop is alive in tmux but not sweeping, so cloud-status.json
+# and the heartbeat go stale. The watchdog touches watchdog.heartbeat at each
+# sweep start, so a heartbeat older than the threshold means the session is
+# stuck; kill it and fall through to a fresh restart. Tune the threshold to ~2x
+# the watchdog INTERVAL (default 60m) + grace; the default 130m assumes that.
+# (watchdog-snapshot-staleness-fix.md P3)
+STALE_HEARTBEAT_MIN="${MEGAPLAN_WATCHDOG_STALE_HEARTBEAT_MIN:-130}"
+HEARTBEAT="/workspace/.megaplan/status/watchdog.heartbeat"
+
 if docker exec "$CONTAINER" bash -lc "tmux has-session -t watchdog" >/dev/null 2>&1; then
-  log "watchdog_alive container=$CONTAINER"
-  exit 0
+  stale="$(docker exec "$CONTAINER" bash -lc "find '$HEARTBEAT' -mmin +${STALE_HEARTBEAT_MIN} 2>/dev/null | head -n1 || true")"
+  if [[ -n "$stale" ]]; then
+    log "watchdog_heartbeat_stale container=$CONTAINER (older than ${STALE_HEARTBEAT_MIN}m); killing hung session to restart"
+    docker exec "$CONTAINER" bash -lc "tmux kill-session -t watchdog 2>/dev/null || true"
+    # fall through to restart below
+  else
+    log "watchdog_alive container=$CONTAINER"
+    exit 0
+  fi
 fi
 
 log "watchdog_missing restarting container=$CONTAINER"
