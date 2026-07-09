@@ -622,6 +622,48 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
   }
 }
 
+const AGENT_FETCH_DEADLINE_MS = 30000;
+
+/**
+ * Resolve the fetch deadline (ms) for agent status/info polling. Production
+ * defaults to ~30s; tests can inject a shorter deadline via deps.fetchDeadlineMs
+ * to exercise timeout behavior deterministically.
+ */
+function resolveFetchDeadlineMs(deps) {
+  const ms = deps?.fetchDeadlineMs;
+  return Number.isFinite(ms) && ms > 0 ? ms : AGENT_FETCH_DEADLINE_MS;
+}
+
+/**
+ * Create a deadline controller that aborts an in-flight fetch after deadlineMs.
+ * Returns { signal, isTimeout, clear }. ``signal`` is passed to fetch(); when the
+ * deadline fires the controller aborts (fetch rejects) and ``isTimeout()`` reports
+ * true so callers can tag the resulting diagnostic. ``clear()`` cancels the timer
+ * and must run once the fetch settles (success or failure) to avoid leaking the
+ * abort timer. Falls back to a no-signal controller when AbortController is absent.
+ */
+function createFetchDeadlineController(deadlineMs = AGENT_FETCH_DEADLINE_MS) {
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timerId = null;
+  let timedOut = false;
+  if (controller && typeof setTimeout === "function") {
+    timerId = setTimeout(() => {
+      timedOut = true;
+      try { controller.abort(); } catch (_) { /* noop */ }
+    }, deadlineMs);
+  }
+  return {
+    signal: controller ? controller.signal : undefined,
+    isTimeout() { return timedOut; },
+    clear() {
+      if (timerId !== null && typeof clearTimeout === "function") {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+    },
+  };
+}
+
 export async function refreshVibeComfyInfo(panel, deps = {}) {
   const {
     markAgentPanelDirtyAfterCommit,

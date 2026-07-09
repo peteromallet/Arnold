@@ -205,10 +205,26 @@ def execute_runtime_code_dynamic(
     source = intent.get("source")
     source = source if isinstance(source, str) else ""
 
-    # Re-derive execution-mode caps from the resolved mode at execution time.
-    # The widget mode is authoritative; an agent's snapshot of allowed_builtins /
-    # allowed_imports / timeout_ms must never widen the runtime sandbox (SD3).
-    resolved_mode = resolve_execution_mode(runtime)
+    # Validate the runtime-code contract before execution. Invalid contracts
+    # are rejected before the worker is ever spawned so malformed or forbidden
+    # code never reaches _run_worker (T7 trust-and-safety boundary).
+    contract = validate_runtime_code_contract(
+        class_type=KIND_TO_CLASS_TYPE["code"],
+        payload=props,
+        require_runtime=True,
+    )
+    if not contract.ok or contract.normalized is None:
+        raise RuntimeCodeExecutionError(
+            "runtime_contract_invalid",
+            "Runtime-backed code contract failed validation before execution.",
+            {"issues": [problem.code for problem in contract.problems]},
+        )
+
+    # The normalized contract is authoritative for the execution sandbox: the
+    # widget/agent snapshot must never widen execution_mode, timeout_ms, or
+    # allowed_builtins beyond the validated contract (SD3).
+    normalized = contract.normalized
+    resolved_mode = normalized.execution_mode or RUNTIME_CODE_EXECUTION_MODE
 
     # Defense-in-depth ack: even if the contract validator was bypassed, never
     # execute unrestricted code without the explicit unrestricted_ack flag.
@@ -219,30 +235,17 @@ def execute_runtime_code_dynamic(
             {"mode": resolved_mode},
         )
 
-    if resolved_mode == RUNTIME_CODE_EXECUTION_MODE:
-        # expression_v1: always the fixed 16-name SAFE_BUILTINS set (SD6 re-derive at execution time)
-        allowed_builtins = sorted(RUNTIME_CODE_SAFE_BUILTINS)
-    else:
-        allowed_builtins_raw = runtime.get("allowed_builtins")
-        if isinstance(allowed_builtins_raw, list) and all(isinstance(x, str) for x in allowed_builtins_raw):
-            allowed_builtins = allowed_builtins_raw
-        else:
-            allowed_builtins = []
-
+    # allowed_builtins comes from the validated contract. allowed_imports is not
+    # carried by the normalized contract, so it is resolved "where applicable"
+    # from the resolved mode's allowlist (same table the validator consults).
+    allowed_builtins = list(normalized.allowed_builtins)
     mode_imports = _ALLOWED_IMPORTS_BY_MODE.get(resolved_mode)
     if mode_imports is None:
         allowed_imports: list[str] = []
     else:
         allowed_imports = sorted(mode_imports)
 
-    if resolved_mode == RUNTIME_CODE_EXECUTION_MODE:
-        timeout_default = 1000
-    else:
-        timeout_default = _TIMEOUT_MS_DEFAULT_BY_MODE.get(resolved_mode, 10_000)
-
-    timeout_ms_val = runtime.get("timeout_ms")
-    if not isinstance(timeout_ms_val, int) or isinstance(timeout_ms_val, bool):
-        timeout_ms_val = timeout_default
+    timeout_ms_val = normalized.timeout_ms
 
     outputs_spec = io.get("outputs")
     outputs_spec = outputs_spec if isinstance(outputs_spec, list) else []
