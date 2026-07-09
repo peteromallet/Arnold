@@ -1,1 +1,1 @@
-/workspace/extension-reality-chain-restart-continuation/arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/tickets_skill.md
+../../data/tickets_skill.md
