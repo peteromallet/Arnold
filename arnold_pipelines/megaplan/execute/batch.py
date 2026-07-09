@@ -833,6 +833,24 @@ def _resolve_max_tasks_per_batch(state: PlanState, args: argparse.Namespace) -> 
     return _positive_int_or_default(state_value, default)
 
 
+def _single_batch_mode_allowed(
+    *,
+    all_task_ids: list[str],
+    pending_task_count: int,
+    pending_batch_count: int,
+    completed_task_ids: set[str],
+    max_tasks_per_batch: int,
+) -> bool:
+    """Allow the whole-plan fast path only for a clean first execution."""
+
+    return (
+        not completed_task_ids
+        and pending_task_count == len(all_task_ids)
+        and pending_batch_count <= 1
+        and len(all_task_ids) <= max_tasks_per_batch
+    )
+
+
 def build_monitor_hint(plan_dir: Path) -> str:
     return f"Use `megaplan status --plan {plan_dir.name}` for updates."
 
@@ -2890,8 +2908,16 @@ def handle_execute_auto_loop(
                 chunks,
                 max_tasks_per_batch,
             )
-    single_batch_mode = (
-        len(split_batches) <= 1 and len(all_task_ids) <= max_tasks_per_batch
+    # The single-batch fast path is only safe for a clean first execution.
+    # On resume, ``pending_batches`` is the authoritative runnable frontier;
+    # replacing it with ``all_task_ids`` can co-scope unrelated/stale tasks
+    # and route the batch using complexity from outside that frontier.
+    single_batch_mode = _single_batch_mode_allowed(
+        all_task_ids=all_task_ids,
+        pending_task_count=len(pending_tasks),
+        pending_batch_count=len(split_batches),
+        completed_task_ids=completed_task_ids,
+        max_tasks_per_batch=max_tasks_per_batch,
     )
     global_batches = split_oversized_batches(
         compute_global_batches(finalize_data),
