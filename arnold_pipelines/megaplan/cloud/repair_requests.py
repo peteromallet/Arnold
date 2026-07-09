@@ -439,6 +439,21 @@ def claim_active_repair_request(
         now=now,
         is_pid_live=is_pid_live,
     )
+    result = _reclaim_stale_claim(
+        result,
+        claim_lock_dir=claim_lock_dir,
+        session=normalized_session,
+        blocker_id=normalized_blocker_id,
+        pid=pid,
+        command=command,
+        started_at=started_at,
+        cwd=cwd,
+        timeout_seconds=timeout_seconds,
+        hostname=hostname,
+        extra=metadata,
+        now=now,
+        is_pid_live=is_pid_live,
+    )
     return _claim_result_from_lock(
         result,
         blocker_id=normalized_blocker_id,
@@ -571,6 +586,45 @@ def _settle_owner_write_race(
         if inspected.status != "stale" or inspected_reasons != ["owner_metadata_missing"]:
             return inspected
     return result
+
+
+def _reclaim_stale_claim(
+    result: RepairLockResult,
+    *,
+    claim_lock_dir: Path,
+    session: str,
+    blocker_id: str,
+    pid: int | None,
+    command: str | None,
+    started_at: str | None,
+    cwd: str | None,
+    timeout_seconds: float | None,
+    hostname: str | None,
+    extra: Mapping[str, Any] | None,
+    now: datetime | None,
+    is_pid_live: Any | None,
+) -> RepairLockResult:
+    if not result.stale:
+        return result
+    owner = result.owner if isinstance(result.owner, dict) else None
+    expected_pid = owner.get("pid") if isinstance(owner, dict) and isinstance(owner.get("pid"), int) else None
+    if not release_repair_lock(claim_lock_dir, owner=owner, expected_pid=expected_pid):
+        return result
+    reacquired = acquire_repair_lock(
+        claim_lock_dir,
+        session=session,
+        target_id=blocker_id,
+        pid=pid,
+        command=command,
+        started_at=started_at,
+        cwd=cwd,
+        timeout_seconds=timeout_seconds,
+        hostname=hostname or _hostname(),
+        extra=extra,
+        now=now,
+        is_pid_live=is_pid_live,
+    )
+    return _settle_owner_write_race(reacquired, now=now, is_pid_live=is_pid_live)
 
 
 def _normalize_claim_identity(value: str, field: str) -> str:

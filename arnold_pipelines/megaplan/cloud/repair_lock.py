@@ -96,6 +96,7 @@ def inspect_repair_lock(
         evidence["reasons"].append("lock_path_not_directory")
 
     owner: dict[str, Any] | None = owner_payload if isinstance(owner_payload, dict) else None
+    pid_probe = is_pid_live or _default_is_pid_live
     if owner is None:
         if owner_path.exists():
             evidence["reasons"].append("owner_metadata_invalid")
@@ -105,7 +106,7 @@ def inspect_repair_lock(
         evidence["owner"] = owner
         pid = owner.get("pid")
         if isinstance(pid, int):
-            if is_pid_live is not None and not is_pid_live(pid):
+            if not pid_probe(pid):
                 evidence["reasons"].append("owner_pid_not_live")
         else:
             evidence["reasons"].append("owner_pid_missing")
@@ -259,6 +260,20 @@ def _default_hostname() -> str:
         return socket.gethostname()
     except OSError:
         return ""
+
+
+def _default_is_pid_live(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _utc_now() -> str:

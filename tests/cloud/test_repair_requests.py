@@ -120,9 +120,8 @@ def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> No
     )
     assert first.claimed
     owner_path = first.lock_dir / "owner.json"
-    snapshot = owner_path.read_text(encoding="utf-8")
 
-    stale = repair_requests.claim_active_repair_request(
+    reclaimed = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id="blocker:v1:stale",
         request_id="req-stale",
@@ -133,14 +132,40 @@ def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> No
         is_pid_live=lambda pid: False,
     )
 
-    assert stale.stale
-    assert stale.evidence is not None
-    assert stale.evidence["kind"] == "active_repair_claim_stale"
-    assert stale.evidence["stale_evidence"]["owner"]["request_id"] == "req-stale"
-    assert "owner_pid_not_live" in stale.evidence["stale_evidence"]["reasons"]
-    assert "timeout_expired" in stale.evidence["stale_evidence"]["reasons"]
-    assert owner_path.read_text(encoding="utf-8") == snapshot
+    assert reclaimed.claimed
+    assert reclaimed.owner is not None
+    assert reclaimed.owner["pid"] == 444
+    assert reclaimed.owner["actor"] == "trigger-b"
+    assert reclaimed.owner["request_id"] == "req-stale"
+    assert json.loads(owner_path.read_text(encoding="utf-8")) == reclaimed.owner
     assert first.lock_dir.exists()
+
+
+def test_active_repair_claim_reclaims_dead_owner_without_custom_probe(tmp_path: Path) -> None:
+    queue_dir = tmp_path / "repair-queue"
+    first = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:default-probe",
+        request_id="req-default-probe",
+        actor="trigger-a",
+        session="demo-session",
+        pid=99_999_999,
+        started_at="2026-07-04T01:00:00+00:00",
+    )
+    assert first.claimed
+
+    reclaimed = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:default-probe",
+        request_id="req-default-probe",
+        actor="trigger-b",
+        session="demo-session",
+        pid=555,
+    )
+
+    assert reclaimed.claimed
+    assert reclaimed.owner is not None
+    assert reclaimed.owner["pid"] == 555
 
 
 def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path) -> None:
