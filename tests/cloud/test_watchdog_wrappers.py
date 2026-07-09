@@ -16002,6 +16002,15 @@ def _extract_canonical_block_program() -> str:
     return text[py_start:py_end]
 
 
+def test_repair_loop_defines_snapshot_path_before_canonical_block_use() -> None:
+    """The canonical snapshot prompt helper must not trip ``set -u`` on SNAPSHOT_PATH."""
+    text = _repair_wrapper()
+    status_idx = text.index('STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"')
+    snapshot_idx = text.index('SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"')
+    canonical_idx = text.index('python3 - "$SNAPSHOT_PATH" "$SESSION" "$ARNOLD_SRC" <<\'PY\'')
+    assert status_idx < snapshot_idx < canonical_idx
+
+
 def _run_canonical_block(
     tmp_path: Path,
     snapshot: dict,
