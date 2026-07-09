@@ -4396,7 +4396,7 @@ exit_if_repair_target_complete() {
   clear_repair_markers
   if [[ "$scope" == "stale_marker" ]]; then
     rm -f "$MARKER_PATH" 2>/dev/null || true
-    log "stale marker retired; no repair needed session=$SESSION phase=$phase reason=$reason marker_path=${MARKER_PATH:-n/a}"
+    log "stale marker retired; no repair needed session=$SESSION phase=$phase reason=stale_marker detail=$reason marker_path=${MARKER_PATH:-n/a}"
   elif [[ "$scope" == "chain" ]]; then
     log "chain already complete; no repair needed session=$SESSION phase=$phase reason=$reason chain_state_path=${chain_path:-n/a} plan_state=${plan_state:-unknown} plan_state_path=${plan_path:-n/a}"
   else
@@ -5563,12 +5563,11 @@ repair_source_initiative_if_possible() {
   result_path="$RUN_DIR/source-initiative-repair.json"
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$WORKSPACE" "$REMOTE_SPEC" "$ARNOLD_SRC" "$result_path" <<'PY' > /dev/null 2>>"$LOG"
 import json
-import shutil
 import sys
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.source_initiative_repair import (
-    source_initiative_restore_available,
+    repair_source_initiative,
 )
 
 workspace = Path(sys.argv[1])
@@ -5576,45 +5575,17 @@ remote_spec = Path(sys.argv[2])
 arnold_src = Path(sys.argv[3])
 result_path = Path(sys.argv[4])
 
-if not source_initiative_restore_available(
+result = repair_source_initiative(
     workspace=workspace,
     remote_spec=remote_spec,
     arnold_src=arnold_src,
-):
-    result_path.write_text(
-        json.dumps({"repaired": False, "reason": "source_initiative_unavailable", "details": {}}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    raise SystemExit(1)
-
-relative = remote_spec.relative_to(workspace)
-source_spec = arnold_src / relative
-source_root = source_spec.parent
-target_root = remote_spec.parent
-target_root.mkdir(parents=True, exist_ok=True)
-for item in source_root.iterdir():
-    destination = target_root / item.name
-    if item.is_dir():
-      shutil.copytree(item, destination, dirs_exist_ok=True)
-    else:
-      shutil.copy2(item, destination)
-
+)
 result_path.write_text(
-    json.dumps(
-        {
-            "repaired": True,
-            "reason": "source_initiative_restored",
-            "details": {
-                "workspace": str(workspace),
-                "remote_spec": str(remote_spec),
-                "source_spec": str(source_spec),
-            },
-        },
-        indent=2,
-    )
-    + "\n",
+    json.dumps(result.as_json(), indent=2) + "\n",
     encoding="utf-8",
 )
+if not result.repaired:
+    raise SystemExit(1)
 PY
   status=$?
   if [[ "$status" == "0" ]]; then

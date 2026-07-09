@@ -124,3 +124,90 @@ def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> 
         == "ordinary repair retrigger helper produced no verification record (returncode=1)"
     )
     assert payload["retrigger_command"] == "arnold-repair-loop demo-session"
+
+
+def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> None:
+    marker = (
+        'python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" '
+        '"$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_DIR" "$MARKER_DIR" <<'
+    )
+    program = _extract_meta_repair_embedded_python(marker)
+    prog_path = tmp_path / "_retrigger.py"
+    prog_path.write_text(program, encoding="utf-8")
+
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "target-workspace"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones:\n  - label: m1\n", encoding="utf-8")
+
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "complete",
+                "verification": {"outcome": "complete"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    argv_log = tmp_path / "argv.log"
+    repair_loop_bin = tmp_path / "fake-repair-loop"
+    repair_loop_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv_log))}\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    repair_loop_bin.chmod(repair_loop_bin.stat().st_mode | 0o111)
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(prog_path),
+            "demo-session",
+            str(repair_loop_bin),
+            str(tmp_path),
+            "",
+            str(repair_data_dir),
+            str(marker_dir),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    argv = argv_log.read_text(encoding="utf-8").splitlines()
+    assert argv == ["demo-session", str(workspace), str(spec_path)]
+
+    verification_json = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("VERIFICATION_JSON="):
+            verification_json = line.split("=", 1)[1]
+            break
+    assert verification_json
+    payload = json.loads(verification_json)
+    assert payload["accepted"] is True
+    assert payload["retrigger_command"] == (
+        f"{repair_loop_bin} demo-session {workspace} {spec_path}"
+    )

@@ -17,6 +17,10 @@ from arnold_pipelines.megaplan.orchestration.evidence_contract import (
     EvidenceRef,
     TransitionDecision,
 )
+from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    AuthorityDecision,
+    effective_execute_completed_task_ids,
+)
 from arnold_pipelines.megaplan.orchestration.transition_policy import (
     TRANSITION_DECISION_REVIEW_DONE_FILENAME,
     TransitionPolicy,
@@ -49,6 +53,7 @@ from arnold_pipelines.megaplan.workers import (
 )
 from arnold_pipelines.megaplan.runtime.execution_environment import preflight_phase
 from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
     append_history,
     apply_session_update,
     atomic_write_json,
@@ -415,6 +420,245 @@ def _backfill_empty_approved_review_from_execution(
     return True
 
 
+def _review_execution_batch_completed_task_ids(
+    plan_dir: Path,
+    *,
+    project_dir: Path | None,
+    state: PlanState,
+) -> set[str]:
+    completed: set[str] = set()
+    for batch_path in sorted(list_batch_artifacts(plan_dir)):
+        try:
+            payload = read_json(batch_path)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        records = [
+            item
+            for item in payload.get("task_updates", []) or []
+            if isinstance(item, dict)
+        ]
+        if not records:
+            continue
+        completed.update(
+            effective_execute_completed_task_ids(
+                records,
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state,
+            )
+        )
+    return completed
+
+
+def _review_execute_authority_gaps(
+    *,
+    finalize_data: dict[str, Any],
+    plan_dir: Path,
+    project_dir: Path | None,
+    state: PlanState,
+) -> list[str]:
+    tasks = [
+        task
+        for task in finalize_data.get("tasks", []) or []
+        if isinstance(task, dict) and (task.get("id") or task.get("task_id"))
+    ]
+    if not tasks:
+        return []
+
+    decisions: dict[str, AuthorityDecision] = {}
+    completed = effective_execute_completed_task_ids(
+        tasks,
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state,
+        decisions=decisions,
+    )
+    batch_completed = _review_execution_batch_completed_task_ids(
+        plan_dir,
+        project_dir=project_dir,
+        state=state,
+    )
+    gaps: list[str] = []
+    for task in tasks:
+        task_id = str(task.get("id") or task.get("task_id") or "")
+        raw_status = task.get("status")
+        if raw_status in {None, "", "pending", "todo", "in_progress"}:
+            if task_id in batch_completed:
+                continue
+            gaps.append(
+                f"{task_id or '<missing-task-id>'}:"
+                f"not_executed:{raw_status or 'missing_status'}"
+            )
+            continue
+        if (
+            raw_status in {"done", "completed", "skipped", "waived", "not_applicable"}
+            and task_id not in completed
+        ):
+            if (
+                raw_status == "skipped"
+                and task.get("reviewer_verdict") == "deferred_baseline_unavailable"
+            ):
+                continue
+            decision = decisions.get(task_id)
+            reason = "unknown"
+            if decision is not None:
+                reason = decision.status.value
+                if decision.would_block_reasons:
+                    reason = f"{reason}:{','.join(decision.would_block_reasons)}"
+            gaps.append(f"{task_id}:{reason}")
+    return gaps
+
+
+def _enforce_review_execute_authority(
+    *,
+    payload: dict[str, Any],
+    finalize_data: dict[str, Any],
+    plan_dir: Path,
+    project_dir: Path | None,
+    state: PlanState,
+    issues: list[str],
+) -> bool:
+    gaps = _review_execute_authority_gaps(
+        finalize_data=finalize_data,
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state,
+    )
+    if not gaps:
+        return False
+
+    payload["review_verdict"] = "needs_rework"
+    payload["review_completion_status"] = "complete"
+    issue = (
+        "Execution authority is incomplete for finalized tasks; review cannot approve "
+        f"until execute completes them: {', '.join(gaps)}"
+    )
+    issues.append(issue)
+    payload["issues"] = issues
+    rework_items = payload.get("rework_items")
+    if not isinstance(rework_items, list):
+        rework_items = []
+        payload["rework_items"] = rework_items
+    for gap in gaps:
+        task_id = gap.split(":", 1)[0]
+        rework_items.append(
+            {
+                "task_id": task_id if task_id != "<missing-task-id>" else None,
+                "issue": f"Execute did not provide authoritative completion evidence: {gap}",
+                "source": "execute_authority",
+                "target": {
+                    "kind": "task" if task_id != "<missing-task-id>" else "global",
+                    "task_id": task_id if task_id != "<missing-task-id>" else None,
+                    "task_ids": [] if task_id == "<missing-task-id>" else [task_id],
+                    "id": None,
+                },
+                "deterministic_check": None,
+            }
+        )
+    criteria = payload.get("criteria")
+    if not isinstance(criteria, list):
+        criteria = []
+        payload["criteria"] = criteria
+    criteria.append(
+        {
+            "id": "execute_authority_complete",
+            "priority": "must",
+            "pass": False,
+            "rationale": issue,
+        }
+    )
+    payload["execute_authority_missing"] = gaps
+    return True
+
+
+def _preserve_raw_review_rework_verdict(
+    *,
+    plan_dir: Path,
+    payload: dict[str, Any],
+    issues: list[str],
+) -> bool:
+    """Fail closed when the raw review artifact disagrees with the normalized payload.
+
+    The model seam writes ``review_output.json`` before the handler persists the
+    normalized ``review.json``. If the raw artifact says ``needs_rework``, no
+    later wrapper/backfill payload may turn that into ``approved``. Review may
+    still demote unsupported advisory rework through the normal blocker
+    normalizer, but only from the raw review content itself.
+    """
+
+    if payload.get("review_verdict") == "needs_rework":
+        return False
+    raw_path = plan_dir / "review_output.json"
+    if not raw_path.exists():
+        return False
+    try:
+        raw = read_json(raw_path)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(raw, dict) or raw.get("review_verdict") != "needs_rework":
+        return False
+
+    payload["review_verdict"] = "needs_rework"
+    payload["review_completion_status"] = raw.get("review_completion_status") or payload.get(
+        "review_completion_status"
+    )
+    for key in (
+        "summary",
+        "issues",
+        "task_verdicts",
+        "sense_check_verdicts",
+        "rework_items",
+        "criteria",
+        "blocking_rework_items",
+    ):
+        value = raw.get(key)
+        if value:
+            payload[key] = value
+    issues[:] = [issue for issue in payload.get("issues", []) if isinstance(issue, str)]
+    issues.append(
+        "Raw review_output.json returned needs_rework; normalized review payload "
+        "was forced back to rework."
+    )
+    payload["issues"] = issues
+    payload["raw_review_verdict_preserved"] = True
+    return True
+
+
+def _promote_authoritative_review_output(
+    *,
+    plan_dir: Path,
+    payload: dict[str, Any],
+) -> bool:
+    """Promote a filled raw review artifact over wrapper/inline payload.
+
+    Scratch promotion normally compares ``review_output.json`` to the seed
+    written before worker execution. A stale or late seed read can make the
+    final filled file look "unmodified", falling back to an inline wrapper
+    payload. At review-finalization time, a valid raw review artifact with a
+    concrete verdict is the authoritative reviewer output.
+    """
+
+    raw_path = plan_dir / "review_output.json"
+    if not raw_path.exists():
+        return False
+    try:
+        raw = read_json(raw_path)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(raw, dict):
+        return False
+    if raw.get("review_verdict") not in {"approved", "needs_rework"}:
+        return False
+
+    promoted = {key: raw[key] for key in _REVIEW_SCRATCH_KNOWN_KEYS if key in raw}
+    payload.clear()
+    payload.update(promoted)
+    payload["raw_review_output_promoted"] = True
+    return True
+
+
 def _audit_review_payload_or_raise(
     *,
     plan_dir: Path,
@@ -532,6 +776,7 @@ def _merge_review_verdicts(
 
 
 _FAILED_CHECK_STATUSES = {"fail", "failed", "failing", "red", "newly_failing", "unsatisfied"}
+_PASSED_CHECK_STATUSES = {"pass", "passed", "passing", "green", "satisfied"}
 
 
 def _failed_check_status(value: Any) -> bool:
@@ -540,7 +785,20 @@ def _failed_check_status(value: Any) -> bool:
     if not isinstance(value, str):
         return False
     normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
-    return normalized in _FAILED_CHECK_STATUSES
+    return normalized in _FAILED_CHECK_STATUSES or normalized.startswith(
+        tuple(f"{status}_" for status in _FAILED_CHECK_STATUSES)
+    )
+
+
+def _passed_check_status(value: Any) -> bool:
+    if value is True:
+        return True
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized in _PASSED_CHECK_STATUSES or normalized.startswith(
+        tuple(f"{status}_" for status in _PASSED_CHECK_STATUSES)
+    )
 
 
 def _grounding_check(value: dict[str, Any]) -> dict[str, Any]:
@@ -571,7 +829,13 @@ def _has_grounded_deterministic_failure(value: dict[str, Any]) -> bool:
         or _failed_check_status(check.get("current_status"))
         or _failed_check_status(check.get("post_execute_status"))
     )
-    return baseline_failed and post_failed
+    baseline_passed = (
+        _passed_check_status(check.get("baseline_status"))
+        or _passed_check_status(check.get("baseline_result"))
+        or _passed_check_status(check.get("pre_status"))
+        or _passed_check_status(check.get("pre_execute_status"))
+    )
+    return post_failed and (baseline_failed or baseline_passed)
 
 
 def _normalize_review_blockers(payload: dict[str, Any], issues: list[str]) -> None:
@@ -1035,6 +1299,10 @@ def _finalize_review_outcome(
     verdict-merging, state advancement, receipt emission, and response
     construction. This helper is the single owner of that flow.
     """
+    raw_review_promoted = _promote_authoritative_review_output(
+        plan_dir=plan_dir,
+        payload=worker.payload,
+    )
     issues = list(worker.payload.get("issues", []))
     finalize_data = read_json(plan_dir / "finalize.json")
     review_projection = deepcopy(finalize_data)
@@ -1061,8 +1329,30 @@ def _finalize_review_outcome(
         invalid_review_verdict = True
         worker.payload["review_verdict"] = review_verdict
 
-    if not invalid_review_verdict:
+    raw_rework_preserved = _preserve_raw_review_rework_verdict(
+        plan_dir=plan_dir,
+        payload=worker.payload,
+        issues=issues,
+    )
+    if raw_rework_preserved:
+        review_verdict = worker.payload.get("review_verdict")
+
+    raw_rework_promoted = (
+        raw_review_promoted and worker.payload.get("review_verdict") == "needs_rework"
+    )
+    if not invalid_review_verdict and not raw_rework_preserved and not raw_rework_promoted:
         _normalize_review_blockers(worker.payload, issues)
+        review_verdict = worker.payload.get("review_verdict")
+
+    authority_enforced = _enforce_review_execute_authority(
+        payload=worker.payload,
+        finalize_data=finalize_data,
+        plan_dir=plan_dir,
+        project_dir=root,
+        state=state,
+        issues=issues,
+    )
+    if authority_enforced:
         review_verdict = worker.payload.get("review_verdict")
 
     if _backfill_empty_approved_review_from_execution(worker.payload, finalize_data):

@@ -655,10 +655,11 @@ if [[ "$VERDICT" == FIXED* ]]; then
   else
     log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
 
-    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_DIR" <<'PY'
+    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_DIR" "$MARKER_DIR" <<'PY'
 import json, subprocess, sys
 from pathlib import Path
 
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_repair_retriggered,
     append_verified_recovered,
@@ -673,6 +674,7 @@ repair_loop_bin = sys.argv[2]
 workspace_root = Path(sys.argv[3])
 install_sync_event_id = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
 repair_data_dir = Path(sys.argv[5])
+marker_dir = Path(sys.argv[6])
 
 incident_id = f"inc-{session}"
 
@@ -690,9 +692,33 @@ retrigger_event = append_repair_retriggered(
 )
 print(f"RETRIGGER_EVENT_ID={retrigger_event.get('event_id', '')}")
 
+target = resolve_current_target(
+    session,
+    marker_dir=marker_dir,
+    repair_data_dir=repair_data_dir,
+)
+current_refs = target.get("current_refs") if isinstance(target.get("current_refs"), dict) else {}
+target_workspace = str(current_refs.get("workspace") or "").strip()
+target_remote_spec = str(current_refs.get("remote_spec") or "").strip()
+if not target_workspace or not target_remote_spec:
+    verification_record = {
+        "retriggered": True,
+        "accepted": False,
+        "outcome": "retrigger_target_unresolved",
+        "rejection_reason": (
+            "ordinary repair retrigger target could not be resolved from current target "
+            f"state (workspace={target_workspace or 'missing'}, remote_spec={target_remote_spec or 'missing'})"
+        ),
+        "retrigger_command": f"{repair_loop_bin} {session}",
+    }
+    print("VERIFICATION_EVENT_ID=")
+    print("RETRIGGER_RETURNCODE=65")
+    print("VERIFICATION_JSON=" + json.dumps(verification_record, default=str))
+    raise SystemExit(0)
+
 # Retrigger ordinary repair
 completed = subprocess.run(
-    [repair_loop_bin, session],
+    [repair_loop_bin, session, target_workspace, target_remote_spec],
     cwd=str(workspace_root),
     capture_output=True, text=True, check=False,
     timeout=3600,
@@ -717,7 +743,7 @@ if isinstance(payload, dict):
 verification_record = verify_retrigger_success(
     retriggered=True,
     retrigger_result=RetriggerExecutionResult(
-        command=(repair_loop_bin, session),
+        command=(repair_loop_bin, session, target_workspace, target_remote_spec),
         returncode=completed.returncode,
         stdout=completed.stdout or "",
         stderr=completed.stderr or "",

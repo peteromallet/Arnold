@@ -761,6 +761,10 @@ def _repair_evidence_superseded_by_current_target(
     stale_states = {"blocked", "authority_divergence", "failed", "manual_review", "awaiting_human"}
     recovered_plan_states = {"finalized", "done", "complete", "completed"}
     recovered_chain_states = {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}
+    target_has_recovery_shape = (
+        current_plan_state in recovered_plan_states
+        or current_chain_state in recovered_chain_states
+    )
     if repair_state in stale_states:
         if current_plan_state in recovered_plan_states:
             return (
@@ -772,6 +776,21 @@ def _repair_evidence_superseded_by_current_target(
                 "current-target observation supersedes stale recurring repair evidence: "
                 f"repair-data state={repair_state} but live chain state is {current_chain_state}"
             )
+
+    repair_outcome = _meta_safe_text(repair_data.get("outcome")).lower()
+    running_outcomes = {"running", "repairing", "recurring_retry_pending"}
+    if (
+        repair_outcome
+        and repair_outcome not in SUCCESS_OUTCOMES
+        and repair_outcome not in running_outcomes
+        and target_has_recovery_shape
+        and _failure_context_is_mechanical_redrive_only(failure_context)
+    ):
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            f"repair outcome is {repair_outcome} but live target is already recovered "
+            "and failure context shows no latest failure"
+        )
 
     observation_plan_state = current_target_observation.get("plan_state")
     live_status = _load_current_target_status(
@@ -845,6 +864,26 @@ def _current_target_has_runtime_proof(current_target_observation: Mapping[str, A
     # Historical logs can survive after the target is gone; do not treat them
     # as proof that another repair/meta-repair attempt is warranted.
     return False
+
+
+def _failure_context_is_mechanical_redrive_only(
+    failure_context: Mapping[str, Any],
+) -> bool:
+    stale_state = failure_context.get("stale_state")
+    if not isinstance(stale_state, Mapping):
+        stale_state = {}
+    if _meta_safe_text(stale_state.get("classification")) != "NO LATEST FAILURE":
+        return False
+    if _meta_safe_text(stale_state.get("recommended_action")) != "mechanical re-drive only":
+        return False
+
+    latest_failure = failure_context.get("plan_latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        latest_failure = {}
+    return not any(
+        _meta_safe_text(latest_failure.get(key))
+        for key in ("kind", "message", "state", "recorded_at", "phase")
+    )
 
 
 def _meta_safe_text(value: Any) -> str:

@@ -42,6 +42,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     COMPLETE,
+    DISCORD_ESCALATED,
     LIVE_WITH_FRESH_ACTIVITY,
     NEEDS_HUMAN,
     PARTIAL_LIVENESS,
@@ -309,6 +310,46 @@ class TestClassifyPersistentRecurringRetry:
         assert result.trigger is None
         assert result.should_dispatch is False
         assert "no execute retry path" in result.rationale[0]
+
+    def test_recurring_retry_skips_terminal_non_success_when_live_target_is_done(
+        self,
+    ) -> None:
+        result = classify_repair_system_failure(
+            session="s7e",
+            evidence={
+                "repair_data": {
+                    "outcome": DISCORD_ESCALATED,
+                    "current_failure_context": {
+                        "stale_state": {
+                            "classification": "NO LATEST FAILURE",
+                            "recommended_action": "mechanical re-drive only",
+                        },
+                        "plan_latest_failure": {
+                            "current_state": "done",
+                        },
+                        "plan_runtime_state": {
+                            "current_state": "done",
+                        },
+                    },
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "plan_state",
+                "current_refs": {
+                    "current_plan_name": "demo-plan",
+                    "plan_current_state": "done",
+                    "chain_last_state": "done",
+                },
+                "plan_state": {"present": True},
+                "chain_state": {"present": True},
+                "active_step_heartbeat": {"active": False},
+            },
+            failure_kinds=["blocked_state_or_recovery_error"] * 3,
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "repair outcome is discord_escalated" in result.rationale[0]
 
 
 class TestClassifyStateInspectionFailure:
