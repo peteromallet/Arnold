@@ -795,6 +795,37 @@ def test_is_trusted_container_requires_env_and_marker_dir(tmp_path, monkeypatch)
     assert ss.is_trusted_container() is False
 
 
+def test_has_local_markers_independent_of_env(tmp_path, monkeypatch):
+    # P0: the resident's build-vs-read trigger is marker-dir presence, NOT the
+    # trust env var — a manually-restarted resident that lost
+    # MEGAPLAN_TRUSTED_CONTAINER must still build fresh when on the box.
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    monkeypatch.setattr(ss, "DEFAULT_MARKER_DIR", tmp_path)
+    assert ss.has_local_markers() is True  # marker dir present, env unset
+    custom = tmp_path / "elsewhere"
+    assert ss.has_local_markers(custom) is False
+    custom.mkdir()
+    assert ss.has_local_markers(custom) is True
+    monkeypatch.setattr(ss, "DEFAULT_MARKER_DIR", tmp_path / "does-not-exist")
+    assert ss.has_local_markers() is False
+
+
+def test_plan_activity_summary_degraded_on_stale_banner():
+    # P1: a sanitized stale snapshot surfaces as degraded with empty buckets so
+    # consumers can't read "0 running" off a frozen view.
+    snap = {
+        "stale_banner": "WATCHDOG STALE",
+        "stale_reason": "snapshot stale (9000s old, limit 7200s)",
+        "sessions": [],
+    }
+    derived = ss.plan_activity_summary(snap)
+    assert derived["degraded"] is True
+    assert derived["stale_banner"] == "WATCHDOG STALE"
+    assert derived["active_working"] == []
+    assert derived["should_be_working_but_needs_attention"] == []
+    assert derived["recently_completed"] == []
+
+
 # --- formatter contract ---------------------------------------------------
 
 

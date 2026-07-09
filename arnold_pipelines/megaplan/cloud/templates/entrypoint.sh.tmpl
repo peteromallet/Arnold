@@ -198,7 +198,7 @@ fi
 if [[ -f /workspace/.secrets/megaplan-resident-discord.env ]]; then
   if ! tmux has-session -t megaplan-resident-discord 2>/dev/null; then
     tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold \
-      "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; set +a; export PYTHONPATH=/workspace/arnold:\${PYTHONPATH:-}; echo [resident-start] \$(date -Iseconds) provider=\$MEGAPLAN_RESIDENT_MODEL_PROVIDER model=\$MEGAPLAN_RESIDENT_MODEL >> /workspace/megaplan-resident-discord.log; python -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-dev} >> /workspace/megaplan-resident-discord.log 2>&1'"
+      "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; set +a; export PYTHONPATH=/workspace/arnold:\${PYTHONPATH:-}; echo [resident-start] \$(date -Iseconds) provider=\$MEGAPLAN_RESIDENT_MODEL_PROVIDER model=\$MEGAPLAN_RESIDENT_MODEL trusted=\${MEGAPLAN_TRUSTED_CONTAINER:-0} markers=\$([ -d /workspace/.megaplan/cloud-sessions ] && echo yes || echo no) >> /workspace/megaplan-resident-discord.log; python -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-dev} >> /workspace/megaplan-resident-discord.log 2>&1'"
     echo "Discord resident running in tmux session 'megaplan-resident-discord'"
   fi
 else
