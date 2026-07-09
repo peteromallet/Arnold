@@ -1,1 +1,1 @@
-/workspace/extension-reality-chain-restart-continuation/arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/_composed/claude_skill.md
+../../data/_composed/claude_skill.md
