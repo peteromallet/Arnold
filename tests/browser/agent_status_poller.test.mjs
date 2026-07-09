@@ -1637,7 +1637,9 @@ test("refreshAgentStatus — timeout aborts fetch, tags diagnostic, and clears d
   }));
 
   const panel = makePanel();
-  const refreshPromise = refreshAgentStatus(panel, { quiet: true }, makeDeps({ fetchDeadlineMs: 5 }));
+  const refreshPromise = refreshAgentStatus(panel, { quiet: true }, makeDeps({
+    fetchDeadlineMs: 5,
+  }));
   await Promise.resolve();
   await globalThis._flushTimers();
   await refreshPromise;
@@ -1645,7 +1647,8 @@ test("refreshAgentStatus — timeout aborts fetch, tags diagnostic, and clears d
   assert.ok(capturedSignal, "should pass AbortSignal to fetch");
   assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.UNAVAILABLE);
   assert.equal(panel.state.lastAgentStatusDiagnostic?.timedOut, true);
-  assert.equal(globalThis._getTimers().length, 1, "only retry timer should remain after clearing deadline");
+  assert.equal(panel.state.statusRetry?.attempts, 1, "should record the first retry attempt");
+  assert.equal(globalThis._getTimers().length, 0, "deadline timer should be cleared after fetch settles");
 });
 
 test("refreshAgentStatus — status readiness coupled to panel UI state (routeStatus, settingsMessage, statusSnapshot)", async () => {
