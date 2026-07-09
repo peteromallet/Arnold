@@ -3582,6 +3582,7 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
             f"LOG={str(log_path)!r}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"PLAN_STATUS_DISPATCH_DECISION={'dispatch_l1_repair'!r}",
             f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
             f"PLAN_STATUS_REQUEST_ID={request_id!r}",
             """
@@ -3599,6 +3600,83 @@ echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
     assert "repair request already claimed; skipping dispatch session=demo-a request=req-test" in log_path.read_text(
         encoding="utf-8"
     )
+
+
+def test_watchdog_dispatch_ignores_non_actionable_request_claim_context(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    log_path = tmp_path / "watchdog.log"
+    launch_log = tmp_path / "repair-launch.json"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, pathlib, sys, time\n"
+        f"pathlib.Path({str(launch_log)!r}).write_text("
+        "json.dumps({"
+        "'session': sys.argv[1], "
+        "'request_id': os.environ.get('CLOUD_WATCHDOG_REPAIR_REQUEST_ID', ''), "
+        "'blocker_id': os.environ.get('CLOUD_WATCHDOG_REPAIR_BLOCKER_ID', ''), "
+        "}), encoding='utf-8')\n"
+        "time.sleep(5)\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+    blocker_id = "blocker:v1:test"
+    request_id = "req-test"
+    repair_requests.claim_active_repair_request(
+        repair_requests.repair_queue_dir(marker_dir),
+        blocker_id=blocker_id,
+        request_id=request_id,
+        actor="other-trigger",
+        session="demo-a",
+        pid=os.getpid(),
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("claim_active_repair_launch"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
+            f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"PLAN_STATUS_DISPATCH_DECISION={'terminal'!r}",
+            f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
+            f"PLAN_STATUS_REQUEST_ID={request_id!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
+echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
+for _ in {1..50}; do
+  [[ -f __LAUNCH_LOG__ ]] && break
+  sleep 0.1
+done
+if [[ -f "$(kimi_pgid_path demo-a)" ]]; then
+  demo_pgid="$(cat "$(kimi_pgid_path demo-a)")"
+  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
+fi
+sleep 0.1
+""".replace("__LAUNCH_LOG__", shlex.quote(str(launch_log))).strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == ["status:dispatched"]
+    payload = json.loads(launch_log.read_text(encoding="utf-8"))
+    assert payload == {"session": "demo-a", "request_id": "", "blocker_id": ""}
+    assert "repair request already claimed" not in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path) -> None:
@@ -10497,6 +10575,60 @@ tmux() { echo TMUX >&2; return 1; }
     assert "\trepair\trepair_dispatched\tchain_cycle: chain cycle detected; artifact=/tmp/chain-health.json\t" in report
     assert "SHOULD_NOT_RUN" not in result.stderr
     assert "TMUX" not in result.stderr
+
+
+def test_watchdog_chain_health_dispatch_clears_stale_plan_status_globals(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / "demo-spec.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+    context_path = tmp_path / "dispatch-context.txt"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=chain_uncommitted_execute_output
+  CHAIN_HEALTH_SUMMARY='publish failure needs repair'
+  CHAIN_HEALTH_ARTIFACT_PATH=/tmp/chain-health.json
+}
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() {
+  printf 'decision=%s request=%s blocker=%s\n' "${PLAN_STATUS_DISPATCH_DECISION:-}" "${PLAN_STATUS_REQUEST_ID:-}" "${PLAN_STATUS_BLOCKER_ID:-}" > __CTX__
+  return 0
+}
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair
+PLAN_STATUS_REQUEST_ID=stale-req
+PLAN_STATUS_BLOCKER_ID=stale-blocker
+""".replace("__CTX__", shlex.quote(str(context_path))).strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert context_path.read_text(encoding="utf-8").strip() == "decision= request= blocker="
+    report = report_path.read_text(encoding="utf-8")
+    assert (
+        "\trepair\trepair_dispatched\tpublish failure needs repair; artifact=/tmp/chain-health.json\t"
+        in report
+    )
 
 
 def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle() -> None:

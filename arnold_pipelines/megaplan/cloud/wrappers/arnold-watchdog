@@ -3906,8 +3906,14 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local pgid_path repair_busy claim_status
+  local pgid_path repair_busy claim_status request_id blocker_id
   REPAIR_DISPATCH_RESULT="unavailable"
+  request_id=""
+  blocker_id=""
+  if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+    request_id="${PLAN_STATUS_REQUEST_ID:-}"
+    blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
+  fi
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop binary unavailable" "unavailable" "immediate_repair"
     return 1
@@ -3928,18 +3934,18 @@ dispatch_kimi_repair() {
     ""|claimed)
       ;;
     already_claimed|busy)
-      log "repair request already claimed; skipping dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown}"
+      log "repair request already claimed; skipping dispatch session=$session request=${request_id:-unknown}"
       REPAIR_DISPATCH_RESULT="busy"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request already claimed" "busy" "immediate_repair"
       return 0
       ;;
     stale)
-      log "repair request claim is stale; refusing dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown}"
+      log "repair request claim is stale; refusing dispatch session=$session request=${request_id:-unknown}"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim is stale" "busy" "immediate_repair"
       return 0
       ;;
     *)
-      log "repair request claim failed; refusing dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown} status=$claim_status"
+      log "repair request claim failed; refusing dispatch session=$session request=${request_id:-unknown} status=$claim_status"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim failed" "unavailable" "immediate_repair"
       return 1
       ;;
@@ -3948,11 +3954,11 @@ dispatch_kimi_repair() {
   kimi_dispatch_marker_set "$session"
   if command -v setsid >/dev/null 2>&1; then
     setsid bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_REQUEST_ID:-}" "${PLAN_STATUS_BLOCKER_ID:-}" \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" \
       >> "$LOG" 2>&1 < /dev/null &
   else
     bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_REQUEST_ID:-}" "${PLAN_STATUS_BLOCKER_ID:-}" \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
   log "repair loop background-dispatched session=$session pid=$!"
@@ -3965,7 +3971,14 @@ claim_active_repair_launch() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  if [[ -z "${PLAN_STATUS_BLOCKER_ID:-}" || -z "${PLAN_STATUS_REQUEST_ID:-}" ]]; then
+  local blocker_id request_id
+  blocker_id=""
+  request_id=""
+  if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+    blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
+    request_id="${PLAN_STATUS_REQUEST_ID:-}"
+  fi
+  if [[ -z "$blocker_id" || -z "$request_id" ]]; then
     printf '\n'
     return 0
   fi
@@ -3974,8 +3987,8 @@ claim_active_repair_launch() {
     "$session" \
     "$workspace" \
     "$remote_spec" \
-    "${PLAN_STATUS_BLOCKER_ID:-}" \
-    "${PLAN_STATUS_REQUEST_ID:-}" \
+    "$blocker_id" \
+    "$request_id" \
     "$$" <<'PY'
 import sys
 
@@ -6227,6 +6240,36 @@ launch_chain_tick() {
     run_kind="plan"
   fi
 
+  PLAN_STATUS_FOUND=0
+  PLAN_STATUS_PLAN_NAME=
+  PLAN_STATUS_CURRENT_STATE=
+  PLAN_STATUS_ACTIVE_STEP_PRESENT=0
+  PLAN_STATUS_ACTIVE_STEP_PHASE=
+  PLAN_STATUS_ACTIVE_STEP_WORKER_PID=
+  PLAN_STATUS_ACTIVE_STEP_PID_ALIVE=
+  PLAN_STATUS_RETRY_STRATEGY=
+  PLAN_STATUS_FAILURE_KIND=
+  PLAN_STATUS_FAILURE_MESSAGE=
+  PLAN_STATUS_FAILURE_PHASE=
+  PLAN_STATUS_FAILURE_RECORDED_AT=
+  PLAN_STATUS_MANUAL_REVIEW_ORIGIN=
+  PLAN_STATUS_TIERS_TRIED=
+  PLAN_STATUS_PUSHED_COMMITS=
+  PLAN_STATUS_MANUAL_REVIEW=0
+  PLAN_STATUS_AWAITING_HUMAN=0
+  PLAN_STATUS_AWAITING_HUMAN_REASON=
+  PLAN_STATUS_STATE_MISMATCH=0
+  PLAN_STATUS_STATE_MISMATCH_SUMMARY=
+  PLAN_STATUS_CHAIN_COMPLETE=0
+  PLAN_STATUS_CHAIN_CURRENT_INDEX=
+  PLAN_STATUS_CHAIN_MILESTONE_COUNT=
+  PLAN_STATUS_DISPATCH_DECISION=
+  PLAN_STATUS_DISPATCH_INTENT=
+  PLAN_STATUS_CUSTODY_BUCKET=
+  PLAN_STATUS_BLOCKER_ID=
+  PLAN_STATUS_REQUEST_ID=
+  PLAN_STATUS_TARGET_SOURCE=
+
   current_target_observation="$(
     PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MARKER_DIR" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" <<'PY' 2>>"${LOG:-/dev/null}" || true
 import json
@@ -6436,35 +6479,6 @@ PY
   fi
 
   local plan_status_env
-  PLAN_STATUS_FOUND=0
-  PLAN_STATUS_PLAN_NAME=
-  PLAN_STATUS_CURRENT_STATE=
-  PLAN_STATUS_ACTIVE_STEP_PRESENT=0
-  PLAN_STATUS_ACTIVE_STEP_PHASE=
-  PLAN_STATUS_ACTIVE_STEP_WORKER_PID=
-  PLAN_STATUS_ACTIVE_STEP_PID_ALIVE=
-  PLAN_STATUS_RETRY_STRATEGY=
-  PLAN_STATUS_FAILURE_KIND=
-  PLAN_STATUS_FAILURE_MESSAGE=
-  PLAN_STATUS_FAILURE_PHASE=
-  PLAN_STATUS_FAILURE_RECORDED_AT=
-  PLAN_STATUS_MANUAL_REVIEW_ORIGIN=
-  PLAN_STATUS_TIERS_TRIED=
-  PLAN_STATUS_PUSHED_COMMITS=
-  PLAN_STATUS_MANUAL_REVIEW=0
-  PLAN_STATUS_AWAITING_HUMAN=0
-  PLAN_STATUS_AWAITING_HUMAN_REASON=
-  PLAN_STATUS_STATE_MISMATCH=0
-  PLAN_STATUS_STATE_MISMATCH_SUMMARY=
-  PLAN_STATUS_CHAIN_COMPLETE=0
-  PLAN_STATUS_CHAIN_CURRENT_INDEX=
-  PLAN_STATUS_CHAIN_MILESTONE_COUNT=
-  PLAN_STATUS_DISPATCH_DECISION=
-  PLAN_STATUS_DISPATCH_INTENT=
-  PLAN_STATUS_CUSTODY_BUCKET=
-  PLAN_STATUS_BLOCKER_ID=
-  PLAN_STATUS_REQUEST_ID=
-  PLAN_STATUS_TARGET_SOURCE=
   # If the helper emits nothing, keep the tick on the default non-attention path.
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
   if [[ -n "$plan_status_env" ]]; then
