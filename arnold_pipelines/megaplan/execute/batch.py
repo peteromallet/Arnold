@@ -74,6 +74,7 @@ from arnold_pipelines.megaplan.model_seam import (
     render_step_message,
 )
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
+    apply_authoritative_execute_overrides,
     validate_execution_evidence,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import Deviation
@@ -3341,6 +3342,10 @@ def handle_execute_auto_loop(
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
     finalize_data = read_json(plan_dir / "finalize.json")
+    finalize_data = apply_authoritative_execute_overrides(
+        finalize_data,
+        plan_dir=plan_dir,
+    )
     deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
         finalize_data
     )
