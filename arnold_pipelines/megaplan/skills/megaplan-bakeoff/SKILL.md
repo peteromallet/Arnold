@@ -1,1 +1,1 @@
-../../data/bakeoff_skill.md
+/workspace/extension-reality-chain-restart-continuation/arnold/arnold_pipelines/megaplan/data/bakeoff_skill.md
