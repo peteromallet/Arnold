@@ -11,6 +11,8 @@ from arnold_pipelines.megaplan.blocker_recovery import (
     find_synthetic_before_execute_gate,
 )
 from arnold_pipelines.megaplan.execute.batch import (
+    _aggregate_terminal_deviations,
+    _is_transient_execute_advisory,
     _prerequisite_blocked_task_ids,
     _reset_stale_authority_done_tasks,
     _normalize_execute_capture_payload,
@@ -220,6 +222,40 @@ def test_harness_artifact_paths_are_removed_from_execute_claims() -> None:
     assert _collect_execute_claimed_paths(
         {"files_changed": ["src/app.py", ".megaplan/plans/run/state.json"]}
     ) == {"src/app.py"}
+
+
+def test_terminal_execute_aggregate_drops_stale_batch_advisories() -> None:
+    aggregate_payload = {
+        "deviations": [
+            "Advisory audit finding: Tasks left pending after execute (executor never started them): T7",
+            "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/app.py",
+            "1/1 tasks have no executor update",
+            "1/1 sense checks have no executor acknowledgment",
+            "substantive command failure that should survive",
+        ]
+    }
+    execution_audit = {
+        "skipped": False,
+        "findings": [
+            "Sense check SC7 is missing an executor acknowledgment.",
+        ],
+    }
+
+    deviations = _aggregate_terminal_deviations(
+        aggregate_payload,
+        timeout_recovery=None,
+        execution_audit=execution_audit,
+        blocked_task_ids=set(),
+    )
+
+    assert deviations == [
+        "substantive command failure that should survive",
+        "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    ]
+    assert _is_transient_execute_advisory(
+        "Advisory audit finding: Tasks left pending after execute (executor never started them): T7"
+    )
+    assert _is_transient_execute_advisory("1/1 sense checks have no executor acknowledgment")
 
 
 def test_prerequisite_blocked_task_ids_excludes_harness_generated_blocks() -> None:
