@@ -1629,6 +1629,25 @@ test("refreshAgentStatus — invalidates status sections and active transcript s
   }]);
 });
 
+test("refreshAgentStatus — timeout aborts fetch, tags diagnostic, and clears deadline timer", async () => {
+  let capturedSignal = null;
+  mockFetch((_url, options) => new Promise((_, reject) => {
+    capturedSignal = options?.signal ?? null;
+    options?.signal?.addEventListener?.("abort", () => reject(new Error("AbortError")));
+  }));
+
+  const panel = makePanel();
+  const refreshPromise = refreshAgentStatus(panel, { quiet: true }, makeDeps({ fetchDeadlineMs: 5 }));
+  await Promise.resolve();
+  await globalThis._flushTimers();
+  await refreshPromise;
+
+  assert.ok(capturedSignal, "should pass AbortSignal to fetch");
+  assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.UNAVAILABLE);
+  assert.equal(panel.state.lastAgentStatusDiagnostic?.timedOut, true);
+  assert.equal(globalThis._getTimers().length, 1, "only retry timer should remain after clearing deadline");
+});
+
 test("refreshAgentStatus — status readiness coupled to panel UI state (routeStatus, settingsMessage, statusSnapshot)", async () => {
   mockFetch((url) => {
     if (url.startsWith("/vibecomfy/agent/status")) {
@@ -1810,4 +1829,23 @@ test("refreshVibeComfyInfo — unavailable responses keep an error diagnostic on
     panel.state.lastVibeComfyInfoDiagnostic.error.includes("Connection refused"),
     `got: ${panel.state.lastVibeComfyInfoDiagnostic.error}`,
   );
+});
+
+test("refreshVibeComfyInfo — timeout aborts fetch, tags diagnostic, and clears deadline timer", async () => {
+  let capturedSignal = null;
+  mockFetch((_url, options) => new Promise((_, reject) => {
+    capturedSignal = options?.signal ?? null;
+    options?.signal?.addEventListener?.("abort", () => reject(new Error("AbortError")));
+  }));
+
+  const panel = makePanel();
+  const refreshPromise = refreshVibeComfyInfo(panel, makeDeps({ fetchDeadlineMs: 5 }));
+  await Promise.resolve();
+  await globalThis._flushTimers();
+  await refreshPromise;
+
+  assert.ok(capturedSignal, "should pass AbortSignal to fetch");
+  assert.equal(panel.state.vibeComfyInfoStatus.kind, "unavailable");
+  assert.equal(panel.state.lastVibeComfyInfoDiagnostic?.timedOut, true);
+  assert.equal(globalThis._getTimers().length, 0, "deadline timer should be cleared after fetch settles");
 });

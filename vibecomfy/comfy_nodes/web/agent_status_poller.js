@@ -490,14 +490,15 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
   if (typeof document !== "undefined" && typeof renderAgentPanel === "function") {
     renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
   }
+  const statusUrl = buildStatusUrl(route, model);
+  const deadline = createFetchDeadlineController(resolveFetchDeadlineMs(deps));
   try {
     // Keep the initial "loading" paint observable, then let tests/users observe
     // the completed state after the request has actually been issued.
     if (typeof nextMacrotask === "function") {
       await nextMacrotask();
     }
-    const statusUrl = buildStatusUrl(route, model);
-    const res = await fetch(statusUrl);
+    const res = await fetch(statusUrl, { signal: deadline.signal });
     let status = null;
     try {
       status = await res.json();
@@ -506,6 +507,7 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
         ok: res.ok,
         httpStatus: res.status,
         payload: scrubDebugPayload(status),
+        timedOut: false,
       });
     } catch (error) {
       if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
@@ -517,6 +519,7 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
         ok: false,
         httpStatus: res.status,
         error: `Malformed JSON: ${String(error?.message || error)}`,
+        timedOut: false,
       });
       panel.state.statusSnapshot = null;
       panel.state.routeStatus = {
@@ -580,11 +583,12 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
     }
     const priorStatusDiagnostic = panel.state.lastAgentStatusDiagnostic || null;
     recordAgentStatusDiagnostic(panel, {
-      url: buildStatusUrl(route, model),
+      url: statusUrl,
       ok: false,
       httpStatus: priorStatusDiagnostic?.httpStatus ?? null,
       error: String(e?.message || e),
       payload: priorStatusDiagnostic?.payload || null,
+      timedOut: deadline.isTimeout(),
     });
     panel.state.settingsMessage = `Status unavailable: ${String(e)}`;
     panel.state.statusSnapshot = null;
@@ -600,6 +604,8 @@ export async function refreshAgentStatus(panel, { quiet = false } = {}, deps = {
     }, deps);
     panel.fields.route.value = route;
     scheduleAgentStatusRetry(panel, route, model, { quiet: true }, deps);
+  } finally {
+    deadline.clear();
   }
   if (typeof document === "undefined") {
     return;
@@ -678,10 +684,11 @@ export async function refreshVibeComfyInfo(panel, deps = {}) {
     (Number.isFinite(panel.state.vibeComfyInfoRequestEpoch) ? panel.state.vibeComfyInfoRequestEpoch : 0) + 1;
   panel.state.vibeComfyInfoRequestEpoch = requestEpoch;
   panel.state.vibeComfyInfoStatus = { kind: "loading" };
+  const infoUrl = buildVibeComfyInfoUrl();
+  const deadline = createFetchDeadlineController(resolveFetchDeadlineMs(deps));
 
   try {
-    const infoUrl = buildVibeComfyInfoUrl();
-    const res = await fetch(infoUrl);
+    const res = await fetch(infoUrl, { signal: deadline.signal });
     let info = null;
     try {
       info = await res.json();
@@ -690,6 +697,7 @@ export async function refreshVibeComfyInfo(panel, deps = {}) {
         ok: res.ok,
         httpStatus: res.status,
         payload: scrubDebugPayload(info),
+        timedOut: false,
       });
     } catch (error) {
       if (Number.isFinite(requestEpoch) && panel.state.vibeComfyInfoRequestEpoch !== requestEpoch) {
@@ -700,6 +708,7 @@ export async function refreshVibeComfyInfo(panel, deps = {}) {
         ok: false,
         httpStatus: res.status,
         error: `Malformed JSON: ${String(error?.message || error)}`,
+        timedOut: false,
       });
       panel.state.vibeComfyInfoSnapshot = null;
       panel.state.vibeComfyInfoStatus = {
@@ -722,6 +731,7 @@ export async function refreshVibeComfyInfo(panel, deps = {}) {
         httpStatus: res.status,
         error: "Malformed payload: expected JSON object",
         payload: scrubDebugPayload(info),
+        timedOut: false,
       });
       panel.state.vibeComfyInfoSnapshot = null;
       panel.state.vibeComfyInfoStatus = {
@@ -738,11 +748,12 @@ export async function refreshVibeComfyInfo(panel, deps = {}) {
     }
     const priorDiagnostic = panel.state.lastVibeComfyInfoDiagnostic || null;
     recordVibeComfyInfoDiagnostic(panel, {
-      url: buildVibeComfyInfoUrl(),
+      url: infoUrl,
       ok: false,
       httpStatus: priorDiagnostic?.httpStatus ?? null,
       error: String(error?.message || error),
       payload: priorDiagnostic?.payload || null,
+      timedOut: deadline.isTimeout(),
     });
     panel.state.vibeComfyInfoSnapshot = null;
     panel.state.vibeComfyInfoStatus = {
@@ -750,6 +761,7 @@ export async function refreshVibeComfyInfo(panel, deps = {}) {
       detail: String(error),
     };
   } finally {
+    deadline.clear();
     if (
       typeof document !== "undefined"
       && typeof markAgentPanelDirtyAfterCommit === "function"
