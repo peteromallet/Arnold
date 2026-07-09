@@ -1,1 +1,1 @@
-../../data/observe_skill.md
+/workspace/extension-reality-chain-restart-continuation/arnold/arnold_pipelines/megaplan/data/observe_skill.md
