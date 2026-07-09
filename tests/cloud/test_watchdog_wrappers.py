@@ -7275,6 +7275,80 @@ tmux() { echo TMUX >&2; return 1; }
     assert "TMUX" not in result.stderr
 
 
+def test_watchdog_completed_chain_with_current_plan_reports_complete_without_repair(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "- label: m1\n"
+        "- label: m2\n",
+        encoding="utf-8",
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"chain-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "s2-demo-finish",
+                "current_milestone_index": 2,
+                "last_state": "done",
+                "completed": [{"label": "m1"}, {"label": "m2"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    plan_dir = workspace / ".megaplan" / "plans" / "s2-demo-finish"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"current_state": "done"}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tcomplete\tchain complete\t" in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
 def test_watchdog_partial_done_chain_state_relaunches_next_milestone(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()

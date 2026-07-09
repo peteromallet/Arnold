@@ -6700,7 +6700,7 @@ PY
   if [[ -n "$plan_status_env" ]]; then
     eval "$plan_status_env"
   fi
-  if [[ "$run_kind" == "chain" && -z "${PLAN_STATUS_PLAN_NAME:-}" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" && "${PLAN_STATUS_CHAIN_COMPLETE:-0}" == "1" ]]; then
+  if [[ "$run_kind" == "chain" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" && "${PLAN_STATUS_CHAIN_COMPLETE:-0}" == "1" ]]; then
     log "chain complete; skipping repair/relaunch session=$session state=done"
     report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
     return 0
