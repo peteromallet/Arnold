@@ -3284,7 +3284,7 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
     # repair on one session cannot block the tick from scanning/reporting the
     # other sessions.
     assert "dispatch_kimi_repair()" in text
-    assert 'setsid bash -c \'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"\'' in text
+    assert 'setsid bash -c \'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; exec "$2" "$3" "$4" "$5"\'' in text
     assert 'PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"' in text
     assert "kimi_dispatch_marker_set" in text
     assert "mechanical_relaunch_attempted_previously" in text
@@ -14456,40 +14456,41 @@ def test_repair_data_maintenance_skips_when_repair_lock_is_busy(tmp_path: Path) 
     lock_dir = marker_dir / "demo.repair-loop.lock"
     marker_dir.mkdir(parents=True)
     repair_dir.mkdir(parents=True)
-    lock_dir.mkdir()
-    started_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=60)).isoformat()
-    (lock_dir / "owner.json").write_text(
-        json.dumps(
-            {
-                "session": "demo",
-                "pid": os.getpid(),
-                "started_at": started_at,
-                "timeout_seconds": 3600,
-                "command": "arnold-repair-loop demo",
-                "cwd": str(tmp_path),
-                "hostname": "localhost",
-            }
-        ),
-        encoding="utf-8",
+    holder = subprocess.Popen(["sleep", "30"])
+    acquired = repair_lock.acquire_repair_lock(
+        lock_dir,
+        session="demo",
+        pid=holder.pid,
+        command="sleep 30",
+        started_at=(dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=60)).isoformat(),
+        timeout_seconds=3600,
+        cwd=str(tmp_path),
+        hostname="localhost",
     )
+    assert acquired.acquired
 
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function_until("run_repair_data_maintenance", "reap_stale_repair_candidates"),
-            f"MARKER_DIR={str(marker_dir)!r}",
-            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
-            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
-            f"SRC_DIR={str(REPO_ROOT)!r}",
-            f"PYTHONPATH={str(REPO_ROOT)!r}",
-            "REPAIR_DATA_RETENTION_INTERVAL_SECS=21600",
-            "run_repair_data_maintenance",
-        ]
-    )
+    try:
+        script = "\n\n".join(
+            [
+                _extract_wrapper_function_until("run_repair_data_maintenance", "reap_stale_repair_candidates"),
+                f"MARKER_DIR={str(marker_dir)!r}",
+                f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+                f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+                f"SRC_DIR={str(REPO_ROOT)!r}",
+                f"PYTHONPATH={str(REPO_ROOT)!r}",
+                "REPAIR_DATA_RETENTION_INTERVAL_SECS=21600",
+                "run_repair_data_maintenance",
+            ]
+        )
 
-    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "LOCK_BUSY" in result.stdout, f"stdout: {result.stdout}"
-    assert not (repair_dir / "index.json").exists()
+        result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "LOCK_BUSY" in result.stdout, f"stdout: {result.stdout}"
+        assert not (repair_dir / "index.json").exists()
+    finally:
+        holder.terminate()
+        holder.wait(timeout=5)
+        repair_lock.release_repair_lock(lock_dir, expected_pid=holder.pid)
 
 
 def test_partial_liveness_tick_writes_sidecar_record(tmp_path: Path) -> None:
