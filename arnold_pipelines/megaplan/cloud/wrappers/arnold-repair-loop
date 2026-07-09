@@ -5219,9 +5219,10 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
-  repair_data_set_outcome "live_with_fresh_activity"
-  log "repair target already running; verified recovery session=$SESSION"
-  exit 0
+    repair_data_set_outcome "live_with_fresh_activity"
+    log "repair target already running; no dev-fix needed session=$SESSION"
+    log "repair target already running; verified recovery session=$SESSION"
+    exit 0
   fi
 fi
 
