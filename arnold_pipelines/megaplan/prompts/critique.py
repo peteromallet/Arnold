@@ -20,6 +20,10 @@ from arnold_pipelines.megaplan._core import (
     robustness_critique_instruction,
     unresolved_significant_flags,
 )
+from arnold_pipelines.megaplan.north_star_actions import (
+    NORTH_STAR_ACTION_TYPES,
+    SEVERITY_BLOCKING,
+)
 from arnold_pipelines.megaplan.types import PlanState
 
 _CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH = """
@@ -49,6 +53,114 @@ def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
         "changes the settled premise — and if so, explicitly cite which settled "
         "decision you are challenging and why."
     )
+    return "\n".join(lines)
+
+
+def _build_north_star_actions_block(actions: list[dict[str, Any]]) -> str:
+    """Render carried North Star actions with explicit instruction per action_type.
+
+    The revise worker must resolve each action by mapping its type to a
+    concrete plan change, gate/scenario/checker addition, dead-delete, or
+    human halt when the action cannot be mapped to the plan.
+    """
+    if not actions:
+        return ""
+
+    # Action-type to concrete revise instruction
+    _action_instructions: dict[str, str] = {
+        "change_plan": (
+            "Change the plan to address this concern directly. The revised plan "
+            "must show a concrete, traceable change — not just a note or TODO."
+        ),
+        "add_gate": (
+            "Add an explicit gate requirement to the plan that blocks completion "
+            "until this concern is resolved. The gate must name a concrete check, "
+            "owner, or blocking condition."
+        ),
+        "add_scenario": (
+            "Add a new scenario / test case to the plan that exercises this concern. "
+            "The scenario must be concrete enough to execute, not just a prose "
+            "placeholder."
+        ),
+        "add_checker": (
+            "Add an automated checker (lint rule, static analysis, CI guard, etc.) "
+            "to the plan that detects or prevents this category of issue."
+        ),
+        "dead_delete": (
+            "Identify and remove plan steps, files, or assumptions that are "
+            "dead weight given this concern. The removal must be explicit in the "
+            "revised plan, not implied."
+        ),
+        "add_human_halt": (
+            "If this concern CANNOT be addressed by any of the above actions, "
+            "do NOT try to work around it — emit a `north_star_actions_addressed` "
+            "entry with `resolution: \"halted\"` and a clear `reason` explaining "
+            "why the action cannot be mapped to a plan change."
+        ),
+    }
+
+    lines: list[str] = [
+        "Carried North Star actions (must be resolved in this revision):",
+        "",
+        "These actions were identified by the gate as plan-level execution-safety "
+        "concerns. Each action has an `action_type` that tells you what concrete "
+        "change is expected. You MUST address every action by mapping its type to "
+        "the corresponding revise behavior below, then record the result in "
+        "`north_star_actions_addressed[]`.",
+        "",
+        "Action type -> expected revise behavior:",
+    ]
+    for at in NORTH_STAR_ACTION_TYPES:
+        instr = _action_instructions.get(at, "Address this action in the revised plan.")
+        lines.append(f"  - `{at}`: {instr}")
+    lines.append("")  # blank line before listing actions
+    lines.append("Carried actions:")
+
+    for action in actions:
+        aid = action.get("id", "?")
+        category = action.get("category", "?")
+        action_type = action.get("action_type", "?")
+        severity = action.get("severity", "?")
+        concern = action.get("concern", "")
+        evidence = action.get("evidence", "")
+
+        line = f"  - {aid} | category={category} | type={action_type} | severity={severity}"
+        lines.append(line)
+        if concern:
+            lines.append(f"    concern: {concern}")
+        if evidence:
+            # Truncate very long evidence strings to keep the prompt readable
+            ev = evidence[:300] + ("..." if len(evidence) > 300 else "")
+            lines.append(f"    evidence: {ev}")
+        # Include required_change / plan_refs as optional guidance
+        required_change = action.get("required_change", "")
+        if required_change:
+            lines.append(f"    required_change: {required_change}")
+        plan_refs = action.get("plan_refs")
+        if isinstance(plan_refs, list) and plan_refs:
+            lines.append(f"    plan_refs: {', '.join(str(r) for r in plan_refs)}")
+
+    lines.append("")
+    lines.append(
+        "For EACH action above, record an entry in `north_star_actions_addressed[]`:"
+    )
+    lines.append(
+        "  - `action_id`: the action `id` from the carried list above"
+    )
+    lines.append(
+        "  - `resolution`: `\"addressed\"` (mapped to a plan change), "
+        "`\"rejected\"` (action is invalid/out-of-scope), or "
+        "`\"halted\"` (cannot be mapped — see `add_human_halt` above)"
+    )
+    lines.append("  - `reason`: what you did or why you rejected/halted")
+    lines.append(
+        "  - `where`: pointer to the plan section where the change lives "
+        '(e.g. "Phase 2 — Step 3", "gate.json section preflight")'
+    )
+    lines.append(
+        "  - `plan_refs` (optional): concrete file paths this resolution touches"
+    )
+
     return "\n".join(lines)
 
 
@@ -194,6 +306,29 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         ctx.get("verification_raw_log_path"),
     )
 
+    # Read carried North Star actions from gate_carry.json (normalized,
+    # carried form). Fall back to gate.json when no carry file exists.
+    north_star_actions: list[dict[str, Any]] = []
+    gate_carry_path = plan_dir / "gate_carry.json"
+    if gate_carry_path.exists():
+        try:
+            carry = read_json(gate_carry_path)
+            if isinstance(carry, dict):
+                raw_actions = carry.get("north_star_actions")
+                if isinstance(raw_actions, list):
+                    north_star_actions = [
+                        a for a in raw_actions if isinstance(a, dict)
+                    ]
+        except Exception:
+            pass
+    if not north_star_actions:
+        ns_from_gate = gate.get("north_star_actions")
+        if isinstance(ns_from_gate, list):
+            north_star_actions = [
+                a for a in ns_from_gate if isinstance(a, dict)
+            ]
+    north_star_block = _build_north_star_actions_block(north_star_actions)
+
     return textwrap.dedent(
         f"""
         You are revising an implementation plan after critique and gate feedback.
@@ -219,6 +354,8 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
 
         {delta_block}
 
+        {north_star_block}
+
         Requirements:
         - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
         - Update the plan to address the significant issues.
@@ -236,7 +373,7 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         - Remove unjustified scope growth. If critique raised scope creep, narrow the plan back to the original idea unless the broader work is strictly required.
         - Maintain the structural template: H1 title, ## Overview, phase sections with numbered step sections, ## Execution Order or ## Validation Order.
         - CRITICAL: Your entire revised plan markdown (all sections) must be output as the `plan` field in the structured output. The prose response must not contain the plan text.
-        - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `assumptions`, `success_criteria`, `questions`, and optional `changed_surfaces` / `test_blast_radius`. Do not add commentary before or after the JSON object.
+        - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `north_star_actions_addressed`, `assumptions`, `success_criteria`, `questions`, and optional `changed_surfaces` / `test_blast_radius`. Do not add commentary before or after the JSON object.
         - Populate `changed_surfaces` with every concrete file path your revised plan will change or create. Include both source files and test files. Use repo-relative paths. This list drives the deterministic test-selection blast radius; be complete. If your revised plan touches a file, list it.
         - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{{"kind": "path", "value": "<path>", "reason": "<why>"}}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor and the prior plan's blast radius; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
 

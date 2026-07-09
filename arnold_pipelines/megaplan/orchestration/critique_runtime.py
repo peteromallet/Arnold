@@ -5,7 +5,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan import handlers as _pkg
 from arnold_pipelines.megaplan.audits.robustness import validate_critique_checks
@@ -37,6 +37,7 @@ from arnold_pipelines.megaplan._core import (
     adaptive_critique_enabled,
     atomic_write_json,
     configured_robustness,
+    infer_next_steps,
     is_creative_mode,
     latest_plan_meta_path,
     latest_plan_path,
@@ -66,6 +67,14 @@ from arnold_pipelines.megaplan.handlers.shared import (
 )
 from arnold_pipelines.megaplan.handlers.tiebreaker import _build_tiebreaker_reprompt
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.north_star_actions import (
+    NORTH_STAR_ACTION_TYPES,
+    NorthStarActionValidationError,
+    blocking_north_star_actions,
+    is_blocking_action,
+    is_blocking_category,
+    normalize_north_star_actions_addressed,
+)
 
 log = logging.getLogger("megaplan")
 _ORIGINAL_VALIDATE_CRITIQUE_CHECKS = validate_critique_checks
@@ -1065,6 +1074,306 @@ def _normalize_critique_recovery_flag(flag: dict[str, Any]) -> dict[str, Any]:
     return clean_flag
 
 
+# --------------------------------------------------------------------------- #
+# North Star pre-worker revise guard
+# --------------------------------------------------------------------------- #
+#
+# Before the revise worker is invoked, halt through the existing
+# ``CliError``/``record_step_failure`` path when a carried North Star action
+# cannot be mapped to concrete worker work. The guard is fail-closed: it only
+# ever *prevents* a revise run, never enables one. The three halt conditions
+# mirror the revise prompt's per-action instructions and the brief:
+#
+#   * ``add_human_halt`` — the gate explicitly requires a human;
+#   * any other unmappable blocking action — its ``action_type`` is not one of
+#     the concrete mappable types the revise worker can act on
+#     (``change_plan``/``add_gate``/``add_scenario``/``add_checker``/
+#     ``dead_delete``);
+#   * a schema-blocking (dangerous) category action that carries no concrete
+#     mappable target (neither ``plan_refs`` nor ``required_change``), so the
+#     worker has nothing concrete to map it to.
+
+# The concrete action types the revise worker can map to plan/scenario/checker
+# work. ``add_human_halt`` is intentionally excluded — it is never mappable.
+_REVISE_MAPPABLE_NORTH_STAR_ACTION_TYPES: frozenset[str] = frozenset(
+    t for t in NORTH_STAR_ACTION_TYPES if t != "add_human_halt"
+)
+
+
+def _carried_north_star_actions(plan_dir: Path) -> list[dict[str, Any]]:
+    """Read the normalized North Star actions the revise worker will see.
+
+    Mirrors the revise prompt reader: prefer ``gate_carry.json`` and fall back
+    to ``gate.json`` when the carry file is absent or holds no actions. Both
+    sources carry *normalized* actions (severity already derived with schema
+    authority by the gate artifact builder), so the returned actions can be
+    inspected directly with :func:`is_blocking_action` /
+    :func:`is_blocking_category`. Missing/malformed payloads yield an empty
+    list; the guard is the single fail-closed authority.
+    """
+    carry_path = plan_dir / "gate_carry.json"
+    if carry_path.exists():
+        try:
+            carry = read_json(carry_path)
+        except Exception:
+            carry = None
+        if isinstance(carry, dict):
+            raw = carry.get("north_star_actions")
+            if isinstance(raw, list):
+                actions = [a for a in raw if isinstance(a, dict)]
+                if actions:
+                    return actions
+    gate_path = plan_dir / "gate.json"
+    if gate_path.exists():
+        try:
+            gate = read_json(gate_path)
+        except Exception:
+            gate = None
+        if isinstance(gate, dict):
+            raw = gate.get("north_star_actions")
+            if isinstance(raw, list):
+                return [a for a in raw if isinstance(a, dict)]
+    return []
+
+
+def _revise_north_star_halt_actions(
+    actions: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return the blocking North Star actions that force a pre-worker halt.
+
+    See the module-level comment for the three halt conditions. Advisory actions
+    and non-blocking entries are never halt triggers. ``plan_refs`` counts as a
+    concrete target only when it holds at least one non-blank string (mirrors
+    the post-revise concrete-ref rule); ``required_change`` only when it is a
+    non-empty (stripped) string.
+    """
+    halt: list[dict[str, Any]] = []
+    for action in actions:
+        if not isinstance(action, Mapping) or not is_blocking_action(action):
+            continue
+        action_type = action.get("action_type")
+        category = action.get("category")
+        if action_type == "add_human_halt":
+            halt.append(dict(action))
+            continue
+        if action_type not in _REVISE_MAPPABLE_NORTH_STAR_ACTION_TYPES:
+            halt.append(dict(action))
+            continue
+        if is_blocking_category(category):
+            plan_refs = action.get("plan_refs")
+            required_change = action.get("required_change")
+            has_target = (
+                isinstance(plan_refs, list)
+                and any(isinstance(ref, str) and ref.strip() for ref in plan_refs)
+            ) or (
+                isinstance(required_change, str) and bool(required_change.strip())
+            )
+            if not has_target:
+                halt.append(dict(action))
+    return halt
+
+
+def _raise_north_star_revise_halt(
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    iteration: int,
+    halt_actions: list[dict[str, Any]],
+) -> None:
+    """Record a revise step failure and raise for an unmappable North Star halt.
+
+    Uses the existing ``CliError``/``record_step_failure`` path (mirroring the
+    revise cost-sanity guard), so the halt shows up in history as a normal
+    step failure without inventing a new runner state.
+    """
+    summaries = [
+        {
+            "id": a.get("id"),
+            "category": a.get("category"),
+            "action_type": a.get("action_type"),
+            "concern": a.get("concern"),
+        }
+        for a in halt_actions
+    ]
+    bullet_ids = ", ".join(str(a.get("id")) for a in halt_actions)
+    message = (
+        "Revise halted before worker invocation: one or more carried North Star "
+        f"actions require a human and cannot be mapped to revise work ({bullet_ids}). "
+        "Address the halt actions (change the plan/scenario/checker target, or "
+        "resolve the human-halt) and re-run gate/revise."
+    )
+    error = CliError(
+        "north_star_revise_human_halt",
+        message,
+        valid_next=infer_next_steps(state),
+        extra={
+            "step": "revise",
+            "halt_actions": summaries,
+            "count": len(halt_actions),
+        },
+    )
+    record_step_failure(
+        plan_dir,
+        state,
+        step="revise",
+        iteration=iteration,
+        error=error,
+        duration_ms=0,
+    )
+    raise error
+
+
+def _revise_north_star_unresolved_actions(
+    *,
+    carried_blocking: Sequence[Mapping[str, Any]],
+    addressed: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return the carried blocking actions that are NOT concretely resolved.
+
+    This is the fail-closed authority for revise closeout (Step 6). A carried
+    blocking action is considered resolved only when the worker's
+    ``north_star_actions_addressed[]`` contains a record that:
+
+    * links to the carried action by ``action_id`` (not omitted);
+    * cites *concrete* plan refs — a non-empty ``plan_refs`` list with at least
+      one non-blank string (not prose-only);
+    * echoes the carried action's ``action_type`` marker exactly
+      (satisfies the required action-type structural marker).
+
+    When *addressed* is ``None`` (the worker payload was malformed) every
+    carried blocker is reported as unresolved, mirroring the
+    ``_post_revise_gate_allowed`` / ``flags_addressed`` convention that absent
+    or incomplete metadata can never stand in for evidence of resolution.
+    Advisory actions are never in scope — only carried blocking actions need
+    concrete addressing before revise can close.
+    """
+    # Absent/malformed addressed metadata => all carried blockers unresolved.
+    if addressed is None:
+        return [
+            {
+                "id": action.get("id"),
+                "action_type": action.get("action_type"),
+                "reason": "addressed_metadata_malformed",
+            }
+            for action in carried_blocking
+            if isinstance(action, Mapping)
+        ]
+
+    # Index addressed records by normalized action_id (first occurrence wins;
+    # a duplicate never strengthens resolution).
+    addressed_by_id: dict[str, dict[str, Any]] = {}
+    for rec in addressed:
+        if not isinstance(rec, Mapping):
+            continue
+        aid = rec.get("action_id")
+        if isinstance(aid, str) and aid.strip():
+            addressed_by_id.setdefault(aid.strip(), dict(rec))
+
+    unresolved: list[dict[str, Any]] = []
+    for action in carried_blocking:
+        if not isinstance(action, Mapping):
+            continue
+        aid = action.get("id")
+        aid_key = aid.strip() if isinstance(aid, str) else None
+        record = addressed_by_id.get(aid_key) if aid_key else None
+
+        if record is None:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": action.get("action_type"),
+                    "reason": "omitted",
+                }
+            )
+            continue
+
+        plan_refs = record.get("plan_refs")
+        has_concrete_refs = isinstance(plan_refs, list) and any(
+            isinstance(ref, str) and ref.strip() for ref in plan_refs
+        )
+        if not has_concrete_refs:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": action.get("action_type"),
+                    "reason": "prose_only",
+                }
+            )
+            continue
+
+        carried_type = action.get("action_type")
+        addressed_type = record.get("action_type")
+        if addressed_type != carried_type:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": carried_type,
+                    "addressed_action_type": addressed_type,
+                    "reason": "action_type_mismatch",
+                }
+            )
+            continue
+    return unresolved
+
+
+def _raise_north_star_revise_unresolved(
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    iteration: int,
+    unresolved: list[dict[str, Any]],
+    malformed_reason: str | None = None,
+    duration_ms: int = 0,
+) -> None:
+    """Record a revise step failure and raise when carried blocking actions are
+    not concretely resolved in the worker output.
+
+    Mirrors ``_raise_north_star_revise_halt``: routes through the existing
+    ``CliError`` / ``record_step_failure`` path so the failure surfaces in
+    history as a normal step failure without inventing a new runner state.
+    """
+    summaries = [
+        {
+            "id": u.get("id"),
+            "action_type": u.get("action_type"),
+            "reason": u.get("reason"),
+        }
+        for u in unresolved
+    ]
+    bullet_ids = ", ".join(str(u.get("id")) for u in unresolved)
+    reason_counts: dict[str, int] = {}
+    for u in unresolved:
+        key = str(u.get("reason"))
+        reason_counts[key] = reason_counts.get(key, 0) + 1
+    reasons = ", ".join(f"{reason}={count}" for reason, count in reason_counts.items())
+    prefix = f"{malformed_reason} " if malformed_reason else ""
+    message = (
+        f"{prefix}Revise cannot close: {len(unresolved)} carried blocking "
+        f"North Star action(s) unresolved ({bullet_ids}) [{reasons}]. Each "
+        "blocking action needs a north_star_actions_addressed record with "
+        "concrete plan_refs and the matching action_type marker."
+    )
+    error = CliError(
+        "north_star_revise_unresolved_blocking",
+        message,
+        valid_next=infer_next_steps(state),
+        extra={
+            "step": "revise",
+            "unresolved_actions": summaries,
+            "count": len(unresolved),
+        },
+    )
+    record_step_failure(
+        plan_dir,
+        state,
+        step="revise",
+        iteration=iteration,
+        error=error,
+        duration_ms=duration_ms,
+    )
+    raise error
+
+
 def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
     from arnold_pipelines.megaplan.handlers.gate import (
         _next_progress_step,
@@ -1076,6 +1385,19 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         require_state(state, "revise", {STATE_CRITIQUED})
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         _has_gate, revise_transition = _resolve_revise_transition(state, plan_dir)
+        # Pre-worker North Star guard: halt through the existing CliError /
+        # record_step_failure path before spending a worker run when a carried
+        # action requires a human, is unmappable, or is a dangerous-category
+        # blocker with no concrete target.
+        carried_ns_actions = _carried_north_star_actions(plan_dir)
+        ns_halt_actions = _revise_north_star_halt_actions(carried_ns_actions)
+        if ns_halt_actions:
+            _raise_north_star_revise_halt(
+                plan_dir,
+                state,
+                iteration=state["iteration"] + 1,
+                halt_actions=ns_halt_actions,
+            )
         previous_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
         revise_start_iso = now_utc()
         notes_consumed = [
@@ -1152,6 +1474,40 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
                     revise_blast_radius = prior_blast_radius
         elif revise_blast_radius is None:
             revise_blast_radius = prior_blast_radius
+        # Step 6: validate carried blocking North Star actions are concretely
+        # resolved in the worker output, then persist the normalized
+        # north_star_actions_addressed[] beside the revise metadata. Fail
+        # closed (record_step_failure -> CliError, no new runner state) when a
+        # carried blocking action is omitted, prose-only (no concrete
+        # plan_refs), structurally malformed, or mismatches the required
+        # action_type marker. Absent/malformed addressed metadata is treated as
+        # all-carried-blocking-unresolved, mirroring the flags_addressed /
+        # _post_revise_gate_allowed convention (SD1).
+        carried_blocking = blocking_north_star_actions(carried_ns_actions)
+        raw_addressed = payload.get("north_star_actions_addressed")
+        addressed_malformed_reason: str | None = None
+        try:
+            normalized_addressed = normalize_north_star_actions_addressed(
+                raw_addressed
+            )
+        except NorthStarActionValidationError as exc:
+            normalized_addressed = None
+            addressed_malformed_reason = (
+                f"north_star_actions_addressed[] malformed: {exc};"
+            )
+        if carried_blocking:
+            unresolved_actions = _revise_north_star_unresolved_actions(
+                carried_blocking=carried_blocking,
+                addressed=normalized_addressed,
+            )
+            if unresolved_actions:
+                _raise_north_star_revise_unresolved(
+                    plan_dir,
+                    state,
+                    iteration=version,
+                    unresolved=unresolved_actions,
+                    malformed_reason=addressed_malformed_reason,
+                )
         revise_meta_fields = {
             "changes_summary": payload["changes_summary"],
             "flags_addressed": payload["flags_addressed"],
@@ -1159,6 +1515,9 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             "success_criteria": payload.get("success_criteria", []),
             "assumptions": payload.get("assumptions", []),
             "delta_from_previous_percent": delta,
+            # Persist the (normalized) addressed-action metadata beside revise
+            # output so finalize/review can trust it as the closeout contract.
+            "north_star_actions_addressed": normalized_addressed or [],
         }
         if revise_blast_radius is not None:
             revise_meta_fields["test_blast_radius"] = revise_blast_radius
