@@ -189,14 +189,15 @@ repair_pidfile_path() {
 repair_loop_pid_matches_session() {
   local pid="$1"
   local session="${2:-}"
-  python3 - "$pid" "$session" <<'PY'
+  local repair_basename="${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}"
+  python3 - "$pid" "$session" "$repair_basename" <<'PY'
 import os
 import pathlib
 import shlex
 import subprocess
 import sys
 
-pid_text, session = sys.argv[1:]
+pid_text, session, repair_basename = sys.argv[1:]
 try:
     pid = int(pid_text)
 except (TypeError, ValueError):
@@ -233,7 +234,7 @@ def match_at(idx: int) -> bool:
     if idx >= len(args):
         return False
     base = os.path.basename(args[idx])
-    if base != "arnold-repair-loop":
+    if base not in {"arnold-repair-loop", repair_basename}:
         return False
     if not session:
         return True
@@ -2153,7 +2154,17 @@ PY
   [[ -r "$pgid_path" ]] || return 1
   read -r pgid < "$pgid_path" || return 1
   [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  if kill -0 "$pgid" >/dev/null 2>&1 \
+    && ps -ww -o args= -p "$pgid" 2>/dev/null \
+      | grep -Fq "${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}"; then
+    return 0
+  fi
   kill -0 -- "-$pgid" >/dev/null 2>&1 || return 1
+  if ps -eo pgid=,args= 2>/dev/null \
+    | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
+    | grep -Fq "${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}"; then
+    return 0
+  fi
   ps -eo pgid=,args= 2>/dev/null \
     | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
     | grep -Eq 'arnold-repair-loop|arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec|launch_hermes_agent\.py'
@@ -2187,12 +2198,12 @@ repair_loop_busy_state() {
     fi
     rm -f "$pidfile" 2>/dev/null || true
   fi
-  live_pid="$(python3 - "$session" <<'PY' 2>/dev/null || true
+  live_pid="$(python3 - "$session" "${PRIMARY_REPAIR_BASENAME:-arnold-repair-loop}" <<'PY' 2>/dev/null || true
 import os
 import pathlib
 import sys
 
-session = sys.argv[1]
+session, repair_basename = sys.argv[1:]
 
 
 def parse_args(pid: int) -> list[str]:
@@ -2207,7 +2218,7 @@ def matches(args: list[str]) -> bool:
     def match_at(idx: int) -> bool:
         if idx >= len(args):
             return False
-        if os.path.basename(args[idx]) != "arnold-repair-loop":
+        if os.path.basename(args[idx]) not in {"arnold-repair-loop", repair_basename}:
             return False
         return idx + 1 < len(args) and args[idx + 1] == session
 

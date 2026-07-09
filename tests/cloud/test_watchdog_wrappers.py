@@ -14470,8 +14470,10 @@ def test_repair_data_maintenance_skips_when_repair_lock_is_busy(tmp_path: Path) 
         session="demo",
         pid=holder.pid,
         command="sleep 30",
-        cwd=str(tmp_path),
+        started_at=(dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=60)).isoformat(),
         timeout_seconds=3600,
+        cwd=str(tmp_path),
+        hostname="localhost",
     )
     assert lock.acquired
 

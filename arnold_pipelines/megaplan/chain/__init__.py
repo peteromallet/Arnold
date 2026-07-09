@@ -2472,11 +2472,13 @@ def _chain_completion_guard(
 
     plan_state = _read_plan_state_payload_from_dir(plan_dir)
     current_state = plan_state.get("current_state")
+    current_state_note = ""
     is_merged_pr = _completion_record_is_merged_pr(record)
     if is_merged_pr and not implementation_milestone:
         return True, "merged PR milestone accepted without implementation checks"
     merged_pr_internal_state_bypass = is_merged_pr and current_state in {
         STATE_BLOCKED,
+        STATE_EXECUTED,
         STATE_FINALIZED,
     }
     merged_pr_state_bypass_reason = ""
@@ -2495,6 +2497,10 @@ def _chain_completion_guard(
             f"merged PR milestone; internal plan state {current_state!r} bypassed "
             "because PR is merged"
         )
+        if current_state_note:
+            merged_pr_state_bypass_reason = (
+                f"{current_state_note}; {merged_pr_state_bypass_reason}"
+            )
 
     if not implementation_milestone:
         return True, "non-implementation completion guard passed"
@@ -2620,9 +2626,60 @@ def _chain_completion_guard(
     if waiver_ok:
         return True, f"typed no-op waiver accepted: {waiver_reason}"
     reason_parts = [reason, finalize_reason, diff_reason]
+    if current_state_note:
+        reason_parts.insert(0, current_state_note)
     if published_diff_reason is not None:
         reason_parts.append(published_diff_reason)
     return True, f"completion guard passed: {'; '.join(reason_parts)}"
+
+
+def _is_failed_no_next_step_blocked_execute(plan_state: dict[str, Any]) -> bool:
+    current_state = plan_state.get("current_state")
+    if current_state != "failed":
+        return False
+    latest_failure = plan_state.get("latest_failure")
+    if not isinstance(latest_failure, dict):
+        return False
+    if latest_failure.get("kind") != "no_next_step":
+        return False
+    history = plan_state.get("history")
+    if not isinstance(history, list):
+        return False
+    return any(
+        isinstance(entry, dict)
+        and entry.get("step") == "execute"
+        and entry.get("result") == "blocked"
+        for entry in history
+    )
+
+
+def _finalize_has_only_terminal_status_rows(plan_dir: Path) -> tuple[bool, str]:
+    try:
+        payload = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False, "finalize.json unavailable"
+    if not isinstance(payload, dict):
+        return False, "finalize.json is not an object"
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return False, "finalize.json has no tasks"
+    saw_terminal = False
+    for task in tasks:
+        if not isinstance(task, dict):
+            return False, "finalize.json contains non-object task rows"
+        status = _optional_finalize_status(task)
+        if status not in {"done", "skipped", "waived", "not_applicable"}:
+            return False, f"finalize.json has non-terminal task status {status!r}"
+        if _task_record_has_authority_payload(task):
+            return False, "finalize.json terminal rows still carry authority payload"
+        saw_terminal = True
+    if not saw_terminal:
+        return False, "finalize.json has no terminal task rows"
+    return True, "terminal finalize task statuses"
+
+
+def _is_chain_control_path(path: str) -> bool:
+    return path in {"chain.yaml", "idea.md", "NORTHSTAR.md"}
 
 
 def _current_branch_name(root: Path) -> str | None:
@@ -2696,6 +2753,7 @@ def _ensure_published_claimed_changes_for_pr_progression(
         path
         for path in dirty_paths
         if path not in claimed_root_paths
+        and not _is_chain_control_path(path)
         and path != ".megaplan"
         and not path.startswith(".megaplan/")
     )
@@ -2774,11 +2832,12 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         return None, "missing active plan or milestone branch for stale merged PR recovery"
 
     current_state = plan_state.get("current_state")
+    canonical_current_state = current_state
     if current_state == STATE_DONE:
         return None, f"plan {plan_name} is already {STATE_DONE!r}"
-    if not isinstance(current_state, str) or not current_state:
+    if not isinstance(canonical_current_state, str) or not canonical_current_state:
         return None, f"plan {plan_name} has no usable current_state for stale merged PR recovery"
-    if current_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
+    if canonical_current_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
         return (
             None,
             f"plan {plan_name} current_state={current_state!r} is not recoverable "
@@ -2792,6 +2851,7 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         path
         for path in dirty_paths
         if path not in claimed_root_paths
+        and not _is_chain_control_path(path)
         and path != ".megaplan"
         and not path.startswith(".megaplan/")
     )
@@ -2837,15 +2897,54 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         _capture_sync_state(root, spec_path, branch=milestone.branch, pr_number=None)
         state = chain_spec.load_chain_state(spec_path)
 
+    plan_dir = resolve_plan_dir(root, plan_name)
+    authoritative, authority_reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    empty_finalize_tasks, finalize_reason = _finalize_payload_has_empty_tasks(plan_dir)
+    terminal_finalize_only, terminal_finalize_reason = _finalize_has_only_terminal_status_rows(
+        plan_dir
+    )
+    if (
+        canonical_current_state == STATE_EXECUTED
+        and terminal_finalize_only
+    ):
+        _mark_plan_completed_by_chain(
+            root,
+            plan_name,
+            milestone_label=milestone.label,
+            completion_reason=(
+                "stale merged PR recovery accepted terminal finalize task statuses: "
+                f"{terminal_finalize_reason}"
+            ),
+            writer=writer,
+        )
+        state.last_state = STATE_DONE
+        state.metadata["stale_merged_pr_recovery"] = {
+            "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "milestone": milestone.label,
+            "plan": plan_name,
+            "stale_pr_number": old_pr_number,
+            "plan_current_state": current_state,
+            "canonical_plan_current_state": canonical_current_state,
+            "dirty_claimed_paths": dirty_claimed,
+            "unclaimed_execute_dirty_paths": unrelated_dirty,
+        }
+        chain_spec.save_chain_state(spec_path, state)
+        return (
+            state,
+            "recovered stale merged PR with terminal finalize task statuses; "
+            f"{terminal_finalize_reason}",
+        )
+
     state.pr_number = None
     state.pr_state = None
-    state.last_state = current_state
+    state.last_state = canonical_current_state
     state.metadata["stale_merged_pr_recovery"] = {
         "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "milestone": milestone.label,
         "plan": plan_name,
         "stale_pr_number": old_pr_number,
         "plan_current_state": current_state,
+        "canonical_plan_current_state": canonical_current_state,
         "dirty_claimed_paths": dirty_claimed,
         "unclaimed_execute_dirty_paths": unrelated_dirty,
     }
