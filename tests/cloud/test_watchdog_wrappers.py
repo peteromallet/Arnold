@@ -387,7 +387,7 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "state mismatch detected + cleared" in text
     assert "repair_clear_stale_state_if_needed()" in text
     assert 'if [[ "$INITIAL_HEALTH" == "alive" ]]' in text
-    assert "repair target already running; no dev-fix needed" in text
+    assert "repair target already running; verified recovery" in text
     assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
     assert "Use the raw failure signal, run narrative, and prior-attempt history" in text
     assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
@@ -2533,7 +2533,17 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     marker_path = marker_dir / "demo-session.json"
-    marker_path.write_text(json.dumps({"run_kind": "chain"}), encoding="utf-8")
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "run_kind": "chain",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+            }
+        ),
+        encoding="utf-8",
+    )
     _write_chain_state(
         workspace / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
         {
@@ -2715,7 +2725,17 @@ def test_repair_loop_exits_for_terminal_plan_with_stale_chain_state(tmp_path: Pa
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones:\n  - label: m1\n", encoding="utf-8")
     marker_path = marker_dir / "demo-session.json"
-    marker_path.write_text(json.dumps({"run_kind": "chain"}), encoding="utf-8")
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "run_kind": "chain",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+            }
+        ),
+        encoding="utf-8",
+    )
     _write_chain_state(
         workspace / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
         {
@@ -3248,10 +3268,12 @@ def test_watchdog_progress_reap_decision_uses_log_idle_and_fails_safe(tmp_path: 
 def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]"' in text
-    assert 'pgrep -f "/$PRIMARY_REPAIR_BASENAME[[:space:]]+$session([[:space:]]|$)"' in text
+    assert 'cmdline_path = pathlib.Path(f"/proc/{pid}/cmdline")' in text
+    assert 'os.path.basename(args[idx]) == "arnold-kimi-goal-operator"' in text
+    assert "and args[idx + 1] == session" in text
     assert 'printf \'%s/%s.kimi-pgid\' "$MARKER_DIR" "$1"' in text
     assert 'kill -0 -- "-$pgid"' in text
+    assert 'grep -Eq \'arnold-repair-loop|arnold-kimi-goal-operator|arnold\\.agent\\.run_agent|codex exec|launch_hermes_agent\\.py\'' in text
     assert 'grep -F "[a]rnold-kimi-goal-operator $session "' not in text
 
 
@@ -3897,7 +3919,15 @@ def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_t
 
     marker_path = marker_dir / "demo-session.json"
     marker_path.write_text(
-        json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
+        json.dumps(
+            {
+                "session": "demo-session",
+                "run_kind": "plan",
+                "plan_name": "demo-plan",
+                "workspace": str(workspace),
+                "relaunch_command": "true",
+            }
+        ),
         encoding="utf-8",
     )
     _write_plan(
@@ -3972,7 +4002,15 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
 
     marker_path = marker_dir / "demo-session.json"
     marker_path.write_text(
-        json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
+        json.dumps(
+            {
+                "session": "demo-session",
+                "run_kind": "plan",
+                "plan_name": "demo-plan",
+                "workspace": str(workspace),
+                "relaunch_command": "true",
+            }
+        ),
         encoding="utf-8",
     )
     _write_plan(
@@ -4051,7 +4089,15 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
     bin_dir.mkdir()
 
     (marker_dir / "demo-session.json").write_text(
-        json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
+        json.dumps(
+            {
+                "session": "demo-session",
+                "run_kind": "plan",
+                "plan_name": "demo-plan",
+                "workspace": str(workspace),
+                "relaunch_command": "true",
+            }
+        ),
         encoding="utf-8",
     )
     _write_plan(
@@ -4138,7 +4184,15 @@ def test_repair_loop_busy_directory_lock_exits_without_mutating_repair_data(tmp_
     workspace.mkdir()
 
     (marker_dir / "demo-session.json").write_text(
-        json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
+        json.dumps(
+            {
+                "session": "demo-session",
+                "run_kind": "plan",
+                "plan_name": "demo-plan",
+                "workspace": str(workspace),
+                "relaunch_command": "true",
+            }
+        ),
         encoding="utf-8",
     )
     _write_plan(
@@ -8153,30 +8207,32 @@ def test_repair_loop_health_treats_resolver_active_step_as_alive_without_tmux(
     )
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
     plan_dir.mkdir(parents=True, exist_ok=True)
-    (plan_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "name": "demo-plan",
-                "current_state": "initialized",
-                "active_step": {
-                    "phase": "prep",
-                    "worker_pid": 12345,
-                    "started_at": "2026-07-06T20:44:13Z",
-                    "last_activity_at": "2026-07-06T20:44:46Z",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    worker = subprocess.Popen(["sleep", "30"])
+    try:
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "initialized",
+                    "active_step": {
+                        "phase": "prep",
+                        "worker_pid": worker.pid,
+                        "started_at": "2026-07-06T20:44:13Z",
+                        "last_activity_at": "2026-07-06T20:44:46Z",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
 
-    script = "\n\n".join(
-        [
-            _extract_repair_function("chain_wait_status"),
-            _extract_repair_function("plan_process_is_alive"),
-            _extract_repair_function("chain_process_is_alive"),
-            _extract_repair_function("resolver_active_step_is_alive"),
-            _extract_repair_function("session_health_status"),
-            f"""
+        script = "\n\n".join(
+            [
+                _extract_repair_function("chain_wait_status"),
+                _extract_repair_function("plan_process_is_alive"),
+                _extract_repair_function("chain_process_is_alive"),
+                _extract_repair_function("resolver_active_step_is_alive"),
+                _extract_repair_function("session_health_status"),
+                f"""
 WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}
 ARNOLD_SRC={str(REPO_ROOT)!r}
 MARKER_DIR={str(marker_dir)!r}
@@ -8186,11 +8242,14 @@ ps() {{ :; }}
 chain_wait_status() {{ echo none; }}
 session_health_status demo-session {workspace} {spec_path} chain ""
 """,
-        ]
-    )
-    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "alive"
+            ]
+        )
+        result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "alive"
+    finally:
+        worker.terminate()
+        worker.wait(timeout=15)
 
 
 def test_watchdog_health_treats_orphaned_chain_process_as_alive(tmp_path: Path) -> None:
