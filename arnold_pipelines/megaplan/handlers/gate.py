@@ -299,6 +299,7 @@ def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[s
         "warnings": list(gate_summary.get("warnings", [])) if isinstance(gate_summary.get("warnings"), list) else [],
         "orchestrator_guidance": str(gate_summary.get("orchestrator_guidance", "")),
         "carried_flags": carried_flags,
+        "north_star_actions": gate_summary.get("north_star_actions", []),
         "iteration": iteration,
         "produced_at": now_utc(),
     }
@@ -869,6 +870,7 @@ def _normalize_gate_payload(
     gate_payload.setdefault("settled_decisions", [])
     gate_payload.setdefault("flag_resolutions", [])
     gate_payload.setdefault("accepted_tradeoffs", [])
+    gate_payload.setdefault("north_star_actions", [])
     # Strip placeholder/empty tradeoff objects emitted by some workers.
     gate_payload["accepted_tradeoffs"] = [
         item
