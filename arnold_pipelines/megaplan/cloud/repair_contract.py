@@ -442,6 +442,12 @@ def project_repair_custody(
         _as_text(_as_mapping(target_payload.get("marker")).get("session")),
         _as_text(target_payload.get("session")),
     )
+    target_current_refs = _as_mapping(target_payload.get("current_refs"))
+    current_plan_identity = _first_non_empty(
+        _as_text(target_current_refs.get("current_plan_name")),
+        _as_text(target_current_refs.get("chain_current_plan_name")),
+        _as_text(target_current_refs.get("marker_plan_name")),
+    )
 
     requests: list[RepairCustodyRequestRecord] = []
     for record in queue_requests:
@@ -449,13 +455,46 @@ def project_repair_custody(
         if target_session and request_session and request_session != target_session:
             continue
         problem_signature = _stable_mapping(_as_mapping(record.get("problem_signature")))
+        request_target = deepcopy(target_payload)
+        request_target_refs = _stable_mapping(_as_mapping(request_target.get("current_refs")))
+        request_target_record = _stable_mapping(_as_mapping(record.get("target")))
+        request_plan_identity = _first_non_empty(
+            _as_text(request_target_record.get("plan_name")),
+            _as_text(problem_signature.get("milestone_or_plan")),
+        )
+        if request_plan_identity:
+            request_target_refs["current_plan_name"] = request_plan_identity
+            request_target_refs["chain_current_plan_name"] = request_plan_identity
+        signature_state = _as_text(problem_signature.get("current_state"))
+        if signature_state:
+            request_target_refs["plan_current_state"] = signature_state
+        request_target["current_refs"] = request_target_refs
+        request_plan_state: dict[str, Any] = {}
+        if request_plan_identity:
+            request_plan_state["name"] = request_plan_identity
+        if signature_state:
+            request_plan_state["current_state"] = signature_state
+        signature_retry_strategy = _as_text(problem_signature.get("retry_strategy"))
+        if signature_retry_strategy:
+            request_plan_state["resume_cursor"] = {"retry_strategy": signature_retry_strategy}
+        signature_failure_kind = _as_text(problem_signature.get("failure_kind"))
+        signature_phase = _as_text(problem_signature.get("phase_or_step"))
+        signature_blocked_task_id = _as_text(problem_signature.get("blocked_task_id"))
+        if signature_failure_kind or signature_phase or signature_blocked_task_id:
+            request_plan_state["latest_failure"] = {
+                "kind": signature_failure_kind,
+                "phase": signature_phase,
+                "metadata": {"blocked_task_id": signature_blocked_task_id},
+            }
         request_fingerprint = blocker_fingerprint_from_evidence(
-            plan_state=plan_payload,
-            current_target=target_payload,
+            plan_state=request_plan_state,
+            current_target=request_target,
             problem_signature=problem_signature,
         )
         request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
         if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
+            continue
+        if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
             continue
         if blocker_id is None and request_blocker_id and blocker_id != request_blocker_id:
             blocker_id = request_blocker_id
@@ -1164,10 +1203,10 @@ def classify_verification_outcome(
         return COMPLETE
     if has_progressed:
         return PROGRESSED
-    if has_true_human_blocker:
-        return TRUE_HUMAN_BLOCKER
     if has_fresh_activity:
         return LIVE_WITH_FRESH_ACTIVITY
+    if has_true_human_blocker:
+        return TRUE_HUMAN_BLOCKER
     if is_live:
         return PARTIAL_LIVENESS
     return REPAIRING

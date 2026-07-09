@@ -235,3 +235,50 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     assert projection["attempts"][0]["request_id"] == queued["request"]["request_id"]
     assert projection["attempts"][0]["state"] == ATTEMPT_STATE_RUNNING
     assert projection["attempts"][0]["terminal"] is False
+
+
+def test_custody_projection_drops_stale_request_from_advanced_plan_target(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+
+    stale = repair_requests.enqueue_repair_request(
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "stalled",
+            "current_state": "finalized",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "s3-old-plan",
+            "gate_recommendation": "",
+            "blocked_task_id": "",
+        },
+        target={"plan_name": "s3-old-plan"},
+        root_cause_hint="old stalled execute request",
+        created_at="2026-07-04T01:00:00Z",
+    )
+
+    projection = project_repair_custody(
+        plan_state={
+            "name": "s7-new-plan",
+            "current_state": "done",
+            "resume_cursor": {},
+            "latest_failure": {},
+        },
+        current_target={
+            "current_refs": {
+                "current_plan_name": "s7-new-plan",
+                "chain_current_plan_name": "s7-new-plan",
+                "plan_current_state": "done",
+            },
+            "event_cursors": {},
+            "plan_state": {"fingerprint": "sha256:target-proof"},
+        },
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert projection["active_request_ids"] == []
+    assert all(request["request_id"] != stale["request"]["request_id"] for request in projection["requests"])
