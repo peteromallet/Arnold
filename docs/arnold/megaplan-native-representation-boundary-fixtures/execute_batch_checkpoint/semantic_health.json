@@ -1,0 +1,19 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "execute_batch_checkpoint",
+  "external_effect_refs": [
+    "effects/execute_batch_checkpoint.json",
+    "execute:batch-continuation"
+  ],
+  "fixture_id": "execute_batch_checkpoint",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_batch_checkpoint/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_batch_checkpoint/boundary_receipts/execute_batch_checkpoint.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "execute_batch_checkpoint"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

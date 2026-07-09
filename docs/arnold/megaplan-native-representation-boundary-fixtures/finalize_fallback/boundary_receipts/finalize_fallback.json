@@ -1,0 +1,16 @@
+{
+  "artifact_refs": [
+    "finalize_revise_feedback.json"
+  ],
+  "boundary_id": "finalize_fallback",
+  "history_ref": "finalize_revise_fallback",
+  "invocation_id": "inv-finalize_fallback",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s5.finalize_fallback.1",
+  "state_observation": {
+    "current_state": "critiqued"
+  },
+  "workflow_id": "megaplan-review"
+}

@@ -1,0 +1,54 @@
+{
+  "artifact_refs": [],
+  "authority_records": [
+    {
+      "actor": "fixture-operator",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "recover-blocked",
+      "details": {
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "authority_transition": "recover-blocked",
+        "contract_ref": "override_recover_blocked_authority",
+        "evidence_hashes": {
+          "phase_result.json": "5226f3cd1b4b7830e67ce4933a4033d24a0433b367f7dbb03a1c814e98a4804d",
+          "state.json": "e82a0c10c286cbd5d5b501ee6200a399a0ae17bb0018ef4b2eacbf777ee8bfbd"
+        },
+        "freshness_token": "inv-override_recover_blocked_authority",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "optional_evidence_refs": [
+          "phase_result.json"
+        ],
+        "required_evidence_refs": [
+          "state.json"
+        ]
+      },
+      "evidence_refs": [
+        "state.json",
+        "phase_result.json"
+      ],
+      "role": "reviewer",
+      "scope": "override.recover_blocked"
+    }
+  ],
+  "boundary_id": "override_recover_blocked_authority",
+  "capability_effects": [
+    "authority",
+    "phase_result",
+    "receipt",
+    "state_history"
+  ],
+  "external_effect_refs": [],
+  "fixture_id": "override_recover_blocked_authority",
+  "path_hashes": {
+    "phase_result_path": "sha256:5226f3cd1b4b7830e67ce4933a4033d24a0433b367f7dbb03a1c814e98a4804d",
+    "receipt_path": "sha256:161026528984a148e06d81b9f0672214eb5df716eb9abf056c33a222cf5ade00",
+    "semantic_health_path": "sha256:245b2065e32e837c787039055c1dd5c2993a5f6445fca437a0b232cd8c6b1f63",
+    "state_path": "sha256:e82a0c10c286cbd5d5b501ee6200a399a0ae17bb0018ef4b2eacbf777ee8bfbd"
+  },
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_recover_blocked_authority/phase_result.json",
+  "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_recover_blocked_authority",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_recover_blocked_authority/boundary_receipts/override_recover_blocked_authority.json",
+  "reducer_promotion": false,
+  "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_recover_blocked_authority/semantic_health.json",
+  "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_recover_blocked_authority/state.json"
+}

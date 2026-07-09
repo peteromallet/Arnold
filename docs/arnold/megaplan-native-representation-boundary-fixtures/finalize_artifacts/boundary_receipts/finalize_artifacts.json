@@ -1,0 +1,21 @@
+{
+  "artifact_refs": [
+    "contract.json",
+    "final.md",
+    "finalize.json"
+  ],
+  "boundary_id": "finalize_artifacts",
+  "details": {
+    "artifact_hash": "sha256:585c740eddca1080f624076a51834fcab8d3426ace82f7415ab8da954141c175"
+  },
+  "history_ref": "finalize_artifacts_published",
+  "invocation_id": "inv-finalize_artifacts",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s5.finalize_artifacts.1",
+  "state_observation": {
+    "current_state": "gated"
+  },
+  "workflow_id": "megaplan-review"
+}

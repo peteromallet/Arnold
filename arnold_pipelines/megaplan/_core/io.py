@@ -1283,25 +1283,155 @@ def artifact_path(plan_dir: Path, filename: str) -> Path:
     return plan_dir / filename
 
 
-def batch_artifact_path(plan_dir: Path, batch_number: int) -> Path:
+# ---------------------------------------------------------------------------
+# Execute batch artifacts (S4 directory layout)
+#
+# New writes use a deterministic directory-based layout:
+#   execute_batches/batch_{index}/tasks_{stable_task_id_digest}.json
+# Reads keep migration-only compatibility with the legacy flat layout:
+#   execution_batch_{N}.json
+# ---------------------------------------------------------------------------
+
+EXECUTE_BATCHES_DIRNAME = "execute_batches"
+_STABLE_DIGEST_LEN = 12
+_EXECUTE_BATCH_DIR_RE = re.compile(r"batch_(\d+)$")
+_LEGACY_BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
+_EXECUTE_BATCH_TASKS_RE = re.compile(r"tasks_[0-9a-f]+\.json$")
+
+
+def stable_task_id_digest(task_ids: Iterable[str]) -> str:
+    """Short stable hex digest over the canonical (sorted, deduped) task-ID set.
+
+    The digest is order- and duplicate-insensitive so the same batch membership
+    always maps to the same filename, regardless of how the caller ordered the
+    task IDs.
+    """
+    canonical = sorted({str(tid) for tid in task_ids})
+    joined = "\n".join(canonical).encode("utf-8")
+    return hashlib.sha256(joined).hexdigest()[:_STABLE_DIGEST_LEN]
+
+
+def execute_batch_dir(plan_dir: Path, batch_index: int) -> Path:
+    """Directory that holds the S4 batch artifact for ``batch_index``."""
+    return plan_dir / EXECUTE_BATCHES_DIRNAME / f"batch_{batch_index}"
+
+
+def execute_batch_artifact_path(
+    plan_dir: Path, batch_index: int, task_ids: Iterable[str]
+) -> Path:
+    """Deterministic S4 write path for a batch artifact.
+
+    Form: ``execute_batches/batch_{index}/tasks_{stable_task_id_digest}.json``
+    """
+    return (
+        execute_batch_dir(plan_dir, batch_index)
+        / f"tasks_{stable_task_id_digest(task_ids)}.json"
+    )
+
+
+def legacy_batch_artifact_path(plan_dir: Path, batch_number: int) -> Path:
+    """Legacy flat batch artifact path (migration read-only)."""
     return plan_dir / f"execution_batch_{batch_number}.json"
 
 
-def list_batch_artifacts(plan_dir: Path) -> list[Path]:
-    def sort_key(path: Path) -> tuple[int, str]:
-        match = re.fullmatch(r"execution_batch_(\d+)\.json", path.name)
-        if match is None:
-            raise ValueError(f"Unexpected batch artifact filename: {path.name}")
-        return (int(match.group(1)), path.name)
+def batch_artifact_path(plan_dir: Path, batch_number: int) -> Path:
+    """Legacy flat batch artifact path.
 
-    return sorted(
-        (
-            path
-            for path in plan_dir.glob("execution_batch_*.json")
-            if path.is_file() and re.fullmatch(r"execution_batch_(\d+)\.json", path.name)
-        ),
-        key=sort_key,
-    )
+    Retained for migration-only read compatibility. New writes must use
+    :func:`execute_batch_artifact_path`; readers should use
+    :func:`resolve_batch_artifact` or :func:`list_batch_artifacts`.
+    """
+    return legacy_batch_artifact_path(plan_dir, batch_number)
+
+
+def batch_artifact_index(path: Path) -> int | None:
+    """Extract the 1-indexed batch number from a batch artifact path.
+
+    Handles both the S4 directory layout
+    (``execute_batches/batch_{index}/tasks_*.json``) and the legacy flat layout
+    (``execution_batch_{N}.json``). Returns ``None`` when the path does not look
+    like a batch artifact.
+    """
+    # S4 layout: the index lives in the parent directory name.
+    parent_match = _EXECUTE_BATCH_DIR_RE.fullmatch(path.parent.name)
+    if (
+        parent_match is not None
+        and _EXECUTE_BATCH_TASKS_RE.fullmatch(path.name) is not None
+    ):
+        return int(parent_match.group(1))
+    # Legacy flat layout.
+    legacy_match = _LEGACY_BATCH_ARTIFACT_RE.search(path.name)
+    if legacy_match is not None:
+        return int(legacy_match.group(1))
+    return None
+
+
+def resolve_batch_artifact(
+    plan_dir: Path, batch_index: int, task_ids: Iterable[str] | None = None
+) -> Path | None:
+    """Resolve the on-disk batch artifact for ``batch_index``.
+
+    Prefers the new S4 directory layout and falls back to the legacy flat
+    ``execution_batch_{N}.json`` artifact for migration-only compatibility.
+    Returns ``None`` when no artifact exists for the index.
+    """
+    if task_ids is not None:
+        new_path = execute_batch_artifact_path(plan_dir, batch_index, task_ids)
+        if new_path.exists():
+            return new_path
+    # Fall back to any S4 artifact already on disk for this index even when the
+    # supplied task-id digest does not match (e.g. a resumed subset of a batch).
+    batch_dir = execute_batch_dir(plan_dir, batch_index)
+    if batch_dir.is_dir():
+        candidates = sorted(
+            p
+            for p in batch_dir.iterdir()
+            if p.is_file()
+            and p.name.startswith("tasks_")
+            and p.suffix == ".json"
+        )
+        if candidates:
+            return candidates[0]
+    legacy = legacy_batch_artifact_path(plan_dir, batch_index)
+    if legacy.exists():
+        return legacy
+    return None
+
+
+def list_batch_artifacts(plan_dir: Path) -> list[Path]:
+    """List batch artifacts sorted by batch index.
+
+    New writes live under ``execute_batches/batch_{index}/tasks_*.json``; the
+    legacy flat ``execution_batch_{N}.json`` artifacts are included only when no
+    S4 artifact exists for the same index (migration-only read compatibility).
+    """
+    by_index: dict[int, Path] = {}
+    batches_root = plan_dir / EXECUTE_BATCHES_DIRNAME
+    if batches_root.is_dir():
+        for entry in sorted(batches_root.iterdir()):
+            if not entry.is_dir():
+                continue
+            m = _EXECUTE_BATCH_DIR_RE.fullmatch(entry.name)
+            if m is None:
+                continue
+            index = int(m.group(1))
+            for child in sorted(entry.iterdir()):
+                if (
+                    child.is_file()
+                    and child.name.startswith("tasks_")
+                    and child.suffix == ".json"
+                ):
+                    by_index.setdefault(index, child)
+                    break
+    for path in plan_dir.glob("execution_batch_*.json"):
+        if not path.is_file():
+            continue
+        m = _LEGACY_BATCH_ARTIFACT_RE.search(path.name)
+        if m is None:
+            continue
+        index = int(m.group(1))
+        by_index.setdefault(index, path)
+    return [by_index[i] for i in sorted(by_index)]
 
 
 def current_iteration_artifact(plan_dir: Path, prefix: str, iteration: int) -> Path:

@@ -1,0 +1,18 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "execute_no_review_terminal",
+  "external_effect_refs": [
+    "execute:no-review-terminal"
+  ],
+  "fixture_id": "execute_no_review_terminal",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_no_review_terminal/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_no_review_terminal/boundary_receipts/execute_no_review_terminal.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "execute_no_review_terminal"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

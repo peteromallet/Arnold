@@ -67,6 +67,24 @@ class FindingSeverity(StrEnum):
     INFO = "info"
 
 
+_TOPOLOGY_DETAIL_KEYS_BY_ROW_ID = MappingProxyType(
+    {
+        "s5.review_child_outputs.1": ("fan_in_ref", "evidence_surface_ref"),
+        "s5.review_reducer_promotion.1": ("reducer_ref",),
+        "s5.review_rework_effects.1": ("evidence_surface_ref",),
+        "s5.review_cap_authority.1": ("authority_scope", "authority_outcomes", "policy_ref"),
+        "s5.review_human_verification.1": (
+            "suspension_route_id",
+            "resume_policy_ref",
+            "resume_cursor_ref",
+        ),
+        "s5.finalize_artifacts.1": ("effect_id", "artifact_policy_ref"),
+        "s5.finalize_fallback.1": ("evidence_surface_ref", "projection_ref"),
+        "s5.final_projection.1": ("evidence_surface_ref", "projection_cases"),
+    }
+)
+
+
 # ── BoundaryContract ──────────────────────────────────────────────────────
 
 
@@ -385,6 +403,26 @@ def _thaw_value(value: Any) -> Any:
     return value
 
 
+def boundary_contract_missing_topology_detail_keys(contract: BoundaryContract) -> tuple[str, ...]:
+    """Return missing source/policy topology markers required for S5 evidence rows."""
+
+    required_keys = _TOPOLOGY_DETAIL_KEYS_BY_ROW_ID.get(contract.row_id or "", ())
+    if not required_keys:
+        return ()
+    missing: list[str] = []
+    for key in required_keys:
+        value = contract.details.get(key)
+        if value is None:
+            missing.append(key)
+            continue
+        if isinstance(value, str) and not value.strip():
+            missing.append(key)
+            continue
+        if isinstance(value, tuple) and not value:
+            missing.append(key)
+    return tuple(missing)
+
+
 __all__ = [
     "AuthorityRecord",
     "BoundaryContract",
@@ -393,4 +431,5 @@ __all__ = [
     "BoundaryReceipt",
     "FindingSeverity",
     "SemanticFinding",
+    "boundary_contract_missing_topology_detail_keys",
 ]

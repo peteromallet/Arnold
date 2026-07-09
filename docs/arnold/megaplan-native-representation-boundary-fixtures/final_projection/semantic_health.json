@@ -1,0 +1,16 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "final_projection",
+  "external_effect_refs": [],
+  "fixture_id": "final_projection",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/final_projection/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/final_projection/boundary_receipts/final_projection.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "final_projection"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

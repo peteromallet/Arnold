@@ -1,0 +1,16 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "revise_to_critique",
+  "external_effect_refs": [],
+  "fixture_id": "revise_to_critique",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/boundary_receipts/revise_to_critique.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "revise_to_critique"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

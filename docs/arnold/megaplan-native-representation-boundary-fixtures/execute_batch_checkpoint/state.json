@@ -1,0 +1,24 @@
+{
+  "batch_stage": "checkpoint",
+  "config": {
+    "project_dir": "/tmp/boundary-fixture"
+  },
+  "created_at": "2026-07-08T00:00:00Z",
+  "current_phase": "execute",
+  "current_state": "executed",
+  "history": [
+    {
+      "result": "success",
+      "step": "execute"
+    }
+  ],
+  "iteration": 1,
+  "last_gate": {},
+  "latest_failure": null,
+  "meta": {
+    "current_invocation_id": "inv-execute_batch_checkpoint"
+  },
+  "name": "boundary-fixture-execute_batch_checkpoint",
+  "plan_versions": [],
+  "sessions": {}
+}

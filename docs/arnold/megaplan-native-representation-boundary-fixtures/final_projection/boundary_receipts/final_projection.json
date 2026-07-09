@@ -1,0 +1,17 @@
+{
+  "artifact_refs": [
+    "finalize.json"
+  ],
+  "boundary_id": "final_projection",
+  "history_ref": "final_projection_recorded",
+  "invocation_id": "inv-final_projection",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s5.final_projection.1",
+  "state_observation": {
+    "current_state": "critiqued",
+    "next_step": "revise"
+  },
+  "workflow_id": "megaplan-review"
+}
