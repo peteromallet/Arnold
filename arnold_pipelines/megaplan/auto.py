@@ -47,6 +47,7 @@ from arnold.runtime.envelope import (
     _envelope_ctx,
     write_envelope_in,
 )
+from arnold_pipelines.megaplan._core.phase_runtime import _pid_alive
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from arnold_pipelines.megaplan.runtime.process import kill_group, spawn
@@ -3940,6 +3941,27 @@ def drive(
             "rerun_execute",
             "terminate_idle_step",
         }
+        # A cached "wait" verdict can mask a worker that has since died.
+        # build_phase_observability probes pid liveness for the status view, but
+        # this driver wait path historically did not. If the recorded worker is
+        # no longer alive, reclassify to resume_or_recover so the orphan-recovery
+        # block below clears and re-dispatches, instead of waiting forever on a
+        # dead process (the dead-worker wedge).
+        if isinstance(active_step, dict):
+            _recorded_worker_pid = active_step.get("worker_pid")
+            if _recorded_worker_pid is not None:
+                try:
+                    _worker_alive = _pid_alive(int(_recorded_worker_pid))
+                except (TypeError, ValueError):
+                    _worker_alive = True
+                if not _worker_alive:
+                    active_step["recommended_action"] = "resume_or_recover"
+                    active_step.setdefault("health", "dead")
+                    active_step["worker_pid_alive"] = False
+                    active_step["recommended_action_reason"] = (
+                        f"active step's recorded worker (pid={_recorded_worker_pid}) "
+                        "is no longer alive; recovering instead of waiting"
+                    )
         if (
             isinstance(active_step, dict)
             and active_step.get("recommended_action") not in orphan_actions
