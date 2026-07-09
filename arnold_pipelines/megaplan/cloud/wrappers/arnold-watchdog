@@ -5836,7 +5836,30 @@ for log_path in log_candidates[:3]:
         raise SystemExit(0)
 
 latest_failure = state.get("latest_failure") or {}
-if latest_failure.get("kind") != "phase_failed":
+failure_kind = latest_failure.get("kind")
+if failure_kind in {"execution_blocked", "blocked_recovery_not_resolved"}:
+    phase = latest_failure.get("phase") or "execute"
+    recorded_at = latest_failure.get("recorded_at") or ""
+    active = state.get("active_step") or {}
+    active_phase = active.get("phase") or ""
+    active_pid = active.get("worker_pid") or ""
+    active_started = active.get("started_at") or ""
+    current_state = state.get("current_state") or ""
+    message = latest_failure.get("message") or ""
+    print(
+        "phase_failure:"
+        f"{state_path.parent.name}:"
+        f"{phase}:"
+        "consecutive=1:"
+        f"recorded={recorded_at or 'unknown'}:"
+        f"state={current_state or 'unknown'}:"
+        f"active={active_phase or 'none'}:"
+        f"started={active_started or 'unknown'}:"
+        f"pid={active_pid or 'none'}:"
+        f"{failure_kind}:{message[:140]}"
+    )
+    raise SystemExit(0)
+if failure_kind != "phase_failed":
     print("ok")
     raise SystemExit(0)
 

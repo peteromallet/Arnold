@@ -341,6 +341,44 @@ def test_live_process_with_current_phase_failure_is_attention(fx):
     assert "alive_but_failed" in entry["operator_next"]
 
 
+def test_recent_execution_blocked_without_runner_is_attention_not_running(fx):
+    fx.add_session("blocked-execute", plan_name="planBlocked")
+    fx.add_chain_health(
+        "blocked-execute",
+        current_plan_name="planBlocked",
+        last_state="blocked",
+        updated_at=NOW - timedelta(seconds=30),
+    )
+    fx.add_plan_state(
+        "blocked-execute",
+        "planBlocked",
+        current_state="blocked",
+    )
+    state_path = (
+        fx.root
+        / "blocked-execute"
+        / ".megaplan"
+        / "plans"
+        / "planBlocked"
+        / "state.json"
+    )
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["latest_failure"] = {
+        "kind": "execution_blocked",
+        "phase": "execute",
+        "message": "execute reported prerequisite-blocked tasks: T1",
+    }
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": False})
+    entry = _by_session(snap, "blocked-execute")
+
+    assert entry["status"] == "attention"
+    assert entry["operator_next"] == "alive_but_failed: current repairable failure receipt remains"
+    assert snap["summary"]["running"] == 0
+    assert snap["summary"]["attention"] == 1
+
+
 def test_live_process_with_failed_no_next_step_is_attention(fx):
     fx.add_session("alive-no-next", plan_name="planStuck")
     fx.add_chain_health(
