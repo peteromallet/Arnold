@@ -945,6 +945,67 @@ def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
     )
 
 
+def _is_transient_execute_advisory(message: object) -> bool:
+    """Return True for batch-local execute advisories that should not survive
+    into the terminal aggregate payload.
+
+    Per-batch payloads legitimately mention then-pending downstream tasks,
+    partial sense-check coverage, and provisional git-diff observations. Once
+    the aggregate execution audit recomputes final-state evidence, carrying
+    those earlier advisories forward makes the terminal execute artifact look
+    blocked for work that later completed.
+    """
+
+    if not isinstance(message, str):
+        return False
+    transient_prefixes = (
+        "Advisory observation mismatch:",
+        "Advisory audit finding:",
+        "Advisory audit skip:",
+        "Advisory carry-forward observation:",
+    )
+    if message.startswith(transient_prefixes):
+        return True
+    transient_fragments = (
+        "tasks have no executor update",
+        "sense checks have no executor acknowledgment",
+        "Tasks left pending after execute",
+    )
+    return any(fragment in message for fragment in transient_fragments)
+
+
+def _aggregate_terminal_deviations(
+    aggregate_payload: dict[str, Any],
+    *,
+    timeout_recovery: dict[str, Any] | None,
+    execution_audit: dict[str, Any],
+    blocked_task_ids: set[str],
+) -> list[str]:
+    deviations: list[str] = []
+    for deviation in aggregate_payload.get("deviations", []):
+        if _is_transient_execute_advisory(deviation):
+            continue
+        if deviation not in deviations:
+            deviations.append(deviation)
+    if timeout_recovery is not None:
+        deviations.extend(
+            deviation
+            for deviation in timeout_recovery.get("deviations", [])
+            if deviation not in deviations
+        )
+    if execution_audit["skipped"]:
+        deviations.append(f"Advisory audit skip: {execution_audit['reason']}")
+    for finding in execution_audit["findings"]:
+        deviations.append(f"Advisory audit finding: {finding}")
+    if blocked_task_ids:
+        deviations.append(
+            f"Pre-existing blocked tasks treated as satisfied for scheduling: "
+            f"{sorted(blocked_task_ids)}. Downstream tasks ran assuming the blocked "
+            f"work is handled out-of-band; re-run those tasks once the blockage is resolved."
+        )
+    return deviations
+
+
 def _is_harness_generated_block(task: dict[str, Any]) -> bool:
     if task.get("status") != "blocked":
         return False
@@ -3308,25 +3369,14 @@ def handle_execute_auto_loop(
         artifact_prefix="execution_audit_aggregate",
         base_ref=_milestone_base_sha,
     )
-    deviations = list(aggregate_payload.get("deviations", []))
-    if timeout_recovery is not None:
-        deviations.extend(
-            deviation
-            for deviation in timeout_recovery.get("deviations", [])
-            if deviation not in deviations
-        )
-    if execution_audit["skipped"]:
-        deviations.append(f"Advisory audit skip: {execution_audit['reason']}")
-    for finding in execution_audit["findings"]:
-        deviations.append(f"Advisory audit finding: {finding}")
+    deviations = _aggregate_terminal_deviations(
+        aggregate_payload,
+        timeout_recovery=timeout_recovery,
+        execution_audit=execution_audit,
+        blocked_task_ids=blocked_task_ids,
+    )
     if all_attribution_records:
         execution_audit["auto_attribution"] = all_attribution_records
-    if blocked_task_ids:
-        deviations.append(
-            f"Pre-existing blocked tasks treated as satisfied for scheduling: "
-            f"{sorted(blocked_task_ids)}. Downstream tasks ran assuming the blocked "
-            f"work is handled out-of-band; re-run those tasks once the blockage is resolved."
-        )
     aggregate_payload["deviations"] = deviations
     if not is_prose_mode(state):
         project_advisory_path_sets(
