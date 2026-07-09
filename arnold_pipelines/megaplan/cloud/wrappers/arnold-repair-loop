@@ -1382,17 +1382,21 @@ def chain_health_blocks_terminal_shortcut() -> bool:
     payload = load_json(marker_dir / f"{session}.chain-health.progress.json")
     if not payload:
         payload = load_json(marker_dir / "repair-data" / f"{session}.chain-health.json")
-    if payload.get("chain_complete") is not False:
+    snapshot = payload.get("snapshot") if isinstance(payload.get("snapshot"), dict) else {}
+    chain_complete = payload.get("chain_complete")
+    if chain_complete is None:
+        chain_complete = snapshot.get("chain_complete")
+    if chain_complete is not False:
         return False
     try:
-        completed_count = int(payload.get("completed_count") or 0)
+        completed_count = int(payload.get("completed_count") or snapshot.get("completed_count") or 0)
     except Exception:
         completed_count = 0
     try:
-        milestone_count = int(payload.get("milestone_count") or 0)
+        milestone_count = int(payload.get("milestone_count") or snapshot.get("milestone_count") or 0)
     except Exception:
         milestone_count = 0
-    pr_state = str(payload.get("pr_state") or "").strip().lower()
+    pr_state = str(payload.get("pr_state") or snapshot.get("pr_state") or "").strip().lower()
     if milestone_count and completed_count < milestone_count:
         return True
     if pr_state and pr_state not in {"merged", "closed"}:
