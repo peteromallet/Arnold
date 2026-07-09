@@ -139,6 +139,29 @@ NORTH_STAR_ACTION_RESOLUTIONS: tuple[str, ...] = (
 )
 
 
+class NorthStarAction(TypedDict, total=False):
+    id: str
+    question_id: str
+    question: str
+    concern: str
+    category: str
+    action_type: str
+    severity: str
+    severity_source: str
+    evidence: str
+    plan_refs: list[str]
+    required_change: str
+
+
+class NorthStarActionAddressed(TypedDict, total=False):
+    action_id: str
+    resolution: str
+    reason: str
+    where: str
+    plan_refs: list[str]
+    action_type: str
+
+
 def is_blocking_category(category: Any) -> bool:
     """Return ``True`` if *category* is one of the schema-blocking categories."""
     return category in NORTH_STAR_DANGEROUS_CATEGORIES
