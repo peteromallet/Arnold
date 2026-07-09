@@ -34,7 +34,7 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
 )
-from arnold_pipelines.megaplan.orchestration.phase_result import Deviation
+from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
 from arnold_pipelines.megaplan.orchestration.plan_contracts import (
     normalize_contract_payload,
     pre_existing_task_ids_from_contract,
@@ -175,6 +175,28 @@ def test_phase_coverage_authority_failure_surfaces_as_recovery_blocker(
         "execution_batch_14.json has no corroborated completed task IDs"
     ]
     assert evaluation.blockers[0].blocker_kind == "quality"
+
+
+def test_prerequisite_rerun_suppresses_pending_authority_coverage_blocker() -> None:
+    evaluation = evaluate_blocker_recovery(
+        {},
+        {"meta": {}, "config": {}},
+        blocked_tasks=[BlockedTask(task_id="T5", reason="blocked_by_prereq")],
+        deviations=[
+            Deviation(
+                kind="phase_coverage",
+                task_id=None,
+                message=(
+                    "finalize.json has pending tasks without authoritative "
+                    "execution updates: T6, T7"
+                ),
+            )
+        ],
+    )
+
+    assert evaluation.can_continue is True
+    assert evaluation.requires_rerun is True
+    assert [blocker.blocker_id for blocker in evaluation.blockers] == ["prereq:unknown:T5"]
 
 
 def test_harness_artifact_paths_are_removed_from_execute_claims() -> None:
