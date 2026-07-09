@@ -443,15 +443,15 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 worker_module.session_key_for("execute", "codex", model=resolved_model),
                 None,
             )
-        # Detect tier_models.execute from profile expansion.  If present,
-        # pass the tier map down to the dispatchers so they can route
-        # per-batch by task complexity.  apply_profile_expansion already
-        # strips tier_models.execute when a CLI --phase-model execute=...
-        # override is present, so no double-check is needed here.
-        if _execute_phase_model_is_pinned(args, state):
+        # Detect tier_models.execute from profile expansion. If present, pass
+        # the tier map down so execute batches route by task complexity.
+        # Explicit execute pins strip tier_models.execute during profile
+        # expansion/override handling; a surviving tier map is therefore
+        # authoritative even when config.phase_model also carries the profile's
+        # fallback execute=... default.
+        tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
+        if tier_map is None and _execute_phase_model_is_pinned(args, state):
             tier_map = None
-        else:
-            tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
         tier_map = _apply_execute_tier_cap(
             tier_map,
             getattr(args, "max_execute_tier", None)
