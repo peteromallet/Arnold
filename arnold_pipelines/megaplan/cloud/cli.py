@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -73,6 +75,73 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
 
     cloud_sub.add_parser("build", parents=[shared], help="Build the cloud image")
     cloud_sub.add_parser("deploy", parents=[shared], help="Deploy the cloud runner")
+
+    quickstart_parser = cloud_sub.add_parser(
+        "quickstart",
+        parents=[shared],
+        help="Create a cloud-ready one-sprint initiative from one brief, preflight it, and optionally launch",
+    )
+    quickstart_parser.add_argument("--slug", required=True, help="Initiative slug and default cloud session name")
+    quickstart_parser.add_argument("--brief", required=True, help="Markdown/text brief to use as the milestone input")
+    quickstart_parser.add_argument(
+        "--north-star",
+        required=True,
+        help="Existing North Star markdown/text file to copy into the generated initiative",
+    )
+    quickstart_parser.add_argument("--title", default=None, help="Human title for README/North Star")
+    quickstart_parser.add_argument("--milestone-title", default="First Sprint", help="Milestone title")
+    quickstart_parser.add_argument("--base-branch", default=None, help="Base branch (default: current git branch, else main)")
+    quickstart_parser.add_argument("--profile", default="partnered-5", help="Megaplan profile for the generated milestone")
+    quickstart_parser.add_argument("--vendor", default="codex", help="Vendor for the generated milestone")
+    quickstart_parser.add_argument("--depth", default="high", help="Reasoning depth for the generated milestone")
+    quickstart_parser.add_argument("--robustness", default="thorough", help="Robustness setting for chain driver/milestone")
+    quickstart_parser.add_argument("--branch", default=None, help="Implementation branch (default: slug)")
+    quickstart_parser.add_argument("--repo-url", default=None, help="Repo URL (default: inferred from git remote origin)")
+    quickstart_parser.add_argument(
+        "--target",
+        default="hetzner-agentbox",
+        choices=("hetzner-agentbox", "custom"),
+        help="Cloud target profile. Use custom with --ssh-host for non-default boxes.",
+    )
+    quickstart_parser.add_argument(
+        "--extra-repo",
+        action="append",
+        default=[],
+        metavar="ROLE=URL[@BRANCH[:WORKSPACE]]",
+        help=(
+            "Add an extra repo checkout to cloud.yaml. Repeatable. Common form: "
+            "worker=https://github.com/org/worker.git. Advanced: "
+            "worker=https://github.com/org/worker.git@develop:/workspace/custom-worker. "
+            "Legacy URL@branch=/workspace/path is also accepted."
+        ),
+    )
+    quickstart_parser.add_argument("--ssh-host", default=None, help="SSH host override")
+    quickstart_parser.add_argument("--ssh-user", default="root", help="SSH user")
+    quickstart_parser.add_argument("--ssh-port", type=int, default=22, help="SSH port")
+    quickstart_parser.add_argument("--engine-ref", default="editible-install", help="Cloud megaplan engine ref")
+    quickstart_parser.add_argument(
+        "--sync-local-engine",
+        action="store_true",
+        help="Also sync this local Arnold checkout to editible-install before launch",
+    )
+    quickstart_parser.add_argument(
+        "--launch",
+        action="store_true",
+        help="After writing and preflighting the initiative, start the cloud chain",
+    )
+    quickstart_parser.add_argument(
+        "--fresh",
+        "--reset",
+        dest="fresh",
+        action="store_true",
+        help="When launching, reset this chain's remote state first",
+    )
+    quickstart_parser.add_argument("--force", action="store_true", help="Overwrite generated initiative/cloud files")
+    quickstart_parser.add_argument(
+        "--skip-remote",
+        action="store_true",
+        help="Only run local preflight checks; do not SSH to the worker",
+    )
 
     chain_parser = cloud_sub.add_parser(
         "chain",
@@ -403,6 +472,8 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         action = getattr(args, "cloud_action")
         if action == "init":
             return _run_init(root, args)
+        if action == "quickstart":
+            return _run_quickstart(root, args)
 
         spec = _load_cloud_spec(root, args)
         provider = _provider_for_action(spec, args)
@@ -600,6 +671,371 @@ def _run_init(root: Path, args: argparse.Namespace) -> int:
     template = resources.files("arnold_pipelines.megaplan.cloud.templates").joinpath("cloud.yaml.tmpl")
     target.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
     sys.stdout.write(json.dumps({"success": True, "cloud_yaml": str(target)}, indent=2) + "\n")
+    return 0
+
+
+_CLOUD_TARGETS: dict[str, dict[str, Any]] = {
+    "hetzner-agentbox": {
+        "provider": "ssh",
+        "ssh": {
+            "host_env": "MEGAPLAN_CLOUD_SSH_HOST",
+            "host": "159.69.51.216",
+            "user": "root",
+            "port": 22,
+            "remote_dir": "/opt/megaplan-cloud/deploy",
+            "workspace_dir": "/opt/megaplan-cloud/workspace",
+            "container": "megaplan-cloud-agent",
+        },
+    }
+}
+
+
+def _git_stdout(root: Path, args: list[str]) -> str | None:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    value = (proc.stdout or "").strip()
+    return value or None
+
+
+def _normalise_git_url(url: str) -> str:
+    if url.startswith("git@github.com:"):
+        return "https://github.com/" + url.removeprefix("git@github.com:")
+    if url.startswith("ssh://git@github.com/"):
+        return "https://github.com/" + url.removeprefix("ssh://git@github.com/")
+    return url
+
+
+def _infer_repo_url(root: Path, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    inferred = _git_stdout(root, ["config", "--get", "remote.origin.url"])
+    if not inferred:
+        raise CliError(
+            "quickstart_missing_repo_url",
+            "Could not infer repo URL from git remote origin. Pass --repo-url.",
+        )
+    return _normalise_git_url(inferred)
+
+
+def _infer_base_branch(root: Path, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    return _git_stdout(root, ["branch", "--show-current"]) or "main"
+
+
+def _quickstart_target_ssh(args: argparse.Namespace) -> dict[str, Any]:
+    if args.target == "custom" and not args.ssh_host:
+        raise CliError("invalid_args", "--target custom requires --ssh-host")
+    target = _CLOUD_TARGETS.get(args.target, {})
+    ssh = dict(target.get("ssh") or {})
+    env_name = ssh.pop("host_env", None)
+    host = args.ssh_host or (os.environ.get(env_name) if env_name else None) or ssh.get("host")
+    if not host:
+        raise CliError("invalid_args", f"target {args.target!r} has no SSH host; pass --ssh-host")
+    return {
+        "host": host,
+        "user": args.ssh_user or ssh.get("user") or "root",
+        "port": args.ssh_port or ssh.get("port") or 22,
+        "remote_dir": ssh.get("remote_dir") or "/opt/megaplan-cloud/deploy",
+        "workspace_dir": ssh.get("workspace_dir") or "/opt/megaplan-cloud/workspace",
+        "container": ssh.get("container") or "megaplan-cloud-agent",
+    }
+
+
+def _split_repo_url_branch(raw_url: str, *, default_branch: str) -> tuple[str, str]:
+    url = raw_url.strip()
+    branch = default_branch
+    at_index = url.rfind("@")
+    if at_index > 0 and "/" not in url[at_index:]:
+        branch = url[at_index + 1 :] or default_branch
+        url = url[:at_index]
+    return _normalise_git_url(url), branch
+
+
+def _parse_quickstart_extra_repo(raw: str, *, slug: str, default_branch: str) -> dict[str, str]:
+    value = raw.strip()
+    if "=" not in value:
+        raise CliError(
+            "invalid_args",
+            "--extra-repo must be formatted as ROLE=URL[@BRANCH[:WORKSPACE]]",
+        )
+    left, right = value.split("=", 1)
+    left = left.strip()
+    right = right.strip()
+    if not left or not right:
+        raise CliError(
+            "invalid_args",
+            "--extra-repo must include a non-empty role/URL and repo URL/workspace",
+        )
+
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", left):
+        role = _slugify_chain_identity(left)
+        url_part = right
+        workspace = f"/workspace/{slug}/{role}"
+        colon_index = right.rfind(":")
+        scheme_index = right.find("://")
+        if colon_index > 0 and right[colon_index + 1 :].startswith("/") and colon_index != scheme_index:
+            url_part = right[:colon_index]
+            workspace = right[colon_index + 1 :]
+        url, branch = _split_repo_url_branch(url_part, default_branch=default_branch)
+    else:
+        url, branch = _split_repo_url_branch(left, default_branch=default_branch)
+        workspace = right
+
+    if not PurePosixPath(workspace).is_absolute():
+        raise CliError("invalid_args", f"--extra-repo workspace must be absolute: {workspace}")
+    return {"url": url, "branch": branch, "workspace": workspace}
+
+
+def _write_text_once(path: Path, text: str, *, force: bool, written: list[str], reused: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and not force:
+        reused.append(str(path))
+        return
+    path.write_text(text.rstrip() + "\n", encoding="utf-8")
+    written.append(str(path))
+
+
+def _call_cloud_step_quietly(func, *call_args) -> tuple[int, str, str]:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            rc = int(func(*call_args) or 0)
+    except CliError:
+        captured_out = stdout.getvalue()
+        captured_err = stderr.getvalue()
+        if captured_out:
+            sys.stdout.write(captured_out)
+        if captured_err:
+            sys.stderr.write(captured_err)
+        raise
+    return rc, stdout.getvalue(), stderr.getvalue()
+
+
+def _json_from_captured_stdout(text: str) -> dict[str, Any] | None:
+    decoder = json.JSONDecoder()
+    idx = 0
+    last: dict[str, Any] | None = None
+    while idx < len(text):
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+        if idx >= len(text):
+            break
+        try:
+            value, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError:
+            break
+        if isinstance(value, dict):
+            last = value
+        idx = end
+    return last
+
+
+def _run_quickstart(root: Path, args: argparse.Namespace) -> int:
+    slug = _slugify_chain_identity(str(args.slug))
+    if not slug:
+        raise CliError("invalid_args", "--slug must contain at least one alphanumeric character")
+    brief_source = Path(args.brief).expanduser().resolve()
+    if not brief_source.is_file():
+        raise CliError("invalid_args", f"--brief does not exist or is not a file: {brief_source}")
+    north_star_source = Path(args.north_star).expanduser().resolve()
+    if not north_star_source.is_file():
+        raise CliError("invalid_args", f"--north-star does not exist or is not a file: {north_star_source}")
+
+    brief_text = brief_source.read_text(encoding="utf-8")
+    north_star_text = north_star_source.read_text(encoding="utf-8")
+    title = (args.title or slug.replace("-", " ").title()).strip()
+    base_branch = _infer_base_branch(root, args.base_branch)
+    repo_url = _infer_repo_url(root, args.repo_url)
+    ssh = _quickstart_target_ssh(args)
+    initiative = root / ".megaplan" / "initiatives" / slug
+    cloud_yaml = Path(args.cloud_yaml).expanduser().resolve() if args.cloud_yaml else initiative / "cloud.yaml"
+    chain_path = initiative / "chain.yaml"
+    milestone_label = f"m1-{slug}"
+    milestone_path = initiative / "briefs" / f"{milestone_label}.md"
+    branch = args.branch or slug
+    written: list[str] = []
+    reused: list[str] = []
+
+    readme = f"# {title}\n\nCloud quickstart initiative generated from `{brief_source}`.\n"
+    milestone = "\n".join(
+        [
+            f"# {args.milestone_title}",
+            "",
+            "This milestone was generated by `megaplan cloud quickstart` from the source brief below.",
+            "",
+            "## Source Brief",
+            "",
+            brief_text.rstrip(),
+        ]
+    )
+    chain_payload = {
+        "base_branch": base_branch,
+        "anchors": {"north_star": "NORTHSTAR.md"},
+        "milestones": [
+            {
+                "label": milestone_label,
+                "idea": f".megaplan/initiatives/{slug}/briefs/{milestone_label}.md",
+                "profile": args.profile,
+                "vendor": args.vendor,
+                "robustness": args.robustness,
+                "depth": args.depth,
+                "branch": branch,
+                "prep_clarify": False,
+            }
+        ],
+        "on_failure": {"abort": "stop_chain"},
+        "on_escalate": {"abort": "stop_chain"},
+        "merge_policy": "auto",
+        "driver": {
+            "robustness": args.robustness,
+            "auto_approve": True,
+            "max_iterations": 24,
+            "poll_sleep": 8.0,
+        },
+    }
+    workspace = f"/workspace/{slug}/{_repo_dir_name(repo_url)}"
+    extra_repos = [
+        _parse_quickstart_extra_repo(raw, slug=slug, default_branch=base_branch)
+        for raw in (args.extra_repo or [])
+    ]
+    cloud_payload: dict[str, Any] = {
+        "provider": "ssh",
+        "repo": {"url": repo_url, "branch": base_branch, "workspace": workspace},
+        "agents": {"default": args.vendor},
+        "codex": {"model": "gpt-5.4", "reasoning": args.depth},
+        "chain_session": slug,
+        "mode": "idle",
+        "chain": {"spec": f"{workspace}/.megaplan/initiatives/{slug}/chain.yaml"},
+        "megaplan": {
+            "ref": args.engine_ref,
+            "codex_auth": "chatgpt",
+            "repo": "https://github.com/peteromallet/Arnold.git",
+            "src_path": "/workspace/arnold",
+        },
+        "resources": {"volume": "agent-volume", "port": 8080},
+        "ssh": ssh,
+        "secrets": [],
+    }
+    if extra_repos:
+        cloud_payload["extra_repos"] = extra_repos
+
+    force = bool(args.force)
+    _write_text_once(initiative / "README.md", readme, force=force, written=written, reused=reused)
+    _write_text_once(initiative / "NORTHSTAR.md", north_star_text, force=force, written=written, reused=reused)
+    _write_text_once(milestone_path, milestone, force=force, written=written, reused=reused)
+    _write_text_once(chain_path, yaml.safe_dump(chain_payload, sort_keys=False), force=force, written=written, reused=reused)
+    _write_text_once(cloud_yaml, yaml.safe_dump(cloud_payload, sort_keys=False), force=force, written=written, reused=reused)
+
+    preflight_args = argparse.Namespace(
+        cloud_yaml=str(cloud_yaml),
+        spec=str(chain_path),
+        skip_remote=bool(args.skip_remote),
+        allow_loose_chain_spec=False,
+        allow_template_placeholders=False,
+        allow_human_gates=False,
+        repo_url=None,
+        repo_branch=None,
+        repo_workspace=None,
+    )
+    spec = _load_cloud_spec(root, preflight_args)
+    provider = _provider_for_action(spec, preflight_args)
+    preflight_rc, preflight_stdout, preflight_stderr = _call_cloud_step_quietly(
+        _run_preflight,
+        root,
+        preflight_args,
+        spec,
+        provider,
+    )
+    if preflight_rc != 0:
+        if preflight_stdout:
+            sys.stdout.write(preflight_stdout)
+        if preflight_stderr:
+            sys.stderr.write(preflight_stderr)
+        return preflight_rc
+    preflight_payload = _json_from_captured_stdout(preflight_stdout) or {}
+
+    launch_payload: dict[str, Any] | None = None
+    if bool(args.launch):
+        chain_args = argparse.Namespace(
+            cloud_yaml=str(cloud_yaml),
+            spec=str(chain_path),
+            idea_dir=None,
+            fresh=bool(args.fresh),
+            no_git_refresh=False,
+            no_editable_install_sync=not bool(args.sync_local_engine),
+            force_clean_editable_install=False,
+            allow_loose_chain_spec=False,
+            allow_template_placeholders=False,
+            allow_human_gates=False,
+            repo_url=None,
+            repo_branch=None,
+            repo_workspace=None,
+            _canonicalized_epic=True,
+            _generated_canonical_files=[],
+        )
+        with _materialized_deploy_dir(spec):
+            rc, launch_stdout, launch_stderr = _call_cloud_step_quietly(
+                _run_chain_wrapper,
+                root,
+                chain_args,
+                spec,
+                provider,
+            )
+        if rc != 0:
+            if launch_stdout:
+                sys.stdout.write(launch_stdout)
+            if launch_stderr:
+                sys.stderr.write(launch_stderr)
+            return rc
+        launch_provenance = _json_from_captured_stdout(launch_stdout) or {}
+        log_payload = launch_provenance.get("log")
+        verification = launch_provenance.get("verification")
+        launch_payload = {
+            "launched": True,
+            "session": slug,
+            "workspace": workspace,
+            "spec": f"{workspace}/.megaplan/initiatives/{slug}/chain.yaml",
+            "local_engine_sync": bool(args.sync_local_engine),
+            "chain_log": log_payload.get("chain_log") if isinstance(log_payload, dict) else None,
+            "verification": verification if isinstance(verification, dict) else None,
+        }
+
+    remote_payload = preflight_payload.get("remote") if isinstance(preflight_payload.get("remote"), dict) else {}
+    payload = {
+        "success": True,
+        "event": "cloud_quickstart",
+        "initiative": str(initiative),
+        "chain": str(chain_path),
+        "cloud_yaml": str(cloud_yaml),
+        "milestone": str(milestone_path),
+        "written": written,
+        "reused": reused,
+        "preflight": {
+            "success": bool(preflight_payload.get("success", True)),
+            "expected_workspace": remote_payload.get("expected_workspace", workspace),
+            "expected_session": remote_payload.get("expected_session", slug),
+            "warnings": preflight_payload.get("warnings", []),
+        },
+        "launch": launch_payload
+        or {
+            "launched": False,
+            "next": (
+                "Rerun with --launch, or run "
+                f"python -m arnold_pipelines.megaplan cloud chain {chain_path} "
+                f"--cloud-yaml {cloud_yaml} --fresh --no-editable-install-sync"
+            ),
+        },
+    }
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
     return 0
 
 
@@ -2600,6 +3036,78 @@ def _human_gate_findings(chain_spec: Any) -> list[dict[str, Any]]:
     return findings
 
 
+_NORTH_STAR_TEMPLATE_PHRASES = (
+    "Describe the durable destination every milestone must preserve",
+    "List invariants the chain must not violate",
+    "Name tempting work that is intentionally out of scope",
+    "Describe any acceptable short-lived compromises",
+    "List signs the chain is solving the wrong problem",
+)
+
+
+def _multi_sprint_north_star_findings(local_spec_path: Path, chain_spec: Any) -> list[dict[str, Any]]:
+    """Return blocking findings for multi-sprint chains with stub North Stars."""
+    milestones = list(getattr(chain_spec, "milestones", []) or [])
+    if len(milestones) <= 1:
+        return []
+    north_star = getattr(getattr(chain_spec, "anchors", None), "north_star", None)
+    if not isinstance(north_star, str) or not north_star.strip():
+        return [
+            {
+                "code": "missing_north_star",
+                "message": "multi-sprint cloud chains require anchors.north_star",
+            }
+        ]
+    from arnold_pipelines.megaplan.anchors import resolve_anchor_path
+
+    path = resolve_anchor_path(local_spec_path, north_star)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [
+            {
+                "code": "north_star_unreadable",
+                "path": str(path),
+                "message": str(exc),
+            }
+        ]
+    findings: list[dict[str, Any]] = []
+    if _TEMPLATE_PLACEHOLDER_RE.search(text):
+        findings.append(
+            {
+                "code": "north_star_template_placeholder",
+                "path": str(path),
+                "message": "North Star still contains template placeholders",
+            }
+        )
+    for phrase in _NORTH_STAR_TEMPLATE_PHRASES:
+        if phrase in text:
+            findings.append(
+                {
+                    "code": "north_star_default_template_text",
+                    "path": str(path),
+                    "message": f"North Star still contains default template text: {phrase}",
+                }
+            )
+            break
+    body_words = [
+        word
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+        for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]*", line)
+    ]
+    if len(body_words) < 40:
+        findings.append(
+            {
+                "code": "north_star_too_thin",
+                "path": str(path),
+                "message": "Multi-sprint North Star must contain at least 40 non-heading words",
+                "word_count": len(body_words),
+            }
+        )
+    return findings
+
+
 def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
     from arnold_pipelines.megaplan import chain as chain_module
     from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
@@ -2618,6 +3126,7 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
     )
     chain_spec = chain_module.load_spec(local_spec_path)
     human_gate_findings = _human_gate_findings(chain_spec)
+    north_star_findings = _multi_sprint_north_star_findings(local_spec_path, chain_spec)
     anchor_requirement = chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
     chain_module.chain_spec.validate_paths(chain_spec, project_root, spec_path=local_spec_path)
     launch_ctx = _derive_chain_launch_context(
@@ -2656,6 +3165,10 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
             "driver.auto_approve: true for unattended cloud runs, or pass "
             "--allow-human-gates to acknowledge intentional pauses"
         )
+    if north_star_findings:
+        errors.append(
+            "multi-sprint cloud chain North Star is missing or still looks like a template; fill it in before launch"
+        )
     if missing_env:
         errors.append("missing configured local secrets: " + ", ".join(missing_env))
     if remote.get("import_check", {}).get("errors"):
@@ -2684,6 +3197,7 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
         "missing_env": missing_env,
         "template_placeholders": placeholder_findings,
         "human_gates": human_gate_findings,
+        "north_star_findings": north_star_findings,
         "errors": errors,
     }
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
@@ -2913,6 +3427,16 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     chain_spec = chain_module.load_spec(local_spec_path)
     chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
     chain_module.chain_spec.validate_paths(chain_spec, project_root, spec_path=local_spec_path)
+    north_star_findings = _multi_sprint_north_star_findings(local_spec_path, chain_spec)
+    if north_star_findings:
+        raise CliError(
+            "multi_sprint_north_star_not_filled",
+            (
+                "Multi-sprint cloud chains require a filled-in North Star. "
+                "Edit the declared anchors.north_star file before launch."
+            ),
+            extra={"north_star_findings": north_star_findings},
+        )
     human_gate_findings = _human_gate_findings(chain_spec)
     if human_gate_findings and not bool(getattr(args, "allow_human_gates", False)):
         sample = ", ".join(
