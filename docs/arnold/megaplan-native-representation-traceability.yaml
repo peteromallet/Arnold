@@ -2,6 +2,7 @@ schema: arnold.megaplan_native_representation.traceability.v1
 target_report: docs/arnold/megaplan-native-representation-report.md
 alignment_plan: docs/arnold/megaplan-native-representation-alignment-plan.md
 status_values: [enabled, implemented, deferred, missing]
+boundary_effect_values: [artifact, state_history, receipt, phase_result, authority, reducer, external_effect]
 completion_rule: missing blocks launch; implemented requires visible source, declared policy, or audited pure phase body plus proof.
 chain_handoff_gates:
   - id: completion-to-composition
@@ -67,6 +68,8 @@ rows:
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m5, platform-m4]
     proof_artifacts: [source_excerpt, rendered_route, suspend_resume_test, legacy_cursor_compatibility_test]
+    boundary_effects_required: [state_history, receipt, phase_result]
+    boundary_contract_ids: [megaplan:prep-clarify, megaplan:suspension, prep_to_plan]
     false_pass_guard: Handler sets a waiting state while topology still shows a single prep node.
     negative_invariant: Structural conformance fails if the branch is not visible outside handler code.
   - id: plan-artifact-version-metadata
@@ -75,6 +78,8 @@ rows:
     owners: [native-python-pipelines-completion, native-composition-followup]
     milestones: [completion-m3-5, completion-m5, composition-m1, composition-m6]
     proof_artifacts: [artifact_manifest, schema_test]
+    boundary_effects_required: [artifact]
+    boundary_contract_ids: [megaplan:artifact-contract]
     false_pass_guard: Artifacts are emitted but source does not declare their contract.
     negative_invariant: Schema/source invariant requires declared boundary names for plan artifacts.
   - id: critique-bare-skip
@@ -91,6 +96,8 @@ rows:
     owners: [native-composition-followup]
     milestones: [composition-m1, composition-m6]
     proof_artifacts: [retry_exhaustion_test, retry_success_test, event_trace]
+    boundary_effects_required: [external_effect]
+    boundary_contract_ids: [megaplan:robustness, critique-fanout]
     false_pass_guard: Retry works but is invisible to topology/policy inspection.
     negative_invariant: Source invariant rejects retry loops in retained critique handler.
   - id: critique-parallel-lenses
@@ -99,6 +106,8 @@ rows:
     owners: [native-composition-followup]
     milestones: [composition-m0, composition-m1, composition-m3, composition-m6]
     proof_artifacts: [dynamic_list_fanout_fixture, reducer_trace, fallback_behavior_test]
+    boundary_effects_required: [reducer]
+    boundary_contract_ids: [critique-fanout, SOURCE_CRITIQUE]
     false_pass_guard: Native trace lists child calls but source still invokes one handler.
     negative_invariant: Static topology snapshot includes untaken selected-lens branches.
   - id: critique-gate-revise-loop
@@ -107,6 +116,8 @@ rows:
     owners: [native-composition-followup]
     milestones: [composition-m0, composition-m1, composition-m2, composition-m6]
     proof_artifacts: [loop_iteration_trace, cap_test, severity_termination_test]
+    boundary_effects_required: [state_history]
+    boundary_contract_ids: [megaplan:revise-loop, gate_to_revise, revise_to_critique]
     false_pass_guard: A state field jumps back to critique without visible typed outcomes.
     negative_invariant: Source invariant requires loop bounds and outcome enum at workflow level.
   - id: gate-preflight-normalization
@@ -115,6 +126,8 @@ rows:
     owners: [native-composition-followup]
     milestones: [composition-m1, composition-m2, composition-m6]
     proof_artifacts: [malformed_payload_golden, unavailable_agent_route, topology_excerpt]
+    boundary_effects_required: [external_effect]
+    boundary_contract_ids: [megaplan:gate]
     false_pass_guard: Bad payload fallback remains buried inside handle_gate.
     negative_invariant: Handler-purity scan rejects route decisions in gate payload recovery code.
   - id: gate-signal-reprompt
@@ -123,6 +136,8 @@ rows:
     owners: [native-composition-followup]
     milestones: [composition-m1, composition-m2, composition-m6]
     proof_artifacts: [gate_retry_test, route_decision_golden, artifact_schema_check]
+    boundary_effects_required: [external_effect]
+    boundary_contract_ids: [megaplan:gate]
     false_pass_guard: Gate looks native but reprompt/downgrade lives in handler.
     negative_invariant: Source invariant requires reprompt policy and downgrade route outside handler.
   - id: gate-flag-debt-fallback
@@ -131,6 +146,8 @@ rows:
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m2, composition-m6, platform-m4, platform-m6]
     proof_artifacts: [effect_event_trace, accepted_with_debt_golden, downgrade_golden]
+    boundary_effects_required: [artifact, external_effect]
+    boundary_contract_ids: [megaplan:gate]
     false_pass_guard: Debt flag is written but no explicit product route exists.
     negative_invariant: Semantic diff fails if debt/downgrade route disappears from topology.
   - id: tiebreaker-subworkflow
@@ -139,6 +156,15 @@ rows:
     owners: [native-composition-followup]
     milestones: [composition-m1, composition-m3, composition-m4, composition-m6]
     proof_artifacts: [subworkflow_graph, path_addressed_trace, proceed_iterate_escalate_tests]
+    boundary_effects_required: [artifact, state_history, receipt, phase_result, reducer]
+    boundary_contract_ids:
+      - megaplan:tiebreaker
+      - tiebreaker_researcher_to_challenger
+      - tiebreaker_challenger_to_synthesis
+      - tiebreaker_synthesis_to_decision
+      - tiebreaker_decision_to_parent
+      - parent_rejoin_promotion
+      - replan_authority
     false_pass_guard: One native node calls old tiebreaker handler.
     negative_invariant: Structural conformance fails for single handler-backed tiebreaker stage.
   - id: human-decision-suspension
@@ -146,15 +172,25 @@ rows:
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m5, platform-m2, platform-m4, platform-m6]
-    proof_artifacts: [process_death_resume_test, rendered_suspension_points]
-    false_pass_guard: Status says waiting but resume coordinate is implicit state.
-    negative_invariant: Resume test starts from persisted path, not handler-local fields.
+    proof_artifacts: [process_death_resume_test, rendered_suspension_points, boundary_receipt_test]
+    boundary_effects_required: [state_history, receipt, phase_result, authority]
+    boundary_contract_ids:
+      - megaplan:suspension
+      - execute_approval
+      - execute_approval_denial
+      - review_human_verification
+      - override_suspension_authority
+      - override_human_gate_authority
+    false_pass_guard: Status or CLI says waiting, but the durable resume coordinate or suspension authority still lives only in runtime state.
+    negative_invariant: Implemented proof must start from canonical source plus boundary receipts; status/CLI hints and compatibility shells do not satisfy the row.
   - id: finalize-fallback-routes
     requirement: Finalize fallback routes
     status: enabled
     owners: [native-composition-followup]
     milestones: [composition-m1, composition-m6]
     proof_artifacts: [finalize_failure_golden, route_test]
+    boundary_effects_required: [artifact, receipt]
+    boundary_contract_ids: [megaplan:finalize, finalize_fallback, final_projection]
     false_pass_guard: Finalize errors are swallowed into artifact flags.
     negative_invariant: Topology includes failure/fallback routes and tests assert they are taken.
   - id: execute-dependency-batches
@@ -163,6 +199,15 @@ rows:
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m3, composition-m4, composition-m6, platform-m1, platform-m5, platform-m6]
     proof_artifacts: [dag_fixture, partial_failure_resume_test, task_dependency_trace]
+    boundary_effects_required: [artifact, state_history, receipt, phase_result, reducer]
+    boundary_contract_ids:
+      - megaplan:execute
+      - execute-batches
+      - execute_batch_checkpoint
+      - execute_partial_failure
+      - execute_blocked_anchor
+      - execute_resume_anchor
+      - execute_aggregate_promotion
     false_pass_guard: Execute remains one node with richer internal logging.
     negative_invariant: Structural conformance fails if execute is only one handler-backed stage.
   - id: execute-approval-gates
@@ -170,15 +215,24 @@ rows:
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m5, composition-m6, platform-m2, platform-m4, platform-m6]
-    proof_artifacts: [approval_tests, no_review_golden, deferred_human_golden]
-    false_pass_guard: Approval works through side effect but topology cannot show it.
-    negative_invariant: Source invariant requires protected actions to pass through declared gate.
+    proof_artifacts: [approval_tests, no_review_golden, deferred_human_golden, boundary_receipt_test]
+    boundary_effects_required: [state_history, receipt, phase_result, authority]
+    boundary_contract_ids:
+      - megaplan:execute
+      - execute_approval
+      - execute_approval_denial
+      - execute_no_review_terminal
+      - override_human_gate_authority
+    false_pass_guard: Approval works through side effect, but topology cannot show it and a CLI or manifest bridge still supplies the route.
+    negative_invariant: Implemented proof must cite declared execute gates and boundary receipts; CLI handlers and manifest backend routing cannot satisfy the row.
   - id: execute-review-rework-loop
     requirement: Execute/review/rework loop
     status: enabled
     owners: [native-composition-followup]
     milestones: [composition-m1, composition-m4, composition-m5, composition-m6]
     proof_artifacts: [review_goldens, loop_trace]
+    boundary_effects_required: [artifact, state_history, receipt, phase_result, external_effect]
+    boundary_contract_ids: [megaplan:review, review_rework_effects]
     false_pass_guard: Review handler mutates next_step to execute.
     negative_invariant: Mutation hiding rework route in handler must fail conformance.
   - id: review-parallel-fanin
@@ -187,6 +241,12 @@ rows:
     owners: [native-composition-followup]
     milestones: [composition-m1, composition-m3, composition-m4, composition-m6]
     proof_artifacts: [parallel_review_trace, deterministic_ordering_test]
+    boundary_effects_required: [artifact, receipt, phase_result, reducer]
+    boundary_contract_ids:
+      - megaplan:review
+      - review-fan-in
+      - review_child_outputs
+      - review_reducer_promotion
     false_pass_guard: Parallel checks run but topology has one review node.
     negative_invariant: Static snapshot includes child review checks and reducer.
   - id: review-retry-cap-outcomes
@@ -194,23 +254,48 @@ rows:
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m2, composition-m6, platform-m4, platform-m5, platform-m6]
-    proof_artifacts: [infra_retry_golden, repeated_failure_cap_golden, force_proceed_block_tests]
-    false_pass_guard: Rework cap is a handler threshold with no visible branch.
-    negative_invariant: Source invariant requires cap and outcome classifier outside retained handler.
+    proof_artifacts: [infra_retry_golden, repeated_failure_cap_golden, force_proceed_block_tests, authority_boundary_test]
+    boundary_effects_required: [receipt, phase_result, authority]
+    boundary_contract_ids:
+      - megaplan:review
+      - review_cap_authority
+      - review_human_verification
+      - review_rework_effects
+    false_pass_guard: Cap exhaustion force-proceeds or blocks through handler/control state while source and authority receipts stay silent.
+    negative_invariant: Implemented proof must cite review route policy and cap authority receipts; handler refs, auto next-step hints, and compatibility bridges cannot satisfy the row.
   - id: override-action-surface
     requirement: Override full action surface
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m2, composition-m6, platform-m2, platform-m6]
-    proof_artifacts: [override_matrix, action_route_tests]
-    false_pass_guard: Only abort/replan are visible; other actions mutate config/state.
-    negative_invariant: No-generic-Megaplan-literal scan plus action-by-action route tests.
+    proof_artifacts: [override_matrix, action_route_tests, authority_boundary_test]
+    boundary_effects_required: [state_history, authority]
+    boundary_contract_ids:
+      - megaplan:override
+      - arnold_pipelines.megaplan.workflows.override_matrix:OVERRIDE_ACTION_MATRIX
+      - override_abort_authority
+      - override_force_proceed_authority
+      - override_replan_authority
+      - override_recover_blocked_authority
+      - override_resume_clarify_authority
+      - override_adopt_execution_authority
+      - override_suspension_authority
+      - override_human_gate_authority
+    false_pass_guard: Only abort/replan are visible; other actions mutate config/state or still depend on components or route bindings.
+    negative_invariant: Implemented proof must cite the override matrix, canonical source, and authority receipts; components, handler refs, route bindings, manifest routing, CLI handlers, and compatibility bridges cannot satisfy the row.
   - id: timeout-deadline-policy
     requirement: Timeout/deadline policy
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m6, platform-m4, platform-m5, platform-m6]
     proof_artifacts: [timeout_event_trace, retry_escalation_test]
+    boundary_effects_required: [external_effect, state_history]
+    boundary_contract_ids:
+      - megaplan:execute
+      - megaplan:review
+      - execute_blocked_anchor
+      - execute_resume_anchor
+      - review_cap_authority
     false_pass_guard: Runtime helper times out but source does not declare retryability.
     negative_invariant: Source invariant requires timeout/retry policy at call site or named policy object.
   - id: model-routing-policy
@@ -219,6 +304,8 @@ rows:
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m6, platform-m2, platform-m6]
     proof_artifacts: [profile_validation, task_complexity_route_test, rendered_policy_view]
+    boundary_effects_required: [external_effect]
+    boundary_contract_ids: [megaplan:model-routing]
     false_pass_guard: Correct model is picked by hidden profile code only.
     negative_invariant: Rendered policy view and negative test for missing route metadata.
   - id: runtime-list-iteration
@@ -250,15 +337,31 @@ rows:
     status: enabled
     owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
     milestones: [completion-m3-5, composition-m1, composition-m6, platform-m4, platform-m5, platform-m6]
-    proof_artifacts: [event_replay_test, liveness_policy_test, status_projection_parity]
-    false_pass_guard: Auto-drive keeps working but status is derived from hidden mutation.
-    negative_invariant: Replay from events reproduces the same visible workflow path.
+    proof_artifacts: [event_replay_test, liveness_policy_test, status_projection_parity, cursor_projection_test]
+    boundary_effects_required: [state_history, receipt, phase_result, authority]
+    boundary_contract_ids:
+      - arnold_pipelines.megaplan.workflows.events:workflow_events
+      - arnold_pipelines.megaplan.workflows.events:workflow_cursor
+    false_pass_guard: Auto-drive keeps working, but next-step authority still comes from state, status, or CLI projection instead of canonical workflow events.
+    negative_invariant: Implemented proof must cite source-derived workflow events and cursors; auto next-step derivation, CLI handlers, and projected native shells cannot satisfy the row.
   - id: path-addressed-checkpoints
     requirement: Path-addressed checkpoints
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m0, composition-m4, composition-m5, composition-m6, platform-m4, platform-m6]
     proof_artifacts: [tree_trace_snapshot, resume_from_path_test]
+    boundary_effects_required: [state_history, receipt, phase_result]
+    boundary_contract_ids:
+      - critique-fanout
+      - execute-batches
+      - review-fan-in
+      - tiebreaker_researcher_to_challenger
+      - tiebreaker_challenger_to_synthesis
+      - tiebreaker_synthesis_to_decision
+      - tiebreaker_decision_to_parent
+      - execute_resume_anchor
+      - review_human_verification
+      - override_recover_blocked_authority
     false_pass_guard: Flattened trace loses subworkflow identity.
     negative_invariant: Snapshot asserts nested path identity and resume target.
   - id: shadow-topology
@@ -290,9 +393,9 @@ rows:
     status: enabled
     owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
     milestones: [completion-m2, completion-m7, composition-m0, composition-m1, composition-m6, platform-m6]
-    proof_artifacts: [path_reconciliation_table, import_smoke_test]
-    false_pass_guard: Review inspects stale or future path and misses live source.
-    negative_invariant: Milestone cannot close without import/path inventory matching installed package and stale-path negative check.
+    proof_artifacts: [path_reconciliation_table, import_smoke_test, native_shell_negative_test]
+    false_pass_guard: Review inspects stale or future path while projected native shells hide that live execution no longer follows canonical source.
+    negative_invariant: Milestone cannot close unless installed package, canonical `.pypeline`, and the native-shell negative test agree; `Pipeline.native_program` and workflow.py shims are receipts, not proof.
   - id: behavior-parity
     requirement: Behavior parity with existing Megaplan
     status: enabled

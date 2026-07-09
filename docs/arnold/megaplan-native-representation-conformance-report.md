@@ -5,138 +5,82 @@ This report closes the `native-platform-followup` chain against
 machine-readable ledger in
 `docs/arnold/megaplan-native-representation-conformance.yaml`.
 
-All 31 traceability rows from
-`docs/arnold/megaplan-native-representation-traceability.yaml` are mapped in
-traceability order below. Every row is `implemented`. No Megaplan semantic is
-deferred into handlers, route labels, manifests, native traces, or runtime side
-effects. Canonical authored-workflow evidence now points to
-`arnold_pipelines/megaplan/workflows/workflow.pypeline`; `workflow.py` remains
-compatibility glue only.
+The conformance YAML and this report were regenerated from the current
+evidence bundle in `docs/arnold/megaplan-native-representation-evidence.yaml`.
+The bundle carries 31 implemented rows in traceability order, 
+39 source-checker records, 80 boundary-contract records, 
+63 boundary receipts, 80 semantic-health records, 
+68 phase-result records, and 9 split-outcome scenario hashes.
+
+Historical conformance reports remain baseline receipts only; no row in the
+current generated ledger cites a prior conformance report as implemented-row
+authority.
 
 ## Structural conformance
 
-This section is the ordered row-by-row closeout ledger. The YAML companion is
-the canonical source for exact `carrier_evidence`, `proof_categories`, and
-`proof_artifacts` paths.
+This section is the ordered row-by-row closeout ledger generated from
+traceability metadata plus current evidence records.
 
-| # | Row ID | Status | Semantic carrier | Key proof |
+| # | Row ID | Status | Semantic carrier | Evidence summary |
 | --- | --- | --- | --- | --- |
-| 1 | `prep-clarification-gate` | implemented | `canonical_source` | Canonical prep branch remains visible in `workflow.pypeline`, with resume/clarify coverage in planning and platform conformance. |
-| 2 | `plan-artifact-version-metadata` | implemented | `declared_policy` | Package-authoring contract and workflow planning metadata keep artifact/version contracts explicit and test-covered. |
-| 3 | `critique-bare-skip` | implemented | `declared_policy` | Robustness variant routing remains declared policy, not handler-only fallback. |
-| 4 | `critique-evaluator-retry` | implemented | `declared_policy` | Retry behavior remains policy-visible and is exercised by conformance reruns. |
-| 5 | `critique-parallel-lenses` | implemented | `canonical_source` | Critique fanout/fan-in remains visible in the canonical authored workflow and compositional topology proofs. |
-| 6 | `critique-gate-revise-loop` | implemented | `canonical_source` | The bounded critique/gate/revise loop is still visible in authored control flow and loop proofs. |
-| 7 | `gate-preflight-normalization` | implemented | `declared_policy` | Gate preflight normalization remains a declared policy surface backed by topology and golden checks. |
-| 8 | `gate-signal-reprompt` | implemented | `declared_policy` | Reprompt and downgrade behavior remains explicit policy with route/golden coverage. |
-| 9 | `gate-flag-debt-fallback` | implemented | `declared_policy` | Debt, downgrade, and flag handling remain product-visible and are preserved under platform reruns. |
-| 10 | `tiebreaker-subworkflow` | implemented | `canonical_source` | Tiebreaker researcher/challenger routing remains a native subworkflow in `workflow.pypeline`. |
-| 11 | `human-decision-suspension` | implemented | `canonical_source` | Human suspension points remain authored workflow semantics with durable resume proof. |
-| 12 | `finalize-fallback-routes` | implemented | `declared_policy` | Finalize failure and fallback routes remain explicit and test-covered. |
-| 13 | `execute-dependency-batches` | implemented | `canonical_source` | Dependency-aware execute batches remain visible in authored workflow control flow and chain/platform reruns. |
-| 14 | `execute-approval-gates` | implemented | `declared_policy` | Approval/no-review/deferred-human gates remain policy-visible and enforced by platform coverage. |
-| 15 | `execute-review-rework-loop` | implemented | `canonical_source` | Execute/review/rework routing remains in authored control flow rather than substrate state mutation. |
-| 16 | `review-parallel-fanin` | implemented | `canonical_source` | Review fanout/fan-in remains visible in native workflow topology and planning proofs. |
-| 17 | `review-retry-cap-outcomes` | implemented | `declared_policy` | Retry caps, force-proceed, and block/escalate outcomes remain declared policy surfaces. |
-| 18 | `override-action-surface` | implemented | `declared_policy` | Override actions remain explicit route/effect policy, not hidden imperative escape hatches. |
-| 19 | `timeout-deadline-policy` | implemented | `declared_policy` | Timeout, retry, and escalation behavior remains policy-visible and platform-rerun backed. |
-| 20 | `model-routing-policy` | implemented | `declared_policy` | Phase/task-complexity routing remains declared policy with platform preservation checks. |
-| 21 | `runtime-list-iteration` | implemented | `canonical_source` | Runtime list iteration remains ordinary authored Python in the canonical `.pypeline` source. |
-| 22 | `dynamic-parallel-map` | implemented | `canonical_source` | Dynamic parallel fanout remains visible in authored workflow control flow. |
-| 23 | `typed-loop-outcomes` | implemented | `canonical_source` | Typed loop outcomes remain native-authored control flow and compiler-checked. |
-| 24 | `autodrive-event-liveness` | implemented | `declared_policy` | Event/liveness transitions remain platform consumers of product semantics, not owners of them. |
-| 25 | `path-addressed-checkpoints` | implemented | `canonical_source` | Path-addressed checkpoints remain visible in authored workflow structure and durable resume reruns. |
-| 26 | `shadow-topology` | implemented | `canonical_source` | The retained topology evidence still derives from the canonical `.pypeline` source and static snapshots. |
-| 27 | `handler-purity-audit` | implemented | `audited_pure_phase_body` | Pure phase bodies and handler-purity scans remain audited in Python, with no hidden semantic owner accepted. |
-| 28 | `golden-trace-regeneration` | implemented | `declared_policy` | Golden regeneration remains guarded by reviewed parity checks rather than unchecked artifact overwrite. |
-| 29 | `source-path-reconciliation` | implemented | `canonical_source` | Installed-package/source-tree reconciliation now proves `workflow.pypeline` is the canonical live source. |
-| 30 | `behavior-parity` | implemented | `canonical_source` | Installed-wheel, platform E2E, and chain/PR conformance reruns preserve Megaplan behavior parity. |
-| 31 | `source-readability` | implemented | `canonical_source` | Reviewers can inspect `workflow.pypeline` directly as the semantic authority. |
+| 1 | `prep-clarification-gate` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `state_history`, `receipt`, `phase_result`; 1 scenario hash record. |
+| 2 | `plan-artifact-version-metadata` | implemented | `declared_policy` | 2 source checkers; boundary bundle covers `artifact`. |
+| 3 | `critique-bare-skip` | implemented | `declared_policy` | 1 source checker. |
+| 4 | `critique-evaluator-retry` | implemented | `declared_policy` | 1 source checker; boundary bundle covers `external_effect`. |
+| 5 | `critique-parallel-lenses` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `reducer`. |
+| 6 | `critique-gate-revise-loop` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `state_history`. |
+| 7 | `gate-preflight-normalization` | implemented | `declared_policy` | 1 source checker; boundary bundle covers `external_effect`; 1 scenario hash record. |
+| 8 | `gate-signal-reprompt` | implemented | `declared_policy` | 1 source checker; boundary bundle covers `external_effect`; 1 scenario hash record. |
+| 9 | `gate-flag-debt-fallback` | implemented | `declared_policy` | 1 source checker; boundary bundle covers `artifact`, `external_effect`; 1 scenario hash record. |
+| 10 | `tiebreaker-subworkflow` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `artifact`, `state_history`, `receipt`, `phase_result`, `reducer`; 1 scenario hash record. |
+| 11 | `human-decision-suspension` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `state_history`, `receipt`, `phase_result`, `authority`; 4 scenario hash records. |
+| 12 | `finalize-fallback-routes` | implemented | `declared_policy` | 1 source checker; boundary bundle covers `artifact`, `receipt`. |
+| 13 | `execute-dependency-batches` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `artifact`, `state_history`, `receipt`, `phase_result`, `reducer`; 1 scenario hash record. |
+| 14 | `execute-approval-gates` | implemented | `declared_policy` | 2 source checkers; boundary bundle covers `state_history`, `receipt`, `phase_result`, `authority`; 2 scenario hash records. |
+| 15 | `execute-review-rework-loop` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `artifact`, `state_history`, `receipt`, `phase_result`, `external_effect`; 2 scenario hash records. |
+| 16 | `review-parallel-fanin` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `artifact`, `receipt`, `phase_result`, `reducer`. |
+| 17 | `review-retry-cap-outcomes` | implemented | `declared_policy` | 2 source checkers; boundary bundle covers `receipt`, `phase_result`, `authority`; 2 scenario hash records. |
+| 18 | `override-action-surface` | implemented | `declared_policy` | 3 source checkers; boundary bundle covers `state_history`, `authority`; 1 scenario hash record. |
+| 19 | `timeout-deadline-policy` | implemented | `declared_policy` | 1 source checker; boundary bundle covers `external_effect`, `state_history`; 1 scenario hash record. |
+| 20 | `model-routing-policy` | implemented | `declared_policy` | 2 source checkers; boundary bundle covers `external_effect`; 1 scenario hash record. |
+| 21 | `runtime-list-iteration` | implemented | `canonical_source` | 1 source checker. |
+| 22 | `dynamic-parallel-map` | implemented | `canonical_source` | 1 source checker. |
+| 23 | `typed-loop-outcomes` | implemented | `canonical_source` | 1 source checker; 1 scenario hash record. |
+| 24 | `autodrive-event-liveness` | implemented | `declared_policy` | 2 source checkers; boundary bundle covers `state_history`, `receipt`, `phase_result`, `authority`; 1 scenario hash record. |
+| 25 | `path-addressed-checkpoints` | implemented | `canonical_source` | 1 source checker; boundary bundle covers `state_history`, `receipt`, `phase_result`; 2 scenario hash records. |
+| 26 | `shadow-topology` | implemented | `canonical_source` | 1 source checker; topology regeneration check. |
+| 27 | `handler-purity-audit` | implemented | `audited_pure_phase_body` | 2 source checkers; handler-purity scan. |
+| 28 | `golden-trace-regeneration` | implemented | `declared_policy` | 1 source checker. |
+| 29 | `source-path-reconciliation` | implemented | `canonical_source` | 1 source checker; installed-package fingerprint, compatibility quarantine record, dead-delete mutation record. |
+| 30 | `behavior-parity` | implemented | `canonical_source` | 1 source checker; installed-package fingerprint. |
+| 31 | `source-readability` | implemented | `canonical_source` | 1 source checker. |
 
 ## Handler purity inventory
 
-`handler-purity-audit` is implemented with `audited_pure_phase_body` evidence in
-`arnold_pipelines/megaplan/handlers/plan.py` and
-`arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py`, and with carrier
-proof in `tests/arnold_pipelines/megaplan/test_semantics_carrier.py`.
-
-The final closeout keeps the same non-negotiable rule from composition: the
-platform may harden side effects, broker mediation, reconcile, leases,
-durability, cancellation, and rollout policy, but it may not become a second
-semantic owner. The installed-package anti-wrapper and source-path reruns keep
-`workflow.py` as compatibility glue and `workflow.pypeline` as the only
-canonical authored workflow carrier.
+`handler-purity-audit` is backed by 1 generated handler-purity scan record over 8 retained handlers.
+The current evidence records 7 handler-specific finding sets and 1 shared-module finding sets; this scan is carried as an explicit audit record, not as alternate route authority.
 
 ## Mutation tests
 
-Mutation-style false-pass guards are preserved by the installed-package proof
-rerun and the platform reruns:
-
-- `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py`
-  rejects canonical-source collapse back into wrapper skeletons or checkout-only
-  evidence.
-- `tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py` rejects
-  stale path authority and proves installed resources still point to the
-  `.pypeline` source.
-- `tests/arnold/conformance/test_platform_e2e.py` and
-  `tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py`
-  assert the durable/broker substrate does not own product routing, loop exits,
-  execute/review decisions, or model routing.
+Compatibility quarantine evidence records 6 quarantined compatibility scans and a `passed=False` result in `tests/arnold/conformance/test_megaplan_coupling_gate.py`.
+Dead-delete mutation evidence records `passed=False` with 1 present deleted-path findings in `tests/arnold/conformance/test_deleted_surfaces.py`.
+These narrowing records stay in the evidence bundle so compatibility or deleted surfaces cannot become row authority by omission.
 
 ## Static topology snapshots
 
-Static topology evidence continues to derive from authored source and committed
-fixtures:
-
-- `tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml`
-- `tests/arnold_pipelines/megaplan/test_workflows_planning.py`
-- `tests/arnold_pipelines/megaplan/test_compositional_workflow.py`
-
-Those artifacts remain aligned with the canonical source path
-`arnold_pipelines/megaplan/workflows/workflow.pypeline`.
+The topology-regeneration record reports `matches_fixture=True` with compiled manifest hash `sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96` and compiled topology hash `sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260` against `tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml`.
 
 ## Fixed scenario manifest
 
-The fixed-scenario and preservation reruns now include the platform-specific
-coverage required by M6:
-
-- `tests/arnold/conformance/test_platform_e2e.py` covers leased execution,
-  brokered effects, audit refs, approval pause/resume, cancellation,
-  reconcile-before-continue, restart/quarantine, and installed workflow
-  resource lowering.
-- `tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py`
-  covers milestone PR creation, commit/push handoff, merge-wait advancement,
-  remote sync-state capture, and restart persistence without transferring
-  product-routing authority into the substrate.
+The scenario manifest contributes 9 hashed split-outcome records across path classes: `approval`, `cap`, `execute`, `gate`, `no_review`, `override`, `prep`, `review`, `tiebreaker`.
+Each scenario record is evidence-only and keeps canonical `.pypeline` and named native workflow code as the only route authority.
 
 ## Installed package source-path reconciliation
 
-Installed-package reconciliation is now part of the final closeout contract, not
-an optional smoke check. The required evidence lives in:
-
-- `tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py`
-- `tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py`
-- `tests/arnold_pipelines/megaplan/package_resources.py`
-
-These proofs jointly establish that:
-
-- `workflow.pypeline` is shipped in the artifact and remains the canonical
-  authored source;
-- `workflow.py` remains compatibility glue only;
-- installed-package checks do not silently fall back to checkout paths.
+Installed-package reconciliation is backed by 1 generated fingerprint record with canonical source `arnold_pipelines/megaplan/workflows/workflow.pypeline` and lowered semantics hash `sha256:be218c69ab3ff14b6a4ce6ce126c7f49bb5699b288130a4388b17fed964207e6`.
+The same record keeps `workflow.py` at `arnold_pipelines/megaplan/workflows/workflow.py` and records `workflow_py_mentions_pypeline=True` so the compatibility shim cannot silently replace authored-source authority.
 
 ## Platform preservation rerun
 
-The final platform preservation rerun combines the platform E2E suite, the
-chain/PR conformance suite, and the production posture docs:
-
-- `docs/arnold/native-platform.md`
-- `docs/arnold/security.md`
-- `docs/arnold/operations.md`
-- `docs/arnold/package-authoring-contract.md`
-- `tests/arnold/conformance/test_platform_e2e.py`
-- `tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py`
-
-Together with the machine-readable ledger, validator output, proof map, and
-completion manifest, these artifacts prove that M6 closed the final
-platform-affected rows without deferring any report-owned Megaplan semantic.
+Current preservation evidence is the combined generated bundle: source-checker rows, boundary receipts, scenario hashes, installed-package fingerprints, topology regeneration, handler-purity audit, compatibility quarantine, and dead-delete mutation records.
+The generated ledger derived from that bundle remains valid only when row order matches traceability order and the validator accepts the current evidence set.
