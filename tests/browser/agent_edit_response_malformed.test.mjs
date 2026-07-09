@@ -327,13 +327,21 @@ test("ACCEPT_REJECTED with authoritative backend reject records rebaseline recov
     disabledApplyEligibility: disabledEligibility,
   });
 
-  assert.deepEqual(obligations, { render: true, queueGuardClear: true, refreshQueueGuard: true });
+  assert.deepEqual(obligations, {
+    render: true,
+    queueGuardClear: true,
+    refreshQueueGuard: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
+  });
   assert.equal(panel.state.phase, PANEL_STATE.ERROR);
   assert.deepEqual(panel.state.failure, failure);
   assert.deepEqual(panel.state.applyEligibility, disabledEligibility);
   assert.equal(panel.state.applyAllowed, false);
   assert.equal(panel.state.canvasApplyAllowed, false);
   assert.equal(panel.state.queueAllowed, false);
+  assert.equal(panel.state.candidateGraph, null);
+  assert.equal(panel.state.candidateGraphHash, null);
   // Baseline synced from failure
   assert.equal(panel.state.baselineTurnId, "0001");
   assert.equal(panel.state.baselineGraphHash, "base-after");

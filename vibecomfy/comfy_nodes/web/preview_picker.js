@@ -356,9 +356,13 @@ export function installPreviewPicker(panel, options = {}) {
     );
   }
 
-  function clearCandidateState(currentPanel) {
-    delete currentPanel.state._previewDiff;
-    delete currentPanel.state._previewDiffGraphHash;
+  function fulfillLifecycleObligations(currentPanel, obligations) {
+    if (!obligations || typeof obligations !== "object") {
+      return;
+    }
+    if (typeof helpers.fulfillLifecycleTransitionObligations === "function") {
+      helpers.fulfillLifecycleTransitionObligations(currentPanel, obligations);
+    }
   }
 
   function requestPreviewOverlayRepaint() {
@@ -432,26 +436,27 @@ export function installPreviewPicker(panel, options = {}) {
 
     if (stage === "before_send") {
       applyOriginalGraph(payload);
-      commitLifecycleReset(currentPanel, {
+      const obligations = commitLifecycleReset(currentPanel, {
         rejected: {},
         message: null,
         debugPayload: { source: "demo", stage },
       });
       commitDemoTranscript(currentPanel, payload, [], null);
-      clearCandidateState(currentPanel);
+      fulfillLifecycleObligations(currentPanel, obligations);
     } else if (stage === "sent_loading") {
       applyOriginalGraph(payload);
-      commitLifecycleReset(currentPanel, {
+      const resetObligations = commitLifecycleReset(currentPanel, {
         rejected: {},
         message: null,
         debugPayload: { source: "demo", stage, reset: true },
       });
-      commitOptimisticSubmit(currentPanel, {
+      fulfillLifecycleObligations(currentPanel, resetObligations);
+      const submitObligations = commitOptimisticSubmit(currentPanel, {
         lastSubmit: { prompt: payload.query, source: "demo" },
         debugPayload: { source: "demo", stage },
       });
       commitDemoTranscript(currentPanel, payload, [payload.userMessage], null);
-      clearCandidateState(currentPanel);
+      fulfillLifecycleObligations(currentPanel, submitObligations);
     } else if (stage === "ready_to_apply") {
       if (isLayoutPreviewScenario()) {
         applyCandidateGraph(payload);
@@ -469,7 +474,7 @@ export function installPreviewPicker(panel, options = {}) {
         report: loadedScenario.report || {},
         change_details: payload.changeDetails || null,
       };
-      commitTerminalResponse(currentPanel, {
+      const obligations = commitTerminalResponse(currentPanel, {
         result: terminalResult,
         outcome: { kind: "candidate" },
         candidateGraph: payload.candidateGraph,
@@ -485,11 +490,12 @@ export function installPreviewPicker(panel, options = {}) {
         },
       });
       commitDemoTranscript(currentPanel, payload, [payload.userMessage, payload.agentMessage], terminalResult);
+      fulfillLifecycleObligations(currentPanel, obligations);
     } else if (stage === "applied") {
       if (!options.alreadyApplied) {
         applyCandidateGraph(payload);
       }
-      commitApplyResolved(currentPanel, {
+      const obligations = commitApplyResolved(currentPanel, {
         accepted: { ok: true, session_id: payload.sessionId, turn_id: payload.turnId },
         lastAppliedChanges: options.lastAppliedChanges || payload.changeDetails || {
           summary: "Demo candidate applied.",
@@ -497,7 +503,7 @@ export function installPreviewPicker(panel, options = {}) {
         debugPayload: { source: "demo", stage },
       });
       commitDemoTranscript(currentPanel, payload, [payload.userMessage, payload.agentMessage], null);
-      clearCandidateState(currentPanel);
+      fulfillLifecycleObligations(currentPanel, obligations);
       currentPanel.state.__demoMode = false;
     }
 

@@ -1614,7 +1614,7 @@ function _handleStopAbort(panel, payload) {
   panel.state.inFlightSubmit = null;
   panel.state.phase = PANEL_STATE.IDLE;
   panel.state.failure = null;
-  panel.state.deltaOps = null;
+  _handleInvalidateCandidate(panel, { repaint: false });
   panel.state.message = payload?.message || "Request cancelled.";
   panel.state.syntheticAgentMessage = _projectSyntheticTranscriptMessage(payload?.syntheticAgentMessage || {
     role: "agent",
@@ -1633,7 +1633,12 @@ function _handleStopAbort(panel, payload) {
     debugPayload: panel.state.debugPayload,
     cancelled: true,
   }, { debugPayload: panel.state.debugPayload });
-  return { render: true, refreshQueueGuard: true };
+  return _obligations({
+    render: true,
+    refreshQueueGuard: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
+  });
 }
 
 function _handleNewConversation(panel) {
@@ -2329,6 +2334,9 @@ function _handleAcceptRejected(panel, payload) {
   panel.state.failure = failure;
   panel.state.syntheticAgentMessage = _projectSyntheticTranscriptMessage(payload?.syntheticAgentMessage);
   if (authoritativeBackendReject) {
+    _handleInvalidateCandidate(panel, { repaint: false });
+  }
+  if (authoritativeBackendReject) {
     panel.state.applyEligibility = payload?.disabledApplyEligibility || null;
     panel.state.applyAllowed = false;
     panel.state.canvasApplyAllowed = false;
@@ -2345,6 +2353,8 @@ function _handleAcceptRejected(panel, payload) {
     render: true,
     queueGuardClear: authoritativeBackendReject,
     refreshQueueGuard: authoritativeBackendReject,
+    invalidateCandidate: authoritativeBackendReject,
+    clearCandidatePreview: authoritativeBackendReject,
   });
 }
 
@@ -2373,8 +2383,11 @@ function _handleCanvasApplyFailure(panel, payload) {
     accepted: payload?.accepted || null,
     undo_stack_depth: Number.isFinite(payload?.undoStackDepth) ? payload.undoStackDepth : null,
   };
+  _handleInvalidateCandidate(panel, { repaint: false });
   return _obligations({
     render: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
   });
 }
 
@@ -2401,6 +2414,7 @@ function _handleApplySuccess(panel, payload) {
       RENDER_SECTIONS.COMPOSER,
     ],
     invalidateCandidate: true,
+    clearCandidatePreview: true,
     queueGuardClear: true,
     refreshQueueGuard: true,
     toast: payload?.toast || null,
@@ -2449,6 +2463,7 @@ function _handleRejectSuccess(panel, payload) {
     render: true,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
     invalidateCandidate: true,
+    clearCandidatePreview: true,
     queueGuardClear: true,
     refreshQueueGuard: true,
     toast: payload?.toast || null,
@@ -2466,9 +2481,9 @@ function _handleRebaselineSuccess(panel, payload) {
     ...result,
     rebaselineRecovery: null,
   });
+  _handleInvalidateCandidate(panel, { repaint: false });
   panel.state.auditRef = result.audit_ref || panel.state.auditRef;
   panel.state.rebaselinePending = null;
-  panel.state.deltaOps = null;
   panel.state.debugPayload = payload?.debugPayload || {
     rebaseline_request: payload?.rebaselineRequest || null,
     rebaseline_response: result,
@@ -2476,6 +2491,8 @@ function _handleRebaselineSuccess(panel, payload) {
   return _obligations({
     render: false,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
   });
 }
 

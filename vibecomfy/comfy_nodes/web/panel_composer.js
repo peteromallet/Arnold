@@ -262,15 +262,11 @@ export function renderComposerNotice(panel, readinessState, deps = {}) {
     return;
   }
   const runtime = getAgentPanelRuntime();
-  runtime.lastNoticeRender = {
+  runtime._lastNoticeRender = {
     panelId: panel?.panelId || null,
     readySeen: Boolean(readinessState?.ready),
     at: new Date().toISOString(),
   };
-  runtime._lastNoticeRender = runtime.lastNoticeRender;
-  if (panel) {
-    panel.lastNoticeRender = runtime.lastNoticeRender;
-  }
   clearNode(notice);
   let hasContent = false;
 
@@ -597,20 +593,6 @@ export function renderDeveloper(panel, deps = {}) {
   }
 
   body.appendChild(devData);
-  if (Object.prototype.hasOwnProperty.call(body, "textContent")) {
-    const summaryText = [
-      "Adapter Capabilities",
-      ...capLines,
-      "Queue Guard State",
-      ...qgLines,
-      "Apply Candidate State",
-      ...boolLines,
-    ].join("\n");
-    body.textContent = summaryText;
-    if (body.parentNode && Object.prototype.hasOwnProperty.call(body.parentNode, "textContent")) {
-      body.parentNode.textContent = summaryText;
-    }
-  }
 }
 
 export function renderDeveloperDisclosure(panel, deps = {}) {

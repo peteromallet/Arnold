@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 
 import { createBrowserHarness, createMockCanvasContext } from "./harness.mjs";
 import {
+  clearPreviewDomOverlay,
   drawPreviewOverlay as drawPanelOverlayPreviewOverlay,
   syncPreviewDomOverlay,
 } from "../../vibecomfy/comfy_nodes/web/panel_overlay.js";
@@ -3044,13 +3045,10 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     assert.equal(blockedQueueResult, null);
     assert.equal(harness.queuePromptCalls.length, 0);
     assert.match(harness.textDump(), /Queue blocked for turn 0002 because queue_allowed=false\./);
-    // The always-on candidate preview overlay must be cleared from the canvas
-    // whenever a candidate is invalidated (the earlier reject + this re-submit),
-    // which legitimately repaints via invalidateCandidateState -> setDirtyCanvas.
-    // Those repaints are not what the redraw-count assertion below checks. Scope
-    // the dirty/draw assertion to the Apply action itself so it still proves
-    // "in-place configure triggers exactly one [true,true] repaint" while
-    // tolerating the legitimate overlay-clearing repaints from invalidation.
+    // The Apply action repaints for the in-place configure and may also repaint
+    // to clear the candidate preview overlay. Every repaint in this scoped
+    // window must be a full [true,true] invalidation; no other canvas dirties
+    // should appear.
     harness.graphDirtyCanvasCalls.length = 0;
     harness.canvasDrawCalls.length = 0;
     const operationCountBeforeApply = harness.operationLog.length;
@@ -3074,8 +3072,22 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     assert.equal(harness.graphConfigureCalls.length, 1);
     assert.deepEqual(harness.graphConfigureCalls[0], candidateGraph);
     assert.equal(harness.graphChangeCalls.length, 1);
-    assert.deepEqual(harness.graphDirtyCanvasCalls, [[true, true]]);
-    assert.deepEqual(harness.canvasDrawCalls, [[true, true]]);
+    assert.ok(
+      harness.graphDirtyCanvasCalls.length >= 1 && harness.graphDirtyCanvasCalls.length <= 2,
+      `expected one configure repaint plus optional preview-clear repaint, got ${harness.graphDirtyCanvasCalls.length}`,
+    );
+    assert.deepEqual(
+      harness.graphDirtyCanvasCalls,
+      Array.from({ length: harness.graphDirtyCanvasCalls.length }, () => [true, true]),
+    );
+    assert.ok(
+      harness.canvasDrawCalls.length >= 1 && harness.canvasDrawCalls.length <= 2,
+      `expected one configure draw plus optional preview-clear draw, got ${harness.canvasDrawCalls.length}`,
+    );
+    assert.deepEqual(
+      harness.canvasDrawCalls,
+      Array.from({ length: harness.canvasDrawCalls.length }, () => [true, true]),
+    );
     assert.equal(harness.app.canvas.graph._nodes.find((node) => node.id === 2)?.boxcolor, "#ffc107");
     // M2 T13 keeps applied-node feedback behind collapsed lazy bubble details.
     expandAgentBubbleDetails(harness.document.body);
@@ -7763,7 +7775,7 @@ test("VibeComfy edited-node overlay box encloses the title bar (LiteGraph pos[1]
   }
 });
 
-test("VibeComfy edited widget field values render on their widget rows instead of stacked corner chips", async () => {
+test("VibeComfy edited canvas widget field values render on their widget rows", async () => {
   const NODE_POS = [120, 240];
   const NODE_SIZE = [260, 150];
   const liveGraph = {
@@ -7829,19 +7841,27 @@ test("VibeComfy edited widget field values render on their widget rows instead o
 
     const drawOps = await harness.drawPreviewOverlay({ ...diff, _candidateGraph: candidateGraph });
     const amberValuePanels = [];
-    let lastFill = null;
     for (const op of drawOps) {
-      if (op.kind === "fillStyle") lastFill = op.args[0];
-      if (op.kind === "roundRect" && lastFill === "rgba(20,18,8,0.92)") {
+      if (
+        op.kind === "fillRect"
+        && (op.args[1] === NODE_POS[1] + 48 || op.args[1] === NODE_POS[1] + 72)
+        && op.args[0] > NODE_POS[0]
+      ) {
         amberValuePanels.push(op.args);
       }
     }
-    assert.equal(amberValuePanels.length, 2, "each changed widget gets one row value backdrop");
-    assert.equal(amberValuePanels[0][1], NODE_POS[1] + 48, "seed value overlay must cover widget row 0");
-    assert.equal(amberValuePanels[1][1], NODE_POS[1] + 72, "steps value overlay must cover widget row 1");
+    assert.equal(amberValuePanels.length, 2, "each changed widget gets one row highlight");
+    assert.equal(amberValuePanels[0][1], NODE_POS[1] + 48, "seed highlight must cover widget row 0");
+    assert.equal(amberValuePanels[1][1], NODE_POS[1] + 72, "steps highlight must cover widget row 1");
+    assert.ok(amberValuePanels[0][0] > NODE_POS[0], "seed preview overlay must be inset to the field area");
+    assert.ok(amberValuePanels[1][0] > NODE_POS[0], "steps preview overlay must be inset to the field area");
+    assert.ok(amberValuePanels[0][2] > NODE_SIZE[0] * 0.8, "seed preview overlay should cover the edited field width");
+    assert.ok(amberValuePanels[1][2] > NODE_SIZE[0] * 0.8, "steps preview overlay should cover the edited field width");
+    assert.ok(amberValuePanels[0][0] + amberValuePanels[0][2] <= NODE_POS[0] + NODE_SIZE[0] - 15);
+    assert.ok(amberValuePanels[1][0] + amberValuePanels[1][2] <= NODE_POS[0] + NODE_SIZE[0] - 15);
 
     const newValueTexts = drawOps.filter((op) => op.kind === "fillText" && (op.args[0] === "seed: 5" || op.args[0] === "steps: 24"));
-    assert.equal(newValueTexts.length, 2, "new widget values must be drawn as row text");
+    assert.equal(newValueTexts.length, 2, "canvas-only widget values must be visible in the preview overlay");
     assert.deepEqual(
       newValueTexts.map((op) => op.args[2]),
       [NODE_POS[1] + 48 + 10, NODE_POS[1] + 72 + 11],
@@ -7853,6 +7873,509 @@ test("VibeComfy edited widget field values render on their widget rows instead o
       .map((op) => op.args[0])
       .filter((text) => text === "seed: 5" || text === "steps: 24");
     assert.deepEqual(oldCornerChipTexts, [], "widget fields must not render stacked corner chips");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy edited canvas text widget preview highlights the edited field area with visible fallback text", async () => {
+  const NODE_POS = [100, 220];
+  const NODE_SIZE = [320, 170];
+  const liveGraph = {
+    nodes: [
+      {
+        id: 9,
+        type: "CLIPTextEncode",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-text-widget" },
+        inputs: [],
+        outputs: [{ name: "CONDITIONING" }],
+        widgets_values: ["old prompt that still belongs to the live canvas field"],
+      },
+    ],
+    links: [],
+  };
+  const candidateGraph = {
+    nodes: [
+      {
+        id: 9,
+        type: "CLIPTextEncode",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-text-widget" },
+        inputs: [],
+        outputs: [{ name: "CONDITIONING" }],
+        widgets_values: ["new prompt visible in preview"],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    const liveNode = harness.getLiveNodes()[0];
+    liveNode.widgets = [
+      {
+        name: "text",
+        value: liveGraph.nodes[0].widgets_values[0],
+        last_y: 42,
+        computeSize: () => [NODE_SIZE[0], 74],
+      },
+    ];
+    const panel = extensionModule.ensureAgentPanel();
+    panel.state.lastSubmitFieldChanges = {
+      outcomeChanges: [
+        {
+          uid: "uid-text-widget",
+          field_path: "widgets_values.0",
+          old: liveGraph.nodes[0].widgets_values[0],
+          new: candidateGraph.nodes[0].widgets_values[0],
+        },
+      ],
+      batchTurnChanges: [],
+    };
+
+    const diff = extensionModule.computePreviewDiff(candidateGraph, {
+      change: { content_edits: { preserved: [], edited: ["uid-text-widget"], removed_named: [] } },
+      recovery: [],
+    });
+    const drawOps = await harness.drawPreviewOverlay({ ...diff, _candidateGraph: candidateGraph });
+
+    const previewPanel = drawOps.find((op) => op.kind === "fillRect" && op.args[1] === NODE_POS[1] + 42);
+    assert.ok(previewPanel, "text widget preview needs a visible edited-row highlight");
+    assert.ok(previewPanel.args[0] > NODE_POS[0], "text preview highlight must be inset to the field area");
+    assert.ok(previewPanel.args[2] > NODE_SIZE[0] * 0.8, "text preview highlight must cover the edited field width");
+    assert.ok(previewPanel.args[0] + previewPanel.args[2] <= NODE_POS[0] + NODE_SIZE[0] - 15);
+    const wrappedPreviewText = drawOps
+      .filter((op) => op.kind === "fillText")
+      .map((op) => op.args[0])
+      .join(" ");
+    assert.match(wrappedPreviewText, /text: new prompt/, "canvas-only text widgets still need visible fallback preview text");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy edited DOM widget field values do not duplicate as canvas value text", async () => {
+  const NODE_POS = [100, 220];
+  const NODE_SIZE = [320, 170];
+  const liveGraph = {
+    nodes: [
+      {
+        id: 9,
+        type: "CLIPTextEncode",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-dom-no-duplicate-widget" },
+        inputs: [],
+        outputs: [{ name: "CONDITIONING" }],
+        widgets_values: ["old prompt"],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    const liveNode = harness.getLiveNodes()[0];
+    const inputEl = {
+      getBoundingClientRect() {
+        return { left: 125, top: 262, width: 290, height: 74 };
+      },
+    };
+    liveNode.widgets = [
+      {
+        name: "text",
+        value: "old prompt",
+        last_y: 42,
+        inputEl,
+        computeSize: () => [NODE_SIZE[0], 74],
+      },
+    ];
+    const panel = extensionModule.ensureAgentPanel();
+    panel.state.lastSubmitFieldChanges = {
+      outcomeChanges: [
+        { uid: "uid-dom-no-duplicate-widget", field_path: "widgets_values.0", old: "old prompt", new: "new prompt visible above the field" },
+      ],
+      batchTurnChanges: [],
+    };
+
+    const candidateGraph = {
+      nodes: [
+        {
+          ...liveGraph.nodes[0],
+          widgets_values: ["new prompt visible above the field"],
+        },
+      ],
+      links: [],
+    };
+    const diff = extensionModule.computePreviewDiff(candidateGraph, {
+      change: { content_edits: { preserved: [], edited: ["uid-dom-no-duplicate-widget"], removed_named: [] } },
+      recovery: [],
+    });
+    const drawOps = await harness.drawPreviewOverlay({ ...diff, _candidateGraph: candidateGraph });
+    const wrappedPreviewText = drawOps
+      .filter((op) => op.kind === "fillText")
+      .map((op) => op.args[0])
+      .join(" ");
+    assert.doesNotMatch(wrappedPreviewText, /text: new prompt visible above the field/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy edited text widget DOM preview chip sits on top of the edited field", async () => {
+  const NODE_POS = [100, 220];
+  const NODE_SIZE = [320, 170];
+  const liveGraph = {
+    nodes: [
+      {
+        id: 9,
+        type: "CLIPTextEncode",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-dom-text-widget" },
+        inputs: [],
+        outputs: [{ name: "CONDITIONING" }],
+        widgets_values: ["old prompt"],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    const liveNode = harness.getLiveNodes()[0];
+    const inputEl = {
+      getBoundingClientRect() {
+        return { left: 125, top: 262, width: 290, height: 74 };
+      },
+    };
+    liveNode.widgets = [
+      {
+        name: "text",
+        value: "old prompt",
+        last_y: 42,
+        inputEl,
+        computeSize: () => [NODE_SIZE[0], 74],
+      },
+    ];
+    harness.app.canvas.canvas = {
+      ownerDocument: harness.document,
+      width: 1000,
+      height: 800,
+      clientWidth: 1000,
+      clientHeight: 800,
+      getBoundingClientRect() {
+        return { left: 10, top: 20, width: 1000, height: 800 };
+      },
+    };
+    harness.app.canvas.ds = { scale: 1, offset: [0, 0] };
+    const ctx = createMockCanvasContext();
+    syncPreviewDomOverlay(
+      harness.app,
+      ctx,
+      {
+        edited: [{ uid: "uid-dom-text-widget", class_type: "CLIPTextEncode", changedWidgetIndices: [0] }],
+        edited_fields: [{ uid: "uid-dom-text-widget", field_path: "widgets_values.0", new_value: "new prompt visible above the field" }],
+        added: [],
+        removed: [],
+        removed_named: [],
+        added_links: [],
+        removed_links: [],
+        _candidateGraph: liveGraph,
+      },
+      liveGraph,
+      makePanelOverlayDeps({ nodes: harness.getLiveNodes(), links: [] }),
+    );
+
+    const root = harness.document.getElementById("vibecomfy-preview-dom-overlay");
+    assert.ok(root, "preview DOM overlay root should be created");
+    assert.equal(root.style.zIndex, "2147483647");
+    const chips = root.querySelectorAll((node) => node.dataset?.vibecomfyPreviewChip === "1");
+    assert.equal(chips.length, 1);
+    assert.equal(chips[0].textContent, "text: new prompt visible above the field");
+    assert.equal(chips[0].style.position, "fixed");
+    assert.equal(chips[0].style.zIndex, "2147483647");
+    assert.equal(chips[0].style.left, "125px");
+    assert.equal(chips[0].style.top, "262px");
+    assert.equal(chips[0].style.width, "290px");
+    assert.equal(chips[0].style.height, "74px");
+    assert.equal(chips[0].style.fontSize, "11px");
+    assert.equal(chips[0].style.alignItems, "flex-start");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy edited text widget DOM preview chip uses the widget DOM rect when available", async () => {
+  const NODE_POS = [100, 220];
+  const NODE_SIZE = [320, 170];
+  const liveGraph = {
+    nodes: [
+      {
+        id: 9,
+        type: "CLIPTextEncode",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-dom-rect-widget" },
+        inputs: [],
+        outputs: [{ name: "CONDITIONING" }],
+        widgets_values: ["old prompt"],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    const liveNode = harness.getLiveNodes()[0];
+    const inputEl = {
+      getBoundingClientRect() {
+        return { left: 444, top: 155, width: 237, height: 63 };
+      },
+    };
+    liveNode.widgets = [
+      {
+        name: "text",
+        value: "old prompt",
+        last_y: 42,
+        inputEl,
+        computeSize: () => [NODE_SIZE[0], 20],
+      },
+    ];
+    harness.app.canvas.canvas = {
+      ownerDocument: harness.document,
+      width: 1000,
+      height: 800,
+      clientWidth: 1000,
+      clientHeight: 800,
+      getBoundingClientRect() {
+        return { left: 10, top: 20, width: 1000, height: 800 };
+      },
+    };
+    harness.app.canvas.ds = { scale: 1, offset: [0, 0] };
+    const ctx = createMockCanvasContext();
+    syncPreviewDomOverlay(
+      harness.app,
+      ctx,
+      {
+        edited: [{ uid: "uid-dom-rect-widget", class_type: "CLIPTextEncode", changedWidgetIndices: [0] }],
+        edited_fields: [{ uid: "uid-dom-rect-widget", field_path: "widgets_values.0", new_value: "new prompt visible above the field" }],
+        added: [],
+        removed: [],
+        removed_named: [],
+        added_links: [],
+        removed_links: [],
+        _candidateGraph: liveGraph,
+      },
+      liveGraph,
+      makePanelOverlayDeps({ nodes: harness.getLiveNodes(), links: [] }),
+    );
+
+    const root = harness.document.getElementById("vibecomfy-preview-dom-overlay");
+    const chip = root?.querySelectorAll((node) => node.dataset?.vibecomfyPreviewChip === "1")[0];
+    assert.ok(chip, "preview DOM overlay chip should be created");
+    assert.equal(chip.style.left, "444px");
+    assert.equal(chip.style.top, "155px");
+    assert.equal(chip.style.width, "237px");
+    assert.equal(chip.style.height, "63px");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy edited text widget DOM preview text follows the field visual zoom scale", async () => {
+  const liveGraph = {
+    nodes: [
+      {
+        id: 9,
+        type: "CLIPTextEncode",
+        pos: [100, 220],
+        size: [320, 170],
+        properties: { vibecomfy_uid: "uid-scaled-dom-widget" },
+        inputs: [],
+        outputs: [{ name: "CONDITIONING" }],
+        widgets_values: ["old prompt"],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    const liveNode = harness.getLiveNodes()[0];
+    const inputEl = harness.document.createElement("textarea");
+    Object.assign(inputEl.style, {
+      fontSize: "16px",
+      fontFamily: "Courier New",
+      lineHeight: "20px",
+      paddingLeft: "10px",
+      paddingRight: "8px",
+      paddingTop: "6px",
+      paddingBottom: "4px",
+      borderRadius: "4px",
+    });
+    Object.defineProperty(inputEl, "offsetWidth", { configurable: true, value: 300 });
+    Object.defineProperty(inputEl, "offsetHeight", { configurable: true, value: 80 });
+    inputEl.getBoundingClientRect = () => ({ left: 50, top: 60, width: 150, height: 40 });
+    harness.document.body.appendChild(inputEl);
+    liveNode.widgets = [
+      {
+        name: "text",
+        value: "old prompt",
+        last_y: 42,
+        inputEl,
+        computeSize: () => [320, 80],
+      },
+    ];
+    harness.app.canvas.canvas = {
+      ownerDocument: harness.document,
+      width: 1000,
+      height: 800,
+      clientWidth: 1000,
+      clientHeight: 800,
+      getBoundingClientRect() {
+        return { left: 10, top: 20, width: 1000, height: 800 };
+      },
+    };
+    harness.app.canvas.ds = { scale: 0.5, offset: [0, 0] };
+    const ctx = createMockCanvasContext();
+    syncPreviewDomOverlay(
+      harness.app,
+      ctx,
+      {
+        edited: [{ uid: "uid-scaled-dom-widget", class_type: "CLIPTextEncode", changedWidgetIndices: [0] }],
+        edited_fields: [{ uid: "uid-scaled-dom-widget", field_path: "widgets_values.0", new_value: "new prompt visible above the field" }],
+        added: [],
+        removed: [],
+        removed_named: [],
+        added_links: [],
+        removed_links: [],
+        _candidateGraph: liveGraph,
+      },
+      liveGraph,
+      makePanelOverlayDeps({ nodes: harness.getLiveNodes(), links: [] }),
+    );
+
+    const chip = harness.document
+      .getElementById("vibecomfy-preview-dom-overlay")
+      ?.querySelectorAll((node) => node.dataset?.vibecomfyPreviewChip === "1")[0];
+    assert.ok(chip, "scaled field preview DOM chip should be created");
+    assert.equal(chip.style.left, "50px");
+    assert.equal(chip.style.top, "60px");
+    assert.equal(chip.style.width, "150px");
+    assert.equal(chip.style.height, "40px");
+    assert.equal(chip.style.fontSize, "8px");
+    assert.equal(chip.style.lineHeight, "10px");
+    assert.equal(chip.style.padding, "3px 4px 2px 5px");
+    assert.match(chip.style.fontFamily, /Courier New/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy edited text widget DOM preview does not invent a floating chip without a widget DOM rect", async () => {
+  const liveGraph = {
+    nodes: [
+      {
+        id: 9,
+        type: "CLIPTextEncode",
+        pos: [100, 220],
+        size: [320, 170],
+        properties: { vibecomfy_uid: "uid-no-dom-rect-widget" },
+        inputs: [],
+        outputs: [{ name: "CONDITIONING" }],
+        widgets_values: ["old prompt"],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    const liveNode = harness.getLiveNodes()[0];
+    liveNode.widgets = [
+      {
+        name: "text",
+        value: "old prompt",
+        last_y: 42,
+        computeSize: () => [320, 74],
+      },
+    ];
+    harness.app.canvas.canvas = {
+      ownerDocument: harness.document,
+      width: 1000,
+      height: 800,
+      clientWidth: 1000,
+      clientHeight: 800,
+      getBoundingClientRect() {
+        return { left: 10, top: 20, width: 1000, height: 800 };
+      },
+    };
+    harness.app.canvas.ds = { scale: 0.3, offset: [-700, -500] };
+    const ctx = createMockCanvasContext();
+    syncPreviewDomOverlay(
+      harness.app,
+      ctx,
+      {
+        edited: [{ uid: "uid-no-dom-rect-widget", class_type: "CLIPTextEncode", changedWidgetIndices: [0] }],
+        edited_fields: [{ uid: "uid-no-dom-rect-widget", field_path: "widgets_values.0", new_value: "new prompt" }],
+        added: [],
+        removed: [],
+        removed_named: [],
+        added_links: [],
+        removed_links: [],
+        _candidateGraph: liveGraph,
+      },
+      liveGraph,
+      makePanelOverlayDeps({ nodes: harness.getLiveNodes(), links: [] }),
+    );
+
+    assert.equal(harness.document.getElementById("vibecomfy-preview-dom-overlay"), null);
   } finally {
     await harness.dispose();
   }
@@ -8094,91 +8617,21 @@ test("VibeComfy link rewire promotion ignores identical LiteGraph link re-emissi
   }
 });
 
-test("VibeComfy preview widget value chips render in a fixed DOM overlay above Comfy DOM widgets", async () => {
-  const graph = {
-    nodes: [
-      {
-        id: 1,
-        type: "CLIPTextEncode",
-        pos: [100, 200],
-        size: [320, 160],
-        properties: { vibecomfy_uid: "prompt" },
-        inputs: [],
-        outputs: [],
-        widgets: [{ name: "text" }],
-        widgets_values: ["old prompt"],
-      },
-    ],
-    links: [],
-  };
-  const harness = await createBrowserHarness({
-    graph,
-    responses: {
-      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
-    },
-  });
-
+test("VibeComfy clearPreviewDomOverlay removes stale fixed DOM preview remnants", async () => {
+  const harness = await createBrowserHarness({});
   try {
-    const liveNode = harness.getLiveNodes()[0];
-    liveNode.widgets = [{
-      name: "text",
-      last_y: 32,
-      computeSize() {
-        return [320, 72];
-      },
-    }];
-    harness.app.canvas.canvas = {
-      ownerDocument: harness.document,
-      width: 1000,
-      height: 800,
-      clientWidth: 1000,
-      clientHeight: 800,
-      getBoundingClientRect() {
-        return { left: 10, top: 20, width: 1000, height: 800 };
-      },
-    };
-    harness.app.canvas.ds = { scale: 1, offset: [0, 0] };
+    const root = harness.document.createElement("div");
+    root.id = "vibecomfy-preview-dom-overlay";
+    root.style.position = "fixed";
+    const chip = harness.document.createElement("div");
+    chip.dataset.vibecomfyPreviewChip = "1";
+    chip.textContent = "stale floating preview text";
+    root.appendChild(chip);
+    harness.document.body.appendChild(root);
 
-    const ctx = createMockCanvasContext();
-    syncPreviewDomOverlay(
-      harness.app,
-      ctx,
-      {
-        edited: [{ uid: "prompt", class_type: "CLIPTextEncode", changedWidgetIndices: [0] }],
-        edited_fields: [{ uid: "prompt", field_path: "widgets_values.0", new_value: "new prompt visible above textarea" }],
-        added: [],
-        removed: [],
-        removed_named: [],
-        added_links: [],
-        removed_links: [],
-      },
-      graph,
-      {
-        captureLiveCanvasRevision: () => 1,
-        getLiveGraph: () => harness.app.canvas.graph,
-        getLiveGraphNodes: () => harness.getLiveNodes(),
-        getUid: (node) => node?.properties?.vibecomfy_uid || null,
-        graphNodeCount: (nextGraph) => nextGraph?.nodes?.length || 0,
-        readNodePos: (node) => ({ x: node.pos[0], y: node.pos[1] }),
-        readNodeSize: (node) => ({ w: node.size[0], h: node.size[1] }),
-        readWidgetValues: (node) => node.widgets_values || [],
-        widgetValuePreviewText: (value) => String(value || ""),
-      },
-    );
+    clearPreviewDomOverlay(harness.document);
 
-    const root = harness.document.getElementById("vibecomfy-preview-dom-overlay");
-    assert.ok(root, "preview DOM overlay root should be created");
-    assert.equal(root.style.position, "fixed");
-    assert.equal(root.style.zIndex, "2147483647");
-    const chips = root.querySelectorAll((node) => node.dataset?.vibecomfyPreviewChip === "1");
-    assert.equal(chips.length, 1);
-    assert.equal(chips[0].textContent, "text: new prompt visible above textarea");
-    assert.equal(chips[0].style.position, "fixed");
-    assert.equal(chips[0].style.zIndex, "2147483647");
-    assert.equal(chips[0].style.whiteSpace, "pre-wrap");
-    assert.equal(chips[0].style.overflowWrap, "anywhere");
-    assert.notEqual(chips[0].style.left, "");
-    assert.notEqual(chips[0].style.top, "");
+    assert.equal(harness.document.getElementById("vibecomfy-preview-dom-overlay"), null);
   } finally {
     await harness.dispose();
   }

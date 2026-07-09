@@ -29,8 +29,13 @@ import {
   SETTINGS_STATUS_RENDER_SECTIONS,
 } from "./panel_scheduler.js";
 import {
+  appendCandidateDetail as appendCandidateDetailImpl,
+  appendFailureDetail as appendFailureDetailImpl,
+  appendQueueDetail as appendQueueDetailImpl,
+  changeDetailsForMessage as changeDetailsForMessageImpl,
   collectThreadMessageEntries as collectThreadMessageEntriesImpl,
   computeThreadDisplayEntries as computeThreadDisplayEntriesImpl,
+  createBubbleDetailSection as createBubbleDetailSectionImpl,
   populateAgentBubbleDetail as populateAgentBubbleDetailImpl,
   recordThreadRender,
   reconcileChatBubbles as reconcileChatBubblesImpl,
@@ -39,6 +44,8 @@ import {
   renderThreadSection as renderThreadSectionImpl,
 } from "./panel_thread.js";
 import {
+  clearPreviewDomOverlay,
+  drawPreviewOverlay as panelOverlayDrawPreviewOverlay,
   installAgentPreviewOverlay as installAgentPreviewOverlayImpl,
   invalidateOverlayDrawModelCache,
 } from "./panel_overlay.js";
@@ -2272,15 +2279,20 @@ function installAgentPreviewOverlay() {
   installAgentPreviewOverlayImpl(app, {
     PANEL_STATE,
     captureLiveCanvasRevision,
-    drawPreviewOverlay,
+    currentAgentPanel,
+    drawPreviewOverlay: panelOverlayDrawPreviewOverlay,
     getLiveGraph,
     getLiveGraphNodes,
     getUid,
     getOrBuildPreviewDiff,
     graphNodeCount: _graphNodeCount,
+    hexToRgba,
+    readNodeBounding,
     readNodePos,
     readNodeSize,
     readWidgetValues,
+    VC_COLORS,
+    vecNumber,
     widgetValuePreviewText,
   });
 }
@@ -3196,33 +3208,7 @@ function createDetails(summary, value) {
 }
 
 function createBubbleDetailSection(title) {
-  const section = el("div");
-  Object.assign(section.style, {
-    display: "grid",
-    gap: "4px",
-    minWidth: "0",
-    maxWidth: "100%",
-  });
-  const heading = el("div", title);
-  Object.assign(heading.style, {
-    fontSize: "10px",
-    fontWeight: "700",
-    color: "#6b7080",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  });
-  const body = el("div");
-  Object.assign(body.style, {
-    display: "grid",
-    gap: "4px",
-    minWidth: "0",
-    maxWidth: "100%",
-    overflowWrap: "anywhere",
-    wordBreak: "break-word",
-  });
-  section.appendChild(heading);
-  section.appendChild(body);
-  return { section, body };
+  return createBubbleDetailSectionImpl(title, { el });
 }
 
 function createQueueIssue(code, message, detail = {}, severity = "error") {
@@ -5511,64 +5497,7 @@ function normalizeFieldChangesFromMessage(message) {
 }
 
 function changeDetailsForMessage(panel, message, snapshot = null) {
-  const responseDetail = responseDetailForMessage(panel, message, snapshot);
-  const safeChangeDetails = changeDetailsFromResponseDetail(responseDetail);
-  if (safeChangeDetails) {
-    return safeChangeDetails;
-  }
-  if (snapshot?.changeDetails && typeof snapshot.changeDetails === "object" && snapshot?.debugPayload == null) {
-    return snapshot.changeDetails;
-  }
-  return panel?.state?.changeDetails || null;
-}
-
-function responseDetailForMessage(panel, message, snapshot = null) {
-  const turnId = turnIdForDetailLookup(panel, message, snapshot);
-  if (!turnId) {
-    return null;
-  }
-  const detailKey = panel?.state?.compartmentIndexes?.responseDetailsByTurnId?.[turnId] || turnId;
-  return panel?.state?.responseDetails?.[detailKey] || null;
-}
-
-function turnIdForDetailLookup(panel, message = null, snapshot = null) {
-  return (
-    (typeof message?.turn_id === "string" && message.turn_id)
-    || (typeof message?.detail_turn_id === "string" && message.detail_turn_id)
-    || (typeof snapshot?.turn_id === "string" && snapshot.turn_id)
-    || (typeof snapshot?.turn?.turnId === "string" && snapshot.turn.turnId)
-    || (typeof panel?.state?.turnId === "string" && panel.state.turnId)
-    || null
-  );
-}
-
-function changeDetailsFromResponseDetail(detail) {
-  if (!detail || typeof detail !== "object") {
-    return null;
-  }
-  const changes = Array.isArray(detail.changes) ? detail.changes : [];
-  const summary =
-    typeof detail.outcome?.summary === "string" && detail.outcome.summary
-      ? detail.outcome.summary
-      : typeof detail.outcome?.question === "string" && detail.outcome.question
-        ? detail.outcome.question
-        : null;
-  if (!changes.length) {
-    return null;
-  }
-  return {
-    landed_operation_count: changes.length,
-    operations: changes.map((change) => ({
-      uid: change.uid,
-      field_path: change.fieldPath || change.field_path,
-      old: Object.prototype.hasOwnProperty.call(change, "old") ? clonePlainData(change.old) : undefined,
-      new: Object.prototype.hasOwnProperty.call(change, "new") ? clonePlainData(change.new) : undefined,
-      summary: change.fieldPath || change.field_path
-        ? `${change.fieldPath || change.field_path} changed`
-        : "field changed",
-    })),
-    done_summary: summary,
-  };
+  return changeDetailsForMessageImpl(panel, message, snapshot, { clonePlainData });
 }
 
 function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null, parentTurnId = null, canonicalActivity = null } = {}) {
@@ -6654,8 +6583,8 @@ function buildAgentPanelDebugSnapshot(panel = currentAgentPanel()) {
   return {
     panelId: panel?.panelId || null,
     panelsCreated: panelsCreatedCount(),
-    lastThreadRender: runtime.lastThreadRender || runtime._lastThreadRender,
-    lastNoticeRender: runtime.lastNoticeRender || runtime._lastNoticeRender,
+    lastThreadRender: runtime._lastThreadRender,
+    lastNoticeRender: runtime._lastNoticeRender,
     statusCommitAt: runtime._statusCommitAt,
     rehydrateCommitAt: runtime._rehydrateCommitAt,
     marksAfterCommit: runtime._marksAfterCommit,
@@ -6886,9 +6815,8 @@ function clearCandidatePreviewState(panel) {
   if (!panel) {
     return;
   }
-  delete panel.state._previewDiff;
-  delete panel.state._previewDiffGraphHash;
   invalidateOverlayDrawModelCache();
+  clearPreviewDomOverlay(app?.canvas?.canvas?.ownerDocument);
   try {
     const graph = getLiveGraph();
     if (graph) {
@@ -6982,6 +6910,7 @@ function collectLayoutMovesFromBaseline(baselineGraph, candidateGraph) {
 function clearCandidateInvalidationSideEffects(repaint = true) {
   // Roundtrip-owned side effect: clear overlay draw model cache.
   invalidateOverlayDrawModelCache();
+  clearPreviewDomOverlay(app?.canvas?.canvas?.ownerDocument);
   // Repaint to clear the always-on candidate preview overlay from the canvas.
   // Callers that have ALREADY repainted (e.g. the post-Apply path, which just
   // ran applyGraphInPlaceWithIntentDecoration -> setDirtyCanvas and is now IDLE
@@ -7723,924 +7652,35 @@ function readNodeBounding(node, titleHeight) {
   return { x: pos.x, y: pos.y - titleHeight, w: size.w, h: size.h + titleHeight };
 }
 
-function _overlayDrawCacheKey(diff, candidateGraph) {
-  const candidateHash =
-    diff?._candidateGraphHash
-    || currentAgentPanel()?.state?.candidateGraphHash
-    || `inline:${_graphNodeCount(candidateGraph)}:${Array.isArray(candidateGraph?.links) ? candidateGraph.links.length : 0}`;
-  const liveRevision = captureLiveCanvasRevision();
-  return `${candidateHash}:${liveRevision == null ? "unknown" : liveRevision}`;
-}
-
-function _buildOverlayDrawModel(ctx, diff, candidateGraph) {
-  const runtime = getAgentPanelRuntime();
-  const key = _overlayDrawCacheKey(diff, candidateGraph);
-  if (runtime._overlayDrawModelCache?.key === key) {
-    return runtime._overlayDrawModelCache.model;
-  }
-  const liveByUid = new Map();
-  for (const node of getLiveGraphNodes(getLiveGraph())) {
-    const uid = getUid(node);
-    if (uid) {
-      liveByUid.set(uid, node);
-    }
-  }
-  const candidateByUid = new Map();
-  for (const node of Array.isArray(candidateGraph?.nodes) ? candidateGraph.nodes : []) {
-    const uid = getUid(node);
-    if (uid) {
-      candidateByUid.set(uid, node);
-    }
-  }
-  const addedByUid = new Map();
-  for (const item of Array.isArray(diff?.added) ? diff.added : []) {
-    if (item?.uid) {
-      addedByUid.set(item.uid, item);
-    }
-  }
-  const ghostDimsByUid = new Map();
-  for (const [uid, node] of candidateByUid) {
-    if (!addedByUid.has(uid)) {
-      continue;
-    }
-    const nodeSize = readNodeSize(node, NaN, NaN);
-    if (nodeSize.w > 40 && nodeSize.h > 20) {
-      ghostDimsByUid.set(uid, nodeSize);
-      continue;
-    }
-    ghostDimsByUid.set(uid, _computeGhostDimensions(node, ctx));
-  }
-  const model = {
-    liveByUid,
-    candidateByUid,
-    addedByUid,
-    ghostDimsByUid,
-    unresolvedWarnCount: 0,
-  };
-  runtime._overlayDrawModelCache = { key, model };
-  return model;
-}
-
-function _warnOverlayUnresolved(model, message, detail) {
-  if (!model || model.unresolvedWarnCount >= 5) {
-    return;
-  }
-  model.unresolvedWarnCount += 1;
-  console.warn(message, safePreviewLogDetail(detail));
-}
-
-// ── Ghost dimension computation (T3) ──────────────────────────────────────
-// Compute plausible width and height from node content when cn.size is
-// missing or implausible (w ≤ 40 or h ≤ 20). Uses LiteGraph constants,
-// title text, non-empty slot labels, truncated widget_values, slot counts,
-// widget rows, and padding.
-function _computeGhostDimensions(cn, ctx) {
-  var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
-  var SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
-  var WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
-  var PAD_X = 32; // room for slot circles + margins
-  var PAD_Y = 12;
-  var MIN_W = 140;
-
-  var title = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
-  var inputs = Array.isArray(cn.inputs) ? cn.inputs : [];
-  var outputs = Array.isArray(cn.outputs) ? cn.outputs : [];
-  var widgetValues = readWidgetValues(cn);
-
-  // Truncate helper — uses Unicode ellipsis (SD3).
-  var _trunc = function (text, maxChars) {
-    text = String(text || "").trim();
-    if (!text) return "";
-    return text.length > maxChars ? text.slice(0, maxChars - 1) + "\u2026" : text;
-  };
-
-  ctx.save();
-  try {
-    ctx.font = "12px Arial, sans-serif";
-    ctx.textBaseline = "top";
-
-    var titleW = ctx.measureText(_trunc(title, 40)).width;
-
-    var maxSlotW = 0;
-    for (var s = 0; s < inputs.length; s += 1) {
-      var lbl = safePreviewOverlayText(inputs[s] && inputs[s].name, "");
-      if (lbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(lbl, 30)).width);
-    }
-    for (var t = 0; t < outputs.length; t += 1) {
-      var olbl = safePreviewOverlayText(outputs[t] && outputs[t].name, "");
-      if (olbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(olbl, 30)).width);
-    }
-
-    var maxWidgetW = 0;
-    for (var wi = 0; wi < widgetValues.length; wi += 1) {
-      var wvText = _trunc(widgetValuePreviewText(widgetValues[wi]), 35);
-      if (wvText) maxWidgetW = Math.max(maxWidgetW, ctx.measureText(wvText).width);
-    }
-
-    var contentW = Math.max(titleW, maxSlotW, maxWidgetW);
-    var gw = Math.max(MIN_W, Math.ceil(contentW + PAD_X));
-
-    var inCount = inputs.length;
-    var outCount = outputs.length;
-    var wRows = widgetValues.length;
-    var slotRows = Math.max(inCount, outCount);
-    var gh = TITLE_H + slotRows * SLOT_H + wRows * WIDGET_H + PAD_Y;
-
-    return { w: gw, h: gh };
-  } finally {
-    ctx.restore();
-  }
-}
-
-const FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS = [
-  /\b(?:canvas_apply_allowed|canvasApplyAllowed|queue_allowed|queueAllowed)\b/i,
-  /\b(?:debug_payload|debugPayload|audit_ref|auditRef|raw_path|rawPath|artifact_path|artifactPath)\b/i,
-  /\/(?:real\/)?ComfyUI\/out\/editor_sessions\//i,
-  /\bturns\/\d+\/(?:response|messages|candidate|debug)\.[a-z0-9]+/i,
-  /\b(?:ProviderError|Traceback|stack trace|engine diagnostics|raw diagnostic)\b/i,
-  /\b(?:model prompt|system prompt|prompt messages)\b/i,
-  /\b(?:token budget|exit mode|remaining batches)\b/i,
-];
-
-function safePreviewOverlayText(text, fallback = "") {
-  const value = String(text == null ? "" : text).trim();
-  if (!value) return "";
-  return FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS.some((pattern) => pattern.test(value))
-    ? fallback
-    : value;
-}
-
-// ── Widget-value preview text (T3) ────────────────────────────────────────
 function widgetValuePreviewText(value) {
   if (value == null) return "";
-  if (typeof value === "string") return safePreviewOverlayText(value, "");
+  if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return "[…]";
-  return "{…}";
+  if (Array.isArray(value)) return "[\u2026]";
+  return "{\u2026}";
+}
+
+function previewOverlayDeps() {
+  return {
+    VC_COLORS,
+    captureLiveCanvasRevision,
+    currentAgentPanel,
+    getLiveGraph,
+    getLiveGraphNodes,
+    getUid,
+    graphNodeCount: _graphNodeCount,
+    hexToRgba,
+    readNodeBounding,
+    readNodePos,
+    readNodeSize,
+    readWidgetValues,
+    vecNumber,
+    widgetValuePreviewText,
+  };
 }
 
 export function drawPreviewOverlay(ctx, diff) {
-  if (!ctx || !diff) {
-    return;
-  }
-  ctx.save();
-  try {
-    if (ctx.setLineDash) {
-      ctx.setLineDash([]);
-    }
-
-    var editedColor = VC_COLORS.edited;
-    var editedFill = hexToRgba(VC_COLORS.edited, 0.16);
-    var addedColor = VC_COLORS.added;
-    var addedFill = hexToRgba(VC_COLORS.added, 0.18);
-    var addedTextColor = hexToRgba(VC_COLORS.added, 0.92);
-    var removedColor = VC_COLORS.removed;
-    var removedFill = hexToRgba(VC_COLORS.removed, 0.16);
-    var layoutColor = "#7dd3fc";
-    var layoutFill = "rgba(125,211,252,0.12)";
-    var layoutBeforeFill = "rgba(125,211,252,0.06)";
-    var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
-    var SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
-    var WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
-    var panel = currentAgentPanel();
-    var candidateGraph = (diff && diff._candidateGraph) || (panel && panel.state && panel.state.candidateGraph);
-    var drawModel = _buildOverlayDrawModel(ctx, diff, candidateGraph);
-    var liveByUid = drawModel.liveByUid;
-    var candidateByUid = drawModel.candidateByUid;
-    var addedByUid = drawModel.addedByUid;
-
-    var _drawBadge = function (bx, by, text, color) {
-      ctx.save();
-      if (ctx.setLineDash) {
-        ctx.setLineDash([]);
-      }
-      ctx.font = "bold 12px sans-serif";
-      var padX = 5;
-      var bw = ctx.measureText(text).width + padX * 2;
-      var bh = 18;
-      ctx.fillStyle = color;
-      ctx.fillRect(bx, by - bh, bw, bh);
-      ctx.fillStyle = "#000000";
-      ctx.textBaseline = "middle";
-      ctx.fillText(text, bx + padX, by - bh / 2 + 1);
-      ctx.restore();
-    };
-
-    var _measureBadgeWidth = function (text) {
-      ctx.save();
-      try {
-        ctx.font = "bold 12px sans-serif";
-        return ctx.measureText(text).width + 10;
-      } finally {
-        ctx.restore();
-      }
-    };
-
-    var _drawFullBoxMarker = function (bounds, strokeColor, fillColor, dashed) {
-      ctx.setLineDash(dashed ? [6, 3] : []);
-      ctx.fillStyle = fillColor;
-      ctx.fillRect(bounds.x - 2, bounds.y - 2, bounds.w + 4, bounds.h + 4);
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(bounds.x - 2, bounds.y - 2, bounds.w + 4, bounds.h + 4);
-      ctx.setLineDash([]);
-    };
-
-    var _lineTo = function (x, y) {
-      if (typeof ctx.lineTo === "function") {
-        ctx.lineTo(x, y);
-      } else if (typeof ctx.bezierCurveTo === "function") {
-        ctx.bezierCurveTo(x, y, x, y, x, y);
-      }
-    };
-
-    var _drawRoundedPanel = function (x, y, w, h, radius, fillStyle, strokeStyle) {
-      ctx.fillStyle = fillStyle;
-      ctx.strokeStyle = strokeStyle;
-      ctx.lineWidth = 1;
-      if (typeof ctx.roundRect === "function") {
-        ctx.beginPath();
-        ctx.roundRect(x, y, w, h, radius);
-        ctx.fill();
-        ctx.stroke();
-        return;
-      }
-      ctx.fillRect(x, y, w, h);
-      ctx.strokeRect(x, y, w, h);
-    };
-
-    // ── Truncation helper (Unicode ellipsis, SD3) ────────────────────────
-    var _trunc = function (text, maxChars) {
-      text = String(text || "").trim();
-      if (!text) return "";
-      return text.length > maxChars ? text.slice(0, maxChars - 1) + "\u2026" : text;
-    };
-
-    var _fitTextToWidth = function (text, maxWidth) {
-      text = String(text == null ? "" : text);
-      if (!text || maxWidth <= 0) return "";
-      if (ctx.measureText(text).width <= maxWidth) return text;
-      var ellipsis = "\u2026";
-      var lo = 0;
-      var hi = text.length;
-      while (lo < hi) {
-        var mid = Math.ceil((lo + hi) / 2);
-        if (ctx.measureText(text.slice(0, mid) + ellipsis).width <= maxWidth) {
-          lo = mid;
-        } else {
-          hi = mid - 1;
-        }
-      }
-      return lo > 0 ? text.slice(0, lo) + ellipsis : ellipsis;
-    };
-
-    var _wrapTextToWidth = function (text, maxWidth, maxLines) {
-      text = String(text == null ? "" : text);
-      if (!text || maxWidth <= 0 || maxLines <= 0) return [];
-      var lines = [];
-      var parts = text.replace(/\r\n/g, "\n").split("\n");
-      var pushWrapped = function (segment) {
-        segment = String(segment || "");
-        if (!segment) {
-          lines.push("");
-          return;
-        }
-        var words = segment.split(/(\s+)/);
-        var current = "";
-        for (var wi = 0; wi < words.length; wi += 1) {
-          var word = words[wi];
-          if (!word) continue;
-          var next = current + word;
-          if (!current || ctx.measureText(next).width <= maxWidth) {
-            current = next;
-            continue;
-          }
-          lines.push(current.trimEnd());
-          current = word.trimStart();
-          while (ctx.measureText(current).width > maxWidth && current.length > 1) {
-            var piece = _fitTextToWidth(current, maxWidth);
-            if (!piece || piece === "\u2026") break;
-            var usable = piece.endsWith("\u2026") ? piece.slice(0, -1) : piece;
-            lines.push(usable);
-            current = current.slice(usable.length);
-          }
-        }
-        if (current) lines.push(current.trimEnd());
-      };
-      for (var pi = 0; pi < parts.length; pi += 1) {
-        pushWrapped(parts[pi]);
-      }
-      if (lines.length > maxLines) {
-        lines = lines.slice(0, maxLines);
-        lines[maxLines - 1] = _fitTextToWidth(lines[maxLines - 1] + "\u2026", maxWidth);
-      }
-      return lines;
-    };
-
-    var _widgetIndexFromFieldPath = function (fieldPath) {
-      var path = String(fieldPath || "");
-      var direct = /(?:^|\.)(?:widgets_values|widgets)\.(\d+)(?:\.|$)/.exec(path);
-      if (direct) return Number(direct[1]);
-      var widgetKey = /^widget_(\d+)$/.exec(path);
-      if (widgetKey) return Number(widgetKey[1]);
-      return null;
-    };
-
-    var _fieldNameCandidates = function (fieldPath) {
-      var path = String(fieldPath || "");
-      if (!path) return [];
-      var normalized = path.replace(/\[(\d+)\]/g, ".$1");
-      var parts = normalized.split(".").filter(Boolean);
-      var last = parts.length ? parts[parts.length - 1] : normalized;
-      return [normalized, last];
-    };
-
-    var _resolveWidgetFieldIndex = function (field, node) {
-      var directIndex = _widgetIndexFromFieldPath(field && field.field_path);
-      if (directIndex != null && Number.isFinite(directIndex)) {
-        return directIndex;
-      }
-      var widgetsForNode = Array.isArray(node && node.widgets) ? node.widgets : [];
-      if (widgetsForNode.length === 0) {
-        return null;
-      }
-      var candidates = _fieldNameCandidates(field && field.field_path);
-      for (var ci = 0; ci < candidates.length; ci += 1) {
-        var candidateName = candidates[ci];
-        for (var wi = 0; wi < widgetsForNode.length; wi += 1) {
-          var widget = widgetsForNode[wi];
-          var widgetNames = [widget && widget.name, widget && widget.label].filter(Boolean);
-          for (var ni = 0; ni < widgetNames.length; ni += 1) {
-            if (String(widgetNames[ni]) === candidateName) {
-              return wi;
-            }
-          }
-        }
-      }
-      return null;
-    };
-
-    var _formatFieldLabel = function (field) {
-      var label = field && field.field_path ? String(field.field_path) : "field";
-      if (field && field.new_value !== null && field.new_value !== undefined) {
-        label += ": " + field.new_value;
-      }
-      return _trunc(safePreviewOverlayText(label, "field"), 48);
-    };
-
-    var _fieldNewValueLabel = function (field) {
-      if (!field || field.new_value === null || field.new_value === undefined) {
-        return "";
-      }
-      return safePreviewOverlayText(field.new_value, "");
-    };
-
-    var _previewFieldValueText = function (labelText, valueText) {
-      var value = String(valueText == null ? "" : valueText);
-      var label = String(labelText == null ? "" : labelText).trim();
-      if (!label) {
-        return value;
-      }
-      return label + ": " + value;
-    };
-
-    var editedFieldsByUid = new Map();
-    if (diff.edited_fields && diff.edited_fields.length > 0) {
-      for (var _efg = 0; _efg < diff.edited_fields.length; _efg += 1) {
-        var groupedField = diff.edited_fields[_efg];
-        if (!groupedField || !groupedField.uid) continue;
-        if (!editedFieldsByUid.has(groupedField.uid)) {
-          editedFieldsByUid.set(groupedField.uid, []);
-        }
-        editedFieldsByUid.get(groupedField.uid).push(groupedField);
-      }
-    }
-
-    var _hasEditedLinkTarget = function (uid) {
-      if (!uid) return false;
-      var needle = "->" + uid + "::";
-      var addedLinks = Array.isArray(diff.added_links) ? diff.added_links : [];
-      var removedLinks = Array.isArray(diff.removed_links) ? diff.removed_links : [];
-      for (var ai = 0; ai < addedLinks.length; ai += 1) {
-        if (String(addedLinks[ai]).indexOf(needle) !== -1) return true;
-      }
-      for (var ri = 0; ri < removedLinks.length; ri += 1) {
-        if (String(removedLinks[ri]).indexOf(needle) !== -1) return true;
-      }
-      return false;
-    };
-
-    var _drawWidgetValueOverlay = function (bounds, valueText, labelText) {
-      var padX = 7;
-      var padY = 4;
-      var overlayX = bounds.x;
-      var overlayY = bounds.y;
-      var overlayW = bounds.w;
-      var overlayH = Math.max(bounds.h, 12);
-      if (!Number.isFinite(overlayW) || !Number.isFinite(overlayH) || overlayW <= 0 || overlayH <= 0) return;
-      var maxTextW = Math.max(overlayW - padX * 2, 4);
-      var rawValue = _previewFieldValueText(labelText, valueText);
-      var wantsMultipleLines = rawValue.indexOf("\n") !== -1 || rawValue.length > 42 || ctx.measureText(rawValue).width > maxTextW;
-      var maxLines = wantsMultipleLines ? Math.max(1, Math.floor((overlayH - padY * 2) / 13)) : 1;
-      var lines = wantsMultipleLines ? _wrapTextToWidth(rawValue, maxTextW, maxLines) : [_fitTextToWidth(rawValue, maxTextW)];
-      lines = lines.filter(function (line) { return line != null; });
-      if (lines.length === 0) lines = [""];
-      var lineH = 13;
-      _drawRoundedPanel(
-        overlayX,
-        overlayY,
-        overlayW,
-        overlayH,
-        5,
-        "rgba(20,18,8,0.92)",
-        hexToRgba(VC_COLORS.edited, 0.95),
-      );
-      ctx.save();
-      try {
-        if (typeof ctx.rect === "function" && typeof ctx.clip === "function") {
-          ctx.beginPath();
-          ctx.rect(overlayX, overlayY, overlayW, overlayH);
-          ctx.clip();
-        }
-        ctx.font = "11px Arial, sans-serif";
-        ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.98);
-        if (wantsMultipleLines) {
-          ctx.textBaseline = "top";
-          ctx.textAlign = "left";
-          for (var li = 0; li < lines.length; li += 1) {
-            ctx.fillText(lines[li], overlayX + padX, overlayY + padY + li * lineH);
-          }
-        } else {
-          ctx.textBaseline = "middle";
-          ctx.textAlign = "right";
-          ctx.fillText(lines[0], overlayX + overlayW - padX, overlayY + overlayH / 2);
-        }
-      } finally {
-        ctx.restore();
-      }
-    };
-
-    // ── Edited nodes (amber outline) ────────────────────────────────────
-    // LiteGraph: node.pos[1] is the top of the node BODY; the title bar is drawn
-    // ABOVE it (getBounding() top = pos[1] - NODE_TITLE_HEIGHT) and node.size is
-    // the body size, excluding the title. So the full visual box is
-    // [pos[0], pos[1]-TITLE_H, size[0], size[1]+TITLE_H].
-    for (var _ei = 0; _ei < (diff.edited || []).length; _ei += 1) {
-      var eitem = diff.edited[_ei];
-      var enode = liveByUid.get(eitem.uid);
-      if (!enode || !enode.pos) {
-        continue;
-      }
-      var epos = readNodePos(enode);
-      var ex = epos.x;
-      var ey = epos.y;
-      var esize = readNodeSize(enode);
-      var ew = esize.w;
-      var collapsed = !!(enode.flags && enode.flags.collapsed);
-      var eh = collapsed ? 0 : esize.h;
-      var eb = readNodeBounding(enode, TITLE_H);
-      // Mark the WHOLE node: title bar (above pos[1]) + body.
-      _drawFullBoxMarker(eb, editedColor, editedFill, false);
-      if (collapsed) {
-        continue; // no widget rows to tint when collapsed
-      }
-      // Tint the changed widget rows. Prefer the live node's own per-widget
-      // geometry (widget.last_y, set by LiteGraph each draw in body-local
-      // coords) for pixel-faithful placement; fall back to computed row
-      // geometry below the slot area when last_y is unavailable.
-      var widgets = Array.isArray(enode.widgets) ? enode.widgets : [];
-      var inCount = Array.isArray(enode.inputs) ? enode.inputs.length : 0;
-      var outCount = Array.isArray(enode.outputs) ? enode.outputs.length : 0;
-      var slotRows = Math.max(inCount, outCount);
-      var computedRowsTop = ey + slotRows * SLOT_H;
-      var widgetRowBounds = new Map();
-      var _rowBoundsForWidgetIndex = function (widx, valueText) {
-        var hasValueText = valueText !== undefined && valueText !== null && String(valueText) !== "";
-        if (!hasValueText && widgetRowBounds.has(widx)) {
-          return widgetRowBounds.get(widx);
-        }
-        var w = widgets[widx];
-        var rowTop;
-        var rowH = WIDGET_H;
-        if (w && typeof w.last_y === "number") {
-          // last_y is body-local (relative to pos[1]).
-          rowTop = ey + w.last_y;
-          if (typeof w.computeSize === "function") {
-            try {
-              var cs = w.computeSize(ew);
-              if (cs && typeof cs[1] === "number" && cs[1] > 0) {
-                rowH = cs[1];
-              }
-            } catch (e) { /* fall back to WIDGET_H */ }
-          }
-          var rawValue = String(valueText == null ? "" : valueText);
-          var longTextValue = rawValue.indexOf("\n") !== -1 || rawValue.length > 42;
-          if (longTextValue && rowH <= WIDGET_H + 4) {
-            var nextWidgetY = null;
-            for (var nwi = 0; nwi < widgets.length; nwi += 1) {
-              if (nwi === widx || !widgets[nwi] || typeof widgets[nwi].last_y !== "number") continue;
-              if (widgets[nwi].last_y > w.last_y && (nextWidgetY == null || widgets[nwi].last_y < nextWidgetY)) {
-                nextWidgetY = widgets[nwi].last_y;
-              }
-            }
-            var bottomY = nextWidgetY != null ? ey + nextWidgetY : ey + eh - 8;
-            if (bottomY > rowTop + rowH) {
-              rowH = Math.min(bottomY - rowTop, 160);
-            }
-          }
-        } else {
-          rowTop = computedRowsTop + widx * WIDGET_H;
-        }
-        var bounds = { x: ex, y: rowTop, w: ew, h: rowH };
-        if (!hasValueText) {
-          widgetRowBounds.set(widx, bounds);
-        }
-        return bounds;
-      };
-      ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.22);
-      for (var _wi = 0; _wi < (eitem.changedWidgetIndices || []).length; _wi += 1) {
-        var widx = eitem.changedWidgetIndices[_wi];
-        var rowBounds = _rowBoundsForWidgetIndex(widx);
-        ctx.fillRect(rowBounds.x, rowBounds.y, rowBounds.w, Math.max(rowBounds.h - 2, 4));
-      }
-
-      var fieldsForNode = editedFieldsByUid.get(eitem.uid) || [];
-      var nonWidgetFields = [];
-      var drawnWidgetFieldIndexes = new Set();
-      for (var _efi = 0; _efi < fieldsForNode.length; _efi += 1) {
-        var ef = fieldsForNode[_efi];
-        var resolvedWidgetIndex = _resolveWidgetFieldIndex(ef, enode);
-        if (resolvedWidgetIndex != null && Number.isFinite(resolvedWidgetIndex) && resolvedWidgetIndex >= 0) {
-          if (!drawnWidgetFieldIndexes.has(resolvedWidgetIndex)) {
-            drawnWidgetFieldIndexes.add(resolvedWidgetIndex);
-            var _overlayWidget = widgets[resolvedWidgetIndex];
-            _drawWidgetValueOverlay(
-              _rowBoundsForWidgetIndex(resolvedWidgetIndex, _fieldNewValueLabel(ef)),
-              _fieldNewValueLabel(ef),
-              _overlayWidget && typeof _overlayWidget.name === "string" ? _overlayWidget.name : null,
-            );
-          }
-        } else {
-          nonWidgetFields.push(ef);
-        }
-      }
-
-      if (nonWidgetFields.length > 0 || _hasEditedLinkTarget(eitem.uid)) {
-        var chipLabel = nonWidgetFields.length > 0
-          ? _formatFieldLabel(nonWidgetFields[0])
-          : "inputs changed";
-        _drawBadge(ex + 4, ey + eh - 2, chipLabel, editedColor);
-      }
-    }
-
-    // ── Reorganisation layout moves ────────────────────────────────────
-    // Non-destructive preview: the live canvas keeps the ORIGINAL layout, so each
-    // live node already sits at its old (before) position. Draw a dashed arrow
-    // from each mover to a translucent target rect at its proposed (after)
-    // position — node (old) ──→ ghost (new) — without moving anything.
-    var layoutMoved = Array.isArray(diff.layout_moved) ? diff.layout_moved : [];
-    for (var _lmi = 0; _lmi < layoutMoved.length; _lmi += 1) {
-      var move = layoutMoved[_lmi];
-      if (!move || !move.uid || !move.before || !move.after) {
-        continue;
-      }
-      var beforeBounds = {
-        x: Number(move.before.x) || 0,
-        y: (Number(move.before.y) || 0) - TITLE_H,
-        w: Math.max(1, Number(move.before.w) || 1),
-        h: Math.max(1, Number(move.before.h) || 1) + TITLE_H,
-      };
-      var afterBounds = {
-        x: Number(move.after.x) || 0,
-        y: (Number(move.after.y) || 0) - TITLE_H,
-        w: Math.max(1, Number(move.after.w) || 1),
-        h: Math.max(1, Number(move.after.h) || 1) + TITLE_H,
-      };
-
-      // Translucent ghost at the proposed position (shows the future footprint).
-      _drawFullBoxMarker(afterBounds, layoutColor, layoutFill, false);
-
-      var beforeCx = beforeBounds.x + beforeBounds.w / 2;
-      var beforeCy = beforeBounds.y + beforeBounds.h / 2;
-      var afterCx = afterBounds.x + afterBounds.w / 2;
-      var afterCy = afterBounds.y + afterBounds.h / 2;
-      ctx.save();
-      try {
-        ctx.strokeStyle = layoutColor;
-        ctx.fillStyle = layoutColor;
-        ctx.lineWidth = 2;
-        if (ctx.setLineDash) {
-          ctx.setLineDash([4, 4]);
-        }
-        ctx.beginPath();
-        ctx.moveTo(beforeCx, beforeCy);
-        _lineTo(afterCx, afterCy);
-        ctx.stroke();
-        if (ctx.setLineDash) {
-          ctx.setLineDash([]);
-        }
-        // Arrowhead at the target, pointing along the move direction.
-        var moveAngle = Math.atan2(afterCy - beforeCy, afterCx - beforeCx);
-        var _ah = 8;
-        ctx.beginPath();
-        ctx.moveTo(afterCx, afterCy);
-        _lineTo(
-          afterCx - _ah * Math.cos(moveAngle - Math.PI / 6),
-          afterCy - _ah * Math.sin(moveAngle - Math.PI / 6),
-        );
-        _lineTo(
-          afterCx - _ah * Math.cos(moveAngle + Math.PI / 6),
-          afterCy - _ah * Math.sin(moveAngle + Math.PI / 6),
-        );
-        ctx.fill();
-      } finally {
-        ctx.restore();
-      }
-    }
-
-    // ── Removed nodes (red outline + "− will be removed" badge) ─────────
-    var removedItems = (diff.removed || []).concat(diff.removed_named || []);
-    var removedBadgeText = "\u2212 will be removed";
-    for (var _ri = 0; _ri < removedItems.length; _ri += 1) {
-      var ritem = removedItems[_ri];
-      var rnode = liveByUid.get(ritem.uid);
-      if (!rnode || !rnode.pos) {
-        continue;
-      }
-      var rb = readNodeBounding(rnode, TITLE_H);
-      var rx = rb.x;
-      var ry = rb.y;
-      var rw = rb.w;
-      var rh = rb.h;
-      _drawFullBoxMarker(rb, removedColor, removedFill, false);
-      var removedBadgeWidth = _measureBadgeWidth(removedBadgeText);
-      var removedBadgeX = Math.max(rx + 4, rx + rw - removedBadgeWidth - 4);
-      var removedBadgeBottomY = ry + Math.max(18, Math.min(TITLE_H - 4, 24));
-      _drawBadge(removedBadgeX, removedBadgeBottomY, removedBadgeText, removedColor);
-    }
-
-    // ── Added nodes (translucent green ghost + "+ new" badge; candidate pos) ─
-    if (candidateGraph && diff.added && diff.added.length > 0) {
-      var candidateNodes = Array.isArray(candidateGraph.nodes)
-        ? candidateGraph.nodes
-        : [];
-      for (var i = 0; i < candidateNodes.length; i += 1) {
-        var cn = candidateNodes[i];
-        var uid =
-          cn && cn.properties ? cn.properties.vibecomfy_uid : undefined;
-        if (!uid || !addedByUid.has(uid)) {
-          continue;
-        }
-        var pos = cn.pos;
-        if (!pos || typeof pos.length !== "number" || pos.length < 2) {
-          continue;
-        }
-        var cpos = readNodePos(cn);
-        var cx = cpos.x;
-        var cy = cpos.y;
-
-        // ── Dimension resolution: use cn.size only when plausible ────────
-        var sizeValid = false;
-        var cw, ch;
-        var csize = readNodeSize(cn, NaN, NaN);
-        if (csize.w > 40 && csize.h > 20) {
-          cw = csize.w;
-          ch = csize.h;
-          sizeValid = true;
-        }
-        if (!sizeValid) {
-          var dims = drawModel.ghostDimsByUid.get(uid) || _computeGhostDimensions(cn, ctx);
-          cw = dims.w;
-          ch = dims.h;
-        }
-
-        // ── Ghost full-box marker + dashed border ────────────────────────
-        _drawFullBoxMarker({ x: cx, y: cy, w: cw, h: ch }, addedColor, addedFill, true);
-
-        // ── Render ghost content: title, slot labels, widget rows ────────
-        ctx.save();
-        try {
-          ctx.font = "12px Arial, sans-serif";
-          ctx.textBaseline = "top";
-
-          // Title
-          var titleText = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
-          var displayTitle = _trunc(titleText, 40);
-          ctx.fillStyle = addedTextColor;
-          ctx.fillText(displayTitle, cx + 10, cy + (TITLE_H - 14) / 2);
-
-          // Slot labels
-          var inputs = Array.isArray(cn.inputs) ? cn.inputs : [];
-          var outputs = Array.isArray(cn.outputs) ? cn.outputs : [];
-          var widgetValues = readWidgetValues(cn);
-          var maxSlots = Math.max(inputs.length, outputs.length);
-
-          for (var si = 0; si < maxSlots; si += 1) {
-            var slotY = cy + TITLE_H + si * SLOT_H + 2;
-            // Input label (left side)
-            if (si < inputs.length && inputs[si] && inputs[si].name) {
-              ctx.fillStyle = addedTextColor;
-              ctx.textAlign = "left";
-              ctx.fillText(_trunc(safePreviewOverlayText(inputs[si].name, ""), 30), cx + 16, slotY);
-            }
-            // Output label (right side)
-            if (si < outputs.length && outputs[si] && outputs[si].name) {
-              ctx.fillStyle = addedTextColor;
-              ctx.textAlign = "right";
-              ctx.fillText(_trunc(safePreviewOverlayText(outputs[si].name, ""), 30), cx + cw - 16, slotY);
-            }
-          }
-
-          // Widget-value rows (below slots)
-          ctx.textAlign = "left";
-          ctx.fillStyle = hexToRgba(VC_COLORS.added, 0.55);
-          var widgetTop = cy + TITLE_H + maxSlots * SLOT_H;
-          for (var wri = 0; wri < widgetValues.length; wri += 1) {
-            var wvPreview = widgetValuePreviewText(widgetValues[wri]);
-            if (wvPreview) {
-              ctx.fillText(_trunc(wvPreview, 35), cx + 10, widgetTop + wri * WIDGET_H + 2);
-            }
-          }
-        } finally {
-          ctx.restore();
-        }
-
-        // ── "+ new" badge at bottom-right ────────────────────────────────
-        _drawBadge(cx + cw - 2 - 64, cy + ch - 2, "+ new", addedColor);
-
-        // Red dot on each unwired required input port of the added node.
-        var addedEntry = addedByUid.get(uid);
-        var unwired = (addedEntry && addedEntry.unwiredRequiredInputs) || [];
-        if (unwired.length > 0) {
-          var cinputs = Array.isArray(cn.inputs) ? cn.inputs : [];
-          ctx.fillStyle = removedColor;
-          for (var si = 0; si < cinputs.length; si += 1) {
-            var inm = cinputs[si] && cinputs[si].name;
-            if (inm && unwired.indexOf(inm) !== -1) {
-              ctx.beginPath();
-              ctx.arc(cx, cy + TITLE_H + (si + 0.5) * SLOT_H, 4, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-        }
-      }
-    }
-
-    // ── Wire overlay: removed (dashed red) then added (solid green) ──────
-    // Uses VC_COLORS for palette consistency.  Resolves link endpoints by
-    // port name to slot indexes at draw time.  Live nodes prefer
-    // node.getConnectionPos(isInput, slotIndex); ghost (candidate-only)
-    // nodes use geometry derived from ghost rect slot rows.
-    if (candidateGraph && ((diff.removed_links && diff.removed_links.length > 0) || (diff.added_links && diff.added_links.length > 0))) {
-      // Parse link key "fromUid::fromPortName->toUid::toPortName"
-      function _parseKey(k) {
-        var m = k.match(/^(.+?)::(.+?)->(.+?)::(.+?)$/);
-        if (!m) return null;
-        return { fromUid: m[1], fromPort: m[2], toUid: m[3], toPort: m[4] };
-      }
-
-      // Slot index by port name
-      function _slotIdx(node, portName, portsKey) {
-        var ports = Array.isArray(node && node[portsKey]) ? node[portsKey] : [];
-        for (var _pi = 0; _pi < ports.length; _pi += 1) {
-          if (ports[_pi] && ports[_pi].name === portName) return _pi;
-        }
-        return -1;
-      }
-
-      // Connection position: live node.getConnectionPos, then geometry fallback
-      function _connPos(node, isInput, slotIdx, ghostPos, ghostW) {
-        if (node && typeof node.getConnectionPos === 'function') {
-          try {
-            return node.getConnectionPos(isInput, slotIdx);
-          } catch (_ignored) { /* fall through */ }
-        }
-        // Live geometry
-        if (node && node.pos && typeof node.pos.length === "number" && node.pos.length >= 2) {
-          var _npos = readNodePos(node);
-          var _nx = _npos.x;
-          var _ny = _npos.y;
-          var _nw = readNodeSize(node).w;
-          if (isInput) return [_nx, _ny + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
-          return [_nx + _nw, _ny + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
-        }
-        // Ghost geometry (candidate-only node)
-        if (ghostPos && typeof ghostPos.length === "number" && ghostPos.length >= 2) {
-          var _gx = vecNumber(ghostPos, 0, 0);
-          var _gy = vecNumber(ghostPos, 1, 0);
-          if (isInput) return [_gx, _gy + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
-          return [_gx + ghostW, _gy + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
-        }
-        return null;
-      }
-
-      // Bezier wire stroke helper
-      function _strokeWire(x1, y1, x2, y2, color, dashed) {
-        ctx.save();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        if (ctx.setLineDash) ctx.setLineDash(dashed ? [8, 4] : []);
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        var _dx = Math.abs(x2 - x1) * 0.5;
-        ctx.bezierCurveTo(x1 + _dx, y1, x2 - _dx, y2, x2, y2);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // Ghost dimension helper (mirrors added-node logic)
-      function _ghostDims(cn) {
-        var _uid = getUid(cn);
-        if (_uid && drawModel.ghostDimsByUid.has(_uid)) {
-          return drawModel.ghostDimsByUid.get(_uid);
-        }
-        var _rs = readNodeSize(cn, NaN, NaN);
-        if (_rs.w > 40 && _rs.h > 20) {
-          return _rs;
-        }
-        return _computeGhostDimensions(cn, ctx);
-      }
-
-      // ── Removed wires: dashed red beziers (drawn first) ──────────────
-      var _remLinks = diff.removed_links || [];
-      for (var _rli = 0; _rli < _remLinks.length; _rli += 1) {
-        var _p = _parseKey(_remLinks[_rli]);
-        if (!_p) continue;
-
-        var _fNode = liveByUid.get(_p.fromUid);
-        var _tNode = liveByUid.get(_p.toUid);
-
-        var _fSlot = _slotIdx(_fNode, _p.fromPort, 'outputs');
-        var _tSlot = _slotIdx(_tNode, _p.toPort, 'inputs');
-
-        if (_fSlot < 0 || _tSlot < 0) {
-          _warnOverlayUnresolved(drawModel, '[vibecomfy] drawPreviewOverlay — unresolvable removed-wire endpoint:', _remLinks[_rli]);
-          continue;
-        }
-
-        var _fp = _connPos(_fNode, false, _fSlot, null, 0);
-        var _tp = _connPos(_tNode, true, _tSlot, null, 0);
-        if (_fp && _tp) {
-          _strokeWire(_fp[0], _fp[1], _tp[0], _tp[1], removedColor, true);
-        } else {
-          _warnOverlayUnresolved(drawModel, '[vibecomfy] drawPreviewOverlay — could not resolve removed-wire endpoint positions:', _remLinks[_rli]);
-        }
-      }
-
-      // ── Added wires: solid green beziers (drawn second) ───────────────
-      var _addLinks = diff.added_links || [];
-      for (var _ali = 0; _ali < _addLinks.length; _ali += 1) {
-        var _p2 = _parseKey(_addLinks[_ali]);
-        if (!_p2) continue;
-
-        var _fNode2 = liveByUid.get(_p2.fromUid);
-        var _tNode2 = liveByUid.get(_p2.toUid);
-
-        // Ghost fallback for endpoints not in the live graph
-        var _fGhostPos = null, _fGhostW = 0;
-        if (!_fNode2) {
-          var _fc = candidateByUid.get(_p2.fromUid);
-          if (_fc && _fc.pos && typeof _fc.pos.length === "number" && _fc.pos.length >= 2) {
-            _fGhostPos = _fc.pos;
-            _fGhostW = _ghostDims(_fc).w;
-          }
-        }
-        var _tGhostPos = null, _tGhostW = 0;
-        if (!_tNode2) {
-          var _tc = candidateByUid.get(_p2.toUid);
-          if (_tc && _tc.pos && typeof _tc.pos.length === "number" && _tc.pos.length >= 2) {
-            _tGhostPos = _tc.pos;
-            _tGhostW = _ghostDims(_tc).w;
-          }
-        }
-
-        // Resolve port → slot on whichever node we have (live or candidate)
-        var _fNodeR = _fNode2 || candidateByUid.get(_p2.fromUid) || null;
-        var _tNodeR = _tNode2 || candidateByUid.get(_p2.toUid) || null;
-
-        var _fSlot2 = _slotIdx(_fNodeR, _p2.fromPort, 'outputs');
-        var _tSlot2 = _slotIdx(_tNodeR, _p2.toPort, 'inputs');
-
-        if (_fSlot2 < 0 || _tSlot2 < 0) {
-          _warnOverlayUnresolved(drawModel, '[vibecomfy] drawPreviewOverlay — unresolvable added-wire endpoint:', _addLinks[_ali]);
-          continue;
-        }
-
-        var _fp2 = _connPos(_fNode2, false, _fSlot2, _fGhostPos, _fGhostW);
-        var _tp2 = _connPos(_tNode2, true, _tSlot2, _tGhostPos, _tGhostW);
-        if (_fp2 && _tp2) {
-          _strokeWire(_fp2[0], _fp2[1], _tp2[0], _tp2[1], addedColor, false);
-        } else {
-          _warnOverlayUnresolved(drawModel, '[vibecomfy] drawPreviewOverlay — could not resolve added-wire endpoint positions:', _addLinks[_ali]);
-        }
-      }
-
-      // Restore dash state
-      if (ctx.setLineDash) ctx.setLineDash([]);
-    }
-  } finally {
-    ctx.restore();
-  }
+  return panelOverlayDrawPreviewOverlay(ctx, diff, previewOverlayDeps());
 }
 
 function lookupLiveNodeByUid(uid) {
@@ -8841,314 +7881,39 @@ function installQueueGuard() {
 }
 
 function appendCandidateDetail(body, panel, message = null, snapshot = null) {
-  const normalDetailMode = Boolean(snapshot);
-  const candidateGraphPresent = candidateActionState(panel, message, snapshot).visible
-    || (!message && !snapshot && Boolean(panel.state.candidateGraph));
-  const phase = snapshot?.phase || panel.state.phase;
-  const clarification = snapshot?.clarification || panel.state.clarification;
-  if (!candidateGraphPresent) {
-    // Clarify turn: the agent asked a question and produced no candidate. Show the
-    // question as the headline (not "No candidate yet") and point the user at the
-    // prompt box, which is open for their answer in the same session.
-    if (phase === PANEL_STATE.CLARIFY && clarification?.message) {
-      const q = el("div", "❓ The agent needs your input:");
-      q.style.color = "#ffc107";
-      q.style.fontWeight = "600";
-      body.appendChild(q);
-      const msg = el("div", clarification.message);
-      msg.style.whiteSpace = "pre-wrap";
-      msg.style.color = "#edf2f7";
-      msg.style.borderLeft = "2px solid #ffc107";
-      msg.style.paddingLeft = "8px";
-      msg.style.margin = "4px 0";
-      body.appendChild(msg);
-      body.appendChild(muted("Answer in the prompt box above and submit — it continues this session."));
-      return;
-    }
-    const feedback = snapshot?.lastAppliedChanges || panel.state.lastAppliedChanges;
-    if (feedback?.items?.length) {
-      appendTextLine(
-        body,
-        feedback.mode === "visual"
-          ? "Applied candidate feedback: changed nodes were highlighted on the canvas temporarily."
-          : "Applied candidate feedback: changed nodes listed here because live node lookup was unavailable.",
-        feedback.mode === "visual" ? "#9ed0ff" : "#ffb86c",
-      );
-      for (const item of feedback.items) {
-        const rowNode = el("div", item.label);
-        rowNode.style.color = item.color;
-        rowNode.style.borderLeft = `2px solid ${item.color}`;
-        rowNode.style.paddingLeft = "8px";
-        body.appendChild(rowNode);
-      }
-      if (feedback.unresolved?.length && feedback.mode === "visual") {
-        body.appendChild(createDetails("panel fallback for unresolved nodes", feedback.unresolved));
-      }
-      return;
-    }
-    return;
-  }
-  const debugPayload = normalDetailMode ? null : (snapshot?.debugPayload || panel.state.debugPayload);
-  const stageInfo = debugPayload ? getBackendStageInfo(debugPayload) : null;
-  if (!normalDetailMode && stageInfo) {
-    appendTextLine(
-      body,
-      `backend stage: ${stageInfo.stage || "unknown"}${stageInfo.progress != null ? ` (${stageInfo.progress})` : ""}`,
-      "#9ed0ff",
-    );
-  }
-  const candidateMessage = snapshot?.message || message?.text || panel.state.message;
-  if (candidateMessage) {
-    const msg = el("div", candidateMessage);
-    msg.style.whiteSpace = "pre-wrap";
-    msg.style.color = "#edf2f7";
-    body.appendChild(msg);
-  }
-  const actionState = candidateActionState(panel, message, snapshot);
-  const eligibility = actionState.eligibility;
-  if (!normalDetailMode) {
-    const canvasApplyAllowed = snapshot?.canvasApplyAllowed ?? panel.state.canvasApplyAllowed;
-    const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
-    appendTextLine(body, `canvas_apply_allowed=${String(canvasApplyAllowed)}`, canvasApplyAllowed ? "#4caf50" : "#ffb86c");
-    appendTextLine(body, `queue_allowed=${String(queueAllowed)}`, queueAllowed ? "#4caf50" : "#ffb86c");
-  }
-  appendTextLine(body, `apply_eligibility=${eligibility.reason}`, eligibility.applyable ? "#4caf50" : "#ffb86c");
-  if (eligibility.message) {
-    appendTextLine(body, eligibility.message, "#9ed0ff");
-  }
-  if (actionState.visible) {
-    const controlsRow = el("div");
-    controlsRow.dataset.vibecomfyCandidateControls = "1";
-    Object.assign(controlsRow.style, {
-      display: "flex",
-      flexWrap: "wrap",
-      gap: "6px",
-      alignItems: "center",
-      marginTop: "2px",
-    });
-
-    const applyBtn = button("Apply", () => applyAgentCandidate(panel));
-    applyBtn.dataset.vibecomfyCandidateAction = "apply";
-    applyBtn.dataset.vibecomfyCandidateTurnId = actionState.turnId || "";
-    applyBtn.disabled = actionState.applyDisabled;
-    applyBtn.style.fontSize = "11px";
-    applyBtn.style.padding = "4px 8px";
-    setButtonEmphasis(applyBtn, actionState.active || panel.state.phase === PANEL_STATE.APPLYING, "primary");
-    controlsRow.appendChild(applyBtn);
-
-    const rejectBtn = button("Reject", () => rejectAgentCandidate(panel));
-    rejectBtn.dataset.vibecomfyCandidateAction = "reject";
-    rejectBtn.dataset.vibecomfyCandidateTurnId = actionState.turnId || "";
-    rejectBtn.disabled = actionState.rejectDisabled;
-    rejectBtn.style.fontSize = "11px";
-    rejectBtn.style.padding = "4px 8px";
-    setButtonEmphasis(rejectBtn, actionState.active || panel.state.phase === PANEL_STATE.APPLYING, "danger");
-    controlsRow.appendChild(rejectBtn);
-
-    const stateLabel = el(
-      "span",
-      actionState.active
-        ? (eligibility.applyable ? "latest" : eligibility.reason)
-        : eligibility.reason,
-    );
-    stateLabel.dataset.vibecomfyCandidateReason = eligibility.reason || "";
-    stateLabel.dataset.vibecomfyCandidateTurnId = actionState.turnId || "";
-    Object.assign(stateLabel.style, {
-      fontSize: "10px",
-      color: eligibility.applyable ? "#4caf50" : "#ffb86c",
-      textTransform: "uppercase",
-      letterSpacing: "0.04em",
-      fontWeight: "700",
-    });
-    controlsRow.appendChild(stateLabel);
-
-    body.appendChild(controlsRow);
-    if (actionState.blockerMessage && actionState.blockerMessage !== eligibility.message) {
-      appendTextLine(body, actionState.blockerMessage, "#9ed0ff");
-    }
-  }
-  const report = snapshot?.candidateReport || (!normalDetailMode ? (message?.report || panel.state.candidateReport) : null);
-  const queueIssueReport = report;
-  const rows = collectDiffRows(report);
-  if (!rows.length) {
-    body.appendChild(muted("Candidate returned without report rows."));
-  }
-  for (const item of rows) {
-    const rowNode = el("div", item.text);
-    rowNode.style.color = item.color;
-    rowNode.style.borderLeft = `2px solid ${item.color}`;
-    rowNode.style.paddingLeft = "8px";
-    if (item.title) {
-      rowNode.title = item.title;
-    }
-    body.appendChild(rowNode);
-  }
-  const affected = {
-    preserved: rows.filter((item) => item.text.startsWith("preserved:")).length,
-    edited: rows.filter((item) => item.text.startsWith("edited:") || item.text.startsWith("changed_node:")).length,
-    added: rows.filter((item) => item.text.startsWith("new_auto_placed:") || item.text.startsWith("added_node:") || item.text.startsWith("added_link:")).length,
-    removed: rows.filter((item) => item.text.startsWith("removed:") || item.text.startsWith("removed_named:") || item.text.startsWith("removed_node:") || item.text.startsWith("removed_link:")).length,
-    helpers: rows.filter((item) => item.text.startsWith("stripped_helper:") || item.text.startsWith("virtual_wires_degraded:")).length,
-    lowered: rows.filter((item) => item.text.startsWith("lowered:")).length,
-  };
-  body.appendChild(createDetails("affected node preview", affected));
-  const issues = collectQueueIssues(queueIssueReport);
-  if (issues.length) {
-    for (const issue of issues) {
-      appendTextLine(body, `${issue.code}: ${issue.message}`, issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
-      if (!normalDetailMode && issue.detail && Object.keys(issue.detail).length) {
-        body.appendChild(createDetails("queue blocker detail", issue.detail));
-      }
-    }
-  }
-  const artifacts = debugPayload?.artifacts;
-  if (!normalDetailMode && artifacts && typeof artifacts === "object") {
-    for (const [name, value] of Object.entries(artifacts)) {
-      appendCodeLine(body, `${name}: ${value}`);
-    }
-  }
-  const auditRef = !normalDetailMode ? (snapshot?.auditRef || panel.state.auditRef) : null;
-  if (auditRef?.path) {
-    appendCodeLine(body, `audit: ${auditRef.path}`, "#9ed0ff");
-  }
-  if (!normalDetailMode) {
-    body.appendChild(createDetails("raw report", report || {}));
-  }
-}
-
-function renderCandidate(panel) {
-  if (!panel?.sections?.candidate) {
-    return;
-  }
-  const body = panel.sections.candidate;
-  clearNode(body);
-  appendCandidateDetail(body, panel, null, null);
+  return appendCandidateDetailImpl(body, panel, message, snapshot, {
+    PANEL_STATE,
+    appendCodeLine,
+    appendTextLine,
+    applyAgentCandidate,
+    button,
+    candidateActionState,
+    collectDiffRows,
+    collectQueueIssues,
+    createDetails,
+    el,
+    getBackendStageInfo,
+    muted,
+    rejectAgentCandidate,
+    setButtonEmphasis,
+  });
 }
 
 function appendFailureDetail(body, panel, snapshot = null) {
-  const normalDetailMode = Boolean(snapshot);
-  const failure = snapshot?.failure || panel.state.failure;
-  if (!failure) {
-    return;
-  }
-  appendTextLine(body, `${failure.kind || "Error"} @ ${failure.stage || "unknown"}`, "#ffd6d6");
-  appendTextLine(body, failure.user_facing_message || failure.message || failure.error || "Unknown failure", "#edf2f7");
-  if (!normalDetailMode) {
-    appendTextLine(body, `retryable=${String(Boolean(failure.retryable))} graph_unchanged=${String(Boolean(failure.graph_unchanged))}`, "#8d93a1");
-    appendTextLine(body, `canvas_apply_allowed=${String(Boolean(failure.canvas_apply_allowed))} queue_allowed=${String(Boolean(failure.queue_allowed))}`, "#8d93a1");
-  }
-  const stageInfo = getBackendStageInfo(failure);
-  if (!normalDetailMode && stageInfo) {
-    appendTextLine(
-      body,
-      `backend stage: ${stageInfo.stage || "unknown"}${stageInfo.progress != null ? ` (${stageInfo.progress})` : ""}`,
-      "#9ed0ff",
-    );
-  }
-  if (!normalDetailMode && failure.next_action) {
-    appendTextLine(body, `next: ${failure.next_action}`, "#8d93a1");
-  }
-  if (panel.state.rebaselinePending) {
-    const pending = panel.state.rebaselinePending;
-    const pendingLabel =
-      panel.state.inFlightRebaseline
-        ? `rebaseline pending: ${pending.reason} (in flight)`
-        : pending.retryable
-          ? `rebaseline pending: ${pending.reason} (retryable)`
-          : `rebaseline pending: ${pending.reason}`;
-    appendTextLine(body, pendingLabel, "#9ed0ff");
-    if (pending.last_known_baseline_graph_hash) {
-      appendCodeLine(body, `expected_baseline: ${pending.last_known_baseline_graph_hash}`, "#8d93a1");
-    }
-  }
-  if (!normalDetailMode && (failure.session_id || failure.turn_id || failure.baseline_turn_id)) {
-    appendTextLine(
-      body,
-      `session=${failure.session_id || "new"} turn=${failure.turn_id || "pending"} baseline=${failure.baseline_turn_id || "none"}`,
-      "#8d93a1",
-    );
-  }
-  if (!normalDetailMode && failure.audit_error) {
-    appendTextLine(body, `audit_error: ${failure.audit_error}`, "#ffb86c");
-  }
-  const recovery = panel.state.rebaselineRecovery;
-  if (recovery?.action === "rebaseline" && recovery.reason === "stale_state_recovery") {
-    appendTextLine(body, "The current canvas can be promoted to the new baseline.", "#9ed0ff");
-    if (recovery.last_known_baseline_graph_hash) {
-      appendCodeLine(body, `expected_baseline: ${recovery.last_known_baseline_graph_hash}`, "#8d93a1");
-    }
-  }
-  if (!normalDetailMode && failure.agent_failure_context && Object.keys(failure.agent_failure_context).length) {
-    body.appendChild(createDetails("agent failure context", failure.agent_failure_context));
-  }
-  if (!normalDetailMode) {
-    body.appendChild(createDetails("raw failure", failure));
-  }
-}
-
-function renderFailure(panel) {
-  if (!panel?.sections?.failure) {
-    return;
-  }
-  const body = panel.sections.failure;
-  clearNode(body);
-  appendFailureDetail(body, panel);
+  return appendFailureDetailImpl(body, panel, snapshot, {
+    appendCodeLine,
+    appendTextLine,
+    createDetails,
+    getBackendStageInfo,
+  });
 }
 
 function appendQueueDetail(body, panel, snapshot = null) {
-  const normalDetailMode = Boolean(snapshot);
-  if (normalDetailMode) {
-    const queueDisplay = snapshot?.queueDisplay;
-    if (!queueDisplay || typeof queueDisplay !== "object") {
-      return;
-    }
-    if (queueDisplay.message) {
-      appendTextLine(body, queueDisplay.message, queueDisplay.state === "blocked" ? "#ffb86c" : "#4caf50");
-    }
-    if (Array.isArray(queueDisplay.issues) && queueDisplay.issues.length) {
-      for (const issue of queueDisplay.issues) {
-        appendTextLine(body, issue.message || issue.code || "Queue issue", issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
-      }
-    }
-    if (!queueDisplay.message && !queueDisplay.issues?.length && queueDisplay.reason) {
-      appendTextLine(body, queueDisplay.reason, queueDisplay.state === "blocked" ? "#ffb86c" : "#8d93a1");
-    }
-    return;
-  }
-  const queueGuard = snapshot?.queueGuard || panel.state.queueGuard || getQueueGuardStateForPanel();
-  const issues = collectQueueIssues(snapshot?.candidateReport || panel.state.candidateReport);
-  if (queueGuard.fallbackWarning) {
-    appendTextLine(body, queueGuard.fallbackWarning, "#ffb86c");
-  }
-  if (queueGuard.lastBlockNotice?.message && !normalDetailMode) {
-    appendTextLine(body, queueGuard.lastBlockNotice.message, "#ff7f7f");
-  }
-  if (!normalDetailMode && queueGuard.hookInstalled) {
-    appendTextLine(body, `native queue guard: active via ${queueGuard.hookPath}`, "#4caf50");
-  } else if (!normalDetailMode) {
-    appendTextLine(body, "native queue guard: panel warning fallback only", "#8d93a1");
-  }
-  const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
-  if (queueAllowed) {
-    appendTextLine(body, "Queue-eligible candidate. Native queue path remains unchanged.", "#4caf50");
-  } else if (issues.length) {
-    for (const issue of issues) {
-      appendTextLine(body, issue.message, "#ffb86c");
-    }
-  } else if (queueGuard.activeContext?.queueAllowed === false) {
-    appendTextLine(body, `Applied turn ${queueGuard.activeContext.turnId || "unknown"} remains queue-blocked.`, "#ff7f7f");
-  } else {
-    appendTextLine(body, "Queue disabled in this proof shell. Candidate review remains local-only for now.", "#8d93a1");
-  }
-}
-
-function renderQueue(panel) {
-  if (!panel?.sections?.queue) {
-    return;
-  }
-  const body = panel.sections.queue;
-  clearNode(body);
-  appendQueueDetail(body, panel);
+  return appendQueueDetailImpl(body, panel, snapshot, {
+    appendTextLine,
+    collectQueueIssues,
+    getQueueGuardStateForPanel,
+  });
 }
 
 function turnIdForBubbleDetail(message = null, snapshot = null) {
@@ -9796,32 +8561,9 @@ function renderAgentPanelSections(panel, dirtySections = ALL_AGENT_PANEL_RENDER_
     } else if (section === RENDER_SECTIONS.THREAD) {
       runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.THREAD, renderThreadSection, result);
     } else if (section === RENDER_SECTIONS.COMPOSER) {
-      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.COMPOSER, (nextPanel) => renderComposerActionsImpl(nextPanel, {
-        candidateActionState,
-        recordAgentPanelRenderCount,
-        routeStatusState,
-        ROUTE_STATUS_KIND,
-        RENDER_SECTIONS,
-        setButtonEmphasis,
-        syncComposerButtons,
-        submitReadinessState,
-        PANEL_STATE,
-      }), result);
+      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.COMPOSER, renderComposerActions, result);
     } else if (section === RENDER_SECTIONS.NOTICE) {
-      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.NOTICE, (nextPanel) => renderComposerNoticeSectionImpl(nextPanel, {
-        recordAgentPanelRenderCount,
-        renderComposerNotice,
-        routeStatusState,
-        ROUTE_STATUS_KIND,
-        submitReadinessState,
-        RENDER_SECTIONS,
-        PANEL_STATE,
-        button,
-        clearNode,
-        el,
-        rebaselineCurrentCanvas,
-        setButtonEmphasis,
-      }), result);
+      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.NOTICE, renderComposerNoticeSection, result);
     } else if (section === RENDER_SECTIONS.SETTINGS) {
       if (runAgentPanelSectionRenderer(
         panel,

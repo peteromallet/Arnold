@@ -16,6 +16,7 @@ function source(name) {
 const previewSource = source("preview_picker.js");
 const replaySource = source("agentic_replay.js");
 const lifecycleSource = source("agent_edit_lifecycle.js");
+const roundtripSource = source("vibecomfy_roundtrip.js");
 
 // ── Forbidden patterns ─────────────────────────────────────────────────────
 // These patterns indicate that a module is directly mutating lifecycle state
@@ -65,10 +66,6 @@ const LIFECYCLE_OWNED_FIELDS = [
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 test("preview_picker.js must not use Object.assign on panel.state", () => {
-  // The preview picker currently writes directly to panel.state (e.g.
-  // currentPanel.state.__demoMode = true, currentPanel.state.sessionId = ...).
-  // After the migration these writes must go through the commit helpers.
-  // This test detects the CURRENT forbidden pattern.
   assert.doesNotMatch(
     previewSource,
     /Object\.assign\(\s*\w*[Pp]anel\w*\.state\b/,
@@ -77,8 +74,6 @@ test("preview_picker.js must not use Object.assign on panel.state", () => {
 });
 
 test("agentic_replay.js must not use Object.assign on panel.state", () => {
-  // agentic_replay.js currently uses Object.assign(panel.state, ...) in
-  // applyReplaySnapshot. After migration this must go through commit helpers.
   assert.doesNotMatch(
     replaySource,
     /Object\.assign\(\s*\w*[Pp]anel\w*\.state\b/,
@@ -91,13 +86,8 @@ test("preview_picker.js must not directly assign to lifecycle-owned state fields
     const pattern = new RegExp(
       String.raw`\.state\.${field}\s*=\s*`,
     );
-    // Currently preview_picker.js DOES directly write to lifecycle fields
-    // (sessionId, turnId, phase, etc.). This test detects that pattern.
-    // When true migration is complete, this assertion should pass.
     const hasDirectWrite = pattern.test(previewSource);
     if (hasDirectWrite) {
-      // NOTE: This assertion is expected to FAIL until the migration is complete.
-      // It serves as a guardrail to prevent new direct writes from being added.
       assert.equal(
         hasDirectWrite,
         false,
@@ -317,15 +307,11 @@ test("RENDER_SECTIONS does not contain a CANDIDATE entry", () => {
   );
 });
 
-// ── Summary: known forbidden patterns currently in source ──────────────────
-// These tests document the CURRENT forbidden patterns. They are EXPECTED to
-// fail until the migration is complete (T3-T14). After migration, these guard
-// rail tests will PASS and prevent regression.
+// ── Summary guardrails ─────────────────────────────────────────────────────
+// These tests prevent preview/replay modules from reintroducing lifecycle
+// mutations that must flow through the reducer and commit helpers.
 
-test("KNOWN_GUARDRAIL: preview_picker.js currently has direct lifecycle writes (will fail until migration complete)", () => {
-  // This test explicitly checks whether preview_picker.js still has ANY
-  // lifecycle-state writes. It aggregates all the checks above into a single
-  // boolean assertion so the test output clearly shows the migration status.
+test("preview_picker.js must not reintroduce direct lifecycle writes", () => {
   const hasObjectAssign = /Object\.assign\(\s*\w*[Pp]anel\w*\.state\b/.test(previewSource);
   const hasCreateState = /\bcreateAgentEditState\b/.test(previewSource);
 
@@ -345,9 +331,6 @@ test("KNOWN_GUARDRAIL: preview_picker.js currently has direct lifecycle writes (
     || hasTranscriptWrite || hasResponseDetailWrite || hasExecutionEventWrite
     || hasAuditArtifactWrite || hasDebugDiagWrite || hasCompartmentWrite;
 
-  // This assertion is EXPECTED to fail while the migration is in-progress.
-  // When preview_picker.js is fully migrated to use agent_lifecycle_commit.js,
-  // all forbidden patterns will be gone and this test will pass.
   assert.equal(
     anyForbidden,
     false,
@@ -360,7 +343,7 @@ test("KNOWN_GUARDRAIL: preview_picker.js currently has direct lifecycle writes (
   );
 });
 
-test("KNOWN_GUARDRAIL: agentic_replay.js currently has direct lifecycle writes (will fail until migration complete)", () => {
+test("agentic_replay.js must not reintroduce direct lifecycle writes", () => {
   const hasObjectAssign = /Object\.assign\(\s*\w*[Pp]anel\w*\.state\b/.test(replaySource);
   const hasCreateState = /\bcreateAgentEditState\b/.test(replaySource);
 
@@ -390,4 +373,22 @@ test("KNOWN_GUARDRAIL: agentic_replay.js currently has direct lifecycle writes (
       + `auditArtifacts=${hasAuditArtifactWrite} debugDiag=${hasDebugDiagWrite} `
       + `compartment=${hasCompartmentWrite}`,
   );
+});
+
+test("only the lifecycle reducer deletes transient preview diff state", () => {
+  for (const [name, moduleSource] of [
+    ["preview_picker.js", previewSource],
+    ["agentic_replay.js", replaySource],
+    ["vibecomfy_roundtrip.js", roundtripSource],
+  ]) {
+    assert.doesNotMatch(
+      moduleSource,
+      /delete\s+[^;\n]*\.state\._previewDiff(?:GraphHash|CacheTag)?\b/,
+      `${name} must not clear _previewDiff* directly; use lifecycle obligations`,
+    );
+  }
+
+  assert.match(lifecycleSource, /delete\s+panel\.state\._previewDiff\b/);
+  assert.match(lifecycleSource, /delete\s+panel\.state\._previewDiffGraphHash\b/);
+  assert.match(lifecycleSource, /delete\s+panel\.state\._previewDiffCacheTag\b/);
 });

@@ -208,6 +208,7 @@ test("Load & Play stages demo replay from before-send to review", async () => {
     const appliedGraphs = [];
     const scheduledRenders = [];
     const canvasDraws = [];
+    const fulfilledObligations = [];
     const panel = {
       shell,
       state: makePanelState(),
@@ -241,6 +242,9 @@ test("Load & Play stages demo replay from before-send to review", async () => {
         scheduleRenderAgentPanel: (reason, p, sections) => {
           scheduledRenders.push({ reason, panel: p, sections });
         },
+        fulfillLifecycleTransitionObligations: (p, obligations) => {
+          fulfilledObligations.push({ panel: p, obligations: { ...obligations } });
+        },
         currentAgentPanel: () => panel,
         PANEL_STATE,
         RENDER_SECTIONS,
@@ -261,6 +265,10 @@ test("Load & Play stages demo replay from before-send to review", async () => {
     assert.equal(panel.state.phase, PANEL_STATE.IDLE, "before_send is idle");
     assert.equal(panel.state.chatMessages.length, 0, "before_send has no transcript yet");
     assert.equal(panel.state.candidateGraph, null, "before_send has no candidate");
+    assert.ok(
+      fulfilledObligations.some((entry) => entry.obligations.clearCandidatePreview === true),
+      "before_send lifecycle reset fulfills preview-clear obligations",
+    );
     assert.equal(controls.prevButton.disabled, true, "cannot go back from first stage");
     assert.equal(controls.nextButton.disabled, false, "can advance from first stage");
 
@@ -272,6 +280,10 @@ test("Load & Play stages demo replay from before-send to review", async () => {
     assert.equal(panel.state.chatMessages[0].role, "user", "sent_loading message is from user");
     assert.equal(panel.state.chatMessages[0].text, "Add a demo node", "user message text is query");
     assert.equal(panel.state.candidateGraph, null, "sent_loading has no candidate yet");
+    assert.ok(
+      fulfilledObligations.some((entry) => entry.obligations.invalidateCandidate === true),
+      "sent_loading submit transition fulfills candidate invalidation obligations",
+    );
 
     controls.nextButton.click();
     await waitFor(() => panel.state.__demoStage === "ready_to_apply");
@@ -286,6 +298,10 @@ test("Load & Play stages demo replay from before-send to review", async () => {
     assert.equal(panel.state.canvasApplyAllowed, true, "canvas apply allowed when eligible");
     assert.equal(panel.state.queueAllowed, false, "queue stays disabled for demo");
     assert.equal(panel.state.applyEligibility?.reason, "applyable", "eligibility reason stored");
+    assert.ok(
+      fulfilledObligations.at(-1)?.obligations.invalidateCandidate === true,
+      "ready_to_apply candidate transition fulfills overlay invalidation obligations",
+    );
     assert.equal(
       panel.state.expandedBubbleTurnKeys["turn:demo-turn-a"],
       undefined,

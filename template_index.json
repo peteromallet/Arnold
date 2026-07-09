@@ -119,10 +119,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -202,10 +202,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -285,10 +285,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -368,10 +368,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -507,10 +507,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -628,10 +628,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -767,10 +767,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -888,10 +888,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -1027,10 +1027,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -1130,10 +1130,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": "ready_templates/image/basic_image_upscale.py",
       "source_sha256": null
@@ -1231,10 +1231,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -1332,10 +1332,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -1433,10 +1433,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -1588,10 +1588,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -1689,10 +1689,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -1900,10 +1900,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": "ready_templates/image/z_image_img2img.py",
       "source_sha256": null
@@ -2001,10 +2001,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -2067,10 +2067,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": "ready_templates/video/basic_video_enhance.py",
       "source_sha256": null,
@@ -2239,10 +2239,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": "manual",
       "source_sha256": null
@@ -2506,10 +2506,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -2725,10 +2725,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -2936,10 +2936,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -3129,10 +3129,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -3325,10 +3325,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null,
@@ -3537,10 +3537,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null,
@@ -3728,10 +3728,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -3959,10 +3959,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -4154,10 +4154,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -4421,10 +4421,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -4578,10 +4578,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -4789,10 +4789,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -4951,10 +4951,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null,
@@ -5174,10 +5174,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -5367,10 +5367,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -5598,10 +5598,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -5863,10 +5863,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -6038,10 +6038,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -6231,10 +6231,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -6498,10 +6498,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -6731,10 +6731,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": "ready_templates/video/wan22_animate_native_first_stage.py",
       "source_sha256": null,
@@ -7001,10 +7001,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -7214,10 +7214,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -7461,10 +7461,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -7562,10 +7562,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -7699,10 +7699,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -7874,10 +7874,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -8049,10 +8049,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -8168,10 +8168,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -8343,10 +8343,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -8518,10 +8518,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -8655,10 +8655,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -8756,10 +8756,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -8931,10 +8931,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -9110,10 +9110,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_i2v_kijai.py",
       "source_sha256": null,
@@ -9272,10 +9272,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_t2i.py",
       "source_sha256": null,
@@ -9459,10 +9459,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_vace_cocktail.py",
       "source_sha256": null,
@@ -9650,10 +9650,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -9769,10 +9769,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -9962,10 +9962,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -10081,10 +10081,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -10256,10 +10256,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -10431,10 +10431,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null
@@ -10578,10 +10578,10 @@
       "supplemental": false,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null,
@@ -10804,10 +10804,10 @@
       "supplemental": true,
       "vibecomfy_version": "2.8.0",
       "comfy_core": {
-        "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-        "status": "discovered",
-        "tested_at": "2026-06-13T00:00:00+00:00",
-        "version": "0.18.2"
+        "commit": "unknown",
+        "status": "unavailable",
+        "tested_at": "2026-07-09T09:32:35.945439+00:00",
+        "version": "unknown"
       },
       "source_workflow": null,
       "source_sha256": null

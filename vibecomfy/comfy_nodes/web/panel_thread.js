@@ -83,9 +83,8 @@ export function renderThreadSection(panel, deps = {}) {
 
 export function recordThreadRender(runtimePayload) {
   const runtime = getAgentPanelRuntime();
-  runtime.lastThreadRender = runtimePayload;
   runtime._lastThreadRender = runtimePayload;
-  return runtime.lastThreadRender;
+  return runtime._lastThreadRender;
 }
 
 function _readSelectorOrNull(selector, value, options = {}) {
@@ -303,6 +302,354 @@ function routeAllowsCandidateDetail(panel, message, detailSnapshot, actionState)
   const routeStatus = routeStatusForRender(panel);
   const route = routeStatus?.selectedRoute || routeStatus?.requestedRoute || null;
   return routeAllowsApplyAffordances(route) || actionState?.visible === true;
+}
+
+export function changeDetailsForMessage(panel, message, snapshot = null, deps = {}) {
+  const responseDetail = responseDetailForMessage(panel, message, snapshot);
+  const safeChangeDetails = changeDetailsFromResponseDetail(responseDetail);
+  if (safeChangeDetails) {
+    return safeChangeDetails;
+  }
+  if (snapshot?.changeDetails && typeof snapshot.changeDetails === "object" && snapshot?.debugPayload == null) {
+    return snapshot.changeDetails;
+  }
+  return panel?.state?.changeDetails || null;
+}
+
+export function createBubbleDetailSection(title, deps = {}) {
+  const { el } = deps;
+  const section = el("div");
+  Object.assign(section.style, {
+    display: "grid",
+    gap: "4px",
+    minWidth: "0",
+    maxWidth: "100%",
+  });
+  const heading = el("div", title);
+  Object.assign(heading.style, {
+    fontSize: "10px",
+    fontWeight: "700",
+    color: "#6b7080",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+  });
+  const body = el("div");
+  Object.assign(body.style, {
+    display: "grid",
+    gap: "4px",
+    minWidth: "0",
+  });
+  section.appendChild(heading);
+  section.appendChild(body);
+  return { section, body };
+}
+
+export function appendCandidateDetail(body, panel, message = null, snapshot = null, deps = {}) {
+  const {
+    PANEL_STATE,
+    appendCodeLine,
+    appendTextLine,
+    applyAgentCandidate,
+    button,
+    candidateActionState,
+    collectDiffRows,
+    collectQueueIssues,
+    createDetails,
+    el,
+    getBackendStageInfo,
+    muted,
+    rejectAgentCandidate,
+    setButtonEmphasis,
+  } = deps;
+  const normalDetailMode = Boolean(snapshot);
+  const actionState = candidateActionState(panel, message, snapshot);
+  const candidateGraphPresent = actionState.visible
+    || (!message && !snapshot && Boolean(panel.state.candidateGraph));
+  const phase = snapshot?.phase || panel.state.phase;
+  const clarification = snapshot?.clarification || panel.state.clarification;
+  if (!candidateGraphPresent) {
+    if (phase === PANEL_STATE.CLARIFY && clarification?.message) {
+      const q = el("div", "\u2753 The agent needs your input:");
+      q.style.color = "#ffc107";
+      q.style.fontWeight = "600";
+      body.appendChild(q);
+      const msg = el("div", clarification.message);
+      msg.style.whiteSpace = "pre-wrap";
+      msg.style.color = "#edf2f7";
+      msg.style.borderLeft = "2px solid #ffc107";
+      msg.style.paddingLeft = "8px";
+      msg.style.margin = "4px 0";
+      body.appendChild(msg);
+      body.appendChild(muted("Answer in the prompt box above and submit - it continues this session."));
+      return;
+    }
+    const feedback = snapshot?.lastAppliedChanges || panel.state.lastAppliedChanges;
+    if (feedback?.items?.length) {
+      appendTextLine(
+        body,
+        feedback.mode === "visual"
+          ? "Applied candidate feedback: changed nodes were highlighted on the canvas temporarily."
+          : "Applied candidate feedback: changed nodes listed here because live node lookup was unavailable.",
+        feedback.mode === "visual" ? "#9ed0ff" : "#ffb86c",
+      );
+      for (const item of feedback.items) {
+        const rowNode = el("div", item.label);
+        rowNode.style.color = item.color;
+        rowNode.style.borderLeft = `2px solid ${item.color}`;
+        rowNode.style.paddingLeft = "8px";
+        body.appendChild(rowNode);
+      }
+      if (feedback.unresolved?.length && feedback.mode === "visual") {
+        body.appendChild(createDetails("panel fallback for unresolved nodes", feedback.unresolved));
+      }
+      return;
+    }
+    return;
+  }
+  const debugPayload = normalDetailMode ? null : (snapshot?.debugPayload || panel.state.debugPayload);
+  const stageInfo = debugPayload ? getBackendStageInfo(debugPayload) : null;
+  if (!normalDetailMode && stageInfo) {
+    appendTextLine(
+      body,
+      `backend stage: ${stageInfo.stage || "unknown"}${stageInfo.progress != null ? ` (${stageInfo.progress})` : ""}`,
+      "#9ed0ff",
+    );
+  }
+  const candidateMessage = snapshot?.message || message?.text || panel.state.message;
+  if (candidateMessage) {
+    const msg = el("div", candidateMessage);
+    msg.style.whiteSpace = "pre-wrap";
+    msg.style.color = "#edf2f7";
+    body.appendChild(msg);
+  }
+  const eligibility = actionState.eligibility;
+  if (!normalDetailMode) {
+    const canvasApplyAllowed = snapshot?.canvasApplyAllowed ?? panel.state.canvasApplyAllowed;
+    const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
+    appendTextLine(body, `canvas_apply_allowed=${String(canvasApplyAllowed)}`, canvasApplyAllowed ? "#4caf50" : "#ffb86c");
+    appendTextLine(body, `queue_allowed=${String(queueAllowed)}`, queueAllowed ? "#4caf50" : "#ffb86c");
+  }
+  appendTextLine(body, `apply_eligibility=${eligibility.reason}`, eligibility.applyable ? "#4caf50" : "#ffb86c");
+  if (eligibility.message) {
+    appendTextLine(body, eligibility.message, "#9ed0ff");
+  }
+  if (actionState.visible) {
+    const controlsRow = el("div");
+    controlsRow.dataset.vibecomfyCandidateControls = "1";
+    Object.assign(controlsRow.style, {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: "6px",
+      alignItems: "center",
+      marginTop: "2px",
+    });
+
+    const applyBtn = button("Apply", () => applyAgentCandidate(panel));
+    applyBtn.dataset.vibecomfyCandidateAction = "apply";
+    applyBtn.dataset.vibecomfyCandidateTurnId = actionState.turnId || "";
+    applyBtn.disabled = actionState.applyDisabled;
+    applyBtn.style.fontSize = "11px";
+    applyBtn.style.padding = "4px 8px";
+    setButtonEmphasis(applyBtn, actionState.active || panel.state.phase === PANEL_STATE.APPLYING, "primary");
+    controlsRow.appendChild(applyBtn);
+
+    const rejectBtn = button("Reject", () => rejectAgentCandidate(panel));
+    rejectBtn.dataset.vibecomfyCandidateAction = "reject";
+    rejectBtn.dataset.vibecomfyCandidateTurnId = actionState.turnId || "";
+    rejectBtn.disabled = actionState.rejectDisabled;
+    rejectBtn.style.fontSize = "11px";
+    rejectBtn.style.padding = "4px 8px";
+    setButtonEmphasis(rejectBtn, actionState.active || panel.state.phase === PANEL_STATE.APPLYING, "danger");
+    controlsRow.appendChild(rejectBtn);
+
+    const stateLabel = el(
+      "span",
+      actionState.active
+        ? (eligibility.applyable ? "latest" : eligibility.reason)
+        : eligibility.reason,
+    );
+    stateLabel.dataset.vibecomfyCandidateReason = eligibility.reason || "";
+    stateLabel.dataset.vibecomfyCandidateTurnId = actionState.turnId || "";
+    Object.assign(stateLabel.style, {
+      fontSize: "10px",
+      color: eligibility.applyable ? "#4caf50" : "#ffb86c",
+      textTransform: "uppercase",
+      letterSpacing: "0.04em",
+      fontWeight: "700",
+    });
+    controlsRow.appendChild(stateLabel);
+
+    body.appendChild(controlsRow);
+    if (actionState.blockerMessage && actionState.blockerMessage !== eligibility.message) {
+      appendTextLine(body, actionState.blockerMessage, "#9ed0ff");
+    }
+  }
+  const report = snapshot?.candidateReport || (!normalDetailMode ? (message?.report || panel.state.candidateReport) : null);
+  const queueIssueReport = report;
+  const rows = collectDiffRows(report);
+  if (!rows.length) {
+    body.appendChild(muted("Candidate returned without report rows."));
+  }
+  for (const item of rows) {
+    const rowNode = el("div", item.text);
+    rowNode.style.color = item.color;
+    rowNode.style.borderLeft = `2px solid ${item.color}`;
+    rowNode.style.paddingLeft = "8px";
+    if (item.title) {
+      rowNode.title = item.title;
+    }
+    body.appendChild(rowNode);
+  }
+  const affected = {
+    preserved: rows.filter((item) => item.text.startsWith("preserved:")).length,
+    edited: rows.filter((item) => item.text.startsWith("edited:") || item.text.startsWith("changed_node:")).length,
+    added: rows.filter((item) => item.text.startsWith("new_auto_placed:") || item.text.startsWith("added_node:") || item.text.startsWith("added_link:")).length,
+    removed: rows.filter((item) => item.text.startsWith("removed:") || item.text.startsWith("removed_named:") || item.text.startsWith("removed_node:") || item.text.startsWith("removed_link:")).length,
+    helpers: rows.filter((item) => item.text.startsWith("stripped_helper:") || item.text.startsWith("virtual_wires_degraded:")).length,
+    lowered: rows.filter((item) => item.text.startsWith("lowered:")).length,
+  };
+  body.appendChild(createDetails("affected node preview", affected));
+  const issues = collectQueueIssues(queueIssueReport);
+  if (issues.length) {
+    for (const issue of issues) {
+      appendTextLine(body, `${issue.code}: ${issue.message}`, issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
+      if (!normalDetailMode && issue.detail && Object.keys(issue.detail).length) {
+        body.appendChild(createDetails("queue blocker detail", issue.detail));
+      }
+    }
+  }
+  const artifacts = debugPayload?.artifacts;
+  if (!normalDetailMode && artifacts && typeof artifacts === "object") {
+    for (const [name, value] of Object.entries(artifacts)) {
+      appendCodeLine(body, `${name}: ${value}`);
+    }
+  }
+  const auditRef = !normalDetailMode ? (snapshot?.auditRef || panel.state.auditRef) : null;
+  if (auditRef?.path) {
+    appendCodeLine(body, `audit: ${auditRef.path}`, "#9ed0ff");
+  }
+  if (!normalDetailMode) {
+    body.appendChild(createDetails("raw report", report || {}));
+  }
+}
+
+export function appendFailureDetail(body, panel, snapshot = null, deps = {}) {
+  const {
+    appendCodeLine,
+    appendTextLine,
+    createDetails,
+    getBackendStageInfo,
+  } = deps;
+  const normalDetailMode = Boolean(snapshot);
+  const failure = snapshot?.failure || panel.state.failure;
+  if (!failure) {
+    return;
+  }
+  appendTextLine(body, `${failure.kind || "Error"} @ ${failure.stage || "unknown"}`, "#ffd6d6");
+  appendTextLine(body, failure.user_facing_message || failure.message || failure.error || "Unknown failure", "#edf2f7");
+  if (!normalDetailMode) {
+    appendTextLine(body, `retryable=${String(Boolean(failure.retryable))} graph_unchanged=${String(Boolean(failure.graph_unchanged))}`, "#8d93a1");
+    appendTextLine(body, `canvas_apply_allowed=${String(Boolean(failure.canvas_apply_allowed))} queue_allowed=${String(Boolean(failure.queue_allowed))}`, "#8d93a1");
+  }
+  const stageInfo = getBackendStageInfo(failure);
+  if (!normalDetailMode && stageInfo) {
+    appendTextLine(
+      body,
+      `backend stage: ${stageInfo.stage || "unknown"}${stageInfo.progress != null ? ` (${stageInfo.progress})` : ""}`,
+      "#9ed0ff",
+    );
+  }
+  if (!normalDetailMode && failure.next_action) {
+    appendTextLine(body, `next: ${failure.next_action}`, "#8d93a1");
+  }
+  if (panel.state.rebaselinePending) {
+    const pending = panel.state.rebaselinePending;
+    const pendingLabel =
+      panel.state.inFlightRebaseline
+        ? `rebaseline pending: ${pending.reason} (in flight)`
+        : pending.retryable
+          ? `rebaseline pending: ${pending.reason} (retryable)`
+          : `rebaseline pending: ${pending.reason}`;
+    appendTextLine(body, pendingLabel, "#9ed0ff");
+    if (pending.last_known_baseline_graph_hash) {
+      appendCodeLine(body, `expected_baseline: ${pending.last_known_baseline_graph_hash}`, "#8d93a1");
+    }
+  }
+  if (!normalDetailMode && (failure.session_id || failure.turn_id || failure.baseline_turn_id)) {
+    appendTextLine(
+      body,
+      `session=${failure.session_id || "new"} turn=${failure.turn_id || "pending"} baseline=${failure.baseline_turn_id || "none"}`,
+      "#8d93a1",
+    );
+  }
+  if (!normalDetailMode && failure.audit_error) {
+    appendTextLine(body, `audit_error: ${failure.audit_error}`, "#ffb86c");
+  }
+  const recovery = panel.state.rebaselineRecovery;
+  if (recovery?.action === "rebaseline" && recovery.reason === "stale_state_recovery") {
+    appendTextLine(body, "The current canvas can be promoted to the new baseline.", "#9ed0ff");
+    if (recovery.last_known_baseline_graph_hash) {
+      appendCodeLine(body, `expected_baseline: ${recovery.last_known_baseline_graph_hash}`, "#8d93a1");
+    }
+  }
+  if (!normalDetailMode && failure.agent_failure_context && Object.keys(failure.agent_failure_context).length) {
+    body.appendChild(createDetails("agent failure context", failure.agent_failure_context));
+  }
+  if (!normalDetailMode) {
+    body.appendChild(createDetails("raw failure", failure));
+  }
+}
+
+export function appendQueueDetail(body, panel, snapshot = null, deps = {}) {
+  const {
+    appendTextLine,
+    collectQueueIssues,
+    getQueueGuardStateForPanel,
+  } = deps;
+  const normalDetailMode = Boolean(snapshot);
+  if (normalDetailMode) {
+    const queueDisplay = snapshot?.queueDisplay;
+    if (!queueDisplay || typeof queueDisplay !== "object") {
+      return;
+    }
+    if (queueDisplay.message) {
+      appendTextLine(body, queueDisplay.message, queueDisplay.state === "blocked" ? "#ffb86c" : "#4caf50");
+    }
+    if (Array.isArray(queueDisplay.issues) && queueDisplay.issues.length) {
+      for (const issue of queueDisplay.issues) {
+        appendTextLine(body, issue.message || issue.code || "Queue issue", issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
+      }
+    }
+    if (!queueDisplay.message && !queueDisplay.issues?.length && queueDisplay.reason) {
+      appendTextLine(body, queueDisplay.reason, queueDisplay.state === "blocked" ? "#ffb86c" : "#8d93a1");
+    }
+    return;
+  }
+  const queueGuard = snapshot?.queueGuard || panel.state.queueGuard || getQueueGuardStateForPanel();
+  const issues = collectQueueIssues(snapshot?.candidateReport || panel.state.candidateReport);
+  if (queueGuard.fallbackWarning) {
+    appendTextLine(body, queueGuard.fallbackWarning, "#ffb86c");
+  }
+  if (queueGuard.lastBlockNotice?.message && !normalDetailMode) {
+    appendTextLine(body, queueGuard.lastBlockNotice.message, "#ff7f7f");
+  }
+  if (!normalDetailMode && queueGuard.hookInstalled) {
+    appendTextLine(body, `native queue guard: active via ${queueGuard.hookPath}`, "#4caf50");
+  } else if (!normalDetailMode) {
+    appendTextLine(body, "native queue guard: panel warning fallback only", "#8d93a1");
+  }
+  const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
+  if (queueAllowed) {
+    appendTextLine(body, "Queue-eligible candidate. Native queue path remains unchanged.", "#4caf50");
+  } else if (issues.length) {
+    for (const issue of issues) {
+      appendTextLine(body, issue.message, "#ffb86c");
+    }
+  } else if (queueGuard.activeContext?.queueAllowed === false) {
+    appendTextLine(body, `Applied turn ${queueGuard.activeContext.turnId || "unknown"} remains queue-blocked.`, "#ff7f7f");
+  } else {
+    appendTextLine(body, "Queue disabled in this proof shell. Candidate review remains local-only for now.", "#8d93a1");
+  }
 }
 
 function bubbleDetailSignature(panel, msg, detailSnapshot) {
@@ -1458,15 +1805,12 @@ export function renderChatThread(panel, deps = {}) {
 
   const threadEntries = collectThreadMessageEntriesImpl(panel);
   if (!threadEntries.length) {
-    const lastThreadRender = recordThreadRenderImpl({
+    recordThreadRenderImpl({
       panelId: panel?.panelId || null,
       messagesSeen: 0,
       branch: "picker",
       at: new Date().toISOString(),
     });
-    if (panel) {
-      panel.lastThreadRender = lastThreadRender;
-    }
     renderShowEarlierMessages(panel, olderMount, 0, deps);
     clearNode(messagesMount);
     messagesMount.style.display = "none";
@@ -1492,15 +1836,12 @@ export function renderChatThread(panel, deps = {}) {
   messagesMount.style.display = "grid";
   clearNode(emptyMount);
   const { displayEntries, hiddenCount } = computeThreadDisplayEntries(panel, threadEntries);
-  const lastThreadRender = recordThreadRenderImpl({
+  recordThreadRenderImpl({
     panelId: panel?.panelId || null,
     messagesSeen: threadEntries.length,
     branch: "messages",
     at: new Date().toISOString(),
   });
-  if (panel) {
-    panel.lastThreadRender = lastThreadRender;
-  }
   renderShowEarlierMessages(panel, olderMount, hiddenCount, deps);
   reconcileChatBubblesImpl(panel, messagesMount, displayEntries, deps);
   return true;

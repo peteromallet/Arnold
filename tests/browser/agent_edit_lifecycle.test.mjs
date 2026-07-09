@@ -1337,6 +1337,7 @@ test("canonical candidate review apply path preserves stage through review then 
     render: true,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
     invalidateCandidate: true,
+    clearCandidatePreview: true,
     queueGuardClear: true,
     refreshQueueGuard: true,
     toast: null,
@@ -1421,6 +1422,7 @@ test("canonical candidate reject and new-conversation clear remove review state 
     render: true,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
     invalidateCandidate: true,
+    clearCandidatePreview: true,
     queueGuardClear: true,
     refreshQueueGuard: true,
     toast: null,
@@ -2136,13 +2138,29 @@ test("STOP_ABORT clears deltaOps", () => {
     phase: PANEL_STATE.SUBMITTING,
     sessionId: "sess-2",
     deltaOps: [{ op: "reorder", target: ["nodes"], value: [3, 1, 2] }],
+    candidateGraph: { nodes: [{ id: 3 }] },
+    candidateGraphHash: "stop-candidate",
+    _previewDiff: { stale: true },
+    _previewDiffGraphHash: "stop-candidate",
+    _previewDiffCacheTag: "stale",
     submitAbortController: { aborted: false },
     inFlightSubmit: Promise.resolve(),
   });
 
-  transition(panel, "STOP_ABORT");
+  const obligations = transition(panel, "STOP_ABORT");
 
+  assert.deepEqual(obligations, {
+    render: true,
+    refreshQueueGuard: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
+  });
   assert.equal(panel.state.deltaOps, null, "STOP_ABORT must clear deltaOps");
+  assert.equal(panel.state.candidateGraph, null);
+  assert.equal(panel.state.candidateGraphHash, null);
+  assert.equal(panel.state._previewDiff, undefined);
+  assert.equal(panel.state._previewDiffGraphHash, undefined);
+  assert.equal(panel.state._previewDiffCacheTag, undefined);
   assert.equal(panel.state.phase, PANEL_STATE.IDLE);
 });
 
@@ -2757,7 +2775,12 @@ test("STOP_ABORT increments submitEpoch and clears in-flight submit state while 
 
   const obligations = transition(panel, "STOP_ABORT");
 
-  assert.deepEqual(obligations, { render: true, refreshQueueGuard: true });
+  assert.deepEqual(obligations, {
+    render: true,
+    refreshQueueGuard: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
+  });
   assert.equal(panel.state.submitEpoch, 5);
   assert.equal(panel.state.submitAbortController, null);
   assert.equal(panel.state.inFlightSubmit, null);
@@ -3326,7 +3349,13 @@ test("ACCEPT_REJECTED preserves retryable local failures but disables authoritat
     authoritativeBackendReject: false,
   });
 
-  assert.deepEqual(retryable, { render: true, queueGuardClear: false, refreshQueueGuard: false });
+  assert.deepEqual(retryable, {
+    render: true,
+    queueGuardClear: false,
+    refreshQueueGuard: false,
+    invalidateCandidate: false,
+    clearCandidatePreview: false,
+  });
   assert.equal(retryablePanel.state.phase, PANEL_STATE.ERROR);
   assert.deepEqual(retryablePanel.state.failure, retryableFailure);
   assert.deepEqual(retryablePanel.state.applyEligibility, { applyable: true, reason: "applyable" });
@@ -3340,6 +3369,11 @@ test("ACCEPT_REJECTED preserves retryable local failures but disables authoritat
     applyAllowed: true,
     canvasApplyAllowed: true,
     queueAllowed: true,
+    candidateGraph: { nodes: [{ id: 11 }] },
+    candidateGraphHash: "candidate-before-authoritative-reject",
+    _previewDiff: { stale: true },
+    _previewDiffGraphHash: "candidate-before-authoritative-reject",
+    _previewDiffCacheTag: "stale-tag",
   });
   const disabledApplyEligibility = {
     applyable: false,
@@ -3362,7 +3396,13 @@ test("ACCEPT_REJECTED preserves retryable local failures but disables authoritat
     disabledApplyEligibility,
   });
 
-  assert.deepEqual(authoritative, { render: true, queueGuardClear: true, refreshQueueGuard: true });
+  assert.deepEqual(authoritative, {
+    render: true,
+    queueGuardClear: true,
+    refreshQueueGuard: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
+  });
   assert.equal(authoritativePanel.state.phase, PANEL_STATE.ERROR);
   assert.deepEqual(authoritativePanel.state.failure, authoritativeFailure);
   assert.deepEqual(authoritativePanel.state.applyEligibility, disabledApplyEligibility);
@@ -3372,6 +3412,11 @@ test("ACCEPT_REJECTED preserves retryable local failures but disables authoritat
   assert.deepEqual(authoritativePanel.state.auditRef, { path: "reject-audit.json" });
   assert.equal(authoritativePanel.state.baselineTurnId, "0001");
   assert.equal(authoritativePanel.state.baselineGraphHash, "base-after-reject");
+  assert.equal(authoritativePanel.state.candidateGraph, null);
+  assert.equal(authoritativePanel.state.candidateGraphHash, null);
+  assert.equal(authoritativePanel.state._previewDiff, undefined);
+  assert.equal(authoritativePanel.state._previewDiffGraphHash, undefined);
+  assert.equal(authoritativePanel.state._previewDiffCacheTag, undefined);
 });
 
 test("STALE_CANVAS_APPLY and CANVAS_APPLY_FAILURE record distinct apply failures", () => {
@@ -3408,7 +3453,11 @@ test("STALE_CANVAS_APPLY and CANVAS_APPLY_FAILURE record distinct apply failures
     undoStackDepth: 2,
   });
 
-  assert.deepEqual(canvas, { render: true });
+  assert.deepEqual(canvas, {
+    render: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
+  });
   assert.equal(canvasPanel.state.phase, PANEL_STATE.ERROR);
   assert.deepEqual(canvasPanel.state.failure, canvasFailure);
   assert.deepEqual(canvasPanel.state.auditRef, { path: "canvas-failure.json" });
@@ -3435,6 +3484,7 @@ test("APPLY_SUCCESS atomically syncs baseline, invalidates candidate, clears que
     changeDetails: { edited: ["uid-4"] },
     _previewDiff: { old: true },
     _previewDiffGraphHash: "preview-hash",
+    _previewDiffCacheTag: "graph",
   });
   const accepted = {
     ok: true,
@@ -3460,6 +3510,7 @@ test("APPLY_SUCCESS atomically syncs baseline, invalidates candidate, clears que
     render: true,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
     invalidateCandidate: true,
+    clearCandidatePreview: true,
     queueGuardClear: true,
     refreshQueueGuard: true,
     toast: "Agent candidate applied",
@@ -3484,6 +3535,7 @@ test("APPLY_SUCCESS atomically syncs baseline, invalidates candidate, clears que
   });
   assert.equal(panel.state._previewDiff, undefined);
   assert.equal(panel.state._previewDiffGraphHash, undefined);
+  assert.equal(panel.state._previewDiffCacheTag, undefined);
 });
 
 // ── Reject flow ────────────────────────────────────────────────────────────
@@ -3631,6 +3683,7 @@ test("REJECT_SUCCESS clears candidate, syncs baseline, invalidates gates, and re
     changeDetails: { edited: ["uid-9"] },
     _previewDiff: { old: true },
     _previewDiffGraphHash: "preview-hash-9",
+    _previewDiffCacheTag: "graph",
     failure: null,
     auditRef: { path: "old-audit.json" },
   });
@@ -3661,6 +3714,7 @@ test("REJECT_SUCCESS clears candidate, syncs baseline, invalidates gates, and re
     render: true,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
     invalidateCandidate: true,
+    clearCandidatePreview: true,
     queueGuardClear: true,
     refreshQueueGuard: true,
     toast: "Agent candidate rejected",
@@ -3689,6 +3743,7 @@ test("REJECT_SUCCESS clears candidate, syncs baseline, invalidates gates, and re
   // Preview diff caches cleared
   assert.equal(panel.state._previewDiff, undefined);
   assert.equal(panel.state._previewDiffGraphHash, undefined);
+  assert.equal(panel.state._previewDiffCacheTag, undefined);
 });
 
 test("REJECT_SUCCESS uses default message and empty toast when not provided", () => {
@@ -3705,6 +3760,7 @@ test("REJECT_SUCCESS uses default message and empty toast when not provided", ()
     render: true,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
     invalidateCandidate: true,
+    clearCandidatePreview: true,
     queueGuardClear: true,
     refreshQueueGuard: true,
     toast: null,
@@ -3963,6 +4019,16 @@ test("REBASELINE_SUCCESS syncs authoritative baseline, clears pending state, and
     auditRef: { path: "/tmp/old-audit.json" },
     rebaselinePending: { reason: "undo" },
     rebaselineRecovery: { action: "rebaseline", reason: "stale_state_recovery" },
+    phase: PANEL_STATE.AWAITING_REVIEW,
+    candidateGraph: { nodes: [{ id: 44 }] },
+    candidateGraphHash: "candidate-before-rebaseline",
+    candidateReport: { ok: true },
+    customNodeResolution: { missing: [] },
+    candidateScopeId: "scope-before-rebaseline",
+    deltaOps: [{ op: "set_node_field", target: ["nodes", 44, "widgets_values", 0], value: "stale" }],
+    _previewDiff: { stale: true },
+    _previewDiffGraphHash: "candidate-before-rebaseline",
+    _previewDiffCacheTag: "stale-tag",
   });
   const result = {
     ok: true,
@@ -3984,12 +4050,21 @@ test("REBASELINE_SUCCESS syncs authoritative baseline, clears pending state, and
   assert.deepEqual(obligations, {
     render: false,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
   });
   assert.equal(panel.state.baselineGraphHash, "baseline-new");
   assert.equal(panel.state.baselineSource, "rebaseline");
   assert.equal(panel.state.baselineRebaselineId, "rebaseline-0001");
   assert.equal(panel.state.rebaselinePending, null);
   assert.equal(panel.state.rebaselineRecovery, null);
+  assertCandidateDefaults(panel.state);
+  assert.equal(panel.state.candidateScopeId, null);
+  assert.equal(panel.state.deltaOps, null);
+  assert.equal(panel.state._previewDiff, undefined);
+  assert.equal(panel.state._previewDiffGraphHash, undefined);
+  assert.equal(panel.state._previewDiffCacheTag, undefined);
+  assert.equal(Boolean(panel.state.candidateGraph && panel.state.phase === PANEL_STATE.AWAITING_REVIEW), false);
   assert.deepEqual(panel.state.auditRef, { path: "/tmp/rebaseline-audit.json" });
   assert.deepEqual(panel.state.debugPayload, {
     rebaseline_request: { session_id: "sess-1" },
@@ -4149,7 +4224,13 @@ test("ACCEPT_REJECTED with normalized rebaselineRecovery stores camelCase recove
     },
   });
 
-  assert.deepEqual(obligations, { render: true, queueGuardClear: true, refreshQueueGuard: true });
+  assert.deepEqual(obligations, {
+    render: true,
+    queueGuardClear: true,
+    refreshQueueGuard: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
+  });
   assert.equal(panel.state.phase, PANEL_STATE.ERROR);
   assert.deepEqual(panel.state.failure, staleFailure);
   // Normalized rebaselineRecovery from payload (camelCase direct path — stored as-is)
@@ -4353,7 +4434,13 @@ test("Accept-stage stale recovery full chain: ACCEPT_REJECTED → REBASELINE_REC
     },
   });
 
-  assert.deepEqual(acceptObligations, { render: true, queueGuardClear: true, refreshQueueGuard: true });
+  assert.deepEqual(acceptObligations, {
+    render: true,
+    queueGuardClear: true,
+    refreshQueueGuard: true,
+    invalidateCandidate: true,
+    clearCandidatePreview: true,
+  });
   assert.equal(panel.state.phase, PANEL_STATE.ERROR);
   // CamelCase direct path — stored as-is
   assert.deepEqual(panel.state.rebaselineRecovery, {
@@ -6508,6 +6595,8 @@ test("CANVAS_APPLY_FAILURE transitions to ERROR phase", () => {
   // CANVAS_APPLY_FAILURE sets phase to ERROR
   assert.equal(panel.state.phase, PANEL_STATE.ERROR);
   assert.equal(obligations.render, true);
+  assert.equal(obligations.invalidateCandidate, true);
+  assert.equal(obligations.clearCandidatePreview, true);
   // Handler does not attach toast obligation
   assert.equal(obligations.toast, undefined);
 });

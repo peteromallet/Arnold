@@ -58,6 +58,7 @@ test("roundtrip does not re-own status poller declarations", () => {
     "normalizeRoutePreference",
     "persistAgentSettings",
     "storeOpenRouterCredential",
+    "configureAgentStatusDeps",
     "getRouteOptions",
     "getRouteDescriptor",
     "buildStatusUrl",
@@ -92,6 +93,8 @@ test("roundtrip does not re-own status poller declarations", () => {
     "getRouteDescriptor",
     "populateRouteSelect",
     "refreshAgentStatus",
+    "refreshResearchContributionSetting",
+    "saveResearchContributionSetting",
     "scheduleAgentStatusRetry",
     "syncChooseEngineGate",
     "testAgentSettings",
@@ -119,6 +122,7 @@ test("roundtrip does not re-own composer or candidate action declarations", () =
     "candidateTurnId",
     "candidateGraphPresentForBubble",
     "snapshotEligibilityForBubble",
+    "composerApplyDisplayState",
   ]) {
     assertNotDeclaredInRoundtrip(name);
   }
@@ -129,6 +133,68 @@ test("roundtrip does not re-own composer or candidate action declarations", () =
   assertImportFrom("agent_candidate_actions", "applyEligibility");
   assertImportFrom("agent_candidate_actions", "disabledApplyEligibility");
   assertImportFrom("agent_candidate_actions", "candidateActionState");
+});
+
+test("roundtrip scheduler ownership stays delegated", () => {
+  const schedulerOwnerApis = [
+    "normalizeDirtySectionList",
+    "agentPanelPendingDirtySections",
+    "isAgentPanelRootConnected",
+    "hasPendingAgentPanelFlush",
+    "noteAgentPanelCommit",
+    "markAgentPanelDirty",
+    "markAllAgentPanelDirty",
+    "consumeAgentPanelDirtySections",
+    "markAgentPanelDirtyAfterCommit",
+    "ensureScheduledAgentPanelDirtyFlush",
+    "scheduleRenderAgentPanel",
+    "setRenderGateway",
+  ];
+  for (const name of schedulerOwnerApis) {
+    assertNotDeclaredInRoundtrip(name);
+  }
+  for (const name of schedulerOwnerApis.filter((name) => name !== "agentPanelPendingDirtySections")) {
+    assertImportFrom("panel_scheduler", name);
+  }
+});
+
+test("roundtrip does not re-own thread detail selector implementations", () => {
+  for (const name of [
+    "responseDetailForMessage",
+    "turnIdForDetailLookup",
+    "changeDetailsFromResponseDetail",
+    "renderCandidate",
+    "renderFailure",
+    "renderQueue",
+  ]) {
+    assertNotDeclaredInRoundtrip(name);
+  }
+
+  for (const name of [
+    "appendCandidateDetail",
+    "appendFailureDetail",
+    "appendQueueDetail",
+    "changeDetailsForMessage",
+    "createBubbleDetailSection",
+  ]) {
+    assertImportFrom("panel_thread", name);
+  }
+});
+
+test("roundtrip does not re-own preview DOM renderer declarations", () => {
+  for (const name of [
+    "syncPreviewDomOverlay",
+    "ensurePreviewDomOverlayRoot",
+    "appendPreviewDomChip",
+    "previewChipGeometry",
+  ]) {
+    assertNotDeclaredInRoundtrip(name);
+  }
+
+  assertImportFrom("panel_overlay", "clearPreviewDomOverlay");
+  assertImportFrom("panel_overlay", "drawPreviewOverlay");
+  assertImportFrom("panel_overlay", "installAgentPreviewOverlay");
+  assertImportFrom("panel_overlay", "invalidateOverlayDrawModelCache");
 });
 
 test("scheduler owns status render sections with notice invalidation", () => {

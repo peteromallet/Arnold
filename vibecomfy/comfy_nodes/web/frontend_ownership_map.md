@@ -19,9 +19,10 @@ frontend helper.
 | `agent_candidate_actions.js` | `vibecomfy/comfy_nodes/web/agent_candidate_actions.js` | Candidate apply/reject visibility and eligibility selectors. |
 | `panel_scheduler.js` | `vibecomfy/comfy_nodes/web/panel_scheduler.js` | Dirty-section tracking, render scheduling, render gateway registration, root-connectedness checks, and the status-driven render-section list. |
 | `panel_thread.js` | `vibecomfy/comfy_nodes/web/panel_thread.js` | Chat thread bubble rendering, entry collection, display computation, history expansion, rating widget, and audit detail rendering. |
-| `panel_overlay.js` | `vibecomfy/comfy_nodes/web/panel_overlay.js` | Preview overlay install, invalidation, ghost dimension computation, and draw model cache. |
+| `panel_overlay.js` | `vibecomfy/comfy_nodes/web/panel_overlay.js` | Preview overlay install, invalidation, canvas ghost/value rendering, ghost dimension computation, and draw model cache. |
 | `panel_runtime.js` | `vibecomfy/comfy_nodes/web/panel_runtime.js` | Singleton panel instance tracking, runtime state creation/backfill, and panel ID allocation. |
 | `agent_edit_lifecycle.js` | `vibecomfy/comfy_nodes/web/agent_edit_lifecycle.js` | Panel state machine, `RENDER_SECTIONS`, obligation normalization, delta-op normalization, and chat message reconciliation. |
+| `preview_picker.js` | `vibecomfy/comfy_nodes/web/preview_picker.js` | Dev/demo preview picker UI and scenario playback. It may commit demo lifecycle transitions through `agent_lifecycle_commit.js` and must fulfill returned obligations instead of mutating lifecycle-owned preview state directly. |
 | `agent_edit_response_contract.js` | `vibecomfy/comfy_nodes/web/agent_edit_response_contract.js` | Response normalizers, field readers, turn identity readers, stage snapshot readers, and route-apply affordance checks. |
 | `agent_edit_response_contract_generated.js` | `vibecomfy/comfy_nodes/web/agent_edit_response_contract_generated.js` | Auto-generated contract shapes. Do not hand-edit. |
 | `comfy_adapter.js` | `vibecomfy/comfy_nodes/web/comfy_adapter.js` | Graph apply/delta in-place, queue guard installation, preview foreground overlay installation, typed socket labels, and exec-node normalization. |
@@ -48,8 +49,10 @@ frontend helper.
 - Own render dispatch in `renderAgentPanelSections()`, while delegating each
   section body to the module that owns that surface.
 - Must not define status polling implementations, settings/developer renderer
-  implementations, composer renderer implementations, route/provider constants,
-  or candidate eligibility selectors.
+  implementations, composer renderer implementations, preview overlay
+  implementations, route/provider constants, or candidate eligibility selectors.
+- Must not define old shell thread-detail renderers such as `renderCandidate`,
+  `renderFailure`, or `renderQueue`.
 
 Acceptable shell wrappers include dependency assembly functions such as
 `agentStatusDeps()`, `composerRenderDeps()`, and
@@ -127,10 +130,44 @@ owner functions.
 ### `panel_thread.js`
 
 - Owns thread collection and rendering.
+- Owns candidate/failure/queue audit detail rendering for thread bubbles.
 - May receive candidate-action state as an injected dependency for bubble action
   affordances.
 - Must not own candidate eligibility decisions or import
   `agent_candidate_actions.js` directly.
+
+### `panel_overlay.js`
+
+- Owns preview overlay installation and all preview drawing implementation.
+- Canvas rendering is the only active preview text path.
+- `clearPreviewDomOverlay` may remain as a compatibility cleanup for stale
+  browser sessions, but DOM preview-chip creation helpers must not be
+  reintroduced.
+- Owns draw-model cache keys, overlay text normalization, ghost dimensions, and
+  port/node fallback logic for preview wires.
+
+### `agent_edit_lifecycle.js`
+
+- Owns candidate/preview state invalidation when reducer transitions leave
+  preview mode.
+- Stop/abort, apply success, authoritative accept rejection, and rebaseline
+  success clear candidate preview state through the lifecycle invalidation
+  primitive.
+- Reject failure intentionally preserves candidate preview state because the
+  reject did not complete.
+- Transient preview diff fields (`_previewDiff`, `_previewDiffGraphHash`, and
+  `_previewDiffCacheTag`) are cleared only by lifecycle candidate invalidation.
+  Shell/demo code may fulfill cleanup obligations, but must not hand-clear those
+  fields.
+
+### `preview_picker.js`
+
+- Owns demo picker controls and local scenario playback only.
+- Uses `agent_lifecycle_commit.js` helpers to reflect demo stages into panel
+  state.
+- Must fulfill lifecycle obligations returned from those helpers when the
+  production shell provides an obligation fulfiller.
+- Must not clear lifecycle-owned candidate/preview fields directly.
 
 ## 3. Settled Boundary Status
 
@@ -142,6 +179,9 @@ owner functions.
 | Composer/settings/developer | `panel_composer.js` owns the settings and developer renderers. The shell imports `renderSettingsSection` and `renderDeveloperSection` with composer aliases and calls them with `composerRenderDeps()`. |
 | Candidate actions | `agent_candidate_actions.js` owns candidate action visibility and eligibility selectors. The shell imports the exported selector surface and injects it into composer/thread render deps. |
 | Thread rendering | `panel_thread.js` owns thread rendering and receives required callbacks/deps from the shell. |
+| Preview overlay | `panel_overlay.js` owns preview overlay implementation. The shell imports and delegates to it; DOM preview-chip rendering is removed. |
+| Diagnostics mirrors | Runtime diagnostics use `_lastThreadRender` and `_lastNoticeRender` as canonical fields. Duplicate `last*Render` mirrors should not be reintroduced. |
+| Demo preview picker | `preview_picker.js` owns demo UI only. Lifecycle state projection goes through commit helpers, and preview cleanup goes through returned obligations. |
 
 ## 4. Ownership Principles
 
@@ -155,5 +195,5 @@ owner functions.
    `SETTINGS_STATUS_RENDER_SECTIONS` list so settings, composer controls, and
    the submit-readiness notice stay in sync.
 5. Static ownership tests should guard against reintroducing local shell copies
-   of status-poller, composer/developer/settings, scheduler status-section, and
-   candidate-action owner symbols.
+   of status-poller, composer/developer/settings, scheduler status-section,
+   preview overlay, thread-detail, and candidate-action owner symbols.

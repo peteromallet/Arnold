@@ -8,8 +8,8 @@ export function invalidateOverlayDrawModelCache() {
 function overlayDrawCacheKey(diff, candidateGraph, deps = {}) {
   const { captureLiveCanvasRevision, graphNodeCount } = deps;
   const candidateHash =
-    diff?._candidateGraphHash
-    || currentAgentPanel()?.state?.candidateGraphHash
+    currentAgentPanel()?.state?.candidateGraphHash
+    || diff?._candidateGraphHash
     || `inline:${graphNodeCount(candidateGraph)}:${Array.isArray(candidateGraph?.links) ? candidateGraph.links.length : 0}`;
   const liveRevision = captureLiveCanvasRevision();
   const deltaDerivedTag = diff?._deltaOpsDerived ? ":delta" : ":graph";
@@ -69,7 +69,7 @@ function safePreviewLogDetail(value) {
   return typeof value;
 }
 
-function clearPreviewDomOverlay(doc = (typeof document !== "undefined" ? document : null)) {
+export function clearPreviewDomOverlay(doc = (typeof document !== "undefined" ? document : null)) {
   const root = doc?.getElementById?.(PREVIEW_DOM_OVERLAY_ID);
   if (root) {
     root.remove();
@@ -122,14 +122,6 @@ function canvasRect(app) {
 
 function graphPointToCanvasPoint(point, app) {
   const canvas = app?.canvas;
-  if (canvas && typeof canvas.convertOffsetToCanvas === "function") {
-    try {
-      const converted = canvas.convertOffsetToCanvas([point.x, point.y]);
-      if (converted && Number.isFinite(converted[0]) && Number.isFinite(converted[1])) {
-        return { x: converted[0], y: converted[1] };
-      }
-    } catch (_ignored) {}
-  }
   const ds = canvas?.ds || {};
   const scale = Number.isFinite(ds.scale) && ds.scale > 0 ? ds.scale : 1;
   const offset = Array.isArray(ds.offset) ? ds.offset : [0, 0];
@@ -160,43 +152,14 @@ function graphBoundsToViewport(bounds, app) {
 
 function viewportScaleForGraphBounds(bounds, viewport) {
   const scales = [];
-  if (
-    bounds
-    && viewport
-    && Number.isFinite(bounds.w)
-    && bounds.w > 0
-    && Number.isFinite(viewport.width)
-    && viewport.width > 0
-  ) {
+  if (bounds?.w > 0 && viewport?.width > 0) {
     scales.push(viewport.width / bounds.w);
   }
-  if (
-    bounds
-    && viewport
-    && Number.isFinite(bounds.h)
-    && bounds.h > 0
-    && Number.isFinite(viewport.height)
-    && viewport.height > 0
-  ) {
+  if (bounds?.h > 0 && viewport?.height > 0) {
     scales.push(viewport.height / bounds.h);
   }
   const finite = scales.filter((value) => Number.isFinite(value) && value > 0);
-  if (finite.length === 0) {
-    return 1;
-  }
-  return Math.min(...finite);
-}
-
-function previewChipGeometry(bounds) {
-  if (!bounds || !Number.isFinite(bounds.w) || !Number.isFinite(bounds.h) || bounds.w <= 0 || bounds.h <= 0) {
-    return null;
-  }
-  return {
-    x: bounds.x,
-    y: bounds.y,
-    w: bounds.w,
-    h: bounds.h,
-  };
+  return finite.length ? Math.min(...finite) : 1;
 }
 
 function previewFieldValueText(labelText, valueText) {
@@ -208,10 +171,111 @@ function previewFieldValueText(labelText, valueText) {
   return `${label}: ${value}`;
 }
 
-function appendPreviewDomChip(root, app, bounds, valueText, labelText = "") {
-  const viewport = graphBoundsToViewport(bounds, app);
+function cssPx(value, fallback) {
+  const parsed = Number.parseFloat(String(value == null ? "" : value));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function widgetFieldBoundsFromRow(rowBounds, widget) {
+  if (!rowBounds || !Number.isFinite(rowBounds.w) || rowBounds.w <= 0) {
+    return rowBounds;
+  }
+  var marginX = Math.min(15, Math.max(4, rowBounds.w * 0.08));
+  var fieldX = rowBounds.x + marginX;
+  var fieldW = Math.max(8, rowBounds.w - marginX * 2);
+  var explicitX = Number(widget && (widget.input_x ?? widget.inputX ?? widget.field_x ?? widget.fieldX ?? widget.value_x ?? widget.valueX));
+  var explicitW = Number(widget && (widget.input_width ?? widget.inputWidth ?? widget.field_width ?? widget.fieldWidth ?? widget.value_width ?? widget.valueWidth));
+  if (Number.isFinite(explicitX)) {
+    fieldX = rowBounds.x + explicitX;
+  }
+  if (Number.isFinite(explicitW) && explicitW > 0) {
+    fieldW = explicitW;
+  }
+  var minX = rowBounds.x;
+  var maxRight = rowBounds.x + rowBounds.w;
+  fieldX = Math.max(minX, Math.min(fieldX, maxRight - 4));
+  fieldW = Math.max(4, Math.min(fieldW, maxRight - fieldX));
+  return { x: fieldX, y: rowBounds.y, w: fieldW, h: rowBounds.h };
+}
+
+function widgetDomViewport(widget) {
+  const candidates = [
+    widget?.inputEl,
+    widget?.inputElement,
+    widget?.textarea,
+    widget?.element,
+    widget?.domElement,
+    widget?.el,
+  ];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate.getBoundingClientRect === "function") {
+      const rect = candidate.getBoundingClientRect();
+      if (
+        rect
+        && Number.isFinite(rect.left)
+        && Number.isFinite(rect.top)
+        && Number.isFinite(rect.width)
+        && rect.width > 0
+        && Number.isFinite(rect.height)
+        && rect.height > 0
+      ) {
+        return {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+          element: candidate,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function previewDomChipStyleForViewport(viewport) {
+  const element = viewport?.element;
+  const doc = element?.ownerDocument || null;
+  const win = doc?.defaultView || (typeof window !== "undefined" ? window : null);
+  let computed = null;
+  if (win && element && typeof win.getComputedStyle === "function") {
+    try {
+      computed = win.getComputedStyle(element);
+    } catch (_ignored) {}
+  }
+  const layoutW = Number(element?.offsetWidth || element?.clientWidth || 0);
+  const layoutH = Number(element?.offsetHeight || element?.clientHeight || 0);
+  const scaleX = layoutW > 0 ? viewport.width / layoutW : 1;
+  const scaleY = layoutH > 0 ? viewport.height / layoutH : scaleX;
+  const visualScale = Math.max(0.05, Math.min(
+    Number.isFinite(scaleX) && scaleX > 0 ? scaleX : 1,
+    Number.isFinite(scaleY) && scaleY > 0 ? scaleY : 1,
+  ));
+  const inlineStyle = element?.style || null;
+  const baseFontSize = cssPx(inlineStyle?.fontSize, cssPx(computed?.fontSize, 11));
+  const family = inlineStyle?.fontFamily || computed?.fontFamily || "Arial, sans-serif";
+  const weight = inlineStyle?.fontWeight || computed?.fontWeight || "normal";
+  const style = inlineStyle?.fontStyle || computed?.fontStyle || "normal";
+  const lineHeightValue = inlineStyle?.lineHeight || computed?.lineHeight;
+  const lineHeightBase = lineHeightValue && lineHeightValue !== "normal"
+    ? cssPx(lineHeightValue, baseFontSize * 1.25)
+    : baseFontSize * 1.25;
+  return {
+    fontSize: Math.max(1, baseFontSize * visualScale),
+    fontFamily: family,
+    fontWeight: weight,
+    fontStyle: style,
+    lineHeightPx: Math.max(1, lineHeightBase * visualScale),
+    padTop: Math.max(0, cssPx(inlineStyle?.paddingTop, cssPx(computed?.paddingTop, 4)) * visualScale),
+    padRight: Math.max(0, cssPx(inlineStyle?.paddingRight, cssPx(computed?.paddingRight, 7)) * visualScale),
+    padBottom: Math.max(0, cssPx(inlineStyle?.paddingBottom, cssPx(computed?.paddingBottom, 4)) * visualScale),
+    padLeft: Math.max(0, cssPx(inlineStyle?.paddingLeft, cssPx(computed?.paddingLeft, 7)) * visualScale),
+    borderRadius: Math.max(0, cssPx(inlineStyle?.borderRadius, cssPx(computed?.borderRadius, 5)) * visualScale),
+  };
+}
+
+function appendPreviewDomChipAtViewport(root, app, viewport, valueText, labelText = "") {
   if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
-    return;
+    return false;
   }
   const rect = canvasRect(app);
   if (
@@ -223,40 +287,19 @@ function appendPreviewDomChip(root, app, bounds, valueText, labelText = "") {
       || viewport.top > rect.top + rect.height
     )
   ) {
-    return;
+    return false;
   }
-  const visible = rect
-    ? {
-        left: Math.max(viewport.left, rect.left),
-        top: Math.max(viewport.top, rect.top),
-        right: Math.min(viewport.left + viewport.width, rect.left + rect.width),
-        bottom: Math.min(viewport.top + viewport.height, rect.top + rect.height),
-      }
-    : {
-        left: viewport.left,
-        top: viewport.top,
-        right: viewport.left + viewport.width,
-        bottom: viewport.top + viewport.height,
-      };
-  if (visible.right <= visible.left || visible.bottom <= visible.top) {
-    return;
-  }
-  const zoomScale = viewportScaleForGraphBounds(bounds, viewport);
-  const fontSize = Math.max(1, 11 * zoomScale);
-  const lineHeight = 1.25;
-  const padY = Math.max(0, 4 * zoomScale);
-  const padX = Math.max(0, 7 * zoomScale);
-  const borderWidth = Math.max(0.5, zoomScale);
-  const borderRadius = Math.max(0, 5 * zoomScale);
+  const chipStyle = previewDomChipStyleForViewport(viewport);
+  const borderWidth = 1;
   const chip = root.ownerDocument.createElement("div");
   chip.dataset.vibecomfyPreviewChip = "1";
   chip.textContent = previewFieldValueText(labelText, valueText);
   Object.assign(chip.style, {
     position: "fixed",
-    left: `${visible.left}px`,
-    top: `${visible.top}px`,
-    width: `${visible.right - visible.left}px`,
-    height: `${visible.bottom - visible.top}px`,
+    left: `${viewport.left}px`,
+    top: `${viewport.top}px`,
+    width: `${viewport.width}px`,
+    height: `${viewport.height}px`,
     boxSizing: "border-box",
     overflow: "hidden",
     whiteSpace: "pre-wrap",
@@ -264,158 +307,78 @@ function appendPreviewDomChip(root, app, bounds, valueText, labelText = "") {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "flex-start",
-    padding: `${padY}px ${padX}px`,
-    border: `${borderWidth}px solid rgba(255,193,7,0.95)`,
-    borderRadius: `${borderRadius}px`,
-    background: "rgba(20,18,8,0.96)",
-    color: "rgba(255,193,7,0.98)",
-    font: `${fontSize}px Arial, sans-serif`,
-    lineHeight: String(lineHeight),
+    padding: `${chipStyle.padTop}px ${chipStyle.padRight}px ${chipStyle.padBottom}px ${chipStyle.padLeft}px`,
+    border: `${borderWidth}px solid rgba(255,193,7,0.98)`,
+    borderRadius: `${chipStyle.borderRadius}px`,
+    background: "rgba(20,18,8,0.98)",
+    color: "rgba(255,222,89,1)",
+    fontStyle: chipStyle.fontStyle,
+    fontWeight: chipStyle.fontWeight,
+    fontSize: `${chipStyle.fontSize}px`,
+    fontFamily: chipStyle.fontFamily,
+    lineHeight: `${chipStyle.lineHeightPx}px`,
     pointerEvents: "none",
     zIndex: "2147483647",
   });
   root.appendChild(chip);
+  return true;
 }
 
-export function syncPreviewDomOverlay(app, ctx, diff, candidateGraph, deps = {}) {
-  const {
-    getLiveGraph,
-    getLiveGraphNodes,
-    getUid,
-    graphNodeCount,
-    readNodePos,
-    readNodeSize,
-    readWidgetValues,
-    widgetValuePreviewText,
-    captureLiveCanvasRevision,
-  } = deps;
-  const doc = liveCanvasElement(app)?.ownerDocument || (typeof document !== "undefined" ? document : null);
-  if (!doc?.body || !diff) {
-    clearPreviewDomOverlay(doc);
-    return;
+function appendPreviewDomChip(root, app, bounds, valueText, labelText = "", viewportOverride = null) {
+  if (!viewportOverride) {
+    return false;
   }
-  const root = ensurePreviewDomOverlayRoot(doc);
-  if (!root) {
-    return;
+  return appendPreviewDomChipAtViewport(root, app, viewportOverride, valueText, labelText);
+}
+
+function widgetIndexFromFieldPath(fieldPath) {
+  var path = String(fieldPath || "");
+  var direct = /(?:^|\.)(?:widgets_values|widgets)\.(\d+)(?:\.|$)/.exec(path);
+  if (direct) return Number(direct[1]);
+  var widgetKey = /^widget_(\d+)$/.exec(path);
+  if (widgetKey) return Number(widgetKey[1]);
+  return null;
+}
+
+function fieldNameCandidates(fieldPath) {
+  var path = String(fieldPath || "");
+  if (!path) return [];
+  var normalized = path.replace(/\[(\d+)\]/g, ".$1");
+  var parts = normalized.split(".").filter(Boolean);
+  var last = parts.length ? parts[parts.length - 1] : normalized;
+  return [normalized, last];
+}
+
+function resolveWidgetFieldIndex(field, node) {
+  var directIndex = widgetIndexFromFieldPath(field && field.field_path);
+  if (directIndex != null && Number.isFinite(directIndex)) {
+    return directIndex;
   }
-  const drawModel = buildOverlayDrawModel(ctx, diff, candidateGraph, {
-    captureLiveCanvasRevision,
-    getLiveGraph,
-    getLiveGraphNodes,
-    getUid,
-    graphNodeCount,
-    readNodeSize,
-    readWidgetValues,
-    widgetValuePreviewText,
-  });
-  const liveByUid = drawModel.liveByUid;
-  const SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
-  const WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
-  const widgetIndexFromFieldPath = function (fieldPath) {
-    const path = String(fieldPath || "");
-    const direct = /(?:^|\.)(?:widgets_values|widgets)\.(\d+)(?:\.|$)/.exec(path);
-    if (direct) return Number(direct[1]);
-    const widgetKey = /^widget_(\d+)$/.exec(path);
-    return widgetKey ? Number(widgetKey[1]) : null;
-  };
-  const fieldNameCandidates = function (fieldPath) {
-    const path = String(fieldPath || "");
-    if (!path) return [];
-    const normalized = path.replace(/\[(\d+)\]/g, ".$1");
-    const parts = normalized.split(".").filter(Boolean);
-    const last = parts.length ? parts[parts.length - 1] : normalized;
-    return [normalized, last];
-  };
-  const resolveWidgetFieldIndex = function (field, node) {
-    const directIndex = widgetIndexFromFieldPath(field?.field_path);
-    if (directIndex != null && Number.isFinite(directIndex)) {
-      return directIndex;
-    }
-    const widgetsForNode = Array.isArray(node?.widgets) ? node.widgets : [];
-    const candidates = fieldNameCandidates(field?.field_path);
-    for (const candidateName of candidates) {
-      for (let wi = 0; wi < widgetsForNode.length; wi += 1) {
-        const widget = widgetsForNode[wi];
-        if ([widget?.name, widget?.label].filter(Boolean).some((name) => String(name) === candidateName)) {
+  var widgetsForNode = Array.isArray(node && node.widgets) ? node.widgets : [];
+  if (widgetsForNode.length === 0) {
+    return null;
+  }
+  var candidates = fieldNameCandidates(field && field.field_path);
+  for (var ci = 0; ci < candidates.length; ci += 1) {
+    var candidateName = candidates[ci];
+    for (var wi = 0; wi < widgetsForNode.length; wi += 1) {
+      var widget = widgetsForNode[wi];
+      var widgetNames = [widget && widget.name, widget && widget.label].filter(Boolean);
+      for (var ni = 0; ni < widgetNames.length; ni += 1) {
+        if (String(widgetNames[ni]) === candidateName) {
           return wi;
         }
       }
     }
-    return null;
-  };
-  let chipCount = 0;
-  const fieldsByUid = new Map();
-  for (const field of Array.isArray(diff.edited_fields) ? diff.edited_fields : []) {
-    if (!field?.uid) continue;
-    if (!fieldsByUid.has(field.uid)) fieldsByUid.set(field.uid, []);
-    fieldsByUid.get(field.uid).push(field);
   }
-  for (const [uid, fields] of fieldsByUid) {
-    const node = liveByUid.get(uid);
-    if (!node?.pos || node.flags?.collapsed) continue;
-    const pos = readNodePos(node);
-    const size = readNodeSize(node);
-    const widgets = Array.isArray(node.widgets) ? node.widgets : [];
-    const slotRows = Math.max(
-      Array.isArray(node.inputs) ? node.inputs.length : 0,
-      Array.isArray(node.outputs) ? node.outputs.length : 0,
-    );
-    const computedRowsTop = pos.y + slotRows * SLOT_H;
-    const rowBoundsForWidgetIndex = function (widx, valueText) {
-      const widget = widgets[widx];
-      let rowTop = computedRowsTop + widx * WIDGET_H;
-      let rowH = WIDGET_H;
-      if (widget && typeof widget.last_y === "number") {
-        rowTop = pos.y + widget.last_y;
-        if (typeof widget.computeSize === "function") {
-          try {
-            const computed = widget.computeSize(size.w);
-            if (computed && typeof computed[1] === "number" && computed[1] > 0) {
-              rowH = computed[1];
-            }
-          } catch (_ignored) {}
-        }
-        const rawValue = String(valueText == null ? "" : valueText);
-        const longTextValue = rawValue.indexOf("\n") !== -1 || rawValue.length > 42;
-        if (longTextValue && rowH <= WIDGET_H + 4) {
-          let nextWidgetY = null;
-          for (let ni = 0; ni < widgets.length; ni += 1) {
-            if (ni === widx || typeof widgets[ni]?.last_y !== "number") continue;
-            if (widgets[ni].last_y > widget.last_y && (nextWidgetY == null || widgets[ni].last_y < nextWidgetY)) {
-              nextWidgetY = widgets[ni].last_y;
-            }
-          }
-          const bottomY = nextWidgetY != null ? pos.y + nextWidgetY : pos.y + size.h - 8;
-          if (bottomY > rowTop + rowH) {
-            rowH = Math.min(bottomY - rowTop, 160);
-          }
-        }
-      }
-      return { x: pos.x, y: rowTop, w: size.w, h: rowH };
-    };
-    const drawn = new Set();
-    for (const field of fields) {
-      const index = resolveWidgetFieldIndex(field, node);
-      if (index == null || !Number.isFinite(index) || index < 0 || drawn.has(index)) {
-        continue;
-      }
-      drawn.add(index);
-      const valueText = safePreviewOverlayText(field.new_value, "");
-      if (!valueText) {
-        continue;
-      }
-      const labelText = typeof widgets[index]?.name === "string" ? widgets[index].name : "";
-      const chipBounds = previewChipGeometry(rowBoundsForWidgetIndex(index, valueText), labelText, valueText);
-      if (!chipBounds) {
-        continue;
-      }
-      appendPreviewDomChip(root, app, chipBounds, valueText, labelText);
-      chipCount += 1;
-    }
+  return null;
+}
+
+function fieldNewValueLabel(field) {
+  if (!field || field.new_value === null || field.new_value === undefined) {
+    return "";
   }
-  if (chipCount === 0) {
-    clearPreviewDomOverlay(doc);
-  }
+  return safePreviewOverlayText(field.new_value, "");
 }
 
 function computeGhostDimensions(cn, ctx, deps = {}) {
@@ -481,16 +444,26 @@ function buildOverlayDrawModel(ctx, diff, candidateGraph, deps = {}) {
   if (runtime._overlayDrawModelCache?.key === key) {
     return runtime._overlayDrawModelCache.model;
   }
+  const nodeOverlayKey = (node) => {
+    const uid = getUid(node);
+    if (uid) {
+      return String(uid);
+    }
+    if (node?.id != null) {
+      return String(node.id);
+    }
+    return null;
+  };
   const liveByUid = new Map();
   for (const node of getLiveGraphNodes(getLiveGraph())) {
-    const uid = getUid(node);
+    const uid = nodeOverlayKey(node);
     if (uid) {
       liveByUid.set(uid, node);
     }
   }
   const candidateByUid = new Map();
   for (const node of Array.isArray(candidateGraph?.nodes) ? candidateGraph.nodes : []) {
-    const uid = getUid(node);
+    const uid = nodeOverlayKey(node);
     if (uid) {
       candidateByUid.set(uid, node);
     }
@@ -532,6 +505,117 @@ function warnOverlayUnresolved(model, message, detail) {
   console.warn(message, safePreviewLogDetail(detail));
 }
 
+export function syncPreviewDomOverlay(app, ctx, diff, candidateGraph, deps = {}) {
+  const {
+    captureLiveCanvasRevision,
+    getLiveGraph,
+    getLiveGraphNodes,
+    getUid,
+    graphNodeCount,
+    readNodeSize,
+    readWidgetValues,
+    widgetValuePreviewText,
+  } = deps;
+  const doc = liveCanvasElement(app)?.ownerDocument || (typeof document !== "undefined" ? document : null);
+  if (!doc?.body || !ctx || !diff) {
+    clearPreviewDomOverlay(doc);
+    return;
+  }
+  const root = ensurePreviewDomOverlayRoot(doc);
+  if (!root) {
+    return;
+  }
+  const drawModel = buildOverlayDrawModel(ctx, diff, candidateGraph, {
+    captureLiveCanvasRevision,
+    getLiveGraph,
+    getLiveGraphNodes,
+    getUid,
+    graphNodeCount,
+    readNodeSize,
+    readWidgetValues,
+    widgetValuePreviewText,
+  });
+  const liveByUid = drawModel.liveByUid;
+  const SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
+  const WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
+  const editedFieldsByUid = new Map();
+  for (const field of Array.isArray(diff.edited_fields) ? diff.edited_fields : []) {
+    if (!field?.uid) continue;
+    if (!editedFieldsByUid.has(field.uid)) {
+      editedFieldsByUid.set(field.uid, []);
+    }
+    editedFieldsByUid.get(field.uid).push(field);
+  }
+  let chipCount = 0;
+  for (const [uid, fields] of editedFieldsByUid) {
+    const node = liveByUid.get(uid);
+    if (!node?.pos || node.flags?.collapsed) {
+      continue;
+    }
+    const pos = node.pos;
+    const size = readNodeSize(node);
+    const widgets = Array.isArray(node.widgets) ? node.widgets : [];
+    const slotRows = Math.max(
+      Array.isArray(node.inputs) ? node.inputs.length : 0,
+      Array.isArray(node.outputs) ? node.outputs.length : 0,
+    );
+    const computedRowsTop = pos[1] + slotRows * SLOT_H;
+    const rowBoundsForWidgetIndex = function (widx, valueText) {
+      const widget = widgets[widx];
+      let rowTop = computedRowsTop + widx * WIDGET_H;
+      let rowH = WIDGET_H;
+      if (widget && typeof widget.last_y === "number") {
+        rowTop = pos[1] + widget.last_y;
+        if (typeof widget.computeSize === "function") {
+          try {
+            const computed = widget.computeSize(size.w);
+            if (computed && typeof computed[1] === "number" && computed[1] > 0) {
+              rowH = computed[1];
+            }
+          } catch (_ignored) {}
+        }
+        const rawValue = String(valueText == null ? "" : valueText);
+        const longTextValue = rawValue.indexOf("\n") !== -1 || rawValue.length > 42;
+        if (longTextValue && rowH <= WIDGET_H + 4) {
+          let nextWidgetY = null;
+          for (let wi = 0; wi < widgets.length; wi += 1) {
+            if (wi === widx || typeof widgets[wi]?.last_y !== "number") continue;
+            if (widgets[wi].last_y > widget.last_y && (nextWidgetY == null || widgets[wi].last_y < nextWidgetY)) {
+              nextWidgetY = widgets[wi].last_y;
+            }
+          }
+          const bottomY = nextWidgetY != null ? pos[1] + nextWidgetY : pos[1] + size.h - 8;
+          if (bottomY > rowTop + rowH) {
+            rowH = Math.min(bottomY - rowTop, 160);
+          }
+        }
+      }
+      return widgetFieldBoundsFromRow({ x: pos[0], y: rowTop, w: size.w, h: rowH }, widget);
+    };
+    const drawn = new Set();
+    for (const field of fields) {
+      const index = resolveWidgetFieldIndex(field, node);
+      if (index == null || !Number.isFinite(index) || index < 0 || drawn.has(index)) {
+        continue;
+      }
+      drawn.add(index);
+      const valueText = fieldNewValueLabel(field);
+      if (!valueText) {
+        continue;
+      }
+      const widget = widgets[index];
+      const labelText = widget && typeof widget.name === "string" ? widget.name : "";
+      const widgetBounds = rowBoundsForWidgetIndex(index, valueText);
+      if (appendPreviewDomChip(root, app, widgetBounds, valueText, labelText, widgetDomViewport(widget))) {
+        chipCount += 1;
+      }
+    }
+  }
+  if (chipCount === 0) {
+    clearPreviewDomOverlay(doc);
+  }
+}
+
 export function installAgentPreviewOverlay(app, deps = {}) {
   const {
     PANEL_STATE,
@@ -542,7 +626,7 @@ export function installAgentPreviewOverlay(app, deps = {}) {
   if (app?.__vibecomfyAgentPreviewOverlayInstalled && runtime._previewForegroundInstallReport) {
     return;
   }
-  const overlayDraw = app.__vibecomfyAgentPreviewOverlayDraw || function (ctx) {
+  const overlayDraw = function (ctx) {
     const panel = currentAgentPanel();
     if (!panel || panel.state.phase !== PANEL_STATE.AWAITING_REVIEW || !panel.state.candidateGraph) {
       clearPreviewDomOverlay(liveCanvasElement(app)?.ownerDocument);
@@ -564,7 +648,7 @@ export function installAgentPreviewOverlay(app, deps = {}) {
     try {
       const diff = getOrBuildPreviewDiff();
       if (diff) {
-        drawPreviewOverlay(ctx, diff);
+        drawPreviewOverlay(ctx, diff, deps);
         syncPreviewDomOverlay(app, ctx, diff, diff._candidateGraph || panel.state.candidateGraph, deps);
       } else {
         clearPreviewDomOverlay(liveCanvasElement(app)?.ownerDocument);
@@ -574,7 +658,6 @@ export function installAgentPreviewOverlay(app, deps = {}) {
       console.warn("[vibecomfy] drawPreviewOverlay threw:", safePreviewLogDetail(e));
     }
   };
-  app.__vibecomfyAgentPreviewOverlayDraw = overlayDraw;
   try {
     const install = installPreviewForegroundOverlay(app, overlayDraw, { windowObj: window });
     runtime._previewForegroundInstallReport = install;
@@ -630,6 +713,8 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
     var addedTextColor = hexToRgba(VC_COLORS.added, 0.92);
     var removedColor = VC_COLORS.removed;
     var removedFill = hexToRgba(VC_COLORS.removed, 0.16);
+    var layoutColor = "#7dd3fc";
+    var layoutFill = "rgba(125,211,252,0.12)";
     var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
     var SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
     var WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
@@ -699,6 +784,14 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
       }
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
+    };
+
+    var lineTo = function (x, y) {
+      if (typeof ctx.lineTo === "function") {
+        ctx.lineTo(x, y);
+      } else if (typeof ctx.bezierCurveTo === "function") {
+        ctx.bezierCurveTo(x, y, x, y, x, y);
+      }
     };
 
     var trunc = function (text, maxChars) {
@@ -855,19 +948,20 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
     var drawWidgetValueOverlay = function (bounds, valueText, labelText) {
       var padX = 7;
       var padY = 4;
-      var overlayX = bounds.x;
-      var overlayY = bounds.y;
-      var overlayW = bounds.w;
-      var overlayH = Math.max(bounds.h, 12);
-      if (!Number.isFinite(overlayW) || !Number.isFinite(overlayH) || overlayW <= 0 || overlayH <= 0) return;
-      var maxTextW = Math.max(overlayW - padX * 2, 4);
       var rawValue = previewFieldValueText(labelText, valueText);
-      var wantsMultipleLines = rawValue.indexOf("\n") !== -1 || rawValue.length > 42 || ctx.measureText(rawValue).width > maxTextW;
-      var maxLines = wantsMultipleLines ? Math.max(1, Math.floor((overlayH - padY * 2) / 13)) : 1;
+      if (!Number.isFinite(bounds.w) || !Number.isFinite(bounds.h) || bounds.w <= 0 || bounds.h <= 0) return;
+      var overlayX = bounds.x;
+      var overlayW = bounds.w;
+      var maxTextW = Math.max(overlayW - padX * 2, 4);
+      var measuredRawW = ctx.measureText(rawValue).width + padX * 2;
+      var wantsMultipleLines = rawValue.indexOf("\n") !== -1 || rawValue.length > 42 || measuredRawW > overlayW;
+      var maxLines = wantsMultipleLines ? 3 : 1;
       var lines = wantsMultipleLines ? wrapTextToWidth(rawValue, maxTextW, maxLines) : [fitTextToWidth(rawValue, maxTextW)];
       lines = lines.filter(function (line) { return line != null; });
       if (lines.length === 0) lines = [""];
       var lineH = 13;
+      var overlayY = bounds.y;
+      var overlayH = Math.max(bounds.h, 12);
       drawRoundedPanel(
         overlayX,
         overlayY,
@@ -900,6 +994,35 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
       } finally {
         ctx.restore();
       }
+    };
+
+    var widgetFieldBoundsFromRow = function (rowBounds, widget) {
+      if (!rowBounds || !Number.isFinite(rowBounds.w) || rowBounds.w <= 0) {
+        return rowBounds;
+      }
+      var marginX = Math.min(15, Math.max(4, rowBounds.w * 0.08));
+      var fieldX = rowBounds.x + marginX;
+      var fieldW = Math.max(8, rowBounds.w - marginX * 2);
+      var explicitX = Number(widget && (widget.input_x ?? widget.inputX ?? widget.field_x ?? widget.fieldX ?? widget.value_x ?? widget.valueX));
+      var explicitW = Number(widget && (widget.input_width ?? widget.inputWidth ?? widget.field_width ?? widget.fieldWidth ?? widget.value_width ?? widget.valueWidth));
+      if (Number.isFinite(explicitX)) {
+        fieldX = rowBounds.x + explicitX;
+      }
+      if (Number.isFinite(explicitW) && explicitW > 0) {
+        fieldW = explicitW;
+      }
+      var minX = rowBounds.x;
+      var maxRight = rowBounds.x + rowBounds.w;
+      fieldX = Math.max(minX, Math.min(fieldX, maxRight - 4));
+      fieldW = Math.max(4, Math.min(fieldW, maxRight - fieldX));
+      return {
+        x: fieldX,
+        y: rowBounds.y,
+        w: fieldW,
+        h: rowBounds.h,
+        nodeTop: rowBounds.nodeTop,
+        nodeBottom: rowBounds.nodeBottom,
+      };
     };
 
     for (var ei = 0; ei < (diff.edited || []).length; ei += 1) {
@@ -963,7 +1086,7 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
         } else {
           rowTop = computedRowsTop + widx * WIDGET_H;
         }
-        var bounds = { x: ex, y: rowTop, w: ew, h: rowH };
+        var bounds = widgetFieldBoundsFromRow({ x: ex, y: rowTop, w: ew, h: rowH, nodeTop: ey, nodeBottom: ey + eh }, w);
         if (!hasValueText) {
           widgetRowBounds.set(widx, bounds);
         }
@@ -985,11 +1108,13 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
           if (!drawnWidgetFieldIndexes.has(resolvedWidgetIndex)) {
             drawnWidgetFieldIndexes.add(resolvedWidgetIndex);
             var overlayWidget = widgets[resolvedWidgetIndex];
-            drawWidgetValueOverlay(
-              rowBoundsForWidgetIndex(resolvedWidgetIndex, fieldNewValueLabel(ef)),
-              fieldNewValueLabel(ef),
-              overlayWidget && typeof overlayWidget.name === "string" ? overlayWidget.name : null,
-            );
+            if (!widgetDomViewport(overlayWidget)) {
+              drawWidgetValueOverlay(
+                rowBoundsForWidgetIndex(resolvedWidgetIndex, fieldNewValueLabel(ef)),
+                fieldNewValueLabel(ef),
+                overlayWidget && typeof overlayWidget.name === "string" ? overlayWidget.name : null,
+              );
+            }
           }
         } else {
           nonWidgetFields.push(ef);
@@ -1033,10 +1158,10 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
         x: cpos.x,
         y: cpos.y - TITLE_H,
         w: dims.w,
-        h: dims.h + TITLE_H,
+        h: dims.h,
       };
       drawFullBoxMarker(gb, addedColor, addedFill, true);
-      drawBadge(gb.x + 4, gb.y + gb.h - 2, "+ new node", addedColor);
+      drawBadge(gb.x + 4, gb.y + gb.h - 2, "+ new", addedColor);
       ctx.save();
       try {
         ctx.font = "12px Arial, sans-serif";
@@ -1044,6 +1169,77 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
         ctx.fillStyle = addedTextColor;
         var ghostTitle = trunc(safePreviewOverlayText((typeof cn.title === "string" && cn.title) || cn.type || "Node", "Node"), 36);
         ctx.fillText(ghostTitle, gb.x + 10, gb.y + 8);
+        var ghostInputs = Array.isArray(cn.inputs) ? cn.inputs : [];
+        var ghostOutputs = Array.isArray(cn.outputs) ? cn.outputs : [];
+        var ghostSlotRows = Math.max(ghostInputs.length, ghostOutputs.length);
+        var ghostWidgetValues = readWidgetValues(cn);
+        var ghostWidgetTop = gb.y + TITLE_H + ghostSlotRows * SLOT_H;
+        var ghostTextMaxW = Math.max(12, gb.w - 20);
+        for (var gwi = 0; gwi < ghostWidgetValues.length; gwi += 1) {
+          var ghostWidgetText = fitTextToWidth(
+            safePreviewOverlayText(widgetValuePreviewText(ghostWidgetValues[gwi]), ""),
+            ghostTextMaxW,
+          );
+          if (ghostWidgetText) {
+            ctx.fillText(ghostWidgetText, gb.x + 10, ghostWidgetTop + gwi * WIDGET_H + 4);
+          }
+        }
+      } finally {
+        ctx.restore();
+      }
+    }
+
+    var layoutMoved = Array.isArray(diff.layout_moved) ? diff.layout_moved : [];
+    for (var lmi = 0; lmi < layoutMoved.length; lmi += 1) {
+      var move = layoutMoved[lmi];
+      if (!move || !move.uid || !move.before || !move.after) {
+        continue;
+      }
+      var beforeBounds = {
+        x: Number(move.before.x) || 0,
+        y: (Number(move.before.y) || 0) - TITLE_H,
+        w: Math.max(1, Number(move.before.w) || 1),
+        h: Math.max(1, Number(move.before.h) || 1) + TITLE_H,
+      };
+      var afterBounds = {
+        x: Number(move.after.x) || 0,
+        y: (Number(move.after.y) || 0) - TITLE_H,
+        w: Math.max(1, Number(move.after.w) || 1),
+        h: Math.max(1, Number(move.after.h) || 1) + TITLE_H,
+      };
+      drawFullBoxMarker(afterBounds, layoutColor, layoutFill, false);
+      var beforeCx = beforeBounds.x + beforeBounds.w / 2;
+      var beforeCy = beforeBounds.y + beforeBounds.h / 2;
+      var afterCx = afterBounds.x + afterBounds.w / 2;
+      var afterCy = afterBounds.y + afterBounds.h / 2;
+      ctx.save();
+      try {
+        ctx.strokeStyle = layoutColor;
+        ctx.fillStyle = layoutColor;
+        ctx.lineWidth = 2;
+        if (ctx.setLineDash) {
+          ctx.setLineDash([4, 4]);
+        }
+        ctx.beginPath();
+        ctx.moveTo(beforeCx, beforeCy);
+        lineTo(afterCx, afterCy);
+        ctx.stroke();
+        if (ctx.setLineDash) {
+          ctx.setLineDash([]);
+        }
+        var moveAngle = Math.atan2(afterCy - beforeCy, afterCx - beforeCx);
+        var arrowHead = 8;
+        ctx.beginPath();
+        ctx.moveTo(afterCx, afterCy);
+        lineTo(
+          afterCx - arrowHead * Math.cos(moveAngle - Math.PI / 6),
+          afterCy - arrowHead * Math.sin(moveAngle - Math.PI / 6),
+        );
+        lineTo(
+          afterCx - arrowHead * Math.cos(moveAngle + Math.PI / 6),
+          afterCy - arrowHead * Math.sin(moveAngle + Math.PI / 6),
+        );
+        ctx.fill();
       } finally {
         ctx.restore();
       }
@@ -1085,7 +1281,7 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
     var drawWire = function (from, to, color, dashed) {
       ctx.save();
       try {
-        ctx.setLineDash(dashed ? [8, 6] : []);
+        ctx.setLineDash(dashed ? [8, 4] : []);
         ctx.strokeStyle = color;
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -1098,36 +1294,103 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
       }
     };
 
+    var parseLinkKey = function (key) {
+      var match = /^(.+?)::(.+?)->(.+?)::(.+?)$/.exec(String(key || ""));
+      return match
+        ? { fromUid: match[1], fromPort: match[2], toUid: match[3], toPort: match[4] }
+        : null;
+    };
+
+    var resolveSlotIndex = function (node, portKey, ioKind) {
+      var portsKey = ioKind === "output" ? "outputs" : "inputs";
+      var ports = Array.isArray(node && node[portsKey]) ? node[portsKey] : [];
+      var key = String(portKey == null ? "" : portKey);
+      for (var pi = 0; pi < ports.length; pi += 1) {
+        if (String(ports[pi]?.name || "") === key) {
+          return pi;
+        }
+        if (ports[pi]?.slot_index != null && String(ports[pi].slot_index) === key) {
+          return pi;
+        }
+      }
+      var numeric = Number(key);
+      if (Number.isInteger(numeric) && numeric >= 0 && numeric < ports.length) {
+        return numeric;
+      }
+      var prefixedNumeric = key.match(/^(?:input|output)_(\d+)$/);
+      if (prefixedNumeric) {
+        var prefixedIndex = Number(prefixedNumeric[1]);
+        if (Number.isInteger(prefixedIndex) && prefixedIndex >= 0 && prefixedIndex < ports.length) {
+          return prefixedIndex;
+        }
+      }
+      var typedMatches = [];
+      for (var ti = 0; ti < ports.length; ti += 1) {
+        if (String(ports[ti]?.type || "") === key) {
+          typedMatches.push(ti);
+        }
+      }
+      if (typedMatches.length === 1) {
+        return typedMatches[0];
+      }
+      if (ports.length === 1) {
+        return 0;
+      }
+      return -1;
+    };
+
     var remLinks = Array.isArray(diff.removed_links) ? diff.removed_links : [];
     for (var rli = 0; rli < remLinks.length; rli += 1) {
       var rem = remLinks[rli];
-      var remMatch = /^(.*?)::(\d+)->(.*?)::(\d+)$/.exec(String(rem || ""));
+      var remMatch = parseLinkKey(rem);
       if (!remMatch) {
         continue;
       }
-      var remFrom = resolvePortPoint(remMatch[1], Number(remMatch[2]), "output", false);
-      var remTo = resolvePortPoint(remMatch[3], Number(remMatch[4]), "input", false);
+      var remFromNode = liveByUid.get(remMatch.fromUid);
+      var remToNode = liveByUid.get(remMatch.toUid);
+      var remFromSlot = resolveSlotIndex(remFromNode, remMatch.fromPort, "output");
+      var remToSlot = resolveSlotIndex(remToNode, remMatch.toPort, "input");
+      if (remFromSlot < 0 || remToSlot < 0) {
+        warnOverlayUnresolved(drawModel, "[vibecomfy] drawPreviewOverlay — unresolvable removed-wire endpoint:", rem);
+        continue;
+      }
+      var remFrom = resolvePortPoint(remMatch.fromUid, remFromSlot, "output", false);
+      var remTo = resolvePortPoint(remMatch.toUid, remToSlot, "input", false);
       if (!remFrom || !remTo) {
         warnOverlayUnresolved(drawModel, "[vibecomfy] drawPreviewOverlay — could not resolve removed-wire endpoint positions:", rem);
         continue;
       }
-      drawWire(remFrom, remTo, removedColor, false);
+      drawWire(remFrom, remTo, removedColor, true);
     }
 
     var addLinks = Array.isArray(diff.added_links) ? diff.added_links : [];
     for (var ali = 0; ali < addLinks.length; ali += 1) {
       var add = addLinks[ali];
-      var addMatch = /^(.*?)::(\d+)->(.*?)::(\d+)$/.exec(String(add || ""));
+      var addMatch = parseLinkKey(add);
       if (!addMatch) {
         continue;
       }
-      var addFrom = resolvePortPoint(addMatch[1], Number(addMatch[2]), "output", addedByUid.has(addMatch[1]));
-      var addTo = resolvePortPoint(addMatch[3], Number(addMatch[4]), "input", addedByUid.has(addMatch[3]));
+      var addFromCandidatePreferred = addedByUid.has(addMatch.fromUid);
+      var addToCandidatePreferred = addedByUid.has(addMatch.toUid);
+      var addFromNode = addFromCandidatePreferred
+        ? candidateByUid.get(addMatch.fromUid)
+        : (liveByUid.get(addMatch.fromUid) || candidateByUid.get(addMatch.fromUid));
+      var addToNode = addToCandidatePreferred
+        ? candidateByUid.get(addMatch.toUid)
+        : (liveByUid.get(addMatch.toUid) || candidateByUid.get(addMatch.toUid));
+      var addFromSlot = resolveSlotIndex(addFromNode, addMatch.fromPort, "output");
+      var addToSlot = resolveSlotIndex(addToNode, addMatch.toPort, "input");
+      if (addFromSlot < 0 || addToSlot < 0) {
+        warnOverlayUnresolved(drawModel, "[vibecomfy] drawPreviewOverlay — unresolvable added-wire endpoint:", add);
+        continue;
+      }
+      var addFrom = resolvePortPoint(addMatch.fromUid, addFromSlot, "output", addFromCandidatePreferred);
+      var addTo = resolvePortPoint(addMatch.toUid, addToSlot, "input", addToCandidatePreferred);
       if (!addFrom || !addTo) {
         warnOverlayUnresolved(drawModel, "[vibecomfy] drawPreviewOverlay — could not resolve added-wire endpoint positions:", add);
         continue;
       }
-      drawWire(addFrom, addTo, addedColor, true);
+      drawWire(addFrom, addTo, addedColor, false);
     }
   } finally {
     ctx.restore();

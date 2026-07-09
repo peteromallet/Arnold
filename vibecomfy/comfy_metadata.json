@@ -1,8 +1,8 @@
 {
-  "captured_at": "2026-06-13T00:00:00+00:00",
-  "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-  "install_dir": "vibecomfy[comfy]",
-  "status": "discovered",
-  "tested_at": "2026-06-13T00:00:00+00:00",
-  "version": "0.18.2"
+  "captured_at": "2026-07-09T09:32:35.945439+00:00",
+  "commit": "unknown",
+  "install_dir": null,
+  "status": "unavailable",
+  "tested_at": "2026-07-09T09:32:35.945439+00:00",
+  "version": "unknown"
 }

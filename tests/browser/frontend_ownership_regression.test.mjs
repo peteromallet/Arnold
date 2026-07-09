@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import * as candidateActions from "../../vibecomfy/comfy_nodes/web/agent_candidate_actions.js";
 import * as panelComposer from "../../vibecomfy/comfy_nodes/web/panel_composer.js";
+import * as panelThread from "../../vibecomfy/comfy_nodes/web/panel_thread.js";
 import * as statusPoller from "../../vibecomfy/comfy_nodes/web/agent_status_poller.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +19,9 @@ function source(name) {
 }
 
 const roundtripSource = source("vibecomfy_roundtrip.js");
+const panelComposerSource = source("panel_composer.js");
+const panelRuntimeSource = source("panel_runtime.js");
+const panelThreadSource = source("panel_thread.js");
 
 function assertNoOwnerDefinition(name) {
   const definitionPattern = new RegExp(
@@ -35,6 +39,14 @@ function functionBody(name) {
     new RegExp(String.raw`(?:async\s+)?function\s+${name}\s*\([^)]*\)\s*\{([\s\S]*?)\n\}`),
   );
   assert.ok(match, `expected wrapper function ${name} in vibecomfy_roundtrip.js`);
+  return match[1];
+}
+
+function functionBodyFrom(moduleSource, name) {
+  const match = moduleSource.match(
+    new RegExp(String.raw`(?:export\s+)?(?:async\s+)?function\s+${name}\s*\([^)]*\)\s*\{([\s\S]*?)\n\}`),
+  );
+  assert.ok(match, `expected function ${name}`);
   return match[1];
 }
 
@@ -123,6 +135,83 @@ test("vibecomfy_roundtrip keeps composer and candidate selector ownership delega
   assert.doesNotMatch(roundtripSource, /function\s+renderSettings\s*\(/);
   assert.doesNotMatch(roundtripSource, /function\s+renderDeveloperSection\s*\(/);
   assert.doesNotMatch(roundtripSource, /function\s+renderSettingsSection\s*\(/);
+
+  assertDelegatingWrapper("submitReadinessState", /submitReadinessStateImpl\(panel,\s*\{/);
+  assertDelegatingWrapper("syncComposerButtons", /syncComposerButtonsImpl\(panel,\s*\{\s*submitting,\s*applying,\s*reviewing,\s*working,\s*showUndo\s*\}\)/);
+  assertDelegatingWrapper("renderComposerNotice", /renderComposerNoticeImpl\(panel,\s*readinessState,\s*\{/);
+  assertDelegatingWrapper("renderComposerActions", /renderComposerActionsImpl\(panel,\s*\{/);
+  assertDelegatingWrapper("renderComposerNoticeSection", /renderComposerNoticeSectionImpl\(panel,\s*\{/);
+});
+
+test("vibecomfy_roundtrip keeps research contribution status wrappers delegated", () => {
+  assertDelegatingWrapper("refreshResearchContributionSetting", /pollerRefreshResearchContributionSetting\(panel,\s*\{/);
+  assertDelegatingWrapper("saveResearchContributionSetting", /pollerSaveResearchContributionSetting\(panel,\s*enabled,\s*\{\s*trigger\s*\},\s*\{/);
+});
+
+test("vibecomfy_roundtrip keeps thread detail builders delegated", () => {
+  for (const name of [
+    "responseDetailForMessage",
+    "turnIdForDetailLookup",
+    "changeDetailsFromResponseDetail",
+    "renderCandidate",
+    "renderFailure",
+    "renderQueue",
+  ]) {
+    assertNoOwnerDefinition(name);
+  }
+
+  assert.match(roundtripSource, /from\s+["']\.\/panel_thread\.js["']/);
+  assertDelegatingWrapper("createBubbleDetailSection", /createBubbleDetailSectionImpl\(title,\s*\{\s*el\s*\}\)/);
+  assertDelegatingWrapper("changeDetailsForMessage", /changeDetailsForMessageImpl\(panel,\s*message,\s*snapshot,\s*\{\s*clonePlainData\s*\}\)/);
+  assertDelegatingWrapper("appendCandidateDetail", /appendCandidateDetailImpl\(body,\s*panel,\s*message,\s*snapshot,\s*\{/);
+  assertDelegatingWrapper("appendFailureDetail", /appendFailureDetailImpl\(body,\s*panel,\s*snapshot,\s*\{/);
+  assertDelegatingWrapper("appendQueueDetail", /appendQueueDetailImpl\(body,\s*panel,\s*snapshot,\s*\{/);
+
+  for (const forbidden of [
+    "Candidate returned without report rows.",
+    "raw failure",
+    "Queue disabled in this proof shell",
+  ]) {
+    assert.doesNotMatch(roundtripSource, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("vibecomfy_roundtrip render dispatch uses composer wrappers instead of duplicate deps", () => {
+  assert.match(
+    roundtripSource,
+    /runAgentPanelSectionRenderer\(panel,\s*RENDER_SECTIONS\.COMPOSER,\s*renderComposerActions,\s*result\)/,
+  );
+  assert.match(
+    roundtripSource,
+    /runAgentPanelSectionRenderer\(panel,\s*RENDER_SECTIONS\.NOTICE,\s*renderComposerNoticeSection,\s*result\)/,
+  );
+  assert.doesNotMatch(roundtripSource, /RENDER_SECTIONS\.COMPOSER,[\s\S]{0,220}renderComposerActionsImpl\(nextPanel/);
+  assert.doesNotMatch(roundtripSource, /RENDER_SECTIONS\.NOTICE,[\s\S]{0,260}renderComposerNoticeSectionImpl\(nextPanel/);
+});
+
+test("frontend render diagnostics keep a single canonical runtime mirror", () => {
+  assert.doesNotMatch(panelRuntimeSource, /\blastThreadRender:\s*null/);
+  assert.doesNotMatch(panelRuntimeSource, /\blastNoticeRender:\s*null/);
+  assert.match(panelRuntimeSource, /_lastThreadRender:\s*null/);
+  assert.match(panelRuntimeSource, /_lastNoticeRender:\s*null/);
+
+  assert.doesNotMatch(panelThreadSource, /runtime\.lastThreadRender\s*=/);
+  assert.doesNotMatch(panelThreadSource, /panel\.lastThreadRender\s*=/);
+  assert.match(panelThreadSource, /runtime\._lastThreadRender\s*=/);
+
+  assert.doesNotMatch(panelComposerSource, /runtime\.lastNoticeRender\s*=/);
+  assert.doesNotMatch(panelComposerSource, /panel\.lastNoticeRender\s*=/);
+  assert.match(panelComposerSource, /runtime\._lastNoticeRender\s*=/);
+
+  assert.match(roundtripSource, /lastThreadRender:\s*runtime\._lastThreadRender/);
+  assert.match(roundtripSource, /lastNoticeRender:\s*runtime\._lastNoticeRender/);
+});
+
+test("panel_composer developer renderer preserves constructed DOM", () => {
+  const body = functionBodyFrom(panelComposerSource, "renderDeveloper");
+  assert.match(body, /body\.appendChild\(devData\)/);
+  assert.doesNotMatch(body, /body\.textContent\s*=/);
+  assert.doesNotMatch(body, /parentNode\.textContent\s*=/);
 });
 
 test("canonical frontend owners expose the expected public APIs", () => {
@@ -159,10 +248,27 @@ test("canonical frontend owners expose the expected public APIs", () => {
     "renderDeveloperSection",
     "renderSettings",
     "renderSettingsSection",
+    "composerApplyDisplayState",
+    "submitReadinessState",
+    "syncComposerButtons",
+    "renderComposerNotice",
+    "renderComposerActions",
+    "renderComposerNoticeSection",
   ]) {
     assert.equal(typeof panelComposer[name], "function", `panel_composer.js exports ${name}`);
   }
   assert.equal(Object.hasOwn(panelComposer, "renderDeveloperSubsection"), false);
+
+  for (const name of [
+    "appendCandidateDetail",
+    "appendFailureDetail",
+    "appendQueueDetail",
+    "changeDetailsForMessage",
+    "createBubbleDetailSection",
+    "populateAgentBubbleDetail",
+  ]) {
+    assert.equal(typeof panelThread[name], "function", `panel_thread.js exports ${name}`);
+  }
 });
 
 test("canonical route policy keeps DeepSeek as a distinct provider route", () => {
