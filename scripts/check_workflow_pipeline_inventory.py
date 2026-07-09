@@ -15,9 +15,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from arnold.conformance.authoring_terms import FORBIDDEN_AUTHORING_TERMS
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from arnold.conformance.authoring_terms import (
+    FORBIDDEN_AUTHORING_TERMS,
+    FORBIDDEN_COMMAND_TERMS,
+)
 
 # Every shipped / example root under arnold/pipelines or arnold_pipelines that
 # exists today must have a disposition row.  A root is either a package
@@ -171,14 +176,9 @@ CANONICAL_NATIVE_ALLOWED_PATTERNS = {
     "Edge(",
 }
 
-# Command examples that must not appear in active docs/skills.
-FORBIDDEN_DOC_PATTERNS = (
-    "arnold pipelines describe",
-    "arnold pipelines check",
-    "arnold pipelines doctor",
-    "arnold pipelines new",
-    "arnold pipeline ",
-)
+# Command examples that must not appear in active docs/skills. Aliased to the
+# shared FORBIDDEN_COMMAND_TERMS (single source of truth).
+FORBIDDEN_DOC_PATTERNS = FORBIDDEN_COMMAND_TERMS
 
 # Files / directories where forbidden patterns are allowed (archival migration
 # notes, legacy tests, and generated fixtures that intentionally capture old
