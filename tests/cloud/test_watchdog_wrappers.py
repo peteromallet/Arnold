@@ -14464,40 +14464,43 @@ def test_repair_data_maintenance_skips_when_repair_lock_is_busy(tmp_path: Path) 
     lock_dir = marker_dir / "demo.repair-loop.lock"
     marker_dir.mkdir(parents=True)
     repair_dir.mkdir(parents=True)
-    lock_dir.mkdir()
-    started_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=60)).isoformat()
-    (lock_dir / "owner.json").write_text(
-        json.dumps(
-            {
-                "session": "demo",
-                "pid": os.getpid(),
-                "started_at": started_at,
-                "timeout_seconds": 3600,
-                "command": "arnold-repair-loop demo",
-                "cwd": str(tmp_path),
-                "hostname": "localhost",
-            }
-        ),
-        encoding="utf-8",
+    holder = subprocess.Popen(["sleep", "30"])
+    lock = repair_lock.acquire_repair_lock(
+        lock_dir,
+        session="demo",
+        pid=holder.pid,
+        command="sleep 30",
+        cwd=str(tmp_path),
+        timeout_seconds=3600,
     )
+    assert lock.acquired
 
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function_until("run_repair_data_maintenance", "reap_stale_repair_candidates"),
-            f"MARKER_DIR={str(marker_dir)!r}",
-            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
-            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
-            f"SRC_DIR={str(REPO_ROOT)!r}",
-            f"PYTHONPATH={str(REPO_ROOT)!r}",
-            "REPAIR_DATA_RETENTION_INTERVAL_SECS=21600",
-            "run_repair_data_maintenance",
-        ]
-    )
+    try:
+        script = "\n\n".join(
+            [
+                _extract_wrapper_function_until("run_repair_data_maintenance", "reap_stale_repair_candidates"),
+                f"MARKER_DIR={str(marker_dir)!r}",
+                f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+                f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+                f"SRC_DIR={str(REPO_ROOT)!r}",
+                f"PYTHONPATH={str(REPO_ROOT)!r}",
+                "REPAIR_DATA_RETENTION_INTERVAL_SECS=21600",
+                "run_repair_data_maintenance",
+            ]
+        )
 
-    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "LOCK_BUSY" in result.stdout, f"stdout: {result.stdout}"
-    assert not (repair_dir / "index.json").exists()
+        result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "LOCK_BUSY" in result.stdout, f"stdout: {result.stdout}"
+        assert not (repair_dir / "index.json").exists()
+    finally:
+        holder.terminate()
+        try:
+            holder.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            holder.kill()
+            holder.wait(timeout=5)
+        repair_lock.release_repair_lock(lock_dir, owner=lock.owner)
 
 
 def test_partial_liveness_tick_writes_sidecar_record(tmp_path: Path) -> None:
