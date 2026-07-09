@@ -406,7 +406,7 @@ def test_profile_expansion_with_phase_model_and_no_state_keeps_tier_models(tmp_p
     assert "critique" in args.tier_models
 
 
-def test_profile_expansion_without_cli_suppresses_profile_execute_tier_models(tmp_path: Path) -> None:
+def test_profile_expansion_without_cli_keeps_profile_execute_tier_models(tmp_path: Path) -> None:
     args = Namespace(
         profile="partnered-5",
         phase_model=[],
@@ -419,10 +419,34 @@ def test_profile_expansion_without_cli_suppresses_profile_execute_tier_models(tm
 
     apply_profile_expansion(args, tmp_path)
 
-    assert "execute=codex:medium" in args.phase_model
+    assert "execute=codex:gpt-5.4" in args.phase_model
     assert args.tier_models is not None
-    assert "execute" not in args.tier_models
+    assert "execute" in args.tier_models
+    assert args.tier_models["execute"][3] == "hermes:deepseek:deepseek-v4-pro"
     assert "critique" in args.tier_models
+
+
+def test_profile_expansion_execute_tiers_survive_profile_fallback_pin(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.handlers.execute import _extract_execute_tier_map
+
+    args = Namespace(
+        profile="partnered-5",
+        phase_model=[],
+        tier_models=None,
+        vendor="codex",
+        critic=None,
+        depth="high",
+        deepseek_provider=None,
+    )
+
+    apply_profile_expansion(args, tmp_path)
+
+    assert "execute=codex:gpt-5.4" in args.phase_model
+    tier_map = _extract_execute_tier_map(args.tier_models)
+    assert tier_map is not None
+    assert tier_map[1] == "hermes:deepseek:deepseek-v4-flash"
+    assert tier_map[3] == "hermes:deepseek:deepseek-v4-pro"
+    assert tier_map[5] == "codex:gpt-5.5"
 
 
 def test_profile_expansion_with_persisted_execute_pin_keeps_execute_pinned_and_suppressed(

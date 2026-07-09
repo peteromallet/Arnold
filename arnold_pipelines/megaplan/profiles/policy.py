@@ -1070,7 +1070,6 @@ def apply_profile_expansion(
             profile_steps.add(step)
         if tier_models:
             suppressed_tier_steps = {"execute", "critique"} & cli_steps
-            suppressed_tier_steps.update({"execute"} & profile_steps)
             for phase in suppressed_tier_steps:
                 tier_models.pop(phase, None)
         args.tier_models = tier_models
