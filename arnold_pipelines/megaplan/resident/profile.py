@@ -8,7 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 from urllib.parse import urlparse
 
 from pydantic import Field
@@ -65,6 +65,33 @@ MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v1"
 # of staleness before treating broad status as degraded.
 _SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
+
+
+def _sanitize_stale_snapshot(snapshot: Mapping[str, Any], reason: str) -> dict[str, Any]:
+    """Return a snapshot with authoritative numbers stripped when it is stale.
+
+    P1 safety net: when the cached cloud-status file is present but stale, we must
+    not let the resident cite frozen progress/summary numbers as if live. Keep
+    ``generated_at``/``source`` (honesty about *when* the frozen view is from),
+    empty ``sessions`` and zero ``summary`` so nothing can be quoted, and attach a
+    ``stale_banner`` the prompt is required to surface verbatim. See
+    ``docs/arnold/watchdog-snapshot-staleness-fix.md``.
+    """
+    banner = (
+        "WATCHDOG STALE — cached cloud-status snapshot is not fresh; numbers "
+        "withheld; use live_cloud_chain / local_epic_chain_state as degraded "
+        f"fallback. ({reason})"
+    )
+    return {
+        "generated_at": snapshot.get("generated_at"),
+        "source": snapshot.get("source"),
+        "marker_dir": snapshot.get("marker_dir"),
+        "watchdog_generated_at": snapshot.get("watchdog_generated_at"),
+        "summary": {"running": 0, "blocked": 0, "repairing": 0, "complete": 0, "attention": 0},
+        "sessions": [],
+        "stale_banner": banner,
+        "stale_reason": reason,
+    }
 
 
 class ActorToolInput(ToolInput):
@@ -436,10 +463,14 @@ class MegaplanResidentProfile:
             " For broad status questions ('how's it going?', 'what is active?', 'is it cooking?', "
             "'why did it not reply?'), answer from `cloud_status_snapshot` / `plan_activity_summary` "
             "in hot context FIRST. That snapshot is the canonical shared-runner view produced by the "
-            "watchdog; cite its generated_at timestamp. If `cloud_status_degraded` is set or the "
-            "snapshot is missing/stale, say so explicitly before using `local_epic_chain_state` or "
-            "`live_cloud_chain` as fallback — and label that fallback as degraded, not full cloud "
-            "status. When a snapshot session carries a `progress` block, lead with the active "
+            "watchdog; cite its generated_at timestamp. If `cloud_status_snapshot.stale_banner` is "
+            "present, you MUST emit that banner VERBATIM as your first line and you MUST NOT quote "
+            "any percent, sprint, summary, or progress number from that snapshot — those have been "
+            "withheld because they are frozen; answer the live question from `live_cloud_chain` / "
+            "`local_epic_chain_state` instead, labeled degraded. If `cloud_status_degraded` is set "
+            "or the snapshot is missing, say so explicitly before using those fallbacks and label "
+            "them degraded, not full cloud status. When a snapshot session carries a `progress` "
+            "block, lead with the active "
             "epic's overall percent — e.g. 'Epic X: <progress.percent>% (A/B sprints done), currently "
             "on <current_plan>'. `progress.percent` already folds the in-flight plan's stage fraction "
             "in, so it advances as the current plan progresses rather than freezing between milestones. "
@@ -483,6 +514,12 @@ class MegaplanResidentProfile:
                     if self.config.codex_sandbox == "danger-full-access"
                     else f"Codex CLI sandbox: {self.config.codex_sandbox}"
                 ),
+                # P0 visibility: surface the build-vs-read decision so a resident
+                # that silently fell to cache mode (lost MEGAPLAN_TRUSTED_CONTAINER
+                # on a manual restart) is diagnosable from hot context / logs.
+                "trusted_container": status_snapshot.is_trusted_container(),
+                "has_local_markers": status_snapshot.has_local_markers(),
+                "status_snapshot_path": str(self.config.status_snapshot_path),
             },
             "configured_cloud_yaml": str(self.config.cloud_yaml_path),
             # Canonical broad-status snapshot — the first source for "how's it
@@ -604,27 +641,46 @@ class MegaplanResidentProfile:
         lag a newly-started session by up to a tick). Elsewhere the on-disk file
         is read with a freshness window.
         """
-        if status_snapshot.is_trusted_container():
+        # P0: build fresh whenever the canonical marker dir is present — the real
+        # "I'm on the box" signal — NOT gated on MEGAPLAN_TRUSTED_CONTAINER. A
+        # resident that lost the env var on a manual restart still serves live
+        # per-turn data instead of a stale cache. The env var now only gates the
+        # best-effort shared-file write (so an arbitrary on-box process doesn't
+        # clobber the watchdog's cache).
+        if status_snapshot.has_local_markers():
             try:
                 snapshot = status_snapshot.build_cloud_status_snapshot()
             except Exception as exc:  # pragma: no cover - defensive guard
                 return None, f"snapshot build failed: {exc.__class__.__name__}: {exc}"
-            # Best-effort refresh of the shared on-disk file so CLI/laptop and
-            # later reads see the current view too. The watchdog still owns the
-            # hourly cadence; this just keeps the file fresh between sweeps while
-            # the resident is active. A write failure never degrades the answer.
-            try:
-                status_snapshot.write_cloud_status_snapshot(
-                    snapshot, path=self.config.status_snapshot_path
-                )
-            except Exception:  # pragma: no cover - best effort
-                pass
+            if status_snapshot.is_trusted_container():
+                # Best-effort refresh of the shared on-disk file so CLI/laptop
+                # and later reads see the current view too. The watchdog still
+                # owns the hourly cadence; this just keeps the file fresh between
+                # sweeps while the resident is active. A write failure never
+                # degrades the answer.
+                try:
+                    status_snapshot.write_cloud_status_snapshot(
+                        snapshot, path=self.config.status_snapshot_path
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    pass
             return snapshot, None
         path = self.config.status_snapshot_path
         try:
-            return status_snapshot.load_cloud_status_snapshot(path, max_age_s=_SNAPSHOT_MAX_AGE_S)
+            snapshot, degraded_reason = status_snapshot.load_cloud_status_snapshot(
+                path, max_age_s=_SNAPSHOT_MAX_AGE_S
+            )
         except Exception as exc:  # pragma: no cover - defensive guard for callers
             return None, f"snapshot load failed at {path}: {exc.__class__.__name__}"
+        if snapshot is None:
+            return None, degraded_reason
+        # P1: never serve stale numbers as authoritative. When the cached file is
+        # present but stale, strip sessions/summary (so the resident cannot cite
+        # frozen progress as if live), keep generated_at for honesty, and attach
+        # a verbatim stale_banner the prompt must lead with.
+        if degraded_reason:
+            return _sanitize_stale_snapshot(snapshot, degraded_reason), degraded_reason
+        return snapshot, None
 
     def tools(self) -> ToolRegistry:
         return self.tool_registry
