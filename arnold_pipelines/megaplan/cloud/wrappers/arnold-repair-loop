@@ -373,12 +373,49 @@ PY
   fi
 }
 
+release_active_repair_claim() {
+  local blocker_id="${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+  local request_id="${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+  local owner_pid="${CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID:-}"
+  if [[ -z "$blocker_id" || ! "$owner_pid" =~ ^[0-9]+$ ]]; then
+    return
+  fi
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_DIR" "$blocker_id" "$owner_pid" "$request_id" <<'PY'
+import sys
+
+from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan.cloud.repair_lock import inspect_repair_lock
+
+marker_dir, blocker_id, owner_pid_text, request_id = sys.argv[1:]
+try:
+    owner_pid = int(owner_pid_text)
+except ValueError:
+    raise SystemExit(0)
+
+queue_dir = repair_requests.repair_queue_dir(marker_dir)
+lock_dir = repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
+owner = inspect_repair_lock(lock_dir).owner
+if request_id and isinstance(owner, dict):
+    owner_request_id = str(owner.get("request_id") or "")
+    if owner_request_id and owner_request_id != request_id:
+        raise SystemExit(0)
+
+repair_requests.release_active_repair_request_claim(
+    queue_dir,
+    blocker_id=blocker_id,
+    expected_pid=owner_pid,
+)
+raise SystemExit(0)
+PY
+}
+
 shutdown_repair_loop() {
   if [[ "$REPAIR_SHUTDOWN_RAN" == "1" ]]; then
     return
   fi
   REPAIR_SHUTDOWN_RAN=1
   cleanup_children
+  release_active_repair_claim
   release_repair_lock
 }
 
