@@ -54,6 +54,8 @@ __all__ = [
     "blocking_north_star_actions",
     "normalize_north_star_action_addressed",
     "normalize_north_star_actions_addressed",
+    "find_unresolved_blocking_actions",
+    "read_carried_north_star_actions",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -486,3 +488,146 @@ def normalize_north_star_actions_addressed(raw: Any) -> list[dict[str, Any]]:
         normalize_north_star_action_addressed(item, index=index)
         for index, item in enumerate(raw)
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Shared closeout check (revise closeout, finalize gate)
+# --------------------------------------------------------------------------- #
+
+
+def find_unresolved_blocking_actions(
+    *,
+    carried_blocking: Sequence[Mapping[str, Any]],
+    addressed: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return the carried blocking actions that are *not* concretely resolved.
+
+    This is the shared authority for North Star closeout checks (revise
+    closeout, finalize gate, review blocking). A carried blocking action is
+    considered resolved **only** when the addressed metadata contains a
+    record that:
+
+    * links to the carried action by ``action_id`` (not omitted);
+    * cites **concrete** plan refs — a non-empty ``plan_refs`` list with at
+      least one non-blank string (not prose-only);
+    * echoes the carried action's ``action_type`` marker exactly
+      (satisfies the required action-type structural marker).
+
+    When *addressed* is ``None`` (metadata absent, malformed, or from a
+    source that could not be read) every carried blocker is reported as
+    unresolved — fail-closed, following the gate-settled decision (SD1)
+    that absent or incomplete metadata can never stand in for evidence of
+    resolution. Advisory actions are never in scope.
+    """
+    # Absent/malformed addressed metadata => all carried blockers unresolved.
+    if addressed is None:
+        return [
+            {
+                "id": action.get("id"),
+                "action_type": action.get("action_type"),
+                "reason": "addressed_metadata_missing_or_malformed",
+            }
+            for action in carried_blocking
+            if isinstance(action, Mapping)
+        ]
+
+    # Index addressed records by normalized action_id (first occurrence wins).
+    addressed_by_id: dict[str, dict[str, Any]] = {}
+    for rec in addressed:
+        if not isinstance(rec, Mapping):
+            continue
+        aid = rec.get("action_id")
+        if isinstance(aid, str) and aid.strip():
+            addressed_by_id.setdefault(aid.strip(), dict(rec))
+
+    unresolved: list[dict[str, Any]] = []
+    for action in carried_blocking:
+        if not isinstance(action, Mapping):
+            continue
+        aid = action.get("id")
+        aid_key = aid.strip() if isinstance(aid, str) else None
+        record = addressed_by_id.get(aid_key) if aid_key else None
+
+        if record is None:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": action.get("action_type"),
+                    "reason": "omitted",
+                }
+            )
+            continue
+
+        plan_refs = record.get("plan_refs")
+        has_concrete_refs = isinstance(plan_refs, list) and any(
+            isinstance(ref, str) and ref.strip() for ref in plan_refs
+        )
+        if not has_concrete_refs:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": action.get("action_type"),
+                    "reason": "prose_only",
+                }
+            )
+            continue
+
+        carried_type = action.get("action_type")
+        addressed_type = record.get("action_type")
+        if addressed_type != carried_type:
+            unresolved.append(
+                {
+                    "id": aid,
+                    "action_type": carried_type,
+                    "addressed_action_type": addressed_type,
+                    "reason": "action_type_mismatch",
+                }
+            )
+            continue
+
+    return unresolved
+
+
+def read_carried_north_star_actions(plan_dir: Any) -> list[dict[str, Any]]:
+    """Read the normalized North Star actions carried from the gate step.
+
+    Prefers ``gate_carry.json`` (the normalized carry artifact) and falls
+    back to ``gate.json`` when the carry file is absent or holds no
+    actions. Both sources carry *normalized* actions (severity already
+    derived with schema authority by the gate artifact builder).
+
+    Returns an empty list when neither source is available. This mirrors
+    the reader in :mod:`critique_runtime` so every closeout hook sees the
+    same carried picture.
+    """
+    import json
+    from pathlib import Path as _Path
+
+    if not isinstance(plan_dir, _Path):
+        plan_dir = _Path(plan_dir)
+
+    def _read_json(path: _Path) -> Any:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    carry_path = plan_dir / "gate_carry.json"
+    if carry_path.exists():
+        carry = _read_json(carry_path)
+        if isinstance(carry, dict):
+            raw = carry.get("north_star_actions")
+            if isinstance(raw, list):
+                actions = [a for a in raw if isinstance(a, dict)]
+                if actions:
+                    return actions
+
+    gate_path = plan_dir / "gate.json"
+    if gate_path.exists():
+        gate = _read_json(gate_path)
+        if isinstance(gate, dict):
+            raw = gate.get("north_star_actions")
+            if isinstance(raw, list):
+                return [a for a in raw if isinstance(a, dict)]
+
+    return []

@@ -19,6 +19,11 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan.flags import flag_resolution_summary
 from arnold_pipelines.megaplan.audits.iteration import compute_iteration_pressure, render_pressure_table
+from arnold_pipelines.megaplan.north_star_actions import (
+    NORTH_STAR_ACTION_CATEGORIES,
+    NORTH_STAR_DANGEROUS_CATEGORIES,
+    NORTH_STAR_ACTION_TYPES,
+)
 from arnold_pipelines.megaplan.types import FlagRegistry, PlanState
 
 def _iteration_pressure_block(state: PlanState, plan_dir: Path) -> str:
@@ -105,6 +110,23 @@ def _gate_prompt(
             )
     output_path = _write_gate_template(plan_dir, state)
 
+    # ── North Star actions carried from prior gate passes ─────────────────
+    carry_path = plan_dir / "gate_carry.json"
+    carried_north_star = ""
+    if carry_path.exists():
+        try:
+            carry = read_json(carry_path)
+            prior_actions = carry.get("north_star_actions") if isinstance(carry, dict) else None
+            if isinstance(prior_actions, list) and prior_actions:
+                carried_north_star = (
+                    "\n        North Star actions from prior gate carry (for awareness; "
+                    "do not re-emit unless still applicable):\n"
+                    f"        {json_dump(prior_actions).strip()}\n"
+                )
+        except Exception:
+            pass
+    # ─────────────────────────────────────────────────────────────────────
+
     return textwrap.dedent(
         f"""
         You are the gatekeeper for the megaplan workflow. Make the continuation decision directly.
@@ -133,7 +155,7 @@ def _gate_prompt(
         {json_dump(gate_signals.get("signals", {}).get("addressed_flags", [])).strip()}
 
         {_iteration_pressure_block(state, plan_dir)}
-
+        {carried_north_star}
         Robustness level:
         {robustness}
 
@@ -152,6 +174,12 @@ def _gate_prompt(
         - ESCALATE when the loop is stuck, churn is recurring, or user intervention is needed.
         - TIEBREAKER when a flag group reflects an *unresolvable constraint tension* (architectural or philosophical — requires a human call) rather than a plan-quality issue. Use TIEBREAKER only when the Iteration Pressure Analysis shows `addressed_then_reopened_count >= 2` for a fuzzy group OR the group has >=2 member flags across >=2 iterations. If the concern is simply that the plan writer hasn't tried hard enough, use ITERATE instead. When recommending TIEBREAKER you MUST provide `tiebreaker_question` (the decision question for human resolution), `tiebreaker_flag_ids` (which flags this resolves), and `tiebreaker_fuzzy_group_id` (which group this resolves). Cite specific flag IDs and iterations in your rationale.
         - `signals_assessment`: one paragraph summarizing score trajectory, flag status, and preflight posture.
+
+        North Star actions — identify concerns that affect plan-wide execution safety:
+        - `north_star_actions[]`: list of structured actions, each with `id`, `concern`, `category`, `action_type`, `severity`, `evidence`, and optional `plan_refs`.
+        - Categories: {json_dump(list(NORTH_STAR_ACTION_CATEGORIES)).strip()} (all) — the dangerous set {json_dump(list(NORTH_STAR_DANGEROUS_CATEGORIES)).strip()} is always `severity: "blocking"` by schema rule.
+        - Action types: {json_dump(list(NORTH_STAR_ACTION_TYPES)).strip()}.
+        - Return `[]` when there are no North Star concerns for this pass.
 
         Flags come in three gate states:
         - **Blocking** (severity = significant/likely-significant): These are serious concerns. If you recommend PROCEED, you MUST provide a `flag_resolutions` entry for every blocking flag. There is no implicit acceptance.
@@ -252,6 +280,7 @@ def _write_gate_template(
             }
         ],
         "settled_decisions": [],
+        "north_star_actions": [],
     }
 
     output_path = plan_dir / "gate_output.json"

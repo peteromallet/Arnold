@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.profiles import (
     VALID_CRITIC_CHOICES,
     VALID_DEEPSEEK_PROVIDER_CHOICES,
     VALID_DEPTH_CHOICES,
+    normalize_robustness,
 )
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.anchors import resolve_anchor_path, validate_anchor_source
@@ -590,6 +591,7 @@ class MilestoneSpec:
     # never introduced here.
     depends_on: list[str] = field(default_factory=list)
     validate: list[MilestoneValidationSpec] = field(default_factory=list)
+    north_star_critical: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], index: int) -> "MilestoneSpec":
@@ -688,6 +690,7 @@ class MilestoneSpec:
             )
             for validation_index, item in enumerate(validate_values)
         ]
+        north_star_critical = _optional_bool(raw, "north_star_critical", index=index)
         return cls(
             label=label,
             idea=idea,
@@ -708,6 +711,7 @@ class MilestoneSpec:
             anchors=anchors,
             depends_on=depends_on,
             validate=validate,
+            north_star_critical=north_star_critical,
         )
 
 
@@ -739,6 +743,7 @@ class ChainSpec:
     auto_approve: bool = True
     require_anchor: bool = True
     missing_anchor_ack: str | None = None
+    north_star_critical: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
@@ -903,6 +908,34 @@ class ChainSpec:
             if not isinstance(missing_anchor_ack, str) or not missing_anchor_ack.strip():
                 raise CliError("invalid_spec", "driver.missing_anchor_ack must be a non-empty string")
             missing_anchor_ack = missing_anchor_ack.strip()
+        north_star_critical = bool(driver_raw.get("north_star_critical", False))
+
+        # --- north_star_critical validation ---
+        # Reject ``north_star_critical: true`` when the effective robustness
+        # is ``bare`` or ``light``.  Use milestone-level robustness when
+        # present; fall back to the driver-level robustness otherwise.
+        # Never silently upgrade robustness — emit CliError instead.
+        driver_robustness_canonical = normalize_robustness(robustness)
+        for i, milestone in enumerate(milestones):
+            effective_critical = (
+                milestone.north_star_critical or north_star_critical
+            )
+            if not effective_critical:
+                continue
+            milestone_rb = milestone.robustness
+            effective_robustness = (
+                normalize_robustness(milestone_rb)
+                if milestone_rb is not None
+                else driver_robustness_canonical
+            )
+            if effective_robustness in ("bare", "light"):
+                raise CliError(
+                    "invalid_spec",
+                    f"milestones[{i}] ({milestone.label!r}) has "
+                    f"north_star_critical enabled but effective robustness "
+                    f"is {effective_robustness!r}.  "
+                    f"north_star_critical requires at least `full` robustness.",
+                )
 
         return cls(
             milestones=milestones,
@@ -929,6 +962,7 @@ class ChainSpec:
             auto_approve=auto_approve,
             require_anchor=require_anchor,
             missing_anchor_ack=missing_anchor_ack,
+            north_star_critical=north_star_critical,
         )
 
 
