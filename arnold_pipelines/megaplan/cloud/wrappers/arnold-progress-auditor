@@ -478,6 +478,19 @@ def _publication_attempt_ts(incident, problem):
     timestamps = []
     if isinstance(incident, dict) and incident.get("latest_actor") == "github_sync":
         timestamps.append(incident.get("last_timestamp"))
+    events = incident.get("events") if isinstance(incident, dict) else []
+    for event in events if isinstance(events, list) else []:
+        if not isinstance(event, dict):
+            continue
+        actor = str(event.get("actor") or "").strip()
+        kind = str(event.get("kind") or "").strip()
+        if actor != "github_sync" and not kind.startswith("incident.github_sync."):
+            continue
+        for key in ("timestamp", "recorded_at", "created_at", "timestamp_utc"):
+            value = event.get(key)
+            if value:
+                timestamps.append(value)
+                break
     evidence_refs = incident.get("evidence_refs") if isinstance(incident, dict) else []
     for ref in evidence_refs if isinstance(evidence_refs, list) else []:
         if not isinstance(ref, dict):
