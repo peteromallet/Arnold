@@ -90,12 +90,40 @@ class ReviewOutcome(StrEnum):
     DEFERRED_HUMAN = "deferred_human"
 
 
+class ReviewDecisionResult(StrEnum):
+    """Typed review handler result values.
+
+    These values are intentionally distinct from ``ReviewOutcome`` route
+    signals: the handler may emit a successful review result while still using
+    a terminal route signal such as ``pass`` or ``deferred_human``.
+    """
+
+    SUCCESS = "success"
+    NEEDS_REWORK = "needs_rework"
+    BLOCKED = "blocked"
+    FORCE_PROCEEDED = "force_proceeded"
+    POLICY_DENIED = "policy_denied"
+
+
 class OverrideOutcome(StrEnum):
     """Closed routing vocabulary for the override step."""
 
     ABORT = "abort"
     FORCE_PROCEED = "force_proceed"
     REPLAN = "replan"
+
+
+class OverridePolicyRoute(StrEnum):
+    """Declared native policy routes for override actions outside direct branches.
+
+    These routes remain source-visible in ``workflow.pypeline`` even when the
+    action resumes through persisted state or recovery policy instead of a
+    direct ``OverrideOutcome`` branch.
+    """
+
+    ADOPT_EXECUTION = "adopt_execution"
+    RECOVER_BLOCKED = "recover_blocked"
+    RESUME_CLARIFY = "resume_clarify"
 
 
 class ExecuteOutcome(StrEnum):
@@ -206,8 +234,10 @@ __all__ = [
     "GateOutcome",
     "HaltOutcome",
     "OverrideOutcome",
+    "OverridePolicyRoute",
     "PrepOutcome",
     "ReviewOutcome",
+    "ReviewDecisionResult",
     "ReviseOutcome",
     "SuspensionHaltOutcome",
     "SuspensionOutcome",

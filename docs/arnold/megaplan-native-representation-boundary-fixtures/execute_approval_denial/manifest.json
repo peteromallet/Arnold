@@ -1,0 +1,26 @@
+{
+  "artifact_refs": [],
+  "authority_records": [],
+  "boundary_id": "execute_approval_denial",
+  "capability_effects": [
+    "phase_result",
+    "receipt",
+    "state_history"
+  ],
+  "external_effect_refs": [
+    "execute:approval-denied"
+  ],
+  "fixture_id": "execute_approval_denial",
+  "path_hashes": {
+    "phase_result_path": "sha256:28eb4a182a73c0fc0abd3152cec84997af6a6307672ebcfb25f1ce64271fb566",
+    "receipt_path": "sha256:ae9495badf6e68d15d7e2794793d227f9902d116b21f9f39f6c31bd70e7de8f9",
+    "semantic_health_path": "sha256:c48f2ba79a8ab0838cfd53a938ead8f98176d1b9d3ba9640759250e1f10fa689",
+    "state_path": "sha256:2f7d4a524f8da7690dcb6b43d935348716f7c1b63386b82e3760d3396ca8b777"
+  },
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval_denial/phase_result.json",
+  "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval_denial",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval_denial/boundary_receipts/execute_approval_denial.json",
+  "reducer_promotion": false,
+  "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval_denial/semantic_health.json",
+  "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval_denial/state.json"
+}

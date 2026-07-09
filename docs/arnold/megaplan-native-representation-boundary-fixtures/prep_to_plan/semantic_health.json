@@ -1,0 +1,16 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "prep_to_plan",
+  "external_effect_refs": [],
+  "fixture_id": "prep_to_plan",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/boundary_receipts/prep_to_plan.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "prep_to_plan"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

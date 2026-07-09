@@ -1,0 +1,30 @@
+{
+  "authority_record_count": 1,
+  "boundary_id": "gate_to_revise",
+  "external_effect_refs": [],
+  "fixture_id": "gate_to_revise",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/boundary_receipts/gate_to_revise.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "gate_to_revise"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [
+    {
+      "boundary_id": "gate_to_revise",
+      "contract_ref": "gate_to_revise",
+      "description": "phase_result.json records phase 'None' but boundary 'gate_to_revise' expects phase 'gate'",
+      "details": {
+        "expected_phase": "gate",
+        "recorded_phase": null
+      },
+      "diagnostic_code": "AWF249_BOUNDARY_EVIDENCE_STALE",
+      "finding_id": "SH-gate_to_revise-phase-result-stale-phase",
+      "finding_version": "arnold.workflow.semantic_finding.v1",
+      "severity": "warning"
+    }
+  ],
+  "scoped_warning_count": 1,
+  "status": "healthy"
+}

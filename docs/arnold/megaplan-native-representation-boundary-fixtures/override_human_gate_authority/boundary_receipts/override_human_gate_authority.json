@@ -1,0 +1,27 @@
+{
+  "authority_records": [
+    {
+      "actor": "fixture-operator",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "human-gate",
+      "details": {
+        "activation_state": "inactive_receipted_fixture"
+      },
+      "evidence_refs": [
+        "state.json"
+      ],
+      "role": "reviewer",
+      "scope": "override.human_gate"
+    }
+  ],
+  "boundary_id": "override_human_gate_authority",
+  "invocation_id": "inv-override_human_gate_authority",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s6.override.human_gate.1",
+  "state_observation": {
+    "current_state": "critiqued"
+  },
+  "workflow_id": "megaplan-review"
+}
