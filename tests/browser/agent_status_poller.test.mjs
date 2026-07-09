@@ -1648,7 +1648,11 @@ test("refreshAgentStatus — timeout aborts fetch, tags diagnostic, and clears d
   assert.equal(panel.state.routeStatus.kind, ROUTE_STATUS_KIND.UNAVAILABLE);
   assert.equal(panel.state.lastAgentStatusDiagnostic?.timedOut, true);
   assert.equal(panel.state.statusRetry?.attempts, 1, "should record the first retry attempt");
-  assert.equal(globalThis._getTimers().length, 0, "deadline timer should be cleared after fetch settles");
+  assert.deepEqual(
+    globalThis._getTimers().map((timer) => timer.id),
+    [panel.state.statusRetry?.timerId],
+    "deadline timer should be cleared after fetch settles, leaving only the owned retry timer",
+  );
 });
 
 test("refreshAgentStatus — status readiness coupled to panel UI state (routeStatus, settingsMessage, statusSnapshot)", async () => {
