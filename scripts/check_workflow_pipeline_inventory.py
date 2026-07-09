@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from arnold.conformance.authoring_terms import FORBIDDEN_AUTHORING_TERMS
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Every shipped / example root under arnold/pipelines or arnold_pipelines that
@@ -157,18 +159,10 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
 
 VALID_STATUSES = {"migrate", "delete", "archive", "whitelist"}
 
-# Forbidden patterns for shipped pipeline source files.
-FORBIDDEN_STRING_PATTERNS = (
-    "PipelineBuilder",
-    "from arnold.pipeline",
-    "import arnold.pipeline",
-    "arnold.pipelines.megaplan",
-    "run_pipeline",
-    "@stage",
-    "@step",
-    "Stage(",
-    "Edge(",
-)
+# Forbidden patterns for shipped pipeline source files. Sourced from the shared
+# arnold.conformance.authoring_terms module (single source of truth) rather than
+# re-authored here, so this list cannot drift from the boundary test's set.
+FORBIDDEN_STRING_PATTERNS = FORBIDDEN_AUTHORING_TERMS
 
 CANONICAL_NATIVE_ALLOWED_PATTERNS = {
     "from arnold.pipeline",

@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from arnold.conformance.authoring_terms import (
+    FORBIDDEN_AUTHORING_TERMS,
+    FORBIDDEN_COMMAND_TERMS,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 ACTIVE_DOC_PATHS = (
@@ -75,25 +80,29 @@ ARCHIVAL_OR_PENDING_PATHS = (
     Path("docs/archive/m5"),
 )
 
-FORBIDDEN_AUTHORING_TERMS = (
-    "PipelineBuilder",
-    "Stage(",
-    "Edge(",
-    "@stage",
-    "@step",
-    "run_pipeline",
-    "from arnold.pipeline",
-    "import arnold.pipeline",
-    "arnold.pipelines.megaplan",
-)
+# FORBIDDEN_AUTHORING_TERMS / FORBIDDEN_COMMAND_TERMS are imported above from
+# arnold.conformance.authoring_terms — the single source of truth shared with
+# the boundary scanners under scripts/. See test_forbidden_terms_single_source.
 
-FORBIDDEN_COMMAND_TERMS = (
-    "arnold pipelines describe",
-    "arnold pipelines check",
-    "arnold pipelines doctor",
-    "arnold pipelines new",
-    "arnold pipeline ",
-)
+
+def test_forbidden_terms_single_source() -> None:
+    """Forbidden-terms constants come from one shared module and stay in sync.
+
+    Guards against the drift that caused the baseline loop: a scanner and the
+    authoring test carrying independent copies of the same forbidden literal.
+    """
+    from arnold.conformance import authoring_terms as terms
+
+    # The constants this test relies on ARE the shared module's objects.
+    assert FORBIDDEN_AUTHORING_TERMS is terms.FORBIDDEN_AUTHORING_TERMS
+    assert FORBIDDEN_COMMAND_TERMS is terms.FORBIDDEN_COMMAND_TERMS
+
+    # Every import-path prefix used by AST scanners must be a member of the
+    # canonical authoring set, so scanners cannot forbid (or allow) something
+    # the authoring test disagrees with.
+    authoring = set(terms.FORBIDDEN_AUTHORING_TERMS)
+    for prefix in terms.FORBIDDEN_MEGAPLAN_IMPORT_PREFIXES:
+        assert prefix in authoring, f"{prefix!r} not in FORBIDDEN_AUTHORING_TERMS"
 
 _FENCE_RE = re.compile(r"```python\n(.*?)\n```", re.DOTALL)
 
