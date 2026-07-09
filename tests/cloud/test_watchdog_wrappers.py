@@ -3101,6 +3101,65 @@ echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
     )
 
 
+def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    log_path = tmp_path / "watchdog.log"
+    launch_log = tmp_path / "repair-launches.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        "sleep 0.1\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+    blocker_id = "blocker:v1:test-stale"
+    request_id = "req-live"
+    repair_requests.claim_active_repair_request(
+        repair_requests.repair_queue_dir(marker_dir),
+        blocker_id=blocker_id,
+        request_id="req-stale",
+        actor="other-trigger",
+        session="demo-a",
+        pid=99999999,
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("claim_active_repair_launch"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
+            f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
+            f"PLAN_STATUS_REQUEST_ID={request_id!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
+echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == ["status:dispatched"]
+    assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
+
+
 def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()

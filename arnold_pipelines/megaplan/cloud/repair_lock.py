@@ -81,6 +81,7 @@ def inspect_repair_lock(
     """Inspect an existing repair lock without mutating it."""
 
     lock_path = Path(lock_dir)
+    pid_probe = is_pid_live or _default_is_pid_live
     if not lock_path.exists():
         return RepairLockResult(status="missing", lock_dir=lock_path)
 
@@ -105,7 +106,7 @@ def inspect_repair_lock(
         evidence["owner"] = owner
         pid = owner.get("pid")
         if isinstance(pid, int):
-            if is_pid_live is not None and not is_pid_live(pid):
+            if not pid_probe(pid):
                 evidence["reasons"].append("owner_pid_not_live")
         else:
             evidence["reasons"].append("owner_pid_missing")
@@ -259,6 +260,16 @@ def _default_hostname() -> str:
         return socket.gethostname()
     except OSError:
         return ""
+
+
+def _default_is_pid_live(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def _utc_now() -> str:

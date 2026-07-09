@@ -143,6 +143,33 @@ def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> No
     assert first.lock_dir.exists()
 
 
+def test_active_repair_claim_defaults_to_pid_liveness_probe(tmp_path: Path) -> None:
+    queue_dir = tmp_path / "repair-queue"
+    first = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:dead-owner",
+        request_id="req-dead",
+        actor="trigger-a",
+        session="demo-session",
+        pid=99999999,
+    )
+
+    assert first.claimed
+
+    stale = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:dead-owner",
+        request_id="req-new",
+        actor="trigger-b",
+        session="demo-session",
+        pid=444,
+    )
+
+    assert stale.stale
+    assert stale.evidence is not None
+    assert "owner_pid_not_live" in stale.evidence["stale_evidence"]["reasons"]
+
+
 def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
