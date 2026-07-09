@@ -75,6 +75,161 @@ def _authoritative_execute_task_overrides(plan_dir: Path | None) -> dict[str, di
     return overrides
 
 
+def apply_authoritative_execute_overrides(
+    finalize_data: dict[str, Any],
+    *,
+    plan_dir: Path | None,
+) -> dict[str, Any]:
+    """Merge persisted execute evidence back into ``finalize_data``.
+
+    Some execute batches are reconstructed from tool-call logs after the worker
+    fails to emit a structured JSON report. Those artifacts may still carry
+    authoritative top-level ``files_changed`` / ``commands_run`` evidence but
+    omit the matching ``task_updates`` / ``sense_check_acknowledgments``
+    records, leaving finalize tasks stranded in ``pending`` despite the work
+    being present in the batch artifact and repository. When an artifact's
+    top-level evidence maps uniquely to one still-untracked task, synthesize a
+    narrow override from that artifact so terminal execute aggregation does not
+    deadlock on tracking noise alone.
+    """
+
+    if plan_dir is None:
+        return finalize_data
+    tasks = finalize_data.get("tasks")
+    sense_checks = finalize_data.get("sense_checks")
+    if not isinstance(tasks, list) or not isinstance(sense_checks, list):
+        return finalize_data
+
+    try:
+        artifacts = list_batch_artifacts(plan_dir)
+    except Exception:
+        return finalize_data
+
+    tasks_by_id = {
+        str(task.get("id")).strip(): task
+        for task in tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str) and task.get("id", "").strip()
+    }
+    sense_checks_by_id = {
+        str(check.get("id")).strip(): check
+        for check in sense_checks
+        if isinstance(check, dict) and isinstance(check.get("id"), str) and check.get("id", "").strip()
+    }
+
+    explicit_task_ids: set[str] = set()
+    explicit_sense_check_ids: set[str] = set()
+    for artifact in artifacts:
+        try:
+            payload = read_json(artifact)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for item in payload.get("task_updates", []):
+            if not isinstance(item, dict):
+                continue
+            task_id = item.get("task_id") or item.get("id")
+            if isinstance(task_id, str) and task_id.strip():
+                explicit_task_ids.add(task_id.strip())
+                task = tasks_by_id.get(task_id.strip())
+                if task is not None:
+                    task.update(item)
+                    task.setdefault("id", task_id.strip())
+        for item in payload.get("sense_check_acknowledgments", []):
+            if not isinstance(item, dict):
+                continue
+            check_id = item.get("sense_check_id") or item.get("id")
+            if isinstance(check_id, str) and check_id.strip():
+                explicit_sense_check_ids.add(check_id.strip())
+                check = sense_checks_by_id.get(check_id.strip())
+                if check is not None and isinstance(item.get("executor_note"), str):
+                    check["executor_note"] = item["executor_note"]
+
+    for artifact in artifacts:
+        try:
+            payload = read_json(artifact)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        top_files = {
+            _normalize_repo_path(path, plan_dir.parent)
+            for path in payload.get("files_changed", [])
+            if isinstance(path, str) and path.strip()
+        }
+        top_commands = {
+            str(command).strip()
+            for command in payload.get("commands_run", [])
+            if isinstance(command, str) and command.strip()
+        }
+        if not top_files and not top_commands:
+            continue
+
+        candidate_tasks: list[dict[str, Any]] = []
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            task_id = task.get("id")
+            if not isinstance(task_id, str) or not task_id.strip():
+                continue
+            if task_id in explicit_task_ids:
+                continue
+            if str(task.get("executor_notes", "")).strip():
+                continue
+            declared_files = {
+                _normalize_repo_path(path, plan_dir.parent)
+                for path in task.get("files_changed", [])
+                if isinstance(path, str) and path.strip()
+            }
+            declared_commands = {
+                str(command).strip()
+                for command in task.get("commands_run", [])
+                if isinstance(command, str) and command.strip()
+            }
+            file_match = bool(declared_files and declared_files.intersection(top_files))
+            command_match = bool(declared_commands and declared_commands.intersection(top_commands))
+            if file_match or command_match:
+                candidate_tasks.append(task)
+        if len(candidate_tasks) != 1:
+            continue
+
+        task = candidate_tasks[0]
+        task_id = str(task.get("id")).strip()
+        task["status"] = "done"
+        task["executor_notes"] = (
+            str(payload.get("output", "")).strip()
+            or "[harness] synthesized from artifact-level execute evidence"
+        )
+        if top_files:
+            task["files_changed"] = sorted(top_files.intersection(
+                {
+                    _normalize_repo_path(path, plan_dir.parent)
+                    for path in task.get("files_changed", [])
+                    if isinstance(path, str) and path.strip()
+                }
+            ) or top_files)
+        if top_commands:
+            task["commands_run"] = sorted(top_commands)
+        head_sha = payload.get("head_sha")
+        if isinstance(head_sha, str) and head_sha.strip():
+            task["head_sha"] = head_sha.strip()
+        explicit_task_ids.add(task_id)
+
+        candidate_checks = [
+            check
+            for check in sense_checks
+            if isinstance(check, dict)
+            and check.get("task_id") == task_id
+            and not str(check.get("executor_note", "")).strip()
+            and str(check.get("id", "")).strip() not in explicit_sense_check_ids
+        ]
+        if len(candidate_checks) == 1:
+            candidate_checks[0]["executor_note"] = task["executor_notes"]
+            explicit_sense_check_ids.add(str(candidate_checks[0].get("id")).strip())
+
+    return finalize_data
+
+
 def validate_execution_evidence(
     finalize_data: dict[str, Any],
     project_dir: Path,
@@ -85,6 +240,10 @@ def validate_execution_evidence(
     artifact_prefix: str = "execution_audit",
     base_ref: str | None = None,
 ) -> dict[str, Any]:
+    finalize_data = apply_authoritative_execute_overrides(
+        finalize_data,
+        plan_dir=plan_dir,
+    )
     if is_prose_mode(state or {"config": {"mode": mode}}):
         return _validate_execution_evidence_doc(finalize_data, project_dir)
     return _validate_execution_evidence_code(
