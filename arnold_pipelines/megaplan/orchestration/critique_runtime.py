@@ -1143,8 +1143,9 @@ def _revise_north_star_halt_actions(
 
     See the module-level comment for the three halt conditions. Advisory actions
     and non-blocking entries are never halt triggers. ``plan_refs`` counts as a
-    concrete target only when it is a non-empty sequence; ``required_change``
-    only when it is a non-empty (stripped) string.
+    concrete target only when it holds at least one non-blank string (mirrors
+    the post-revise concrete-ref rule); ``required_change`` only when it is a
+    non-empty (stripped) string.
     """
     halt: list[dict[str, Any]] = []
     for action in actions:
@@ -1161,7 +1162,10 @@ def _revise_north_star_halt_actions(
         if is_blocking_category(category):
             plan_refs = action.get("plan_refs")
             required_change = action.get("required_change")
-            has_target = bool(plan_refs) or (
+            has_target = (
+                isinstance(plan_refs, list)
+                and any(isinstance(ref, str) and ref.strip() for ref in plan_refs)
+            ) or (
                 isinstance(required_change, str) and bool(required_change.strip())
             )
             if not has_target:

@@ -683,6 +683,54 @@ class TestReviseNorthStarHaltActions:
         assert len(halted) == 1
         assert halted[0]["id"] == "ns-ws-change"
 
+    def test_dangerous_category_with_whitespace_only_plan_refs_halts(self) -> None:
+        """A plan_refs list with a single whitespace-only ref is not concrete.
+
+        Mirrors the post-revise concrete-ref rule: at least one ref must be a
+        non-blank string. ``plan_refs=['   ']`` must halt, even though it is a
+        truthy non-empty list.
+        """
+        action = normalize_north_star_action(
+            _ns_action(
+                id="ns-ws-refs",
+                category=sorted(NORTH_STAR_DANGEROUS_CATEGORIES)[5],
+                evidence="Live plan topology resume risk concern.",
+                plan_refs=["   "],
+            )
+        )
+        # Normalization preserves whitespace refs verbatim (no stripping).
+        assert action.get("plan_refs") == ["   "]
+        halted = _revise_north_star_halt_actions([action])
+        assert len(halted) == 1
+        assert halted[0]["id"] == "ns-ws-refs"
+
+    def test_dangerous_category_with_all_blank_plan_refs_halts(self) -> None:
+        """Every-blank plan_refs (spaces, tabs, empty) is not concrete."""
+        action = normalize_north_star_action(
+            _ns_action(
+                id="ns-all-blank-refs",
+                category=sorted(NORTH_STAR_DANGEROUS_CATEGORIES)[0],
+                evidence="Route authority bypass.",
+                plan_refs=["   ", "\t", ""],
+            )
+        )
+        halted = _revise_north_star_halt_actions([action])
+        assert len(halted) == 1
+        assert halted[0]["id"] == "ns-all-blank-refs"
+
+    def test_dangerous_category_with_mixed_blank_and_concrete_plan_refs_passes(self) -> None:
+        """At least one non-blank ref is sufficient even when blanks are mixed in."""
+        action = normalize_north_star_action(
+            _ns_action(
+                id="ns-mixed-refs",
+                category=sorted(NORTH_STAR_DANGEROUS_CATEGORIES)[1],
+                evidence="Baseline drift concern.",
+                plan_refs=["   ", "plan.md#baselines", ""],
+            )
+        )
+        halted = _revise_north_star_halt_actions([action])
+        assert len(halted) == 0
+
     def test_non_dangerous_blocking_without_target_does_not_halt(self) -> None:
         """A non-dangerous blocking action without plan_refs still passes
         (it's the worker's job to find the target)."""
