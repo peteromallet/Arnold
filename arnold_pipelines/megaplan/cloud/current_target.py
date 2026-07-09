@@ -90,6 +90,7 @@ def resolve_current_target(
             "repair_progress": {"present": False, "items": []},
             "chain_log": {},
             "active_step_heartbeat": {},
+            "resume_authority_failure": {},
             "sibling_sessions": [],
             "ignored_artifacts": [],
             "stale_evidence": [],
@@ -128,6 +129,10 @@ def resolve_current_target(
     event_cursors = _collect_event_cursors(plan_state_path, plan_state)
     chain_log = _collect_chain_log_evidence(workspace, session, run_kind)
     active_step_heartbeat = _collect_active_step_heartbeat(plan_state, pid_is_live=pid_is_live)
+    resume_authority_failure = _collect_resume_authority_failure(
+        plan_state_path,
+        plan_state,
+    )
 
     stale_evidence: list[dict[str, Any]] = []
     rationale: list[str] = []
@@ -314,6 +319,7 @@ def resolve_current_target(
         "repair_progress": repair_progress,
         "chain_log": chain_log,
         "active_step_heartbeat": active_step_heartbeat,
+        "resume_authority_failure": resume_authority_failure,
         "sibling_sessions": siblings,
         "ignored_artifacts": sorted(ignored_artifacts, key=_artifact_sort_key),
         "stale_evidence": sorted(stale_evidence, key=_artifact_sort_key),
@@ -423,6 +429,61 @@ def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str
         "resume_retry_strategy": retry_strategy,
         "mtime": _mtime(events_path),
     }
+
+
+def _collect_resume_authority_failure(
+    plan_state_path: Path | None,
+    plan_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    if plan_state_path is None or not plan_state_path.exists() or not isinstance(plan_state, Mapping):
+        return {}
+    if _safe_text(plan_state.get("current_state")).lower() != "failed":
+        return {}
+    resume_cursor = plan_state.get("resume_cursor")
+    if not isinstance(resume_cursor, Mapping):
+        return {}
+    phase = _safe_text(resume_cursor.get("phase"))
+    if not phase:
+        return {}
+
+    try:
+        from arnold_pipelines.megaplan._core import topology as _topology
+        from arnold_pipelines.megaplan._core.workflow import (
+            _resume_execute_authority_failure,
+        )
+    except Exception:
+        return {}
+
+    try:
+        active_state = _topology.predecessors(phase, policy="resume")
+    except Exception:
+        return {}
+    if active_state != "executed":
+        return {}
+
+    try:
+        failure = _resume_execute_authority_failure(
+            plan_state_path.parent,
+            cursor=dict(resume_cursor),
+            guard="current_target_observe",
+        )
+    except Exception:
+        return {}
+    if not isinstance(failure, Mapping) or not failure:
+        return {}
+
+    plan_name = _safe_plan_name(plan_state.get("name")) or plan_state_path.parent.name
+    payload = _stable_mapping(failure)
+    payload["code"] = "resume_execute_authority_blocked"
+    payload["phase"] = phase
+    payload["plan_name"] = plan_name
+    payload["current_state"] = _safe_text(plan_state.get("current_state"))
+    if _safe_text(payload.get("reason")) == "execute_authority_diverged":
+        payload["recommended_action"] = "repair_execute_authority"
+        payload["suggested_commands"] = [
+            f"execute --plan {plan_name} --confirm-destructive --user-approved"
+        ]
+    return payload
 
 
 def _collect_tmux_process_evidence(

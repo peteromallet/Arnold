@@ -38,6 +38,7 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 load_spec = load_cloud_spec
+CLOUD_STATUS_CLI_MAX_AGE_S = 5 * 60
 
 # Cloud deployments always drive phases via subprocess (remote SSH exec);
 # the substrate is pinned here so the cloud CLI explicitly declares its
@@ -4530,9 +4531,26 @@ def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | Non
     if not isinstance(snapshot, dict):
         sys.stderr.write("cloud status: box snapshot malformed; falling back to legacy remote listing\n")
         return _run_cloud_chains(spec, provider, args=args)
+    stale_reason = _cloud_status_snapshot_stale_reason(snapshot)
+    if stale_reason:
+        sys.stderr.write(
+            f"cloud status: box snapshot stale ({stale_reason}); "
+            "falling back to legacy remote listing\n"
+        )
+        return _run_cloud_chains(spec, provider, args=args)
     _emit_cloud_status_human(snapshot, compact=compact)
     sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
     return 0
+
+
+def _cloud_status_snapshot_stale_reason(snapshot: Mapping[str, Any]) -> str | None:
+    generated = status_snapshot._parse_iso(snapshot.get("generated_at"))
+    if generated is None:
+        return "missing generated_at"
+    age = (datetime.now(timezone.utc) - generated).total_seconds()
+    if age > CLOUD_STATUS_CLI_MAX_AGE_S:
+        return f"{int(age)}s old, limit {CLOUD_STATUS_CLI_MAX_AGE_S}s"
+    return None
 
 
 def _run_cloud_chains(spec: CloudSpec, provider, *, args: argparse.Namespace | None = None) -> int:

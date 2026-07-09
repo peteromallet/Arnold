@@ -1203,10 +1203,10 @@ def classify_verification_outcome(
         return COMPLETE
     if has_progressed:
         return PROGRESSED
-    if has_fresh_activity:
-        return LIVE_WITH_FRESH_ACTIVITY
     if has_true_human_blocker:
         return TRUE_HUMAN_BLOCKER
+    if has_fresh_activity:
+        return LIVE_WITH_FRESH_ACTIVITY
     if is_live:
         return PARTIAL_LIVENESS
     return REPAIRING
@@ -2411,6 +2411,15 @@ def _is_known_repairable_shape(
 ) -> bool:
     if current_state == "failed" and retry_strategy == "repair_state" and failure_kind == "no_next_step":
         return _has_current_target_evidence(current_target)
+    resume_authority_failure = _as_mapping(current_target.get("resume_authority_failure"))
+    if (
+        current_state == "failed"
+        and retry_strategy == "rerun_phase"
+        and failure_kind in {"phase_failed", "execution_blocked"}
+        and _as_text(resume_authority_failure.get("code")) == "resume_execute_authority_blocked"
+        and _as_text(resume_authority_failure.get("reason")) == "execute_authority_diverged"
+    ):
+        return _has_current_target_evidence(current_target)
     if current_state != "blocked":
         return False
     if retry_strategy != "manual_review":
@@ -2429,11 +2438,12 @@ def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
     current_refs = _as_mapping(target_payload.get("current_refs"))
     plan_state = _as_mapping(target_payload.get("plan_state"))
     chain_state = _as_mapping(target_payload.get("chain_state"))
+    authoritative_source = _as_text(target_payload.get("authoritative_source"))
     if _as_text(plan_state.get("fingerprint")):
         return True
     if _as_text(chain_state.get("fingerprint")):
         return True
-    if _as_text(target_payload.get("authoritative_source")) and _as_text(
+    if authoritative_source and authoritative_source != "marker" and _as_text(
         current_refs.get("current_plan_name")
     ):
         return True

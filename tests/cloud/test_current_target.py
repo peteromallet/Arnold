@@ -1011,5 +1011,57 @@ def test_active_step_dead_pid_is_stale_not_live(tmp_path: Path) -> None:
     assert {item["kind"] for item in record["stale_evidence"]} >= {"stale_active_step_dead_pid"}
     assert "active_step worker PID is not live" in record["rationale"]
 
+
+def test_resolve_current_target_reports_failed_resume_execute_authority_divergence(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "failed-review-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "current_state": "failed",
+            "resume_cursor": {"phase": "review", "retry_strategy": "rerun_phase"},
+            "latest_failure": {
+                "kind": "phase_failed",
+                "phase": "review",
+                "message": "Cannot run 'review' while current state is 'failed'",
+            },
+        },
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+    _write_marker(
+        marker_dir / "demo.json",
+        {
+            "session": "demo",
+            "workspace": str(workspace),
+            "run_kind": "plan",
+            "plan_name": plan_name,
+        },
+    )
+
+    record = resolve_current_target(
+        "demo",
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    failure = record["resume_authority_failure"]
+    assert failure["code"] == "resume_execute_authority_blocked"
+    assert failure["reason"] == "execute_authority_diverged"
+    assert failure["phase"] == "review"
+    assert failure["plan_name"] == plan_name
+    assert failure["missing_task_ids"] == ["T1"]
+
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:
     return chain_spec._state_path_for(spec_path)

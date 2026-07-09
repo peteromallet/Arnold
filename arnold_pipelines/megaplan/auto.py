@@ -2650,7 +2650,7 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         task_id = str(task.get("id") or task.get("task_id") or "")
         raw_status = task.get("status")
         if raw_status in {None, "", "pending", "todo", "in_progress"}:
-            if task_id in batch_completed:
+            if task_id in completed or task_id in batch_completed:
                 continue
             missing.append(
                 f"{task_id or '<missing-task-id>'}:"

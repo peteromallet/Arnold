@@ -170,6 +170,68 @@ def test_classifier_dispatches_failed_no_next_step_repair_state(tmp_path: Path) 
     assert decision.failure_kind == "no_next_step"
 
 
+def test_classifier_dispatches_failed_rerun_phase_execute_authority_divergence(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    state = _plan_state(
+        current_state="failed",
+        resume_cursor={"retry_strategy": "rerun_phase"},
+        latest_failure={
+            "kind": "phase_failed",
+            "phase": "review",
+            "metadata": {"stderr": "Cannot run 'review' while current state is 'failed'"},
+        },
+    )
+    target = _current_target(
+        current_refs={
+            "current_plan_name": "agentic-replay-viewer",
+            "plan_current_state": "failed",
+        },
+        plan_state={"present": True, "fingerprint": "sha256:failed-proof"},
+        resume_authority_failure={
+            "code": "resume_execute_authority_blocked",
+            "reason": "execute_authority_diverged",
+            "phase": "review",
+            "missing_task_ids": ["T1"],
+        },
+    )
+    queued = enqueue_repair_request(
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "phase_failed",
+            "current_state": "failed",
+            "phase_or_step": "review",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="failed plan is blocked on execute authority divergence",
+    )
+
+    projection = project_repair_custody(
+        plan_state=state,
+        current_target=target,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+    decision = classify_repair_dispatch(
+        plan_state=state,
+        current_target=target,
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.request_id == queued["request"]["request_id"]
+    assert decision.current_state == "failed"
+    assert decision.retry_strategy == "rerun_phase"
+    assert decision.failure_kind == "phase_failed"
+
+
 def test_projection_ignores_stale_cross_session_custody_for_execution_blocked(
     tmp_path: Path,
 ) -> None:
