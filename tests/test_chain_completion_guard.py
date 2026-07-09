@@ -193,7 +193,15 @@ def _write_execute_authority_plan(root: Path, *, base_sha: str) -> Path:
                             "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
                         ],
                         "head_sha": base_sha,
-                    }
+                    },
+                    {
+                        "task_id": "v3_api_tests",
+                        "status": "done",
+                        "commands_run": [
+                            "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+                        ],
+                        "head_sha": base_sha,
+                    },
                 ]
             }
         )
@@ -385,7 +393,7 @@ def test_run_chain_pr_merge_resume_blocks_non_terminal_plan(tmp_path: Path) -> N
     assert "current_state='gated'" in result["reason"]
 
 
-def test_stale_merged_pr_recovery_accepts_failed_no_next_step_blocked_execute(
+def test_stale_merged_pr_recovery_rejects_failed_no_next_step_blocked_execute(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -510,19 +518,15 @@ def test_stale_merged_pr_recovery_accepts_failed_no_next_step_blocked_execute(
         writer=lambda _msg: None,
     )
 
-    assert recovered_state is not None
-    assert "cleared stale PR cursor" in reason
-    assert recovered_state.last_state == "executed"
-    assert recovered_state.pr_number is None
-    assert recovered_state.pr_state is None
-    assert recovered_state.metadata["stale_merged_pr_recovery"]["plan_current_state"] == "failed"
+    assert recovered_state is None
     assert (
-        recovered_state.metadata["stale_merged_pr_recovery"]["canonical_plan_current_state"]
-        == "executed"
+        reason
+        == "plan plan-m1 current_state='failed' is not recoverable before "
+        "terminal-success 'done'; stale merged PR cannot advance"
     )
 
 
-def test_completion_guard_accepts_merged_pr_failed_no_next_step_blocked_execute(
+def test_completion_guard_rejects_merged_pr_failed_no_next_step_blocked_execute(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -603,8 +607,8 @@ def test_completion_guard_accepts_merged_pr_failed_no_next_step_blocked_execute(
         implementation_milestone=True,
     )
 
-    assert ok is True
-    assert "no_next_step after blocked execute was canonicalized" in reason
+    assert ok is False
+    assert reason == "plan plan-m1 current_state='failed' is not terminal-success 'done'"
 
 
 def test_run_chain_stops_when_resumed_pr_is_closed(tmp_path: Path) -> None:
@@ -1252,7 +1256,7 @@ def test_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
     assert saved.retry_counts["m1"] == 1
 
 
-def test_pr_merge_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
+def test_pr_merge_shadow_completion_guard_failure_does_not_retry(tmp_path: Path) -> None:
     base = _init_repo(tmp_path)
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text(
@@ -1306,11 +1310,11 @@ def test_pr_merge_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> 
         )
 
     saved = load_chain_state(spec_path)
-    assert result["status"] == "stopped"
-    assert "completion guard retrying" in result["reason"]
+    assert result["status"] == "done"
+    assert result["reason"] == ""
     assert saved.current_plan_name is None
-    assert saved.last_state == "blocked"
-    assert saved.retry_counts["m1"] == 1
+    assert saved.last_state == "done"
+    assert saved.retry_counts == {}
 
 
 def test_run_chain_clears_stale_closed_pr_state_on_restart(tmp_path: Path) -> None:
@@ -1402,7 +1406,7 @@ def test_latest_execution_batch_all_tasks_done_accepts_execution_window_authorit
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
     assert ok is True
-    assert reason == "execution_batch_1.json"
+    assert reason == "finalize.json"
 
 
 def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_head(
@@ -1418,10 +1422,10 @@ def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_h
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
     assert ok is True
-    assert reason == "execution_batch_1.json"
+    assert reason == "finalize.json"
 
 
-def test_latest_execution_batch_all_tasks_done_ignores_blocked_batches_with_no_done_claims(
+def test_latest_execution_batch_all_tasks_done_rejects_blocked_batches_with_no_done_claims(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -1461,8 +1465,8 @@ def test_latest_execution_batch_all_tasks_done_ignores_blocked_batches_with_no_d
 
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
-    assert ok is True
-    assert reason == "execution_batch_1.json"
+    assert ok is False
+    assert reason == "execution_batch_1.json has no corroborated completed task IDs"
 
 
 def test_latest_execution_batch_all_tasks_done_ignores_deferred_baseline_batch(
@@ -1555,7 +1559,7 @@ def test_latest_execution_batch_all_tasks_done_ignores_deferred_baseline_batch(
     assert reason in {"execution_batch_2.json", "finalize.json"}
 
 
-def test_latest_execution_batch_all_tasks_done_accepts_authoritative_finalize_without_batches(
+def test_latest_execution_batch_all_tasks_done_rejects_authoritative_finalize_without_batches(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -1606,8 +1610,8 @@ def test_latest_execution_batch_all_tasks_done_accepts_authoritative_finalize_wi
 
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
-    assert ok is True
-    assert reason == "finalize.json"
+    assert ok is False
+    assert reason == "no execution_batch_*.json artifact found"
 
 
 def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_update_over_stale_finalize(
@@ -1689,7 +1693,7 @@ def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_updat
     assert reason in {"execution_batch_2.json", "finalize.json"}
 
 
-def test_recover_blocked_execute_if_tasks_done_handles_failed_no_next_step_projection(
+def test_recover_blocked_execute_if_tasks_done_handles_blocked_no_next_step_projection(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -1757,7 +1761,7 @@ def test_recover_blocked_execute_if_tasks_done_handles_failed_no_next_step_proje
     writer = mock.Mock()
     outcome = chain_module.DriverOutcome(
         plan="plan-m1",
-        status="failed",
+        status="blocked",
         final_state="failed",
         iterations=2,
         reason="no next_step and no override available",
@@ -1868,13 +1872,15 @@ def test_stale_merged_pr_recovery_accepts_terminal_blocked_execute_finalize(
 ) -> None:
     _init_repo(tmp_path)
     spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
     plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
     plan_dir.mkdir(parents=True, exist_ok=True)
     (plan_dir / "state.json").write_text(
         json.dumps(
             {
                 "name": "plan-m1",
-                "current_state": "failed",
+                "current_state": "finalized",
                 "history": [{"step": "execute", "result": "blocked"}],
                 "latest_failure": {
                     "kind": "no_next_step",
@@ -1926,16 +1932,16 @@ def test_stale_merged_pr_recovery_accepts_terminal_blocked_execute_finalize(
     )
 
     assert recovered is not None
-    assert "terminal finalize task statuses" in reason
-    assert recovered.pr_number == 158
-    assert recovered.pr_state == "merged"
-    assert recovered.last_state == "done"
+    assert "cleared stale PR cursor" in reason
+    assert recovered.pr_number is None
+    assert recovered.pr_state is None
+    assert recovered.last_state == "finalized"
     saved_plan = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert saved_plan["current_state"] == "done"
-    assert "latest_failure" not in saved_plan
+    assert saved_plan["current_state"] == "finalized"
+    assert saved_plan["latest_failure"]["kind"] == "no_next_step"
 
 
-def test_rearm_rerun_phase_execute_authority_block_resets_plan(
+def test_rearm_fresh_session_execute_block_resets_plan(
     tmp_path: Path,
 ) -> None:
     _init_repo(tmp_path)
@@ -1945,18 +1951,18 @@ def test_rearm_rerun_phase_execute_authority_block_resets_plan(
         "name": "plan-m1",
         "current_state": "blocked",
         "config": {"project_dir": str(tmp_path)},
-        "resume_cursor": {"phase": "execute", "retry_strategy": "rerun_phase"},
+        "resume_cursor": {"phase": "execute", "retry_strategy": "fresh_session"},
         "latest_failure": {
-            "kind": "authority_divergence",
+            "kind": "execution_blocked",
             "phase": "execute",
-            "message": "execute terminal success lacks corroborated task completion",
+            "message": "execute blocked by quality gates",
         },
         "meta": {},
     }
     (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
 
     writer = mock.Mock()
-    recovered = chain_module._rearm_rerun_phase_execute_authority_block(
+    recovered = chain_module._rearm_fresh_session_execute_block(
         plan_dir,
         writer=writer,
     )
@@ -1966,13 +1972,13 @@ def test_rearm_rerun_phase_execute_authority_block_resets_plan(
     assert saved["current_state"] == "finalized"
     assert "latest_failure" not in saved
     assert "resume_cursor" not in saved
-    recoveries = saved.get("meta", {}).get("rerun_phase_execute_recoveries")
+    recoveries = saved.get("meta", {}).get("fresh_session_execute_recoveries")
     assert isinstance(recoveries, list) and len(recoveries) == 1
     writer.assert_called_once()
-    assert "rerun-phase retry" in writer.call_args.args[0]
+    assert "fresh-session retry" in writer.call_args.args[0]
 
 
-def test_rearm_rerun_phase_execute_authority_block_quarantines_stale_execute_artifacts(
+def test_rearm_fresh_session_execute_block_preserves_existing_execute_artifacts(
     tmp_path: Path,
 ) -> None:
     _init_repo(tmp_path)
@@ -1982,11 +1988,11 @@ def test_rearm_rerun_phase_execute_authority_block_quarantines_stale_execute_art
         "name": "plan-m1",
         "current_state": "blocked",
         "config": {"project_dir": str(tmp_path)},
-        "resume_cursor": {"phase": "execute", "retry_strategy": "rerun_phase"},
+        "resume_cursor": {"phase": "execute", "retry_strategy": "fresh_session"},
         "latest_failure": {
-            "kind": "authority_divergence",
+            "kind": "execution_blocked",
             "phase": "execute",
-            "message": "execute terminal success lacks corroborated task completion",
+            "message": "execute blocked by quality gates",
             "metadata": {"reasons": ["T13:not_executed:pending"]},
         },
         "meta": {},
@@ -2039,27 +2045,27 @@ def test_rearm_rerun_phase_execute_authority_block_quarantines_stale_execute_art
     )
 
     writer = mock.Mock()
-    recovered = chain_module._rearm_rerun_phase_execute_authority_block(
+    recovered = chain_module._rearm_fresh_session_execute_block(
         plan_dir,
         writer=writer,
     )
 
     assert recovered is True
-    assert not (plan_dir / "execute_batch_13_output.json").exists()
-    assert not (plan_dir / "execution_batch_13.json").exists()
-    assert (plan_dir / "execute_batch_13_output.json.authority-divergence").exists()
-    assert (plan_dir / "execution_batch_13.json.authority-divergence").exists()
+    assert (plan_dir / "execute_batch_13_output.json").exists()
+    assert (plan_dir / "execution_batch_13.json").exists()
     assert (plan_dir / "execution_batch_12.json").exists()
     saved = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    recoveries = saved.get("meta", {}).get("rerun_phase_execute_recoveries")
+    assert saved["current_state"] == "finalized"
+    assert "latest_failure" not in saved
+    assert "resume_cursor" not in saved
+    recoveries = saved.get("meta", {}).get("fresh_session_execute_recoveries")
     assert isinstance(recoveries, list)
-    assert recoveries[-1]["quarantined_artifacts"] == [
-        "execute_batch_13_output.json",
-        "execution_batch_13.json",
-    ]
+    assert recoveries[-1]["reason"] == (
+        "chain relaunch honored execute fresh_session resume cursor"
+    )
 
 
-def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_rows(
+def test_latest_execution_batch_all_tasks_done_rejects_stale_pending_finalize_rows_without_batch_override(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -2115,8 +2121,8 @@ def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_ro
 
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
-    assert ok is True
-    assert reason == "execution_batch_1.json"
+    assert ok is False
+    assert reason == "finalize.json has pending tasks without authoritative execution updates: T2"
 
 
 def test_latest_execution_batch_all_tasks_done_rejects_pending_finalize_rows_during_authority_rerun(
@@ -2182,7 +2188,7 @@ def test_latest_execution_batch_all_tasks_done_rejects_pending_finalize_rows_dur
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
     assert ok is False
-    assert "authority-divergence execute rerun" in reason
+    assert reason == "finalize.json has pending tasks without authoritative execution updates: T2"
 
 
 def test_latest_execution_batch_all_tasks_done_accepts_explained_noop_finalize_rows(

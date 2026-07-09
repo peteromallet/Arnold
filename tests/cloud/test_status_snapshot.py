@@ -591,6 +591,120 @@ def test_frozen_chain_health_sidecar_defers_to_watchdog_complete(fx):
     assert entry["should_run"] is False
 
 
+def test_newer_incomplete_done_chain_state_beats_watchdog_complete_verdict(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n"
+        "  - label: m3\n"
+        "    idea: m3.md\n"
+        "  - label: m4\n"
+        "    idea: m4.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=False,
+        completed_count=0,
+        milestone_count=4,
+        current_plan_name="m4-demo-plan",
+        last_state="failed",
+        updated_at=NOW - timedelta(hours=6),
+    )
+    fx.add_watchdog_report(
+        items=[{"session": "epic-run", "status": "complete", "action": "observe", "message": "chain complete"}]
+    )
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_state_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 4,
+                "last_state": "done",
+                "completed": [{"label": "m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "attention"
+    assert entry["chain_complete"] is False
+    assert entry["completed_count"] == 1
+    assert entry["milestone_count"] == 4
+    assert "chain custody mismatch" in entry["operator_next"]
+
+
+def test_newer_four_of_four_chain_state_unlocks_complete_status(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n"
+        "  - label: m3\n"
+        "    idea: m3.md\n"
+        "  - label: m4\n"
+        "    idea: m4.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=False,
+        completed_count=0,
+        milestone_count=4,
+        current_plan_name="m4-demo-plan",
+        last_state="failed",
+        updated_at=NOW - timedelta(hours=6),
+    )
+    fx.add_watchdog_report(
+        items=[{"session": "epic-run", "status": "complete", "action": "observe", "message": "chain complete"}]
+    )
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_state_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 4,
+                "last_state": "done",
+                "completed": [
+                    {"label": "m1", "status": "done"},
+                    {"label": "m2", "status": "done"},
+                    {"label": "m3", "status": "done"},
+                    {"label": "m4", "status": "done"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "complete"
+    assert entry["should_run"] is False
+    assert entry["chain_complete"] is True
+    assert entry["completed_count"] == 4
+    assert entry["milestone_count"] == 4
+    assert entry["progress"]["percent"] == 100
+
+
 def test_summary_counts_partition_all_sessions(fx):
     fx.add_session("r1"); fx.add_chain_health("r1")
     fx.add_session("r2"); fx.add_chain_health("r2")

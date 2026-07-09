@@ -1,0 +1,22 @@
+base_branch: editible-install
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1-extension-reality-clean-lane-recovery
+  idea: .megaplan/initiatives/extension-reality-clean-lane-recovery/briefs/m1-extension-reality-clean-lane-recovery.md
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  branch: cloud/extension-reality-clean-lane-recovery
+  prep_clarify: false
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: thorough
+  auto_approve: true
+  max_iterations: 24
+  poll_sleep: 8.0
