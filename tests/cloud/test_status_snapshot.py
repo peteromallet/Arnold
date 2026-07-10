@@ -788,6 +788,104 @@ def test_plan_activity_summary_prefers_snapshot_over_no_snapshot():
     assert [e["session"] for e in derived["should_be_working_but_needs_attention"]] == ["a"]
 
 
+def test_snapshot_adds_separate_read_only_shadow_views_without_reclassification(fx):
+    workspace = fx.add_session("shadowed", plan_name="plan-a")
+    fx.add_chain_health(
+        "shadowed",
+        current_plan_name="plan-a",
+        completed_count=1,
+        milestone_count=3,
+        pr_number=42,
+        pr_state="open",
+    )
+    fx.add_plan_state("shadowed", "plan-a", current_state="executed")
+
+    entry = _by_session(fx.build(), "shadowed")
+
+    # Existing compatibility fields and classification retain their established
+    # values even when the sibling views disagree about runner/publication state.
+    assert {
+        key: entry[key]
+        for key in ("session", "workspace", "status", "should_run", "current_plan", "pr_number", "pr_state")
+    } == {
+        "session": "shadowed",
+        "workspace": str(workspace),
+        "status": "running",
+        "should_run": True,
+        "current_plan": "plan-a",
+        "pr_number": 42,
+        "pr_state": "open",
+    }
+    sections = [entry["execution_authority"], entry["runner"], entry["publication"]]
+    assert all(section["shadow"] is True and section["read_only"] is True for section in sections)
+    assert len({section["view_hash"] for section in sections}) == 3
+    assert entry["execution_authority"]["accepted_task_ids"] == []
+    assert any(
+        item["code"] == "legacy_plan_state_observation"
+        and item["source"].endswith("/plan-a/state.json")
+        for item in entry["execution_authority"]["diagnostics"]
+    )
+    assert entry["runner"]["status"] == "stopped"
+    publication = {item["field"]: item for item in entry["publication"]["observations"]}
+    assert publication["pull_request"]["value"] == "42"
+    assert publication["branch"]["state"] == "unknown"
+
+
+def test_shadow_views_reuse_collected_contradiction_paths_and_are_deterministic(fx):
+    fx.add_session("contradicted", plan_name="marker-plan")
+    fx.add_chain_health("contradicted", current_plan_name="chain-plan")
+    marker_file = fx.marker_dir / "contradicted.json"
+    marker = json.loads(marker_file.read_text(encoding="utf-8"))
+    marker["branch"] = "marker-branch"
+    marker_file.write_text(json.dumps(marker), encoding="utf-8")
+    health_file = fx.marker_dir / "contradicted.chain-health.progress.json"
+    health = json.loads(health_file.read_text(encoding="utf-8"))
+    health["branch"] = "health-branch"
+    health_file.write_text(json.dumps(health), encoding="utf-8")
+
+    first = _by_session(fx.build(), "contradicted")
+    second = _by_session(fx.build(), "contradicted")
+
+    for name in ("execution_authority", "runner", "publication"):
+        assert first[name] == second[name]
+    diagnostics = first["publication"]["diagnostics"]
+    assert any(
+        item["code"] == "publication_observation_contradiction"
+        and "contradicted.json" in item["source"]
+        and "contradicted.chain-health.progress.json" in item["source"]
+        and item["reason"] == "conflicting observations for branch"
+        for item in diagnostics
+    )
+
+
+def test_detailed_status_renders_separate_shadow_views_with_hashes_and_sources(fx):
+    fx.add_session("contradicted", plan_name="marker-plan")
+    fx.add_chain_health("contradicted", current_plan_name="chain-plan")
+    marker_file = fx.marker_dir / "contradicted.json"
+    marker = json.loads(marker_file.read_text(encoding="utf-8"))
+    marker["branch"] = "marker-branch"
+    marker_file.write_text(json.dumps(marker), encoding="utf-8")
+    health_file = fx.marker_dir / "contradicted.chain-health.progress.json"
+    health = json.loads(health_file.read_text(encoding="utf-8"))
+    health["branch"] = "health-branch"
+    health_file.write_text(json.dumps(health), encoding="utf-8")
+
+    detailed = sf.format_cloud_status_detailed(fx.build())
+
+    # The established session/evidence surface remains present, followed by
+    # operator-facing views that do not imply authority or mutate the snapshot.
+    assert "[running] contradicted" in detailed
+    assert f"evidence: {marker_file}" in detailed
+    assert "execution_authority [shadow, read-only]:" in detailed
+    assert "runner [shadow, read-only]:" in detailed
+    assert "publication [shadow, read-only]:" in detailed
+    assert detailed.count("hash=") == 3
+    assert "observation: branch=contradicted" in detailed
+    assert "diagnostic: publication_observation_contradiction subject=branch" in detailed
+    assert str(marker_file) in detailed
+    assert str(health_file) in detailed
+
+
 def test_write_load_roundtrip_and_freshness(tmp_path, fx):
     fx.add_session("a"); fx.add_chain_health("a")
     snap = fx.build(watchdog_report_path=fx.root / "absent.json")
