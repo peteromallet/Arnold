@@ -2344,6 +2344,38 @@ def test_merged_pr_completion_prefers_gh_merge_commit_over_stale_chain_pr_head(
     assert stale_pr_head[:12] not in reason
 
 
+def test_completion_guard_allows_published_pr_target_descending_from_chain_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    base = _init_repo(tmp_path)
+    local_branch = _git(tmp_path, "branch", "--show-current")
+    published_sha = _commit_published_semantic_change(
+        tmp_path,
+        base,
+        branch="published-not-landed",
+        return_to=local_branch,
+    )
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    def fake_published_target_from_gh(_root: Path, pr_number: int) -> tuple[str, str]:
+        assert pr_number == 95
+        return published_sha, "gh.pr#95.mergeCommit"
+
+    monkeypatch.setattr(
+        chain_module,
+        "_published_pr_target_from_gh",
+        fake_published_target_from_gh,
+    )
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        {**_record(), "pr_number": 95, "pr_state": "merged"},
+        implementation_milestone=True,
+        chain_state=ChainState(target_base_ref=local_branch),
+    )
+
+    assert ok is True
+    assert "published PR target" in reason
 def test_missing_milestone_base_sha_blocks_without_waiver(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _commit_semantic_change(tmp_path)
