@@ -1,0 +1,411 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Reality Convergence
+Source: `.megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5ed92f91a987b5fafb1e8011624176237e2b9fe3164b07cde7fa7d1f59b4baf9`
+
+```md
+# North Star: Extension Reality Convergence
+
+## End State
+
+The Reigh video-editor extension system is truthful and converged across trust, composition authority, and export readiness. Extensions are presented as trusted local code unless a later untrusted-runtime epic adds real isolation. Composition facts used by planner/export/preview flow through a canonical authority spine instead of scattered legacy timeline reads. Export readiness is decided by planner-owned blockers, with guard scans and provider route checks demoted to structured planner inputs.
+
+## Success In One Sentence
+
+From a clean checkout on top of the completed extension-foundation work, Reigh can prove that extension trust claims are honest, the first composition fact family has moved to graph authority, and every user-facing export block originates from canonical planner readiness.
+
+## Immutable Constraints
+
+- Do not implement fake or partial permission enforcement and call it sandboxing.
+- Do not claim marketplace, third-party, or untrusted extension safety.
+- Keep extension code trusted and unsandboxed unless a separate future epic introduces isolation and brokered APIs.
+- Do not delete legacy timeline storage fields before compatibility projection and regression tests exist.
+- Do not let migrated fact families remain authoritative through direct legacy timeline reads.
+- Do not add a second export readiness authority beside the planner.
+- Do not weaken quality gates, docs checks, or release checks to make the epic pass.
+- Preserve existing editor behavior for timelines and packages that do not use migrated composition features.
+- Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.
+
+## Required Proof
+
+- SDK, JSON schema, examples, docs, and manager UI agree on the trusted-code/access-disclosure model.
+- A regression gate fails if docs or UI imply sandboxing, runtime permission enforcement, marketplace safety, or third-party safety.
+- The first composition authority ratchet proves shader/ref readiness comes from graph-projected facts, not direct legacy shader fields.
+- A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled.
+- User-facing export/render blocked states are derived from planner blockers.
+- Generated-module artifact state, provider availability, output-format availability, contribution conflicts, shader/material blockers, and live-binding blockers are represented in planner readiness.
+- Quality checks pass from a clean checkout with the convergence gates enabled.
+
+## Explicitly Deferred
+
+- True permission enforcement through iframe, Worker, process, SES-like isolation, or a brokered host API.
+- Marketplace install, remote extension discovery, update/delete flows, code signing, and dependency resolution.
+- Full composition-spine completion beyond the fact families named by this epic.
+- Full process/sidecar runtime hardening unless required as an input to export-readiness diagnostics.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146`
+Current milestone: `m3-export-readiness-convergence`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M3: Export Readiness Convergence
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M3 Export Readiness Convergence Cleanup
+
+## Overview
+Complete the already-implemented M3 export readiness convergence by closing the remaining blocker-provenance gaps, removing dead/stale artifacts, and reconciling docs that duplicate planner-owned blocker vocabulary. This is a bridge to the Epic North Star, not a contradiction: legacy scans remain useful, but user-facing export readiness must come from planner blockers or structured blocker objects. No new readiness architecture, sandboxing claim, or output-format capability is planned.
+
+## Main Phase
+
+### Step 1: Confirm Current Touchpoints
+**Scope:** Small
+**Complexity: 1**
+1. Inspect the cited source, tests, and docs only: `useRenderState.ts`, `useClientRender.ts`, `renderPlanner.ts`, nearby hook tests, and the three stale docs.
+2. Reconfirm `getFastRenderRouteDecision()` is unused and `runExportGuard()` only feeds planner readiness.
+
+### Step 2: Fix Render Hook Provenance Gaps
+**Scope:** Medium
+**Complexity: 3**
+1. Delete dead `getFastRenderRouteDecision()` code and unused types/imports.
+2. Rename `runExportGuard()` to a scanner/adapter name such as `collectExportGuardInput()` and update call sites.
+3. Replace the dynamic render-router import catch hardcoded message with planner-owned blocker provenance.
+4. Ensure exporter subscriber `failed` phases always call `setRenderLog()` with `progress.log` or a concise execution-failure fallback.
+5. Add focused `useRenderState.test.tsx` coverage for both gaps.
+
+### Step 3: Structure WebCodecs Unsupported Failure
+**Scope:** Medium
+**Complexity: 2**
+1. Update `useClientRender.ts` so WebCodecs unsupported failure carries a `RenderBlocker`-shaped object or equivalent structured blocker provenance.
+2. Keep this local to client execution unless existing types already make planner integration natural.
+3. Add/update `useClientRender.test.ts` coverage.
+
+### Step 4: Clean Stale Planner and Docs Artifacts
+**Scope:** Medium
+**Complexity: 2**
+1. Remove or update the stale M3 audit comment in `renderPlanner.ts`.
+2. Update `v8-architecture-baseline.md` and `m0-fixture-matrices.md` to reference canonical planner blocker codes instead of duplicating enum vocabulary.
+3. Update `phase4-readiness.md` to remove the stale `contributionFamilies.ts` source reference.
+
+### Step 5: Re-audit User-Facing Error Paths
+**Scope:** Small
+**Complexity: 2**
+1. Re-scan render/export error and log paths in `useRenderState.ts` and `useClientRender.ts`.
+2. Confirm each path is planner/blocker-backed, a justified pre-planner config guard, or a genuine post-execution failure.
+
+### Step 6: Validate
+**Scope:** Medium
+**Complexity: 2**
+1. Run focused tests for render state, client render, planner, router, export guard, and readiness docs.
+2. Run the repo’s normal validation command if discoverable.
+3. Document any unrelated environmental failure with the exact command/output.
+
+## Execution Order
+1. Confirm insertion points before editing.
+2. Apply hook/source changes before tests that assert new behavior.
+3. Update docs/comments after source behavior is settled.
+4. Re-audit message paths after all edits.
+
+## Validation Order
+1. Run focused hook tests first.
+2. Run planner/router/export-guard/doc contract tests next.
+3. Run broader project validation last.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-10T10:04:02Z",
+  "hash": "sha256:33e79a6eecad3ed1a772ba26d76ebd3043df7a4220015d12a9233c3da0f80cf3",
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "Dynamic render-router import failures in `useRenderState.ts` produce planner-owned blocker provenance rather than only `Render routing unavailable.`",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Exporter subscriber failed phases update `renderLog` with a meaningful failure message.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The WebCodecs unsupported path exposes a `RenderBlocker`-shaped object or equivalent structured blocker provenance.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`getFastRenderRouteDecision()` is removed and no repository references remain.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Export guard scan output remains consumed through planner readiness, and legacy `runExportGuard()` naming is demoted or renamed.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The stale `renderPlanner.ts` comment no longer claims completed planner inputs are still missing.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Docs no longer duplicate stale canonical blocker vocabulary or reference nonexistent `contributionFamilies.ts` as an active source.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Focused M3 tests pass for render planner, render router, export guard, render state, client render, and readiness docs.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The implementation avoids new readiness APIs, new output-format product capabilities, and any new sandboxing or untrusted-extension safety claims.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The repo\u2019s normal full validation passes, or any failure is documented as unrelated with evidence.",
+      "priority": "should",
+      "requires": [
+        "run_tests",
+        "read_build_output",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The engineering brief is accurate that M3 architecture is substantially implemented and remaining work is cleanup plus focused tests.",
+    "A `RenderBlocker`-shaped object is sufficient for WebCodecs unsupported because this is a browser executor capability check, not planner readiness.",
+    "The stale `contributionFamilies.ts` doc reference should be updated to existing canonical sources rather than restoring a generated matrix file.",
+    "Renaming `runExportGuard()` is a bridge to the North Star because it demotes legacy scan terminology while preserving scans as planner inputs.",
+    "No clarification is needed before implementation; the brief\u2019s open questions do not materially change the plan."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [],
+    "changed_surfaces": [
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useClientRender.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx",
+      "src/tools/video-editor/hooks/__tests__/useClientRender.test.ts",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/phase4-readiness.md"
+    ],
+    "always_run": [
+      "rg \"getFastRenderRouteDecision|runExportGuard|contributionFamilies\\.ts|Render routing unavailable|WebCodecs not supported\" src docs",
+      "targeted test invocation for listed tests"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/hooks/__tests__/useClientRender.test.ts, src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx, src/tools/video-editor/hooks/useClientRender.ts, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/renderPlanner.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/phase4-readiness.md. Candidate: The touched surface is limited to two hooks, one planner comment, focused tests, and docs. Scoped validation is appropriate, with full validation as the regression fallback because this area influences user-facing export readiness. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx, src/tools/video-editor/hooks/__tests__/useClientRender.test.ts, src/tools/video-editor/runtime/__tests__/renderPlanner.test.ts, src/tools/video-editor/lib/__tests__/renderRouter.test.ts, src/tools/video-editor/runtime/__tests__/exportGuard.test.ts, src/tools/video-editor/**/__tests__/phase4ReadinessDocs.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx",
+      "src/tools/video-editor/hooks/__tests__/useClientRender.test.ts",
+      "src/tools/video-editor/runtime/__tests__/renderPlanner.test.ts",
+      "src/tools/video-editor/lib/__tests__/renderRouter.test.ts",
+      "src/tools/video-editor/runtime/__tests__/exportGuard.test.ts",
+      "src/tools/video-editor/**/__tests__/phase4ReadinessDocs.test.ts"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is well-structured, aligned with the epic North Star, and based on accurate code-state analysis. I verified each key claim: `getFastRenderRouteDecision()` is dead code (defined but never called, single file), `runExportGuard()` is called directly in useRenderState.ts and referenced in multiple docs, the stale renderPlanner.ts comment at line 298-303 still claims disabled-format inputs are missing, the exporter subscriber `failed` phase at line 590-594 does not call `setRenderLog`, phase4-readiness.md already acknowledges `contributionFamilies.ts` as absent but the plan's goal to upda...",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Rename `runExportGuard()` to a scanner/adapter name such as `collectExportGuardInput()` rather than deleting the scan infrastructure.",
+      "rationale": "Preserves useful guard scans as planner inputs while demoting legacy scan authority terminology. Aligned with North Star: 'Do not add a second export readiness authority beside the planner.'"
+    },
+    {
+      "id": "SD2",
+      "decision": "Use a `RenderBlocker`-shaped object for WebCodecs unsupported failures rather than trying to route it through planner readiness.",
+      "rationale": "WebCodecs availability is a browser executor capability check, not a planner-domain concern. Structured blocker provenance is sufficient for user-facing messaging without forcing a planner integration that doesn't belong."
+    },
+    {
+      "id": "SD3",
+      "decision": "Update doc references to the nonexistent `contributionFamilies.ts` by pointing to canonical sources (contributionKinds.ts, familyDefinitions.ts, family-maturity.json) rather than restoring a generated matrix file.",
+      "rationale": "The canonical sources already exist and are the single source of truth. Restoring a stale generated file would create maintenance burden and duplicate authority."
+    },
+    {
+      "id": "SD4",
+      "decision": "Delete the dead `getFastRenderRouteDecision()` function and any unused types/imports it drags in.",
+      "rationale": "Confirmed unused: only defined at line 51 of useRenderState.ts, never called anywhere in the repository. Dead code removal is non-controversial cleanup."
+    }
+  ],
+  "warnings": [
+    "Verify during execution that renaming `runExportGuard()` updates all 16 references across code and docs consistently.",
+    "Phase4-readiness.md already acknowledges `contributionFamilies.ts` as absent; ensure the doc update clarifies rather than removes useful historical context.",
+    "The test blast radius notes missing test selectors for several files \u2014 confirm test coverage is adequate after edits."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-10T10:13:15Z"
+}
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.
