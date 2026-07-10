@@ -449,6 +449,50 @@ def test_codex_progress_liveness_uses_rollout_and_cpu_signals(
     assert probe() == "progressing"
 
 
+def test_review_liveness_does_not_treat_cpu_only_as_model_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A busy Codex/node process alone cannot keep a silent review alive."""
+    from arnold_pipelines.megaplan.workers import _impl
+
+    output_path = tmp_path / "review.json"
+    output_path.write_text("", encoding="utf-8")
+    liveness = _impl.CodexProgressLiveness(
+        output_path=output_path,
+        include_cpu_signal=False,
+    )
+    probe = liveness.bind_process(SimpleNamespace(pid=321, poll=lambda: None))
+
+    # A CPU sample would advance for a spinning node process. Strict review
+    # liveness intentionally ignores it until Codex emits a token/event or
+    # writes an artifact.
+    monkeypatch.setattr(_impl, "_subtree_cputime_sample", lambda _roots: 99.0)
+    assert probe() == "alive_only"
+    assert probe() == "alive_only"
+
+    output_path.write_text('{"review_verdict":"approved"}', encoding="utf-8")
+    assert probe() == "progressing"
+
+
+def test_run_command_kills_alive_silent_worker_without_liveness_grace(tmp_path: Path) -> None:
+    """The review policy can terminate a process that is alive but evidentially silent."""
+    from arnold_pipelines.megaplan.types import CliError
+    from arnold_pipelines.megaplan.workers import _impl
+
+    with pytest.raises(CliError, match="stalled stream") as captured:
+        _impl.run_command(
+            ["/bin/sh", "-c", "sleep 5"],
+            cwd=tmp_path,
+            timeout=10,
+            idle_timeout=0.05,
+            progress_liveness_probe=lambda: "alive_only",
+            progress_liveness_grace_timeout=0.0,
+            activity_callback=lambda *_args: None,
+        )
+
+    assert captured.value.code == "worker_stall"
+
+
 def test_run_codex_step_execute_wires_progress_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -515,3 +559,70 @@ def test_run_codex_step_execute_wires_progress_probe(
     assert callable(captured["activity_guard"])
     assert callable(captured["progress_liveness_factory"])
     assert captured["progress_liveness_grace_timeout"] == pytest.approx(600.0)
+
+
+def test_run_codex_step_review_uses_strict_stream_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.workers import _impl
+
+    root = tmp_path / "root"
+    root.mkdir()
+    ensure_runtime_layout(root)
+    plan_dir = root / ".megaplan" / "plans" / "review-liveness"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    output_path = plan_dir / "out.json"
+    state = {
+        "name": "review-liveness",
+        "idea": "x",
+        "current_state": "executed",
+        "iteration": 0,
+        "created_at": "1970-01-01T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "mode": "code"},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {},
+    }
+    captured: dict[str, object] = {}
+
+    def fake_run_command(command, **kwargs):
+        captured["command"] = list(command)
+        captured["progress_liveness_grace_timeout"] = kwargs.get(
+            "progress_liveness_grace_timeout"
+        )
+        factory = kwargs["progress_liveness_factory"]
+        probe = factory(SimpleNamespace(pid=321, poll=lambda: None))
+        liveness = probe.__self__
+        captured["include_cpu_signal"] = liveness.include_cpu_signal
+        output_path.write_text(
+            '{"review_verdict":"approved","criteria":[],"issues":[],'
+            '"rework_items":[],"summary":"ok","task_verdicts":[],'
+            '"sense_check_verdicts":[]}',
+            encoding="utf-8",
+        )
+        return _impl.CommandResult(
+            command=list(command), cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=5
+        )
+
+    monkeypatch.setattr(_impl, "run_command", fake_run_command)
+    monkeypatch.setattr(
+        _impl, "_codex_step_cost", lambda *args, **kwargs: (0.0, 0, 0, "gpt-5.5", None)
+    )
+
+    _impl.run_codex_step(
+        "review",
+        state,
+        plan_dir,
+        root=root,
+        persistent=False,
+        fresh=True,
+        read_only=True,
+        output_path=output_path,
+        prompt_override="Return a valid review payload.",
+    )
+
+    assert "--json" in captured["command"], " ".join(captured["command"])
+    assert captured["include_cpu_signal"] is False
+    assert captured["progress_liveness_grace_timeout"] == 0.0
