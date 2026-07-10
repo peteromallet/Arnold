@@ -37,6 +37,56 @@ def _stable_unique_strings(values: list[str]) -> list[str]:
     return ordered
 
 
+def phase_quality_deviations_for_current_attempt(
+    batch_payloads: list[dict[str, Any]],
+    *,
+    blocking_reasons: list[str],
+) -> tuple[list[str], list[str]]:
+    """Separate current quality blockers from deferred execution evidence.
+
+    ``execution_batch_*.json`` is a durable, cross-attempt audit trail.  It is
+    intentionally cumulative in ``execution.json``.  It must *not*, however,
+    be replayed as the quality-gate input for a later retry: an earlier
+    contract failure may have been fixed by a subsequent batch, and an
+    explicitly unavailable external prerequisite is evidence rather than a
+    code-quality failure.
+
+    Callers pass only payloads produced by the invocation currently being
+    reduced.  The returned first list is safe to publish as PhaseResult
+    ``deviations``; the second remains durable diagnostic evidence.
+    """
+    current: list[str] = []
+    for payload in batch_payloads:
+        current.extend(
+            issue
+            for issue in payload.get("deviations", [])
+            if isinstance(issue, str) and issue.strip()
+        )
+
+    deferred_markers = (
+        "advisory",
+        "expected environment limitation",
+        "accepted environment blocker",
+        "environment-dependent",
+        "environment gap",
+        "prerequisite error",
+        "prerequisites are missing",
+        "comfyui server",
+        "could not find comfyui",
+        "err_connection_refused",
+        "recorded as command evidence only",
+    )
+    blockers = list(blocking_reasons)
+    deferred: list[str] = []
+    for issue in current:
+        normalized = issue.casefold()
+        if any(marker in normalized for marker in deferred_markers):
+            deferred.append(issue)
+        else:
+            blockers.append(issue)
+    return _stable_unique_strings(blockers), _stable_unique_strings(deferred)
+
+
 def _build_aggregate_execution_payload(
     batch_payloads: list[dict[str, Any]],
     *,
