@@ -626,3 +626,60 @@ def test_run_codex_step_review_uses_strict_stream_evidence(
     assert "--json" in captured["command"], " ".join(captured["command"])
     assert captured["include_cpu_signal"] is False
     assert captured["progress_liveness_grace_timeout"] == 0.0
+
+
+def test_run_codex_step_plan_uses_strict_stream_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan is non-execute too: an alive-only Codex node must not mask a wedge."""
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.types import CliError
+    from arnold_pipelines.megaplan.workers import _impl
+
+    root = tmp_path / "root"
+    root.mkdir()
+    ensure_runtime_layout(root)
+    plan_dir = root / ".megaplan" / "plans" / "plan-liveness"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-liveness",
+        "idea": "x",
+        "current_state": "initialized",
+        "iteration": 0,
+        "created_at": "1970-01-01T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "mode": "code"},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {},
+    }
+    captured: dict[str, object] = {}
+
+    def fake_run_command(command, **kwargs):
+        captured["command"] = list(command)
+        captured["progress_liveness_grace_timeout"] = kwargs.get(
+            "progress_liveness_grace_timeout"
+        )
+        probe = kwargs["progress_liveness_factory"](
+            SimpleNamespace(pid=321, poll=lambda: None)
+        )
+        captured["include_cpu_signal"] = probe.__self__.include_cpu_signal
+        raise CliError("worker_stall", "silent model-worker")
+
+    monkeypatch.setattr(_impl, "run_command", fake_run_command)
+    with pytest.raises(CliError) as raised:
+        _impl.run_codex_step(
+            "plan",
+            state,
+            plan_dir,
+            root=root,
+            persistent=False,
+            fresh=True,
+            read_only=False,
+            prompt_override="Return a plan.",
+        )
+
+    assert raised.value.code == "worker_stall"
+    assert "--json" in captured["command"]
+    assert captured["include_cpu_signal"] is False
+    assert captured["progress_liveness_grace_timeout"] == 0.0

@@ -3348,15 +3348,16 @@ def _run_codex_step_uncapped(
                 prompt=prompt,
                 json_trace=json_trace,
             )
-        # A review has no mutating tool work to protect.  Require a structured
-        # Codex event, rollout token, or output artifact to extend its idle
-        # window; a live-but-silent node process is a transport/CLI wedge, not
-        # progress.  Execute deliberately retains CPU-based liveness because
-        # pytest/build subprocesses can be legitimately quiet.
-        strict_review_liveness = step == "review"
+        # Non-execute phases have no long mutating tool turn to protect.  They
+        # must show a structured Codex event, rollout token, or output artifact
+        # to extend their idle window; a live-but-silent node process is a
+        # transport/CLI wedge, not progress.  Execute deliberately retains
+        # CPU-based liveness because pytest/build subprocesses can be
+        # legitimately quiet for minutes.
+        strict_structured_liveness = step not in _EXECUTE_STEPS
         liveness = CodexProgressLiveness(
             output_path=output_path,
-            include_cpu_signal=not strict_review_liveness,
+            include_cpu_signal=not strict_structured_liveness,
         )
         result = run_command(
             command,
@@ -3369,11 +3370,12 @@ def _run_codex_step_uncapped(
             pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
             idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
             progress_liveness_factory=liveness.bind_process,
-            # Strict review liveness has no grace: a process that is merely
-            # alive but has no token/event/artifact evidence must surface as a
-            # retryable worker_stall at the configured bounded idle timeout.
+            # Structured non-execute liveness has no grace: a process that is
+            # merely alive but has no token/event/artifact evidence must
+            # surface as a retryable worker_stall at the configured bounded
+            # idle timeout.
             progress_liveness_grace_timeout=(
-                0.0 if strict_review_liveness else (codex_idle_s if codex_idle_s > 0 else None)
+                0.0 if strict_structured_liveness else (codex_idle_s if codex_idle_s > 0 else None)
             ),
         )
         if not read_only:
@@ -3851,10 +3853,10 @@ def run_codex_step(
     free_text: bool = False,
     repair_attempted: bool = False,
 ) -> WorkerResult:
-    # Review supervision relies on stream-json to observe the rollout/token
+    # Non-execute supervision relies on stream-json to observe rollout/token
     # cadence.  Enforce it here as well as at dispatcher call sites so direct
     # handler callers cannot silently disable the watchdog's evidence channel.
-    json_trace = json_trace or step == "review"
+    json_trace = json_trace or step not in _EXECUTE_STEPS
     return _run_codex_step_uncapped(
         step,
         state,
@@ -4319,11 +4321,11 @@ def _codex_to_agent_result(
                 root=root,
                 persistent=(mode == "persistent"),
                 fresh=eff_fresh,
-                # Review needs stream-json too: it supplies the token/tool
-                # evidence used to distinguish a live review from a silent
-                # transport wedge.  The final schema payload still comes from
-                # the output file.
-                json_trace=(step in {"execute", "review"}),
+                # Every non-execute phase needs stream-json too: it supplies
+                # the token/tool evidence used to distinguish a live phase
+                # from a silent transport wedge.  The final schema payload
+                # still comes from the output file.
+                json_trace=True,
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
@@ -4771,7 +4773,7 @@ def run_step_with_worker(
                                 root=root,
                                 persistent=(mode == "persistent"),
                                 fresh=effective_refreshed,
-                                json_trace=(step in {"execute", "review"}),
+                                json_trace=True,
                                 prompt_override=prompt_override,
                                 prompt_kwargs=prompt_kwargs,
                                 effort=effort,
