@@ -3766,3 +3766,594 @@ class TestRiskyOrDeferredFixesMarkdown:
         assert "**esc-plan**" in md
         assert "ccc333" in md
         assert "ESCALATE" in md
+
+
+class TestStageMetrics:
+    """Focused `TestStageMetrics` coverage for stage_metrics JSON and Markdown."""
+
+    STAGE_NAMES = [
+        "prep", "plan", "critique", "gate", "revise", "finalize",
+        "execute", "review", "feedback", "chain", "repair",
+        "meta_repair", "human_pr_ci", "deployment_runtime",
+    ]
+
+    COUNTER_NAMES = [
+        "stalls", "retries", "repair_attempts", "meta_repair_attempts",
+        "human_waits", "ci_waits", "handoff_gaps", "no_op_loops",
+        "dead_workers", "duration_seconds", "unknowns", "missing_evidence",
+    ]
+
+    def _bucket(self, **counters):
+        """Build a stage metric bucket with zero counters and optional overrides."""
+        bucket = {}
+        for c in self.COUNTER_NAMES:
+            bucket[c] = counters.get(c, 0)
+            bucket[f"{c}_evidence"] = counters.get(f"{c}_evidence", [])
+        return bucket
+
+    def _ref(self, ref_type, value, **extra):
+        ref = {"type": ref_type, "value": value}
+        ref.update(extra)
+        return ref
+
+    # ── JSON payload shape for all 14 stages ──────────────────────────
+
+    def test_stage_metrics_json_has_all_14_stages(self, tmp_path: Path) -> None:
+        stage_metrics = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        stage_metrics["unknown_phase_count"] = 0
+        stage_metrics["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": stage_metrics,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        sm = payload["stage_metrics"]
+        for stage in self.STAGE_NAMES:
+            assert stage in sm, f"stage_metrics missing key: {stage}"
+        assert sm["unknown_phase_count"] == 0
+        assert sm["unknown_phase_evidence"] == []
+
+    # ── All 12 counters per stage ─────────────────────────────────────
+
+    def test_stage_metrics_each_stage_has_all_12_counters(self, tmp_path: Path) -> None:
+        stage_metrics = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        stage_metrics["unknown_phase_count"] = 0
+        stage_metrics["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": stage_metrics,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        for stage in self.STAGE_NAMES:
+            bucket = payload["stage_metrics"][stage]
+            for c in self.COUNTER_NAMES:
+                assert c in bucket, f"{stage} missing counter: {c}"
+                assert isinstance(bucket[c], int), f"{stage}.{c} should be int, got {type(bucket[c])}"
+
+    # ── Empty evidence for zero counters ──────────────────────────────
+
+    def test_stage_metrics_zero_counters_have_empty_evidence(self, tmp_path: Path) -> None:
+        stage_metrics = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        stage_metrics["unknown_phase_count"] = 0
+        stage_metrics["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": stage_metrics,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        for stage in self.STAGE_NAMES:
+            bucket = payload["stage_metrics"][stage]
+            for c in self.COUNTER_NAMES:
+                if bucket[c] == 0:
+                    ev = bucket.get(f"{c}_evidence", None)
+                    assert ev == [], f"{stage}.{c}_evidence should be [] when counter=0, got {ev}"
+
+    # ── Evidence pointer fields for nonzero counters ──────────────────
+
+    def test_stage_metrics_nonzero_counters_have_evidence_refs(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        # Put nonzero data in the chain stage
+        ref = self._ref("watchdog_stall", "stall:test-plan", source="watchdog-report.json")
+        sm["chain"]["stalls"] = 2
+        sm["chain"]["stalls_evidence"] = [ref]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        chain = payload["stage_metrics"]["chain"]
+        assert chain["stalls"] == 2
+        assert chain["stalls_evidence"] == [ref]
+        assert ref["type"] == "watchdog_stall"
+        assert ref["value"] == "stall:test-plan"
+
+    # ── Markdown rendering ────────────────────────────────────────────
+
+    def test_stage_metrics_markdown_section_header_present(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+        assert "## Stage metrics" in md
+
+    def test_stage_metrics_markdown_renders_nonzero_stage(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["chain"]["stalls"] = 3
+        sm["chain"]["stalls_evidence"] = [
+            self._ref("watchdog_stall", "stall:plan-a", source="watchdog-report.json"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert "**chain**" in md
+        assert "stalls=3" in md
+
+    def test_stage_metrics_markdown_empty_state(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+        assert "_No stage metric data available._" in md
+
+    # ── Synthetic phase durations ─────────────────────────────────────
+
+    def test_stage_metrics_duration_seconds_counter(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["execute"]["duration_seconds"] = 420
+        sm["execute"]["duration_seconds_evidence"] = [
+            self._ref("phase_duration", "execute", duration_seconds=420, source="events.ndjson"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["execute"]["duration_seconds"] == 420
+        assert "duration=420s" in md
+        assert "**execute**" in md
+
+    # ── Repair attempts / retries ─────────────────────────────────────
+
+    def test_stage_metrics_repair_attempts_and_retries(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["repair"]["repair_attempts"] = 4
+        sm["repair"]["repair_attempts_evidence"] = [
+            self._ref("repair_data", "/tmp/repair-data.json", source="repair-data"),
+        ]
+        sm["gate"]["retries"] = 3
+        sm["gate"]["retries_evidence"] = [
+            self._ref("recent_gate_history", "test-plan", source="state.json"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["repair"]["repair_attempts"] == 4
+        assert payload["stage_metrics"]["gate"]["retries"] == 3
+        assert "**repair**" in md
+        assert "repair_attempts=4" in md
+        assert "**gate**" in md
+        assert "retries=3" in md
+
+    # ── Watchdog stalls ───────────────────────────────────────────────
+
+    def test_stage_metrics_watchdog_stalls_counter(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["chain"]["stalls"] = 2
+        sm["chain"]["stalls_evidence"] = [
+            self._ref("watchdog_stall", "progress_stall:m-tune", source="watchdog-report.json"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "progress_stall:m-tune",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["chain"]["stalls"] == 2
+        assert "stalls=2" in md
+        assert "**chain**" in md
+
+    # ── Unmapped phases ───────────────────────────────────────────────
+
+    def test_stage_metrics_unmapped_phases_unknown_count(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 5
+        sm["unknown_phase_evidence"] = [
+            {"phase": "weird_phase", "refs": [self._ref("plan", "test-plan")]},
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["unknown_phase_count"] == 5
+        assert len(payload["stage_metrics"]["unknown_phase_evidence"]) == 1
+        # Markdown renders unknown phases as a separate bullet
+        assert "unknown phases" in md
+
+    # ── Missing evidence ──────────────────────────────────────────────
+
+    def test_stage_metrics_missing_evidence_counter(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["execute"]["missing_evidence"] = 3
+        sm["execute"]["missing_evidence_evidence"] = [
+            self._ref("unpaired_phase_start", "execute", source="events.ndjson"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert payload["stage_metrics"]["execute"]["missing_evidence"] == 3
+        assert "missing_evidence=3" in md
+        assert "**execute**" in md
+
+    # ── coverage block ────────────────────────────────────────────────
+
+    def test_coverage_block_shape(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        # Mark one stage as having data
+        sm["execute"]["duration_seconds"] = 100
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        cov = payload["coverage"]
+        assert cov["total_stages"] == 14
+        assert "stages_with_data" in cov
+        assert "stages_without_data" in cov
+        assert "stages_not_checked" in cov
+        assert "execute" in cov["stages_with_data"]
+        assert "prep" in cov["stages_without_data"]  # all-zero
+        # No stages should be not_checked since all 14 buckets are present
+        assert cov["stages_not_checked"] == []
+
+    def test_coverage_block_with_missing_stages(self, tmp_path: Path) -> None:
+        # Stage_metrics with only a few stages (simulating partial input)
+        sm: dict = {"unknown_phase_count": 0, "unknown_phase_evidence": []}
+        sm["chain"] = self._bucket(stalls=1)
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        cov = payload["coverage"]
+        # Stages not present in the dict go to stages_not_checked
+        assert "prep" in cov["stages_not_checked"]
+        assert "chain" in cov["stages_with_data"]
+        assert len(cov["stages_not_checked"]) > 0
+
+    # ── data_quality block ────────────────────────────────────────────
+
+    def test_data_quality_block_shape(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 2
+        sm["unknown_phase_evidence"] = [{"phase": "unknown_x", "refs": []}]
+        sm["execute"]["missing_evidence"] = 1
+        sm["execute"]["missing_evidence_evidence"] = [
+            self._ref("unpaired_phase_start", "execute", source="events.ndjson"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        dq = payload["data_quality"]
+        assert dq["unknown_phases"] == 2
+        assert len(dq["unknown_phase_evidence"]) == 1
+        assert "execute" in dq["stages_with_missing_evidence"]
+        assert dq["missing_inputs"] == []
+        assert dq["data_sources"]["stage_metrics_available"] is True
+        assert dq["data_sources"]["findings_available"] is False
+        assert dq["data_sources"]["green_checks_available"] is False
+
+    def test_data_quality_missing_inputs(self, tmp_path: Path) -> None:
+        # Only a subset of stages present
+        sm: dict = {"unknown_phase_count": 0, "unknown_phase_evidence": []}
+        sm["plan"] = self._bucket(duration_seconds=60)
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        dq = payload["data_quality"]
+        missing = {m["stage"] for m in dq["missing_inputs"]}
+        assert "prep" in missing
+        assert "plan" not in missing  # plan IS present
+        for m in dq["missing_inputs"]:
+            assert m["status"] == "not_checked"
+
+    # ── dispatch_summary block ────────────────────────────────────────
+
+    def test_dispatch_summary_block_present(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        ds = payload["dispatch_summary"]
+        assert ds["mode"] == "report_only"
+        expected_keys = {
+            "mode", "autofix_enabled", "repair_dispatched", "model_dispatched",
+            "deepseek_dispatched", "meta_repair_dispatched", "codex_dispatched",
+            "git_commit_performed", "file_edit_performed", "rationale",
+        }
+        assert set(ds.keys()) == expected_keys
+
+    def test_dispatch_summary_report_only_guard(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        ds = payload["dispatch_summary"]
+        assert ds["autofix_enabled"] is False
+        assert ds["repair_dispatched"] is False
+        assert ds["model_dispatched"] is False
+        assert ds["deepseek_dispatched"] is False
+        assert ds["meta_repair_dispatched"] is False
+        assert ds["codex_dispatched"] is False
+        assert ds["git_commit_performed"] is False
+        assert ds["file_edit_performed"] is False
+        assert "report-only" in ds["rationale"].lower()
+        assert "no repair" in ds["rationale"].lower()
+
+    # ── Multiple nonzero stages in markdown ───────────────────────────
+
+    def test_stage_metrics_markdown_multiple_nonzero_stages(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["plan"]["retries"] = 1
+        sm["plan"]["retries_evidence"] = [
+            self._ref("chain_log_repetition", "status_stopped", source="chain_log"),
+        ]
+        sm["chain"]["stalls"] = 2
+        sm["chain"]["stalls_evidence"] = [
+            self._ref("watchdog_stall", "stall:plan-a", source="watchdog-report.json"),
+        ]
+        sm["repair"]["repair_attempts"] = 3
+        sm["repair"]["repair_attempts_evidence"] = [
+            self._ref("repair_data", "/tmp/rd", source="repair-data"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "stall:plan-a",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        assert "**plan**" in md
+        assert "retries=1" in md
+        assert "**chain**" in md
+        assert "stalls=2" in md
+        assert "**repair**" in md
+        assert "repair_attempts=3" in md
+
+    # ── Multiple counter types within a single stage ───────────────────
+
+    def test_stage_metrics_multiple_counters_same_stage(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["human_pr_ci"]["human_waits"] = 4
+        sm["human_pr_ci"]["human_waits_evidence"] = [
+            self._ref("unresolved_user_actions", "test-plan", source="finalize.json"),
+        ]
+        sm["human_pr_ci"]["ci_waits"] = 2
+        sm["human_pr_ci"]["ci_waits_evidence"] = [
+            self._ref("chain_log_repetition", "pr_closed", source="chain_log"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        hb = payload["stage_metrics"]["human_pr_ci"]
+        assert hb["human_waits"] == 4
+        assert hb["ci_waits"] == 2
+        assert "**human_pr_ci**" in md
+        assert "human_waits=4" in md
+        assert "ci_waits=2" in md
+
+    # ── Stage metrics absent from findings_data ────────────────────────
+
+    def test_stage_metrics_absent_from_input(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        # stage_metrics defaults to empty dict
+        assert payload["stage_metrics"] == {}
+        # coverage marks all stages as not_checked
+        assert len(payload["coverage"]["stages_not_checked"]) == 14
+        # data_quality marks all stages as missing_inputs
+        assert len(payload["data_quality"]["missing_inputs"]) == 14
+        assert payload["data_quality"]["data_sources"]["stage_metrics_available"] is False
+        # MD shows empty state
+        assert "_No stage metric data available._" in md
+
+    # ── Evidence pointers have stable shape ───────────────────────────
+
+    def test_stage_metrics_evidence_pointer_fields_stable(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        ref = self._ref("watchdog_stall", "progress_stall:m-tune",
+                        source="watchdog-report.json",
+                        plan="test-plan",
+                        workspace="/ws/test")
+        sm["chain"]["stalls"] = 1
+        sm["chain"]["stalls_evidence"] = [ref]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "progress_stall:m-tune",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+
+        ev = payload["stage_metrics"]["chain"]["stalls_evidence"][0]
+        # Stable required fields
+        assert ev["type"] == "watchdog_stall"
+        assert ev["value"] == "progress_stall:m-tune"
+        assert ev["source"] == "watchdog-report.json"
+        assert ev["plan"] == "test-plan"
+        assert ev["workspace"] == "/ws/test"
+
+    # ── Markdown evidence truncation ──────────────────────────────────
+
+    def test_stage_metrics_markdown_includes_compact_evidence_refs(self, tmp_path: Path) -> None:
+        sm = {stage: self._bucket() for stage in self.STAGE_NAMES}
+        sm["unknown_phase_count"] = 0
+        sm["unknown_phase_evidence"] = []
+
+        sm["chain"]["stalls"] = 1
+        sm["chain"]["stalls_evidence"] = [
+            self._ref("watchdog_stall", "stall:plan-x", source="watchdog-report.json"),
+        ]
+
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+            "stage_metrics": sm,
+        }
+        _payload, md = _run_report_assembler(findings_data, tmp_path)
+
+        # Evidence refs should appear in brackets
+        assert "watchdog_stall:stall:plan-x" in md
