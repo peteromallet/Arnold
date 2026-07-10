@@ -103,11 +103,11 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - For each task, emit one sense_check.
         - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
         - Do not invent tasks that don't trace to a plan step.
-        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
-          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=8 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=8 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=8 sibling and it runs on the pricier model.
           - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
         - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
-          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          1. Isolate heavyweights. A c=7 or c=8+ task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
           2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
           3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
         - Do not include `validation` or `coverage_complete` fields - the harness computes those.
@@ -126,22 +126,21 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
             - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
             - `docs`: writes documentation files (executor must produce `files_changed`).
             If unsure, default to `code`.
-          - `complexity`: integer 1–5 complexity score. This score routes the task to a
-            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
-            - 1 = trivial, mechanical, single-file change with no logic to reason about
-                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
-            - 2 = simple, localized change plus the obvious test update; one file or two,
-                  logic is linear and the failure mode is obvious.
-            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
-                  executor must hold in its head; correctness is not self-evident from the diff.
-            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
-                  the error propagates through a shared contract or invariant that code you did
-                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
-                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
-            - 5 = fundamental system-invariant change with high regression risk: concurrency that
-                  cascades, a schema/wire-format others build on, a state machine, or a security/
-                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
-                  state or break a system-wide contract — not merely "important" or central code.
+          - `complexity`: integer 1–10 "weight" score. This is a composite of **difficulty**
+            (cognitive load, novelty, risk of subtle bugs, reasoning required) **and scale**
+            (size/volume of change: files/modules touched, surface area, amount of work).
+            The third dimension is **blast radius / consequence** (how costly a mistake would be).
+            Adjudicate deliberately — do not guess. Use the rubric:
+            - 1 = MICRO: tightly scoped, obvious change (one small location, few lines). Low difficulty, negligible scale.
+            - 2 = LIGHT: small, well-understood task (localized fix or test update). Limited reasoning, very small surface.
+            - 3 = ROUTINE: normal maintenance with clear path (small feature or refactor across a few locations). Low-moderate difficulty, contained scale.
+            - 4 = STANDARD: bounded task needing some design judgment (across a small module). Touches several files but risks are understandable.
+            - 5 = MEANINGFUL: moderately sized with genuine complexity (multiple components, non-obvious edges). Scale or difficulty requires deliberate planning.
+            - 6 = HEAVY: large or difficult task crossing module boundaries (several interacting requirements, meaningful regression risk). Requires sustained reasoning.
+            - 7 = DEMANDING: high-complexity work (uncertain root causes, non-trivial architecture, broad surface, delicate constraints). Both difficulty and scale elevated.
+            - 8 = MAJOR: major subsystem change or broad repair (many dependencies, substantial validation). Large and cognitively demanding.
+            - 9 = CRITICAL: high-risk work affecting core paths, data integrity, security, or many consumers. Scale may be broad or difficulty exceptionally subtle.
+            - 10 = EXCEPTIONAL: system-defining work with maximum scale, uncertainty, or consequence (major redesign, multi-system migration). Requires expert reasoning and comprehensive validation.
             Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
             genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
             cascading, test-evading failure that earns the higher tier in the justification.

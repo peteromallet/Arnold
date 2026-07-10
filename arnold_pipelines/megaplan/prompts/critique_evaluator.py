@@ -2,7 +2,7 @@
 
 The evaluator reads the finished plan, the task graph, and the 9-lens
 catalog, then decides which lenses to fire / skip and rates each selected
-lens's complexity 1–5.  The profile maps complexity scores to models;
+lens's complexity 1–10.  The profile maps complexity scores to models;
 the evaluator never names a vendor or model.  Every lens fires by default;
 a skip requires a concrete reason.
 """
@@ -232,7 +232,7 @@ def _critique_evaluator_prompt(
     """Assemble the critique evaluator prompt.
 
     Renders the finished plan + task graph, the intent/issue-hints/notes
-    block, the 9-lens catalog, a 1–5 complexity rubric with FLOOR rules,
+    block, the 9-lens catalog, a 1–10 complexity rubric with FLOOR rules,
     and the fire-by-default / justify-to-skip contract.  The evaluator
     never names models or vendors — the profile maps complexity to models.
 
@@ -352,7 +352,7 @@ def _critique_evaluator_prompt(
     return textwrap.dedent(
         f"""\
         You are the Critique Evaluator. Your job is to decide which critique
-        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        lenses to fire and to rate each selected lens's difficulty on a 1–10
         complexity scale. The profile will map your complexity scores to
         models — you do NOT name models or vendors.
 
@@ -380,33 +380,20 @@ def _critique_evaluator_prompt(
 
         {lens_catalog}
 
-        ## Complexity Rubric (1–5)
+        ## Complexity Rubric (1–10)
 
-        Rate each selected lens on its **hardest realistic** aspect, not a
-        worst-case imagining. When genuinely torn between two tiers, choose the
-        LOWER one UNLESS you can name the specific cascading, test-evading
-        failure that earns the higher tier in the justification.
+        Rate each selected lens on its **hardest realistic** aspect (composite of difficulty + scale + blast radius/consequence). When genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific cascading, test-evading failure that earns the higher tier.
 
-        - **1 = trivial, mechanical check.** The lens's question can be
-          answered by pattern-matching a single file or a grep hit. A weak
-          model cannot get it wrong.
-        - **2 = simple, localized check.** The lens touches one or two
-          files, the question has a linear answer, and the failure mode
-          (missing something) is obvious.
-        - **3 = multi-step check with non-trivial reasoning.** The lens
-          requires holding multiple files or a dataflow in your head;
-          correctness is not self-evident from a quick skim.
-        - **4 = cross-cutting or high-stakes check.** A defect this lens would
-          miss is **non-local and not caught by an obvious test** — it
-          propagates through a shared contract or invariant that code the plan
-          does NOT touch relies on. Spanning several modules is NOT sufficient
-          on its own; a lens whose failure is local and obvious is tier 2-3.
-        - **5 = fundamental system-level check.** The lens probes a
-          security-sensitive path, a schema migration, an auth boundary, or
-          a contract relied on by the whole system, where a subtle error would
-          pass the full suite and corrupt state. Only assign tier 5 when the
-          lens genuinely requires system-level reasoning — not merely
-          "important" or central code.
+        - **1 = MICRO:** tightly scoped, obvious check (one small location or grep). Low difficulty, negligible scale.
+        - **2 = LIGHT:** small, well-understood check (localized, linear answer). Limited reasoning, very small surface.
+        - **3 = ROUTINE:** normal check with clear path (small feature area). Low-moderate difficulty, contained scale.
+        - **4 = STANDARD:** bounded check needing some judgment (small module or feature). Touches several files but risks understandable.
+        - **5 = MEANINGFUL:** moderately sized with genuine complexity (multiple components, non-obvious edges). Scale or difficulty requires deliberate planning.
+        - **6 = HEAVY:** large or difficult check crossing boundaries (several interacting requirements, meaningful risk of missing issues).
+        - **7 = DEMANDING:** high-complexity check (uncertain causes, non-trivial architecture, broad surface, delicate constraints). Both dimensions elevated.
+        - **8 = MAJOR:** major subsystem or broad repair check (many dependencies, substantial validation needs). Large and cognitively demanding.
+        - **9 = CRITICAL:** high-risk check affecting core paths, data integrity, security or many consumers. Scale broad or difficulty exceptionally subtle.
+        - **10 = EXCEPTIONAL:** system-defining check with maximum scale/uncertainty/consequence (core engine, wire format, consistency model). Requires expert reasoning and comprehensive validation.
 
         **FLOOR rules (hard minimum) — these two lenses ONLY:**
         - `correctness` — NEVER below tier 4. A correctness defect that
@@ -414,7 +401,7 @@ def _critique_evaluator_prompt(
         - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
           contradictions are subtle and cascade into runtime failures; a
           weak model will miss them.
-        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        Every OTHER lens must EARN tier 4-10 under the rubric above; the
         expected home for an ordinary, locally-verifiable check is tier 2-3.
         Do not let "this plan is large" inflate a lens whose own question is
         answerable by a focused read.
@@ -437,7 +424,7 @@ def _critique_evaluator_prompt(
           `skipped` must cover all {len(all_check_ids)} lens ids with no overlap
           and no omission.
         - **At least one lens must be selected** — an all-skip verdict is rejected.
-        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+        - **Every selected catalog lens** must emit a `complexity` (int 1–10) and
           a `complexity_justification` (one or two sentences citing why this
           lens sits at exactly that tier — reference the lens's question, the
           plan's concrete files/interfaces/risks). The justification must be
@@ -456,9 +443,9 @@ def _critique_evaluator_prompt(
 
         Your output must be a JSON object with these keys:
         - `selections`: list of objects. For catalog lenses:
-          {{check_id, complexity (int 1–5), complexity_justification, why?}}
+          {{check_id, complexity (int 1–10), complexity_justification, why?}}
           For `other` custom areas:
-          {{check_id: "other", area, why, complexity (int 1–5), complexity_justification}}
+          {{check_id: "other", area, why, complexity (int 1–10), complexity_justification}}
         - `skipped`: list of {{check_id, why}} objects
         - `evaluator_model`: your own model identifier string
         - `flag_verifications`: list of

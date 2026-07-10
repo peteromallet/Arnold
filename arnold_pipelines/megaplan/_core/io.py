@@ -156,17 +156,17 @@ def compute_batch_complexity(
     Indexes finalize tasks by ID and returns ``max(effective_complexity)``
     for the batch.  Each task's effective complexity is
     ``max(task.complexity, task.tier_override)`` when ``tier_override`` is an
-    integer in 1..5; out-of-range or non-integer ``tier_override`` values are
+    integer in 1..10; out-of-range or non-integer ``tier_override`` values are
     silently ignored and the base ``complexity`` is used.  Treats missing task
     IDs, missing ``complexity``, non-integer complexity, and out-of-range
-    values as **5** (fail-safe: expensive model).  Returns 5 for empty or
+    values as **10** (fail-safe: expensive model).  Returns 10 for empty or
     malformed batch input.
     """
     if not batch_task_ids:
-        return 5
+        return 10
     tasks = finalize_data.get("tasks", [])
     if not isinstance(tasks, list):
-        return 5
+        return 10
     task_map: dict[str, dict[str, Any]] = {}
     for task in tasks:
         if isinstance(task, dict) and isinstance(task.get("id"), str):
@@ -175,20 +175,20 @@ def compute_batch_complexity(
     for tid in batch_task_ids:
         task = task_map.get(tid)
         if not isinstance(task, dict):
-            return 5
+            return 10
         complexity = task.get("complexity")
         if not isinstance(complexity, int):
-            return 5
-        if complexity < 1 or complexity > 5:
-            return 5
+            return 10
+        if complexity < 1 or complexity > 10:
+            return 10
         tier_override = task.get("tier_override")
-        if isinstance(tier_override, int) and 1 <= tier_override <= 5:
+        if isinstance(tier_override, int) and 1 <= tier_override <= 10:
             effective = max(complexity, tier_override)
         else:
             effective = complexity
         if effective > max_complexity:
             max_complexity = effective
-    return max_complexity if max_complexity > 0 else 5
+    return max_complexity if max_complexity > 0 else 10
 
 
 # ---------------------------------------------------------------------------

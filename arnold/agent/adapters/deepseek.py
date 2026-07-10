@@ -45,16 +45,19 @@ from arnold.security.llm_proxy import broker_production_mode_requested
 _PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
     "deepseek": "https://api.deepseek.com",
     "mimo": "https://api.xiaomimimo.com/v1",
+    "xai": "https://api.x.ai/v1",
 }
 
 _PROVIDER_KEY_VARS: dict[str, tuple[str, ...]] = {
     "deepseek": ("DEEPSEEK_API_KEY", "HERMES_API_KEY"),
     "mimo": ("MIMO_API_KEY",),
+    "xai": ("XAI_API_KEY",),
 }
 
 _PROVIDER_BASE_URL_VARS: dict[str, str] = {
     "deepseek": "DEEPSEEK_BASE_URL",
     "mimo": "MIMO_BASE_URL",
+    "xai": "XAI_BASE_URL",
 }
 
 
@@ -99,6 +102,8 @@ def _provider_display_name(provider: str) -> str:
         return "DeepSeek"
     if provider == "mimo":
         return "MiMo"
+    if provider == "xai":
+        return "xAI"
     return provider
 
 # ---------------------------------------------------------------------------

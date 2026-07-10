@@ -16,6 +16,7 @@ KNOWN_CREDENTIALS: dict[str, CredentialSpec] = {
     "CLAUDE_API_KEY": {"provider": "claude", "env_var": "CLAUDE_API_KEY"},
     "OPENAI_API_KEY": {"provider": "openai", "env_var": "OPENAI_API_KEY"},
     "CODEX_API_KEY": {"provider": "codex", "env_var": "CODEX_API_KEY"},
+    "XAI_API_KEY": {"provider": "xai", "env_var": "XAI_API_KEY"},
     "DISCORD_BOT_TOKEN": {"provider": "discord", "env_var": "DISCORD_BOT_TOKEN"},
 }
 

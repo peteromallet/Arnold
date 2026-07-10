@@ -468,9 +468,9 @@ def resolve_batch_tier(
     ----------
     tier_map:
         Normalized ``{tier_ordinal: spec_string}`` mapping (may be
-        ``None`` or empty).  Keys are 1..5 integers.
+        ``None`` or empty).  Keys are 1..10 integers.
     batch_complexity:
-        The computed complexity ordinal for the batch (1..5).
+        The computed complexity ordinal for the batch (1..10).
 
     Returns
     -------
