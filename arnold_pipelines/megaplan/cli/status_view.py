@@ -386,7 +386,16 @@ def _observed_workflow_phase(
         failure_phase = latest_failure.get("phase")
         if isinstance(failure_phase, str) and failure_phase:
             return failure_phase
-    if isinstance(last_step, dict):
+    # History is only cursor authority when the recorded result actually
+    # completed a workflow transition.  Execute records ``partial`` and
+    # ``blocked`` entries while the state intentionally remains finalized so
+    # the pending batches can run again.  Treating either as a completed
+    # execute event fabricates a review cursor and contradicts that correct
+    # control projection.
+    if (
+        isinstance(last_step, dict)
+        and last_step.get("result") in {"success", "needs_rework", "force_proceeded"}
+    ):
         last_phase = last_step.get("step")
         if isinstance(last_phase, str) and last_phase:
             return last_phase

@@ -3046,8 +3046,16 @@ def _observed_phase_context(
         phase = latest_failure.get("phase")
         if isinstance(phase, str) and phase:
             return phase, "latest_failure"
+    # A history record is not automatically a completed transition.  In
+    # particular execute emits ``partial``/``blocked`` while finalized keeps
+    # projecting execute for the remaining work.  Letting those records
+    # manufacture a review cursor turns a valid rework continuation into a
+    # workflow_cursor_mismatch.
     last_step = status.get("last_step")
-    if isinstance(last_step, Mapping):
+    if (
+        isinstance(last_step, Mapping)
+        and last_step.get("result") in {"success", "needs_rework", "force_proceeded"}
+    ):
         phase = last_step.get("step")
         if isinstance(phase, str) and phase:
             return phase, "last_step"
