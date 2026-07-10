@@ -816,6 +816,17 @@ active_step = record.get("active_step_heartbeat")
 if isinstance(active_step, dict) and active_step.get("active"):
     raise SystemExit(0)
 if isinstance(active_step, dict):
+    # The resolver's explicit liveness verdict is authoritative.  In
+    # particular, stale phase/timestamp fields must not turn a dead worker
+    # (active=False / pid_live=False) back into an apparently live run.  Keep
+    # the legacy timestamp fallback only for records that predate those
+    # boolean verdicts and therefore have genuinely unknown liveness.
+    active = active_step.get("active")
+    pid_live = active_step.get("pid_live")
+    if isinstance(active, bool):
+        raise SystemExit(0 if active else 1)
+    if isinstance(pid_live, bool):
+        raise SystemExit(0 if pid_live else 1)
     phase = str(active_step.get("phase") or "").strip().lower()
     started_at = str(active_step.get("started_at") or "").strip()
     last_activity_at = str(active_step.get("last_activity_at") or "").strip()
