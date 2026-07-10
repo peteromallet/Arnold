@@ -100,7 +100,7 @@ def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> 
             "FIXED",
             str(resp_path),
             str(brief_path),
-            str(repair_data_dir),
+            str(repair_data_dir / "demo-session.repair-data.json"),
         ],
         capture_output=True,
         text=True,
@@ -129,7 +129,7 @@ def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> 
 def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> None:
     marker = (
         'python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" '
-        '"$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_DIR" "$MARKER_DIR" <<'
+        '"$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" <<'
     )
     program = _extract_meta_repair_embedded_python(marker)
     prog_path = tmp_path / "_retrigger.py"
@@ -144,6 +144,22 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
     spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones:\n  - label: m1\n", encoding="utf-8")
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "chain-demo.json"
+    chain_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": "demo-plan",
+                "last_state": "done",
+                "milestones": [{"label": "m1"}],
+                "completed": [{"label": "m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    plan_path = workspace / ".megaplan" / "plans" / "demo-plan" / "state.json"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(json.dumps({"current_state": "done"}), encoding="utf-8")
 
     (marker_dir / "demo-session.json").write_text(
         json.dumps(
@@ -184,11 +200,11 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
             sys.executable,
             str(prog_path),
             "demo-session",
-            str(repair_loop_bin),
-            str(tmp_path),
-            "",
-            str(repair_data_dir),
-            str(marker_dir),
+                str(repair_loop_bin),
+                str(tmp_path),
+                "",
+                str(repair_data_dir / "demo-session.repair-data.json"),
+                str(marker_dir),
         ],
         capture_output=True,
         text=True,
