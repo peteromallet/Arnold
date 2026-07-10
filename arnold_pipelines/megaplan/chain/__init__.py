@@ -3098,6 +3098,47 @@ def _append_reconciled_completed_record(
     )
 
 
+def _append_reconciled_completed_record_with_guard(
+    root: Path,
+    state: ChainState,
+    *,
+    plan_name: str,
+    milestone: MilestoneSpec,
+    pr_number: int | None,
+    pr_state: str | None,
+    completion_reason: str,
+    writer,
+) -> tuple[bool, str]:
+    record = {
+        "label": milestone.label,
+        "plan": plan_name,
+        "status": STATE_DONE,
+        "pr_number": pr_number,
+        "pr_state": pr_state,
+    }
+    appended, reason = _append_completed_with_guard(
+        root,
+        state,
+        record,
+        implementation_milestone=True,
+        writer=writer,
+    )
+    if not appended:
+        return False, reason
+    _mark_plan_completed_by_chain(
+        root,
+        plan_name,
+        milestone_label=milestone.label,
+        completion_reason=completion_reason if completion_reason else reason,
+        writer=writer,
+    )
+    writer(
+        f"[chain] reconciled terminal plan {plan_name} into completed "
+        f"milestone {milestone.label}\n"
+    )
+    return True, reason
+
+
 def _handle_completion_guard_failure(
     *,
     root: Path,
@@ -4432,7 +4473,7 @@ def _reconcile_chain_from_ground_truth(
             or (state.pr_number is not None and live_active_pr_state == "merged")
         )
     ):
-        _append_reconciled_completed_record(
+        appended, reason = _append_reconciled_completed_record_with_guard(
             root,
             state,
             plan_name=plan_name,
@@ -4442,7 +4483,13 @@ def _reconcile_chain_from_ground_truth(
             completion_reason="terminal plan state reconciled from ground truth",
             writer=writer,
         )
-        completed_labels.add(active_milestone.label)
+        if appended:
+            completed_labels.add(active_milestone.label)
+        else:
+            writer(
+                f"[chain] reconciliation completion guard blocked "
+                f"{active_milestone.label}: {reason}\n"
+            )
 
     reviewed_finalized_plan = (
         bool(plan_name)
@@ -4461,7 +4508,7 @@ def _reconcile_chain_from_ground_truth(
                 live_active_pr_state == "merged"
                 and active_milestone.label not in completed_labels
             ):
-                _append_reconciled_completed_record(
+                appended, reason = _append_reconciled_completed_record_with_guard(
                     root,
                     state,
                     plan_name=plan_name,
@@ -4471,9 +4518,15 @@ def _reconcile_chain_from_ground_truth(
                     completion_reason="reviewed finalized plan with merged PR",
                     writer=writer,
                 )
-                completed_labels.add(active_milestone.label)
+                if appended:
+                    completed_labels.add(active_milestone.label)
+                else:
+                    writer(
+                        f"[chain] reconciliation completion guard blocked "
+                        f"{active_milestone.label}: {reason}\n"
+                    )
         elif not active_uses_pr and active_milestone.label not in completed_labels:
-            _append_reconciled_completed_record(
+            appended, reason = _append_reconciled_completed_record_with_guard(
                 root,
                 state,
                 plan_name=plan_name,
@@ -4483,7 +4536,13 @@ def _reconcile_chain_from_ground_truth(
                 completion_reason="reviewed finalized local plan",
                 writer=writer,
             )
-            completed_labels.add(active_milestone.label)
+            if appended:
+                completed_labels.add(active_milestone.label)
+            else:
+                writer(
+                    f"[chain] reconciliation completion guard blocked "
+                    f"{active_milestone.label}: {reason}\n"
+                )
     if (
         active_uses_pr
         and state.pr_number is not None
