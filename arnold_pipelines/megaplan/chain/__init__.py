@@ -1860,6 +1860,15 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         if override is None:
                             overlaid_finalize_records.append(task)
                             continue
+                        from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                            has_durable_terminal_task_evidence,
+                        )
+                        if has_durable_terminal_task_evidence(task):
+                            # A replayed/partial batch may omit outputs already
+                            # reconciled into finalize.json. Never let that erase
+                            # terminal corroboration at chain completion.
+                            overlaid_finalize_records.append(task)
+                            continue
                         merged = dict(task)
                         for field in (
                             "files_changed",

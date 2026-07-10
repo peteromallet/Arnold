@@ -177,3 +177,26 @@ def test_review_scope_reconciliation_requires_terminal_task_and_committed_eviden
     assert finalize_data["tasks"][0]["files_changed"] == ["tests/poller.py"]
     assert finalize_data["tasks"][1]["files_changed"] == []
     assert finalize_data["tasks"][2]["files_changed"] == []
+
+
+from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    has_durable_terminal_task_evidence,
+)
+
+
+def test_terminal_authority_evidence_requires_outputs_not_terminal_label() -> None:
+    assert has_durable_terminal_task_evidence(
+        {"status": "done", "files_changed": ["tests/poller.py"]}
+    )
+    assert has_durable_terminal_task_evidence(
+        {"status": "done", "commands_run": ["pytest tests/test_runtime.py -q"]}
+    )
+    assert has_durable_terminal_task_evidence(
+        {"status": "skipped", "executor_notes": "ComfyUI prerequisite is unavailable."}
+    )
+    assert not has_durable_terminal_task_evidence(
+        {"status": "done", "files_changed": [], "commands_run": []}
+    )
+    assert not has_durable_terminal_task_evidence(
+        {"status": "pending", "files_changed": ["speculative.py"]}
+    )
