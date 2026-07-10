@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arnold_pipelines.megaplan.cloud import repair_contract
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud import repair_requests
@@ -17,6 +19,10 @@ from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, rel
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRIGGER = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-repair-trigger"
+
+
+def _queue_root(workspace: Path) -> Path:
+    return workspace / ".megaplan" / "repair-queue"
 
 
 def _signature(**overrides: str) -> dict[str, str]:
@@ -54,6 +60,7 @@ def _write_marker(marker_dir: Path, workspace: Path, session: str = "demo") -> P
 
 def _enqueue(marker_dir: Path, workspace: Path, session: str = "demo") -> dict[str, object]:
     return repair_requests.enqueue_repair_request(
+        queue_root=_queue_root(workspace),
         marker_dir=marker_dir,
         session=session,
         source="test",
@@ -78,13 +85,18 @@ def _write_chain_state_for_spec(workspace: Path, spec: Path, *, current_plan_nam
 def _repair_stub(tmp_path: Path) -> Path:
     stub = tmp_path / "repair-loop"
     log = tmp_path / "repair-args.json"
+    effects = tmp_path / "repair-effects"
     stub.write_text(
         f"""#!/usr/bin/env python3
 import json
 import os
 import sys
 from pathlib import Path
-Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], "request_id": os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", ""), "claim_owner_pid": os.environ.get("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID", "")}}), encoding="utf-8")
+effects = Path({str(effects)!r})
+effects.mkdir()
+for effect in ("subprocess", "state", "source", "commit", "push"):
+    effects.joinpath(effect).write_text("mutated", encoding="utf-8")
+Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], "request_id": os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", ""), "claim_owner_pid": os.environ.get("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID", ""), "queue_root": os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT", "")}}), encoding="utf-8")
 """,
         encoding="utf-8",
     )
@@ -97,6 +109,7 @@ def _run_trigger(
     repair_bin: Path,
     *,
     enabled: bool = False,
+    autonomy: bool | None = None,
     lock_dir: Path | None = None,
     env_overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -111,11 +124,17 @@ def _run_trigger(
         env.update(env_overrides)
     if not enabled and not (env_overrides and "ARNOLD_CLOUD_HOT_ENV" in env_overrides):
         env["ARNOLD_REPAIR_TRIGGER_ENABLED"] = "0"
+    if autonomy is None and env_overrides and "ARNOLD_CLOUD_HOT_ENV" in env_overrides:
+        env.pop("ARNOLD_AUTONOMY", None)
+    else:
+        env["ARNOLD_AUTONOMY"] = "1" if (enabled if autonomy is None else autonomy) else "0"
     cmd = [
         sys.executable,
         str(TRIGGER),
         "--marker-dir",
         str(marker_dir),
+        "--queue-root",
+        str(_queue_root(marker_dir.parent / "workspace")),
         "--repair-bin",
         str(repair_bin),
     ]
@@ -125,7 +144,7 @@ def _run_trigger(
 
 
 def _decisions(marker_dir: Path) -> list[dict[str, object]]:
-    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    queue_dir = _queue_root(marker_dir.parent / "workspace")
     records: list[dict[str, object]] = []
     for path in sorted(repair_requests.decisions_dir(queue_dir).glob("*.json"), key=lambda item: item.name):
         records.append(json.loads(path.read_text(encoding="utf-8")))
@@ -186,7 +205,7 @@ def _project_request_custody(marker_dir: Path, request: dict[str, object]) -> di
     return repair_contract.project_repair_custody(
         plan_state=plan_state,
         current_target=normalized_target,
-        marker_dir=marker_dir,
+        queue_root=_queue_root(marker_dir.parent / "workspace"),
         repair_data_dir=None,
     )
 
@@ -225,7 +244,8 @@ def test_trigger_reports_current_target_resolution_evidence(tmp_path: Path) -> N
 
     assert result.returncode == 0, result.stderr
     observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
-    assert observe["status"] == "would_dispatch"
+    assert observe["status"] == "blocked"
+    assert observe["authorized"] is False
     assert observe["target"]["authoritative_source"] == "chain_state"
     assert observe["target"]["target_session"] == "demo"
     assert observe["target"]["current_refs"]["remote_spec"] == str(spec)
@@ -250,6 +270,91 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert payload["argv"] == ["demo", str(workspace), str(spec)]
     assert payload["request_id"] == queued["request"]["request_id"]
     assert payload["claim_owner_pid"].isdigit()
+    assert payload["queue_root"] == str(_queue_root(workspace))
+    assert not (marker_dir.parent / "repair-queue").exists()
+
+
+def test_trigger_consumes_human_gate_request_from_explicit_central_queue(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    _write_marker(marker_dir, workspace)
+    queued = repair_requests.enqueue_human_gate_repair_request(
+        queue_root=_queue_root(workspace),
+        marker_dir=workspace / ".megaplan" / "plans" / "m3",
+        session="demo",
+        workspace=workspace,
+        run_kind="plan",
+        plan_name="m3",
+        pipeline_name="megaplan",
+        artifact_stage="execute",
+        step_name="approval",
+        prompt="operator approval required",
+    )
+    assert queued is not None
+
+    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=False)
+
+    assert result.returncode == 0, result.stderr
+    observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
+    assert observe["request_id"] == queued["request"]["request_id"]
+    assert observe["status"] == "blocked"
+    assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
+    assert not (marker_dir.parent / "repair-queue").exists()
+
+
+@pytest.mark.parametrize(
+    ("master_enabled", "path_enabled"),
+    ((False, False), (False, True), (True, False), (True, True)),
+)
+def test_trigger_real_wrapper_master_path_mutation_matrix(
+    tmp_path: Path,
+    master_enabled: bool,
+    path_enabled: bool,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    _enqueue(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+    repair_bin = _repair_stub(tmp_path)
+    queue_dir = _queue_root(workspace)
+    before = {
+        path.relative_to(queue_dir): path.read_bytes()
+        for path in queue_dir.rglob("*")
+        if path.is_file()
+    }
+
+    result = _run_trigger(
+        marker_dir,
+        repair_bin,
+        enabled=path_enabled,
+        autonomy=master_enabled,
+    )
+
+    assert result.returncode == 0, result.stderr
+    authorized = master_enabled and path_enabled
+    if authorized:
+        _read_json_eventually(tmp_path / "repair-args.json")
+        effects = tmp_path / "repair-effects"
+        assert {path.name for path in effects.iterdir()} == {
+            "subprocess", "state", "source", "commit", "push"
+        }
+        assert '"status": "dispatched"' in result.stdout
+        return
+
+    after = {
+        path.relative_to(queue_dir): path.read_bytes()
+        for path in queue_dir.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+    assert not (tmp_path / "repair-args.json").exists()
+    assert not (tmp_path / "repair-effects").exists()
+    assert not (queue_dir / "repair-trigger.lock").exists()
+    assert '"status": "dispatched"' not in result.stdout
+    observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
+    assert observe["status"] == "blocked"
+    assert observe["target"]["current_refs"]["remote_spec"] == str(spec)
 
 
 def test_trigger_does_not_launch_when_request_claim_is_already_held(tmp_path: Path) -> None:
@@ -263,7 +368,7 @@ def test_trigger_does_not_launch_when_request_claim_is_already_held(tmp_path: Pa
     blocker_id = projection["blocker_id"]
     assert blocker_id
     claim = repair_requests.claim_active_repair_request(
-        repair_requests.repair_queue_dir(marker_dir),
+        _queue_root(workspace),
         blocker_id=blocker_id,
         request_id=queued["request"]["request_id"],
         actor="other-trigger",
@@ -305,7 +410,10 @@ def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:
     _write_chain_state_for_spec(workspace, spec)
     repair_bin = _repair_stub(tmp_path)
     hot_env = tmp_path / "cloud-hot-env"
-    hot_env.write_text("ARNOLD_REPAIR_TRIGGER_ENABLED=1\n", encoding="utf-8")
+    hot_env.write_text(
+        "ARNOLD_AUTONOMY=1\nARNOLD_REPAIR_TRIGGER_ENABLED=1\n",
+        encoding="utf-8",
+    )
 
     result = _run_trigger(
         marker_dir,
@@ -327,7 +435,7 @@ def test_trigger_coalesces_pending_duplicate_files_under_lock(tmp_path: Path) ->
     workspace = tmp_path / "workspace"
     _write_marker(marker_dir, workspace)
     first = _enqueue(marker_dir, workspace)
-    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    queue_dir = _queue_root(workspace)
     first_path = Path(first["path"])
     duplicate = json.loads(first_path.read_text(encoding="utf-8"))
     duplicate["request_id"] = "duplicate-request"
@@ -337,7 +445,7 @@ def test_trigger_coalesces_pending_duplicate_files_under_lock(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=False)
+    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=True)
 
     assert result.returncode == 0, result.stderr
     coalesced = [item for item in _decisions(marker_dir) if item["decision"] == "coalesced"]
@@ -404,7 +512,7 @@ def test_trigger_skips_terminal_requests_and_reports_no_actionable(tmp_path: Pat
     workspace = tmp_path / "workspace"
     _write_marker(marker_dir, workspace)
     queued = _enqueue(marker_dir, workspace)
-    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    queue_dir = _queue_root(workspace)
     repair_requests.write_decision(
         queue_dir,
         request_id=queued["request"]["request_id"],

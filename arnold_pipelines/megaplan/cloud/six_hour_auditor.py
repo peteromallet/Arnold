@@ -8,7 +8,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
+
+AUDIT_CODEX_MODEL = "gpt-5.6-sol"
+AUDIT_MODEL_INPUTS = (
+    "CODEX_MODEL",
+    "MEGAPLAN_AUDIT_CODEX_MODEL",
+    "CLOUD_WATCHDOG_CODEX_MODEL",
+)
 
 _LAYER_ORDER = (
     "project_progress",
@@ -74,6 +82,83 @@ _AUDITOR_RECURSION_STALE_CODES = frozenset(
 class AuditorConfig:
     watchdog_stale_after: timedelta = timedelta(hours=6)
     max_running_repair_age: timedelta = timedelta(hours=2)
+
+
+def validate_audit_model_inputs(environ: dict[str, str]) -> str:
+    """Reject any explicit Codex pin that disagrees with the audit boundary."""
+    conflicts = {
+        name: value
+        for name in AUDIT_MODEL_INPUTS
+        if (value := str(environ.get(name) or "").strip())
+        and value != AUDIT_CODEX_MODEL
+    }
+    if conflicts:
+        rendered = ", ".join(f"{name}={value}" for name, value in sorted(conflicts.items()))
+        raise ValueError(
+            f"six-hour auditor model pin conflict: {rendered}; required={AUDIT_CODEX_MODEL}"
+        )
+    return AUDIT_CODEX_MODEL
+
+
+def enqueue_audit_repair_request(
+    audit_item: dict[str, Any],
+    *,
+    queue_root: Path | str,
+) -> dict[str, Any] | None:
+    """Route an unhealthy audit finding through the central repair authority.
+
+    This is deliberately the auditor's only operational handoff.  It creates
+    no claims, edits no source or run state, and performs no commit or push.
+    """
+    incident_audit = (
+        audit_item.get("incident_audit")
+        if isinstance(audit_item.get("incident_audit"), dict)
+        else {}
+    )
+    findings = [
+        finding
+        for finding in incident_audit.get("findings") or []
+        if isinstance(finding, dict) and finding.get("status") != "ok"
+    ]
+    if not findings:
+        return None
+    primary = findings[0]
+    session = str(audit_item.get("session") or "").strip()
+    if not session:
+        raise ValueError("six-hour audit repair request requires a session")
+    workspace = str(audit_item.get("workspace") or "").strip()
+    plan = str(audit_item.get("plan") or "").strip()
+    code = str(primary.get("code") or "six_hour_audit_finding").strip()
+    layer = str(primary.get("layer") or "six_hour_auditor").strip()
+    recommendation = str(primary.get("recommendation") or "").strip()
+    signature = {
+        "failure_kind": code,
+        "current_state": str((audit_item.get("incident_projection") or {}).get("state") or ""),
+        "phase_or_step": layer,
+        "milestone_or_plan": plan,
+        "gate_recommendation": "",
+        "blocked_task_id": "",
+        "event_signature": f"six_hour_auditor:{layer}:{code}",
+    }
+    diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
+    return enqueue_repair_request(
+        queue_root=queue_root,
+        session=session,
+        problem_signature=signature,
+        root_cause_hint={
+            "summary": diagnosis.get("summary") or primary.get("message") or code,
+            "recommendation": recommendation,
+            "incident_id": incident_audit.get("incident_id"),
+        },
+        source="six_hour_auditor",
+        target={
+            "plan": plan,
+            "incident_id": incident_audit.get("incident_id"),
+            "problem_id": incident_audit.get("problem_id"),
+        },
+        workspace=workspace,
+        run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
+    )
 
 
 def build_audit_input(

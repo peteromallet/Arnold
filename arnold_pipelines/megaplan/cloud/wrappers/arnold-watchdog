@@ -56,6 +56,7 @@ REPORT_ARCHIVE_DIR="${CLOUD_WATCHDOG_REPORT_ARCHIVE_DIR:-/workspace/watchdog-rep
 REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
@@ -1164,7 +1165,7 @@ manual_review_dispatch_status_env() {
   local remote_spec_path="$3"
   local run_kind="${4:-chain}"
   local plan_name="${5:-}"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" "$MARKER_DIR" "$REPAIR_DATA_DIR" <<'PY'
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" "$MARKER_DIR" "$REPAIR_QUEUE_ROOT" "$REPAIR_DATA_DIR" <<'PY'
 import hashlib
 import json
 import shlex
@@ -1182,13 +1183,14 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
 from arnold_pipelines.megaplan.cloud.repair_requests import (
     active_repair_claim_lock_dir,
     enqueue_repair_request,
-    repair_queue_dir,
+    validate_queue_root,
 )
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
-session, workspace_raw, remote_spec_raw, run_kind, plan_name, marker_dir_raw, repair_data_dir_raw = sys.argv[1:]
+session, workspace_raw, remote_spec_raw, run_kind, plan_name, marker_dir_raw, queue_root_raw, repair_data_dir_raw = sys.argv[1:]
 workspace = Path(workspace_raw)
 marker_dir = Path(marker_dir_raw)
+queue_root = validate_queue_root(queue_root_raw)
 repair_data_dir = Path(repair_data_dir_raw)
 needs_human_path = repair_data_dir / f"{session}.needs-human.json"
 
@@ -1317,7 +1319,7 @@ projection = project_repair_custody(
     plan_state=plan_state,
     current_target=target,
     canonical_run_state=canonical_run_state,
-    marker_dir=marker_dir,
+    queue_root=queue_root,
     repair_data_dir=repair_data_dir,
 )
 if not projection.get("active_request_ids"):
@@ -1326,6 +1328,7 @@ if not projection.get("active_request_ids"):
     metadata = latest_failure.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
     enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session=session,
         source="watchdog",
@@ -1355,7 +1358,7 @@ if not projection.get("active_request_ids"):
         plan_state=plan_state,
         current_target=target,
         canonical_run_state=canonical_run_state,
-        marker_dir=marker_dir,
+        queue_root=queue_root,
         repair_data_dir=repair_data_dir,
     )
 
@@ -1374,7 +1377,7 @@ lock_evidence = None
 blocker_id = str(projection.get("blocker_id") or "").strip()
 if blocker_id:
     lock_evidence = inspect_repair_lock(
-        active_repair_claim_lock_dir(repair_queue_dir(marker_dir), blocker_id)
+        active_repair_claim_lock_dir(queue_root, blocker_id)
     )
 
 decision = classify_repair_dispatch(
@@ -2161,6 +2164,7 @@ repair_trigger_scan() {
     PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
       "$trigger_bin" \
       --marker-dir "$MARKER_DIR" \
+      --queue-root "$REPAIR_QUEUE_ROOT" \
       --repair-data-dir "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" 2>&1
   )"
   rc=$?
@@ -4088,12 +4092,12 @@ dispatch_kimi_repair() {
   pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
   if command -v setsid >/dev/null 2>&1; then
-    setsid bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" "$$" \
+    setsid bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; export ARNOLD_REPAIR_QUEUE_ROOT="$9"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" "$$" "$REPAIR_QUEUE_ROOT" \
       >> "$LOG" 2>&1 < /dev/null &
   else
-    bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" "$$" \
+    bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; export ARNOLD_REPAIR_QUEUE_ROOT="$9"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" "$$" "$REPAIR_QUEUE_ROOT" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
   log "repair loop background-dispatched session=$session pid=$!"
@@ -4119,6 +4123,7 @@ claim_active_repair_launch() {
   fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
     "$MARKER_DIR" \
+    "$REPAIR_QUEUE_ROOT" \
     "$session" \
     "$workspace" \
     "$remote_spec" \
@@ -4130,7 +4135,8 @@ import sys
 
 from arnold_pipelines.megaplan.cloud import repair_requests
 
-marker_dir, session, workspace, remote_spec, blocker_id, request_id, pid_text = sys.argv[1:]
+marker_dir, queue_root_raw, session, workspace, remote_spec, blocker_id, request_id, pid_text = sys.argv[1:]
+queue_root = repair_requests.validate_queue_root(queue_root_raw)
 try:
     pid = int(pid_text)
 except ValueError:
@@ -4147,7 +4153,7 @@ def _pid_is_live(candidate: int) -> bool:
     return True
 
 result = repair_requests.claim_active_repair_request(
-    repair_requests.repair_queue_dir(marker_dir),
+    queue_root,
     blocker_id=blocker_id,
     request_id=request_id,
     actor="arnold-watchdog",
@@ -4164,14 +4170,14 @@ if result.status == "stale":
     if not isinstance(owner_pid, int):
         owner_pid = None
     released = repair_requests.release_active_repair_request_claim(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_root,
         blocker_id=blocker_id,
         owner=owner,
         expected_pid=owner_pid,
     )
     if released:
         result = repair_requests.claim_active_repair_request(
-            repair_requests.repair_queue_dir(marker_dir),
+            queue_root,
             blocker_id=blocker_id,
             request_id=request_id,
             actor="arnold-watchdog",
@@ -5560,14 +5566,14 @@ PY
 
 reconcile_awaiting_pr_merge() {
   local session="$1" workspace="$2" remote_spec="${3:-}"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$MARKER_DIR" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$MARKER_DIR" "$REPAIR_QUEUE_ROOT" <<'PY'
 import json
 import pathlib
 import subprocess
 import sys
 import time
 
-session, workspace_raw, remote_spec_raw, marker_dir = sys.argv[1:]
+session, workspace_raw, remote_spec_raw, marker_dir, queue_root = sys.argv[1:]
 workspace = pathlib.Path(workspace_raw)
 remote_spec = pathlib.Path(remote_spec_raw) if remote_spec_raw else None
 if remote_spec is not None and not remote_spec.is_absolute():
@@ -5646,6 +5652,7 @@ def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> 
         if not repair_request_queue_enabled():
             return "queue_disabled"
         result = enqueue_repair_request(
+            queue_root=queue_root,
             marker_dir=marker_dir,
             session=session,
             source="watchdog_pr_merge_reconciliation",

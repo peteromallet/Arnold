@@ -41,6 +41,7 @@ def _make_hook_extensions(
     base = {
         "plan_dir": plan_dir,
         "workspace_path": workspace_path,
+        "repair_queue_root": str(Path(workspace_path) / ".megaplan" / "repair-queue"),
         "session": session,
         "chain_session": session,
         "run_kind": "plan",
@@ -62,27 +63,26 @@ def _make_ctx(
     )
 
 
-def _read_requests(marker_dir: Path) -> list[dict]:
-    """Read all queued repair requests from the marker-dir-adjacent queue."""
-    from arnold_pipelines.megaplan.cloud.repair_requests import (
-        iter_repair_requests,
-        repair_queue_dir,
-    )
+def _queue_root(workspace: Path) -> Path:
+    return workspace / ".megaplan" / "repair-queue"
 
-    queue_dir = repair_queue_dir(marker_dir)
-    if not queue_dir.exists():
+
+def _read_requests(queue_root: Path) -> list[dict]:
+    """Read all requests from an explicit central queue root."""
+    from arnold_pipelines.megaplan.cloud.repair_requests import iter_repair_requests
+
+    if not queue_root.exists():
         return []
-    return iter_repair_requests(marker_dir)
+    return iter_repair_requests(queue_root)
 
 
-def _read_decisions(marker_dir: Path) -> list[dict]:
+def _read_decisions(queue_root: Path) -> list[dict]:
     """Read all decision records from the queue."""
     from arnold_pipelines.megaplan.cloud.repair_requests import (
         decisions_dir,
-        repair_queue_dir,
     )
 
-    dec_dir = decisions_dir(repair_queue_dir(marker_dir))
+    dec_dir = decisions_dir(queue_root)
     if not dec_dir.exists():
         return []
     records: list[dict] = []
@@ -106,10 +106,6 @@ class TestLifecycleFailureEnqueue:
         """Enqueued request carries correct source, signature fields, and
         redacted hint hash — no raw failure text stored."""
         from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            iter_repair_requests,
-        )
-
         plan_dir = tmp_path / "markers"
         plan_dir.mkdir()
         # Create a state.json so _workspace_path_for_plan_dir resolution works
@@ -117,6 +113,7 @@ class TestLifecycleFailureEnqueue:
 
         _enqueue_lifecycle_failure_request(
             plan_dir=plan_dir,
+            queue_root=_queue_root(tmp_path),
             kind="stall_detected",
             message="Driver stalled after 5 iterations",
             current_state="blocked",
@@ -125,7 +122,7 @@ class TestLifecycleFailureEnqueue:
             metadata={"blocked_task_id": "T1"},
         )
 
-        requests = list(iter_repair_requests(plan_dir))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 1
         req = requests[0]
 
@@ -154,16 +151,13 @@ class TestLifecycleFailureEnqueue:
         """Same failure kind+state+plan_dir submitted twice coalesces into
         a single request with a coalesced decision for the second."""
         from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            iter_repair_requests,
-        )
-
         plan_dir = tmp_path / "markers"
         plan_dir.mkdir()
         (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
 
         _enqueue_lifecycle_failure_request(
             plan_dir=plan_dir,
+            queue_root=_queue_root(tmp_path),
             kind="stall_detected",
             message="First stall",
             current_state="blocked",
@@ -174,6 +168,7 @@ class TestLifecycleFailureEnqueue:
 
         _enqueue_lifecycle_failure_request(
             plan_dir=plan_dir,
+            queue_root=_queue_root(tmp_path),
             kind="stall_detected",
             message="Second stall — same signature",
             current_state="blocked",
@@ -182,11 +177,11 @@ class TestLifecycleFailureEnqueue:
             metadata={"blocked_task_id": "T1"},
         )
 
-        requests = list(iter_repair_requests(plan_dir))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 1
 
         # The decision for the second should be "coalesced"
-        decisions = _read_decisions(plan_dir)
+        decisions = _read_decisions(_queue_root(tmp_path))
         coalesced_decisions = [d for d in decisions if d.get("decision") == "coalesced"]
         assert len(coalesced_decisions) >= 1
 
@@ -195,16 +190,13 @@ class TestLifecycleFailureEnqueue:
     ) -> None:
         """Different failure kinds produce separate requests (no coalescing)."""
         from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            iter_repair_requests,
-        )
-
         plan_dir = tmp_path / "markers"
         plan_dir.mkdir()
         (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
 
         _enqueue_lifecycle_failure_request(
             plan_dir=plan_dir,
+            queue_root=_queue_root(tmp_path),
             kind="stall_detected",
             message="Driver stalled",
             current_state="blocked",
@@ -215,6 +207,7 @@ class TestLifecycleFailureEnqueue:
 
         _enqueue_lifecycle_failure_request(
             plan_dir=plan_dir,
+            queue_root=_queue_root(tmp_path),
             kind="iteration_cap",
             message="Hit iteration limit",
             current_state="blocked",
@@ -223,7 +216,7 @@ class TestLifecycleFailureEnqueue:
             metadata={"blocked_task_id": "T2"},
         )
 
-        requests = list(iter_repair_requests(plan_dir))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 2
 
     def test_enqueue_failure_is_non_fatal(self, tmp_path: Path) -> None:
@@ -243,6 +236,7 @@ class TestLifecycleFailureEnqueue:
             # Should not raise — exception is caught inside the function
             _enqueue_lifecycle_failure_request(
                 plan_dir=plan_dir,
+                queue_root=_queue_root(tmp_path),
                 kind="stall_detected",
                 message="Driver stalled",
                 current_state="blocked",
@@ -253,20 +247,12 @@ class TestLifecycleFailureEnqueue:
 
         # The function completed without propagating the exception
         # No request was written (enqueue failed), and that's OK
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            iter_repair_requests,
-        )
-
-        requests = list(iter_repair_requests(plan_dir))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 0
 
     def test_feature_flag_off_suppresses_enqueue(self, tmp_path: Path) -> None:
         """When repair_request_queue_enabled() returns False, no request is written."""
         from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            iter_repair_requests,
-        )
-
         plan_dir = tmp_path / "markers"
         plan_dir.mkdir()
         (plan_dir / "state.json").write_text('{"current_state":"blocked"}')
@@ -277,6 +263,7 @@ class TestLifecycleFailureEnqueue:
         ):
             _enqueue_lifecycle_failure_request(
                 plan_dir=plan_dir,
+                queue_root=_queue_root(tmp_path),
                 kind="stall_detected",
                 message="Driver stalled",
                 current_state="blocked",
@@ -285,8 +272,67 @@ class TestLifecycleFailureEnqueue:
                 metadata={},
             )
 
-        requests = list(iter_repair_requests(plan_dir))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 0
+
+    def test_lifecycle_and_supervisor_producers_converge_on_central_queue(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
+        from arnold_pipelines.megaplan.cloud.supervise import (
+            enqueue_supervisor_repair_request,
+        )
+
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        marker_dir = workspace / ".megaplan" / "cloud-sessions"
+        plan_dir.mkdir(parents=True)
+        marker_dir.mkdir()
+        queue_root = _queue_root(workspace)
+
+        _enqueue_lifecycle_failure_request(
+            plan_dir=plan_dir,
+            queue_root=queue_root,
+            kind="stall_detected",
+            message="driver stalled",
+            current_state="blocked",
+            phase="execute",
+            suggested_action="manual_review",
+            metadata={"blocked_task_id": "T1"},
+        )
+        first_supervisor = enqueue_supervisor_repair_request(
+            queue_root=queue_root,
+            marker_dir=marker_dir,
+            session="demo-session",
+            workspace=workspace,
+            remote_spec=".megaplan/initiatives/demo/chain.yaml",
+            run_kind="chain",
+            reason="retry budget exhausted",
+            log_path="/tmp/supervise.log",
+        )
+        second_supervisor = enqueue_supervisor_repair_request(
+            queue_root=queue_root,
+            marker_dir=marker_dir,
+            session="demo-session",
+            workspace=workspace,
+            remote_spec=".megaplan/initiatives/demo/chain.yaml",
+            run_kind="chain",
+            reason="retry budget exhausted",
+            log_path="/tmp/supervise.log",
+        )
+
+        requests = _read_requests(queue_root)
+        assert {request["source"] for request in requests} == {
+            "lifecycle_failure",
+            "arnold_supervise_exit",
+        }
+        assert all(request["queue_dir"] == str(queue_root) for request in requests)
+        assert first_supervisor["status"] == "queued"
+        assert second_supervisor["status"] == "coalesced"
+        assert any(
+            decision["decision"] == "coalesced"
+            for decision in _read_decisions(queue_root)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +353,9 @@ class TestHumanGateEnqueue:
         markers = tmp_path / "plan-markers"
         markers.mkdir()
 
-        hook_ext = _make_hook_extensions(plan_dir=str(markers))
+        hook_ext = _make_hook_extensions(
+            plan_dir=str(markers), workspace_path=str(tmp_path)
+        )
 
         step = HumanGateStep(
             name="human_gate",
@@ -333,7 +381,7 @@ class TestHumanGateEnqueue:
         assert result.next == "halt"
 
         # A repair request should have been enqueued
-        requests = list(iter_repair_requests(markers))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 1
         req = requests[0]
 
@@ -346,7 +394,7 @@ class TestHumanGateEnqueue:
 
         target = req["target"]
         assert target["plan_dir"] == str(markers)
-        assert target["workspace_path"] == "/tmp/test-workspace"
+        assert target["workspace_path"] == str(tmp_path)
         assert target["pipeline_name"] == "demo_judges"
 
     def test_resume_path_does_not_enqueue(self, tmp_path: Path) -> None:
@@ -357,7 +405,9 @@ class TestHumanGateEnqueue:
 
         markers = tmp_path / "plan-markers"
         markers.mkdir()
-        hook_ext = _make_hook_extensions(plan_dir=str(markers))
+        hook_ext = _make_hook_extensions(
+            plan_dir=str(markers), workspace_path=str(tmp_path)
+        )
 
         step = HumanGateStep(
             name="human_gate",
@@ -381,17 +431,12 @@ class TestHumanGateEnqueue:
         assert result.next == "approve"
 
         # No repair request should have been enqueued
-        requests = list(iter_repair_requests(markers))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 0
 
     def test_missing_hook_extensions_no_op(self, tmp_path: Path) -> None:
         """When hook_extensions is missing plan_dir/workspace_path/session,
         no enqueue occurs and the step still halts normally."""
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            iter_repair_requests,
-            repair_queue_dir,
-        )
-
         markers = tmp_path / "plan-markers"
         markers.mkdir()
 
@@ -418,18 +463,13 @@ class TestHumanGateEnqueue:
         assert result.next == "halt"
 
         # No queue was created because hook_extensions were missing required keys
-        queue_dir = repair_queue_dir(markers)
+        queue_dir = _queue_root(tmp_path)
         req_dir = queue_dir / "requests"
         assert not req_dir.exists() or len(list(req_dir.glob("*.json"))) == 0
 
     def test_missing_workspace_path_no_op(self, tmp_path: Path) -> None:
         """When hook_extensions has plan_dir and session but no workspace_path,
         enqueue is skipped."""
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            iter_repair_requests,
-            repair_queue_dir,
-        )
-
         markers = tmp_path / "plan-markers"
         markers.mkdir()
 
@@ -459,18 +499,13 @@ class TestHumanGateEnqueue:
         result = step.run(ctx)
         assert result.next == "halt"
 
-        queue_dir = repair_queue_dir(markers)
+        queue_dir = _queue_root(tmp_path)
         req_dir = queue_dir / "requests"
         assert not req_dir.exists() or len(list(req_dir.glob("*.json"))) == 0
 
     def test_missing_session_no_op(self, tmp_path: Path) -> None:
         """When hook_extensions has plan_dir and workspace but no session,
         enqueue is skipped."""
-        from arnold_pipelines.megaplan.cloud.repair_requests import (
-            iter_repair_requests,
-            repair_queue_dir,
-        )
-
         markers = tmp_path / "plan-markers"
         markers.mkdir()
 
@@ -499,7 +534,7 @@ class TestHumanGateEnqueue:
         result = step.run(ctx)
         assert result.next == "halt"
 
-        queue_dir = repair_queue_dir(markers)
+        queue_dir = _queue_root(tmp_path)
         req_dir = queue_dir / "requests"
         assert not req_dir.exists() or len(list(req_dir.glob("*.json"))) == 0
 
@@ -512,7 +547,9 @@ class TestHumanGateEnqueue:
 
         markers = tmp_path / "plan-markers"
         markers.mkdir()
-        hook_ext = _make_hook_extensions(plan_dir=str(markers))
+        hook_ext = _make_hook_extensions(
+            plan_dir=str(markers), workspace_path=str(tmp_path)
+        )
 
         step = HumanGateStep(
             name="human_gate",
@@ -540,7 +577,7 @@ class TestHumanGateEnqueue:
         assert result.next == "halt"
 
         # No repair request enqueued
-        requests = list(iter_repair_requests(markers))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 0
 
     def test_human_gate_enqueue_failure_non_fatal(self, tmp_path: Path) -> None:
@@ -548,7 +585,9 @@ class TestHumanGateEnqueue:
         normally — enqueue failure is a logged warning only."""
         markers = tmp_path / "plan-markers"
         markers.mkdir()
-        hook_ext = _make_hook_extensions(plan_dir=str(markers))
+        hook_ext = _make_hook_extensions(
+            plan_dir=str(markers), workspace_path=str(tmp_path)
+        )
 
         step = HumanGateStep(
             name="human_gate",
@@ -585,7 +624,9 @@ class TestHumanGateEnqueue:
 
         markers = tmp_path / "plan-markers"
         markers.mkdir()
-        hook_ext = _make_hook_extensions(plan_dir=str(markers))
+        hook_ext = _make_hook_extensions(
+            plan_dir=str(markers), workspace_path=str(tmp_path)
+        )
 
         # First halt
         step1 = HumanGateStep(
@@ -624,10 +665,10 @@ class TestHumanGateEnqueue:
         assert result2.next == "halt"
 
         # Only one unique request should exist
-        requests = list(iter_repair_requests(markers))
+        requests = _read_requests(_queue_root(tmp_path))
         assert len(requests) == 1
 
         # A coalesced decision should exist
-        decisions = _read_decisions(markers)
+        decisions = _read_decisions(_queue_root(tmp_path))
         coalesced = [d for d in decisions if d.get("decision") == "coalesced"]
         assert len(coalesced) >= 1
