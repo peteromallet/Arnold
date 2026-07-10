@@ -880,6 +880,21 @@ def _checkout_milestone_branch(
             if ancestor.returncode == 0:
                 writer(f"[chain] {branch} already contains {fork_point}\n")
             elif ancestor.returncode == 1:
+                common = _compat().subprocess.run(
+                    ["git", "merge-base", "HEAD", fork_point],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=120,
+                )
+                if common.returncode != 0 or not common.stdout.strip():
+                    writer(
+                        f"[chain] git merge-base HEAD {fork_point} -> rc={common.returncode}; "
+                        f"no common ancestor with existing milestone branch {branch}; "
+                        "skipping automatic rebase to preserve the repair relaunch.\n"
+                    )
+                    return base_sha
                 if expected_base_ref:
                     branch_has_expected = _compat().subprocess.run(
                         ["git", "merge-base", "--is-ancestor", expected_base_ref, "HEAD"],
@@ -914,6 +929,19 @@ def _checkout_milestone_branch(
                             f"branch {branch}: {fork_point} no longer contains the "
                             f"recorded target base {expected_base_ref}; preserving "
                             "the existing branch history for repair relaunch.\n"
+                        )
+                        return base_sha
+                    if (
+                        branch_has_expected.returncode == 1
+                        and fork_has_expected.returncode == 0
+                    ):
+                        writer(
+                            "[chain] skipping automatic rebase for existing milestone "
+                            f"branch {branch}: HEAD does not contain the recorded "
+                            f"target base {expected_base_ref}, but {fork_point} does; "
+                            "the branch history was built on a different root and "
+                            "cannot be rebased onto the current base. Preserving the "
+                            "existing branch for repair relaunch.\n"
                         )
                         return base_sha
                 rebase = _compat().subprocess.run(
