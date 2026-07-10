@@ -882,6 +882,50 @@ def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
     assert saved.completed == reconciled.completed
 
 
+def test_reconcile_rewinds_branch_completion_missing_pr_context(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    _write_plan_state(tmp_path, current_state="done")
+    state = ChainState(
+        current_milestone_index=1,
+        last_state="done",
+        completed=[
+            {
+                "label": "m7",
+                "plan": "m7-plan",
+                "status": "done",
+                "pr_number": None,
+                "pr_state": None,
+            }
+        ],
+    )
+
+    messages: list[str] = []
+    reconciled = _reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        spec,
+        state,
+        writer=messages.append,
+        push_enabled=True,
+    )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.pr_number is None
+    assert reconciled.pr_state is None
+    assert reconciled.last_state == "authority_divergence"
+    assert reconciled.completed == []
+    assert saved.current_milestone_index == 0
+    assert saved.current_plan_name == "m7-plan"
+    assert saved.last_state == "authority_divergence"
+    assert saved.completed == []
+    assert any("missing PR context" in message for message in messages)
+
+
 def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     tmp_path: Path,
 ) -> None:
