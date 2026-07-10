@@ -22,8 +22,14 @@
 #   7. Persists a redacted meta-repair record under repair-data/meta/.
 set -uo pipefail
 
+TERMINAL_AUDIT_MODE=0
+if [[ "${1:-}" == "--terminal-audit" ]]; then
+  TERMINAL_AUDIT_MODE=1
+  shift
+fi
+
 if [[ $# -lt 1 ]]; then
-  echo "usage: arnold-meta-repair-loop <session> [trigger]" >&2
+  echo "usage: arnold-meta-repair-loop [--terminal-audit] <session> [trigger]" >&2
   exit 64
 fi
 
@@ -72,6 +78,12 @@ SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_LOG="$RUN_DIR/${TS}-${SAFE_SESSION}.log"
 
 mkdir -p "$RUN_DIR" "$REPAIR_DATA_DIR"
+
+# No-model closeout: invoke L1 once only after strict terminal preflight.
+if [[ "$TERMINAL_AUDIT_MODE" == 1 ]]; then
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.terminal_audit "$SESSION" --repair-loop-bin "$REPAIR_LOOP_BIN" --marker-dir "$MARKER_DIR" --repair-data-dir "$REPAIR_DATA_DIR"
+  exit $?
+fi
 
 log() {
   local message
