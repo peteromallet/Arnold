@@ -1598,7 +1598,7 @@ def verify_retrigger_success(
         rejection_reason = "partial_liveness is not a terminal success"
     elif normalized_outcome == REPAIRING:
         rejection_reason = "repairing is not a verified terminal success"
-    elif normalized_outcome != COMPLETE:
+    elif normalized_outcome not in {COMPLETE, LIVE_WITH_FRESH_ACTIVITY}:
         rejection_reason = f"outcome {normalized_outcome!r} cannot close repair custody"
 
     verification_record = build_verification_record(
