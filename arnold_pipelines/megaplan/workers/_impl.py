@@ -539,6 +539,12 @@ class CodexProgressLiveness:
     """
 
     output_path: Path
+    # Review is read-only and normally short.  Unlike execute, a review must
+    # not let a spinning Codex/node process masquerade as useful work forever:
+    # its JSON trace/rollout/output file are the authoritative evidence that
+    # the model is actually advancing.  Execute keeps CPU sampling because a
+    # legitimate long-running tool can be stdout-silent for minutes.
+    include_cpu_signal: bool = True
 
     session_id: str | None = None
     _stdout_buffer: str = ""
@@ -608,11 +614,13 @@ class CodexProgressLiveness:
         readable = False
         progressing = False
 
-        for current, attr_name in (
+        signals: list[tuple[Any | None, str]] = [
             (_path_progress_signal(self.output_path), "_last_output_signal"),
             (self._sample_rollout_signal(), "_last_rollout_signal"),
-            (self._sample_cpu_signal(), "_last_cpu_signal"),
-        ):
+        ]
+        if self.include_cpu_signal:
+            signals.append((self._sample_cpu_signal(), "_last_cpu_signal"))
+        for current, attr_name in signals:
             signal_readable, signal_progressing = self._observe(current, attr_name)
             readable = readable or signal_readable
             progressing = progressing or signal_progressing
@@ -3237,6 +3245,8 @@ def _run_codex_step_uncapped(
         command.extend(_codex_model_flag(model))
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
+        if json_trace:
+            command.append("--json")
         if free_text:
             command.append("-")
         else:
@@ -3338,7 +3348,16 @@ def _run_codex_step_uncapped(
                 prompt=prompt,
                 json_trace=json_trace,
             )
-        liveness = CodexProgressLiveness(output_path=output_path)
+        # A review has no mutating tool work to protect.  Require a structured
+        # Codex event, rollout token, or output artifact to extend its idle
+        # window; a live-but-silent node process is a transport/CLI wedge, not
+        # progress.  Execute deliberately retains CPU-based liveness because
+        # pytest/build subprocesses can be legitimately quiet.
+        strict_review_liveness = step == "review"
+        liveness = CodexProgressLiveness(
+            output_path=output_path,
+            include_cpu_signal=not strict_review_liveness,
+        )
         result = run_command(
             command,
             cwd=work_dir,
@@ -3350,7 +3369,12 @@ def _run_codex_step_uncapped(
             pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
             idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
             progress_liveness_factory=liveness.bind_process,
-            progress_liveness_grace_timeout=codex_idle_s if codex_idle_s > 0 else None,
+            # Strict review liveness has no grace: a process that is merely
+            # alive but has no token/event/artifact evidence must surface as a
+            # retryable worker_stall at the configured bounded idle timeout.
+            progress_liveness_grace_timeout=(
+                0.0 if strict_review_liveness else (codex_idle_s if codex_idle_s > 0 else None)
+            ),
         )
         if not read_only:
             _verify_engine_after_mutating_worker(step, state, root, execution_env)
@@ -3451,7 +3475,7 @@ def _run_codex_step_uncapped(
                 model=model,
                 read_only=read_only,
             )
-        if error.code == "worker_timeout":
+        if error.code in {"worker_timeout", "worker_stall"}:
             try:
                 capture_outcome = capture_step_output(
                     StepInvocation(
@@ -3513,9 +3537,13 @@ def _run_codex_step_uncapped(
                     exit_code=error.exit_code,
                 ) from error
             raise CliError(
-                "worker_timeout",
+                error.code,
                 (
-                    f"Codex {step} step timed out after {timeout_seconds}s before producing structured output. "
+                    (
+                        f"Codex {step} worker became silent before producing structured output. "
+                        if error.code == "worker_stall"
+                        else f"Codex {step} step timed out after {timeout_seconds}s before producing structured output. "
+                    )
                     + _codex_retry_guidance(step)
                 ),
                 extra=error.extra,
@@ -3823,6 +3851,10 @@ def run_codex_step(
     free_text: bool = False,
     repair_attempted: bool = False,
 ) -> WorkerResult:
+    # Review supervision relies on stream-json to observe the rollout/token
+    # cadence.  Enforce it here as well as at dispatcher call sites so direct
+    # handler callers cannot silently disable the watchdog's evidence channel.
+    json_trace = json_trace or step == "review"
     return _run_codex_step_uncapped(
         step,
         state,
@@ -4287,7 +4319,11 @@ def _codex_to_agent_result(
                 root=root,
                 persistent=(mode == "persistent"),
                 fresh=eff_fresh,
-                json_trace=(step == "execute"),
+                # Review needs stream-json too: it supplies the token/tool
+                # evidence used to distinguish a live review from a silent
+                # transport wedge.  The final schema payload still comes from
+                # the output file.
+                json_trace=(step in {"execute", "review"}),
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
@@ -4304,6 +4340,7 @@ def _codex_to_agent_result(
                 or error.code
                 not in {
                     "worker_timeout",
+                    "worker_stall",
                     "connection_error",
                     "codex_pre_first_byte_stall",
                     "worker_error",
@@ -4734,7 +4771,7 @@ def run_step_with_worker(
                                 root=root,
                                 persistent=(mode == "persistent"),
                                 fresh=effective_refreshed,
-                                json_trace=(step == "execute"),
+                                json_trace=(step in {"execute", "review"}),
                                 prompt_override=prompt_override,
                                 prompt_kwargs=prompt_kwargs,
                                 effort=effort,
@@ -4751,6 +4788,7 @@ def run_step_with_worker(
                                 or error.code
                                 not in {
                                     "worker_timeout",
+                                    "worker_stall",
                                     "connection_error",
                                     "codex_pre_first_byte_stall",
                                     "worker_error",
