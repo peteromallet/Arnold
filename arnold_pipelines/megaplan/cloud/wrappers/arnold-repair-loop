@@ -5748,22 +5748,66 @@ PY
   fi
   if ! python3 - "$source_origin" "$expected_origin" <<'PY'
 import sys
+from urllib.parse import urlsplit
 
 def identity(value):
-    value = value.strip().lower().rstrip("/")
-    if value.startswith("git@") and ":" in value:
-        host_path = value[4:]
-        value = host_path.replace(":", "/", 1)
-    value = value.removeprefix("https://").removeprefix("http://")
-    return value.removesuffix(".git")
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("git@") and ":" in value and "://" not in value:
+        value = value[4:].replace(":", "/", 1)
+    elif "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        value = f"{host}{parsed.path.rstrip('/')}"
+    else:
+        value = value.removeprefix("https://").removeprefix("http://")
+    return value.lower().removesuffix(".git")
 
 raise SystemExit(0 if identity(sys.argv[1]) and identity(sys.argv[1]) == identity(sys.argv[2]) else 1)
 PY
   then
     python3 - "$result_path" "$source_origin" "$expected_origin" <<'PY'
-import json, pathlib, sys
+import json
+import pathlib
+import sys
+from urllib.parse import urlsplit
+
 path, source_origin, expected_origin = sys.argv[1:]
-pathlib.Path(path).write_text(json.dumps({"repaired": False, "reason": "source_repo_identity_mismatch", "details": {"source_origin": source_origin, "expected_origin": expected_origin}}, indent=2) + "\n", encoding="utf-8")
+
+def identity(value):
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("git@") and ":" in value and "://" not in value:
+        value = value[4:].replace(":", "/", 1)
+    elif "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        value = f"{host}{parsed.path.rstrip('/')}"
+    else:
+        value = value.removeprefix("https://").removeprefix("http://")
+    return value.lower().removesuffix(".git")
+
+pathlib.Path(path).write_text(
+    json.dumps(
+        {
+            "repaired": False,
+            "reason": "source_repo_identity_mismatch",
+            "details": {
+                "source_origin": identity(source_origin),
+                "expected_origin": identity(expected_origin),
+            },
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
 PY
     log "source workspace repair refused: engine repo differs from target repo result=$result_path"
     return 1
@@ -5772,13 +5816,23 @@ PY
     workspace_origin="$(git -C "$WORKSPACE" remote get-url origin 2>/dev/null || true)"
     if ! python3 - "$workspace_origin" "$expected_origin" <<'PY'
 import sys
+from urllib.parse import urlsplit
 
 def identity(value):
-    value = value.strip().lower().rstrip("/")
-    if value.startswith("git@") and ":" in value:
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("git@") and ":" in value and "://" not in value:
         value = value[4:].replace(":", "/", 1)
-    value = value.removeprefix("https://").removeprefix("http://")
-    return value.removesuffix(".git")
+    elif "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        value = f"{host}{parsed.path.rstrip('/')}"
+    else:
+        value = value.removeprefix("https://").removeprefix("http://")
+    return value.lower().removesuffix(".git")
 
 raise SystemExit(0 if identity(sys.argv[1]) and identity(sys.argv[1]) == identity(sys.argv[2]) else 1)
 PY
@@ -5787,8 +5841,26 @@ PY
 import json
 import pathlib
 import sys
+from urllib.parse import urlsplit
 
 result_path, workspace, workspace_origin, expected_origin = sys.argv[1:]
+
+def identity(value):
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("git@") and ":" in value and "://" not in value:
+        value = value[4:].replace(":", "/", 1)
+    elif "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        value = f"{host}{parsed.path.rstrip('/')}"
+    else:
+        value = value.removeprefix("https://").removeprefix("http://")
+    return value.lower().removesuffix(".git")
+
 pathlib.Path(result_path).write_text(
     json.dumps(
         {
@@ -5796,8 +5868,8 @@ pathlib.Path(result_path).write_text(
             "reason": "workspace_repo_identity_mismatch",
             "details": {
                 "workspace": workspace,
-                "workspace_origin": workspace_origin,
-                "expected_origin": expected_origin,
+                "workspace_origin": identity(workspace_origin),
+                "expected_origin": identity(expected_origin),
             },
         },
         indent=2,
