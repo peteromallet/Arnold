@@ -1093,3 +1093,103 @@ def test_run_chain_rearms_fresh_session_execute_block_on_restart(
     assert "resume_cursor" not in updated
     assert result["status"] != "stopped"
     assert any("fresh-session retry" in message for message in messages)
+
+
+def test_run_chain_rearms_stale_incomplete_execute_cursor_mismatch_on_restart(
+    tmp_path: Path,
+) -> None:
+    """Chain admission must not stop before the corrected auto driver runs."""
+
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan_state(tmp_path, current_state="blocked", active_step=None)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state_payload["history"] = [
+        {"step": "execute", "result": "blocked", "message": "T8 and T11 pending"}
+    ]
+    state_payload["latest_failure"] = {
+        "kind": "workflow_cursor_mismatch",
+        "message": "workflow cursor from last_step expects one of [review] but control projection offered [execute]",
+        "phase": "execute",
+        "state": "blocked",
+        "metadata": {"observed_phase_source": "last_step"},
+    }
+    state_payload["resume_cursor"] = {
+        "phase": "execute",
+        "retry_strategy": "repair_workflow_projection",
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state_payload) + "\n", encoding="utf-8")
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="m7-plan",
+            last_state="blocked",
+            pr_number=122,
+            pr_state="open",
+        ),
+    )
+
+    messages: list[str] = []
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="blocked"),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            return_value="origin/main",
+        ),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=DriverOutcome(
+                status="done",
+                plan="m7-plan",
+                final_state="done",
+                iterations=1,
+                reason="pending execute work resumed",
+            ),
+        ) as drive,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=messages.append,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    drive.assert_called_once()
+    updated = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert updated["current_state"] == "finalized"
+    assert "latest_failure" not in updated
+    assert "resume_cursor" not in updated
+    assert updated["meta"]["workflow_cursor_recoveries"][-1]["history_result"] == "blocked"
+    assert result["status"] != "stopped"
+    assert any("stale incomplete-execute workflow cursor mismatch" in message for message in messages)
+
+
+def test_chain_preserves_genuine_workflow_cursor_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Only the invalidated incomplete-history shape is reopened."""
+
+    from arnold_pipelines.megaplan.chain import _rearm_stale_incomplete_execute_cursor_mismatch
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    payload = {
+        "current_state": "blocked",
+        "history": [{"step": "execute", "result": "blocked"}],
+        "latest_failure": {
+            "kind": "workflow_cursor_mismatch",
+            "message": "workflow cursor from active_step expects one of [review] but control projection offered [execute]",
+            "phase": "execute",
+            "metadata": {"observed_phase_source": "active_step"},
+        },
+        "resume_cursor": {"phase": "execute", "retry_strategy": "repair_workflow_projection"},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    assert _rearm_stale_incomplete_execute_cursor_mismatch(plan_dir, writer=lambda _message: None) is False
+    assert json.loads((plan_dir / "state.json").read_text(encoding="utf-8")) == payload
