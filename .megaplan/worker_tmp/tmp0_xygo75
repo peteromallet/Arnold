@@ -1,0 +1,322 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M3: Export Readiness Convergence
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: M3 Export Readiness Convergence Cleanup
+
+## Overview
+Complete the already-implemented M3 export readiness convergence by closing the remaining blocker-provenance gaps, removing dead/stale artifacts, and reconciling docs that duplicate planner-owned blocker vocabulary. This remains aligned with the Epic North Star: legacy scans stay useful, but user-facing export readiness must come from planner blockers or structured blocker objects.
+
+Gate diagnosis: the finalize feedback does not indicate the plan is targeting the wrong code or root cause. It is a verification-contract issue: the prior scoped test blast radius named changed surfaces but left machine-readable selectors empty, so finalize could not choose a trusted baseline command. This revision keeps the implementation scope unchanged and adds concrete scoped test selectors plus full-suite fallback.
+
+## Main Phase
+
+### Step 1: Confirm Current Touchpoints
+**Scope:** Small  
+**Complexity:** 1
+1. Inspect only the cited implementation, tests, and docs: `src/tools/video-editor/hooks/useRenderState.ts`, `src/tools/video-editor/hooks/useClientRender.ts`, `src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/hooks/useRenderState.test.tsx`, `src/tools/video-editor/runtime/renderPlanner.test.ts`, `src/tools/video-editor/lib/renderRouter.test.ts`, `src/tools/video-editor/runtime/exportGuard.test.ts`, `src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts`, and the three stale docs.
+2. Reconfirm `getFastRenderRouteDecision()` is unused and that export guard scan output feeds planner readiness instead of bypassing it.
+3. Keep this as cleanup and provenance repair only; do not add new readiness APIs, output-format product capability, sandboxing language, or untrusted-extension safety claims.
+
+### Step 2: Fix Render Hook Provenance Gaps
+**Scope:** Medium  
+**Complexity:** 3
+1. Delete dead `getFastRenderRouteDecision()` code and unused types/imports from `src/tools/video-editor/hooks/useRenderState.ts`.
+2. Rename `runExportGuard()` to a scanner/adapter name such as `collectExportGuardInput()` and update all local call sites so the naming reflects planner input, not an independent readiness authority.
+3. Replace the dynamic render-router import catch hardcoded message with planner-owned blocker provenance or an equivalent structured blocker path already accepted by the hook.
+4. Ensure exporter subscriber `failed` phases always call `setRenderLog()` with `progress.log` or a concise execution-failure fallback.
+5. Add focused coverage in `src/tools/video-editor/hooks/useRenderState.test.tsx` for router import failure provenance, failed-phase render logging, and the export guard adapter rename behavior where externally observable.
+
+### Step 3: Structure WebCodecs Unsupported Failure
+**Scope:** Medium  
+**Complexity:** 2
+1. Update `src/tools/video-editor/hooks/useClientRender.ts` so the WebCodecs unsupported failure carries a `RenderBlocker`-shaped object or equivalent structured blocker provenance.
+2. Keep the change local to client execution unless existing types make planner integration natural.
+3. Add `src/tools/video-editor/hooks/useClientRender.test.ts` if needed to cover the unsupported-WebCodecs path directly; otherwise extend the nearest existing hook test without broadening the feature surface.
+
+### Step 4: Clean Stale Planner and Docs Artifacts
+**Scope:** Medium  
+**Complexity:** 2
+1. Remove or update the stale M3 audit comment in `src/tools/video-editor/runtime/renderPlanner.ts`.
+2. Update `docs/extensions/composition-spine/v8-architecture-baseline.md` and `docs/extensions/composition-spine/m0-fixture-matrices.md` to reference canonical planner blocker codes instead of duplicating enum vocabulary.
+3. Update `docs/extensions/phase4-readiness.md` to remove the stale `contributionFamilies.ts` source reference and point at current canonical sources.
+4. Do not add or restore generated matrix files unless an existing quality gate proves they are required.
+
+### Step 5: Re-audit User-Facing Error Paths
+**Scope:** Small  
+**Complexity:** 2
+1. Re-scan render/export error and log paths in `src/tools/video-editor/hooks/useRenderState.ts` and `src/tools/video-editor/hooks/useClientRender.ts`.
+2. Classify each path as planner/blocker-backed, a justified pre-planner config guard, or a genuine post-execution failure.
+3. Confirm no migrated readiness path reintroduces direct legacy timeline authority or a second export readiness authority beside the planner.
+
+### Step 6: Validate With Explicit Test Contract
+**Scope:** Medium  
+**Complexity:** 2
+1. Run the scoped Vitest baseline and focused validation command: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/lib/renderRouter.attach.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts`.
+2. Run the new direct hook test path after it exists: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/hooks/useClientRender.test.ts`.
+3. Run repository contract scans: `rg "getFastRenderRouteDecision|runExportGuard|contributionFamilies\.ts|Render routing unavailable|WebCodecs not supported" src docs` and inspect remaining hits for intentional compatibility text only.
+4. Run the repo’s normal validation command if discoverable, expected to be `npm run quality:check`; if unavailable or failing for unrelated environmental reasons, capture the exact command and output.
+
+## Execution Order
+1. Confirm insertion points before editing.
+2. Apply hook/source changes before tests that assert new behavior.
+3. Update docs/comments after source behavior is settled.
+4. Re-audit message paths after all edits.
+5. Keep the scoped test selector list synchronized with any newly added or removed test file.
+
+## Validation Order
+1. Run scoped hook/runtime/router/export-guard/readiness-doc Vitest selectors first.
+2. Run the new `useClientRender` direct test selector once created.
+3. Run repository text scans for stale symbols and user-facing stale messages.
+4. Run broader project validation last, with any unrelated failure documented by command and output.
+
+
+        Plan metadata:
+        {
+  "version": 2,
+  "timestamp": "2026-07-10T10:17:22Z",
+  "hash": "sha256:3fb1afc2e49ab8b5f958ebd6ab9a1d07835ebebbb4f6e457e0a044e2ea6c6d7f",
+  "changes_summary": "Addressed the finalize gate by treating it as a verification-contract problem, not a wrong-code or wrong-root-cause critique. The implementation plan scope stays the same, but the revision now includes concrete scoped test selectors, a full-suite fallback, and complete changed-surface metadata for deterministic baseline selection.",
+  "flags_addressed": [
+    {
+      "id": "finalize-baseline-test-scope",
+      "resolution": "addressed",
+      "reason": "Added machine-readable scoped test_blast_radius selectors with concrete existing test paths, retained full_suite_fallback, and made the validation step explicit without widening implementation scope.",
+      "where": "Step 6: Validate With Explicit Test Contract; test_blast_radius"
+    }
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "Dynamic render-router import failures in `useRenderState.ts` produce planner-owned blocker provenance rather than only `Render routing unavailable.`",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Exporter subscriber failed phases update `renderLog` with a meaningful failure message.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The WebCodecs unsupported path exposes a `RenderBlocker`-shaped object or equivalent structured blocker provenance.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`getFastRenderRouteDecision()` is removed and no repository references remain.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Export guard scan output remains consumed through planner readiness, and legacy `runExportGuard()` naming is demoted or renamed.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The stale `renderPlanner.ts` comment no longer claims completed planner inputs are still missing.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Docs no longer duplicate stale canonical blocker vocabulary or reference nonexistent `contributionFamilies.ts` as an active source.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Focused M3 tests pass for render planner, render router, export guard, render state, client render, and readiness docs using explicit scoped selectors.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The implementation avoids new readiness APIs, new output-format product capabilities, and any new sandboxing or untrusted-extension safety claims.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The repo\u2019s normal full validation passes, or any failure is documented as unrelated with evidence.",
+      "priority": "should",
+      "requires": [
+        "run_tests",
+        "run_linter",
+        "read_build_output",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The finalize failure is limited to missing scoped test metadata and does not invalidate the implementation targets in the hook, planner, router, export guard, or docs surfaces.",
+    "Creating `src/tools/video-editor/hooks/useClientRender.test.ts` is acceptable if direct WebCodecs unsupported coverage is not already available through an existing hook test.",
+    "The scoped baseline should use existing test files for finalize selection; the new `useClientRender` test is listed as a changed surface and post-edit selector once created.",
+    "`npm run quality:check` is the repo\u2019s normal broad validation command based on `package.json`; if another command is documented locally during execution, the executor should prefer that documented command."
+  ],
+  "delta_from_previous_percent": 78.44,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "reason": "Covers render hook routing, export guard input collection, failed-phase logging, and user-facing render state behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Covers planner readiness and blocker provenance contracts touched by hook provenance changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Guards the composition graph authority/readiness interactions that M3 must not regress."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/renderRouter.test.ts",
+        "reason": "Covers render route decision behavior referenced by the dynamic router import path."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/renderRouter.attach.test.ts",
+        "reason": "Covers render router attachment behavior adjacent to route decision and client/server routing contracts."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Covers export guard scan output that must remain planner readiness input rather than a separate authority."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "reason": "Covers readiness documentation contracts and stale source references updated by the plan."
+      }
+    ],
+    "changed_surfaces": [
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useClientRender.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "src/tools/video-editor/hooks/useClientRender.test.ts",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/phase4-readiness.md"
+    ],
+    "always_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/lib/renderRouter.attach.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/hooks/useClientRender.test.ts",
+      "rg \"getFastRenderRouteDecision|runExportGuard|contributionFamilies\\\\.ts|Render routing unavailable|WebCodecs not supported\" src docs",
+      "npm run quality:check"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/hooks/useClientRender.test.ts, src/tools/video-editor/hooks/useClientRender.ts, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/renderPlanner.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/phase4-readiness.md. Candidate: The scoped selectors are existing Vitest files that cover the hook, planner, router, export guard, and readiness-doc surfaces named by the plan, giving finalize a deterministic baseline without inferring from git status. The planned new `useClientRender.test.ts` is included as a changed surface and post-edit command, while full validation remains the fallback gate.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 9: requires human verification (subjective_judgment).",
+    "status": "open",
+    "severity": "minor"
+  }
+]
+
+
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146/critique_check_correctness.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: correctness
+Question: Are the proposed changes technically correct?
+Guidance: Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+    This is critique iteration 2. The template file includes prior findings with their status. Verify addressed flags were actually fixed, re-flag if inadequate, and check for new issues introduced by the revision.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

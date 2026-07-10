@@ -1,0 +1,353 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Reality Convergence
+Source: `.megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5ed92f91a987b5fafb1e8011624176237e2b9fe3164b07cde7fa7d1f59b4baf9`
+
+```md
+# North Star: Extension Reality Convergence
+
+## End State
+
+The Reigh video-editor extension system is truthful and converged across trust, composition authority, and export readiness. Extensions are presented as trusted local code unless a later untrusted-runtime epic adds real isolation. Composition facts used by planner/export/preview flow through a canonical authority spine instead of scattered legacy timeline reads. Export readiness is decided by planner-owned blockers, with guard scans and provider route checks demoted to structured planner inputs.
+
+## Success In One Sentence
+
+From a clean checkout on top of the completed extension-foundation work, Reigh can prove that extension trust claims are honest, the first composition fact family has moved to graph authority, and every user-facing export block originates from canonical planner readiness.
+
+## Immutable Constraints
+
+- Do not implement fake or partial permission enforcement and call it sandboxing.
+- Do not claim marketplace, third-party, or untrusted extension safety.
+- Keep extension code trusted and unsandboxed unless a separate future epic introduces isolation and brokered APIs.
+- Do not delete legacy timeline storage fields before compatibility projection and regression tests exist.
+- Do not let migrated fact families remain authoritative through direct legacy timeline reads.
+- Do not add a second export readiness authority beside the planner.
+- Do not weaken quality gates, docs checks, or release checks to make the epic pass.
+- Preserve existing editor behavior for timelines and packages that do not use migrated composition features.
+- Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.
+
+## Required Proof
+
+- SDK, JSON schema, examples, docs, and manager UI agree on the trusted-code/access-disclosure model.
+- A regression gate fails if docs or UI imply sandboxing, runtime permission enforcement, marketplace safety, or third-party safety.
+- The first composition authority ratchet proves shader/ref readiness comes from graph-projected facts, not direct legacy shader fields.
+- A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled.
+- User-facing export/render blocked states are derived from planner blockers.
+- Generated-module artifact state, provider availability, output-format availability, contribution conflicts, shader/material blockers, and live-binding blockers are represented in planner readiness.
+- Quality checks pass from a clean checkout with the convergence gates enabled.
+
+## Explicitly Deferred
+
+- True permission enforcement through iframe, Worker, process, SES-like isolation, or a brokered host API.
+- Marketplace install, remote extension discovery, update/delete flows, code signing, and dependency resolution.
+- Full composition-spine completion beyond the fact families named by this epic.
+- Full process/sidecar runtime hardening unless required as an input to export-readiness diagnostics.
+```
+
+### Current Stage
+Stage: `revise`
+Plan directory: `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146`
+Current milestone: `m3-export-readiness-convergence`
+
+### Phase Instruction
+Address critique findings without weakening the North Star. If a finding requires changing the anchor, escalate instead of editing around it.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are revising an implementation plan after critique and gate feedback.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M3: Export Readiness Convergence
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Current plan (markdown):
+        # Implementation Plan: M3 Export Readiness Convergence Cleanup
+
+## Overview
+Complete the already-implemented M3 export readiness convergence by closing the remaining blocker-provenance gaps, removing dead/stale artifacts, and reconciling docs that duplicate planner-owned blocker vocabulary. This is a bridge to the Epic North Star, not a contradiction: legacy scans remain useful, but user-facing export readiness must come from planner blockers or structured blocker objects. No new readiness architecture, sandboxing claim, or output-format capability is planned.
+
+## Main Phase
+
+### Step 1: Confirm Current Touchpoints
+**Scope:** Small
+**Complexity: 1**
+1. Inspect the cited source, tests, and docs only: `useRenderState.ts`, `useClientRender.ts`, `renderPlanner.ts`, nearby hook tests, and the three stale docs.
+2. Reconfirm `getFastRenderRouteDecision()` is unused and `runExportGuard()` only feeds planner readiness.
+
+### Step 2: Fix Render Hook Provenance Gaps
+**Scope:** Medium
+**Complexity: 3**
+1. Delete dead `getFastRenderRouteDecision()` code and unused types/imports.
+2. Rename `runExportGuard()` to a scanner/adapter name such as `collectExportGuardInput()` and update call sites.
+3. Replace the dynamic render-router import catch hardcoded message with planner-owned blocker provenance.
+4. Ensure exporter subscriber `failed` phases always call `setRenderLog()` with `progress.log` or a concise execution-failure fallback.
+5. Add focused `useRenderState.test.tsx` coverage for both gaps.
+
+### Step 3: Structure WebCodecs Unsupported Failure
+**Scope:** Medium
+**Complexity: 2**
+1. Update `useClientRender.ts` so WebCodecs unsupported failure carries a `RenderBlocker`-shaped object or equivalent structured blocker provenance.
+2. Keep this local to client execution unless existing types already make planner integration natural.
+3. Add/update `useClientRender.test.ts` coverage.
+
+### Step 4: Clean Stale Planner and Docs Artifacts
+**Scope:** Medium
+**Complexity: 2**
+1. Remove or update the stale M3 audit comment in `renderPlanner.ts`.
+2. Update `v8-architecture-baseline.md` and `m0-fixture-matrices.md` to reference canonical planner blocker codes instead of duplicating enum vocabulary.
+3. Update `phase4-readiness.md` to remove the stale `contributionFamilies.ts` source reference.
+
+### Step 5: Re-audit User-Facing Error Paths
+**Scope:** Small
+**Complexity: 2**
+1. Re-scan render/export error and log paths in `useRenderState.ts` and `useClientRender.ts`.
+2. Confirm each path is planner/blocker-backed, a justified pre-planner config guard, or a genuine post-execution failure.
+
+### Step 6: Validate
+**Scope:** Medium
+**Complexity: 2**
+1. Run focused tests for render state, client render, planner, router, export guard, and readiness docs.
+2. Run the repo’s normal validation command if discoverable.
+3. Document any unrelated environmental failure with the exact command/output.
+
+## Execution Order
+1. Confirm insertion points before editing.
+2. Apply hook/source changes before tests that assert new behavior.
+3. Update docs/comments after source behavior is settled.
+4. Re-audit message paths after all edits.
+
+## Validation Order
+1. Run focused hook tests first.
+2. Run planner/router/export-guard/doc contract tests next.
+3. Run broader project validation last.
+
+
+        Current plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-10T10:04:02Z",
+  "hash": "sha256:33e79a6eecad3ed1a772ba26d76ebd3043df7a4220015d12a9233c3da0f80cf3",
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "Dynamic render-router import failures in `useRenderState.ts` produce planner-owned blocker provenance rather than only `Render routing unavailable.`",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Exporter subscriber failed phases update `renderLog` with a meaningful failure message.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The WebCodecs unsupported path exposes a `RenderBlocker`-shaped object or equivalent structured blocker provenance.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`getFastRenderRouteDecision()` is removed and no repository references remain.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Export guard scan output remains consumed through planner readiness, and legacy `runExportGuard()` naming is demoted or renamed.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The stale `renderPlanner.ts` comment no longer claims completed planner inputs are still missing.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Docs no longer duplicate stale canonical blocker vocabulary or reference nonexistent `contributionFamilies.ts` as an active source.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Focused M3 tests pass for render planner, render router, export guard, render state, client render, and readiness docs.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The implementation avoids new readiness APIs, new output-format product capabilities, and any new sandboxing or untrusted-extension safety claims.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The repo\u2019s normal full validation passes, or any failure is documented as unrelated with evidence.",
+      "priority": "should",
+      "requires": [
+        "run_tests",
+        "read_build_output",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The engineering brief is accurate that M3 architecture is substantially implemented and remaining work is cleanup plus focused tests.",
+    "A `RenderBlocker`-shaped object is sufficient for WebCodecs unsupported because this is a browser executor capability check, not planner readiness.",
+    "The stale `contributionFamilies.ts` doc reference should be updated to existing canonical sources rather than restoring a generated matrix file.",
+    "Renaming `runExportGuard()` is a bridge to the North Star because it demotes legacy scan terminology while preserving scans as planner inputs.",
+    "No clarification is needed before implementation; the brief\u2019s open questions do not materially change the plan."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [],
+    "changed_surfaces": [
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useClientRender.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx",
+      "src/tools/video-editor/hooks/__tests__/useClientRender.test.ts",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/phase4-readiness.md"
+    ],
+    "always_run": [
+      "rg \"getFastRenderRouteDecision|runExportGuard|contributionFamilies\\.ts|Render routing unavailable|WebCodecs not supported\" src docs",
+      "targeted test invocation for listed tests"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/hooks/__tests__/useClientRender.test.ts, src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx, src/tools/video-editor/hooks/useClientRender.ts, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/renderPlanner.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/phase4-readiness.md. Candidate: The touched surface is limited to two hooks, one planner comment, focused tests, and docs. Scoped validation is appropriate, with full validation as the regression fallback because this area influences user-facing export readiness. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx, src/tools/video-editor/hooks/__tests__/useClientRender.test.ts, src/tools/video-editor/runtime/__tests__/renderPlanner.test.ts, src/tools/video-editor/lib/__tests__/renderRouter.test.ts, src/tools/video-editor/runtime/__tests__/exportGuard.test.ts, src/tools/video-editor/**/__tests__/phase4ReadinessDocs.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx",
+      "src/tools/video-editor/hooks/__tests__/useClientRender.test.ts",
+      "src/tools/video-editor/runtime/__tests__/renderPlanner.test.ts",
+      "src/tools/video-editor/lib/__tests__/renderRouter.test.ts",
+      "src/tools/video-editor/runtime/__tests__/exportGuard.test.ts",
+      "src/tools/video-editor/**/__tests__/phase4ReadinessDocs.test.ts"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Gate summary:
+        {
+  "recommendation": "ITERATE",
+  "passed": false,
+  "rationale": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'scoped' but selectors are missing or empty; scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations.",
+  "signals_assessment": "Finalize baseline selection could not establish a trusted scoped test command from plan metadata or finalized task declarations.",
+  "warnings": [
+    "Code-mode plans that require tests must carry machine-readable `test_blast_radius` metadata before finalize.",
+    "Finalize refused to infer scope from current git status and refused to run the full suite implicitly."
+  ],
+  "criteria_check": {
+    "finalize_baseline_test_scope": {
+      "passed": false,
+      "message": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'scoped' but selectors are missing or empty; scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations.",
+      "requires_revise": true
+    }
+  },
+  "preflight_results": {},
+  "unresolved_flags": [
+    {
+      "id": "finalize-baseline-test-scope",
+      "severity": "significant",
+      "status": "open",
+      "concern": "Plan metadata lacks a trusted scoped baseline test contract for code-mode work.",
+      "evidence": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'scoped' but selectors are missing or empty; scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations.",
+      "category": "verification_contract"
+    }
+  ],
+  "addressed_flags": [],
+  "flag_resolutions": [],
+  "orchestrator_guidance": "Run revise. The revised plan must add structured `test_blast_radius` metadata with scoped path selectors, or explicitly opt into `test_selection=full` if that is intentional.",
+  "signals": {},
+  "finalize_failure": {
+    "code": "missing_scoped_baseline_test_contract",
+    "test_selection": {
+      "mode": "unresolved",
+      "reason": "test_blast_radius strategy is 'scoped' but selectors are missing or empty; scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available",
+      "command_override": null,
+      "fallback_attempted": true,
+      "fallback_reason": "Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations."
+    }
+  }
+}
+
+        Open significant flags:
+        []
+
+
+
+
+
+        Requirements:
+        - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
+        - Update the plan to address the significant issues.
+        - Keep the plan readable and executable.
+        - Return flags_addressed with the exact flag IDs you addressed or rejected. For each flag, include:
+          - `id`: the flag ID
+          - `resolution`: `"addressed"` (you incorporated the fix) or `"rejected"` (the flag is invalid or out of scope)
+          - `reason`: a concise explanation of what was changed or why the flag was rejected
+          - `where`: a pointer to the plan section / files the change or claim points at (e.g., "Phase 2 — Step 3", "README.md §API")
+        - Include `changes_summary` as a short plain-English summary of what changed in the revision. If there were no concrete flags, say that explicitly (for example: `No critique flags were raised; refined wording and kept the plan aligned for execution.`).
+        - Preserve or improve success criteria quality. Each criterion must have a `priority` of `must`, `should`, or `info`. Promote or demote priorities if critique feedback reveals a criterion was over- or under-weighted.
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - For code-mode plans with any `run_tests` success criterion, include or preserve a machine-readable `test_blast_radius` object in the structured output. Use this shape: `{"strategy":"scoped","confidence":"high","selectors":[{"kind":"path","value":"tests/test_relevant.py","reason":"covers the changed surface"}],"changed_surfaces":["src/relevant.py"],"always_run":[],"full_suite_fallback":true,"rationale":"Why these tests cover the planned changes."}`. If finalize feedback says scoped baseline metadata was missing, the revision must add this object rather than only adding prose validation commands.
+        - Verify that the plan remains aligned with the user's original intent, not just internal plan quality.
+        - Remove unjustified scope growth. If critique raised scope creep, narrow the plan back to the original idea unless the broader work is strictly required.
+        - Maintain the structural template: H1 title, ## Overview, phase sections with numbered step sections, ## Execution Order or ## Validation Order.
+        - CRITICAL: Your entire revised plan markdown (all sections) must be output as the `plan` field in the structured output. The prose response must not contain the plan text.
+        - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `assumptions`, `success_criteria`, `questions`, and optional `changed_surfaces` / `test_blast_radius`. Do not add commentary before or after the JSON object.
+        - Populate `changed_surfaces` with every concrete file path your revised plan will change or create. Include both source files and test files. Use repo-relative paths. This list drives the deterministic test-selection blast radius; be complete. If your revised plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor and the prior plan's blast radius; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
