@@ -2467,8 +2467,11 @@ def _published_target_is_in_chain_target(
     target_ref = _string_value(chain_state.target_base_ref)
     if not target_ref:
         return None, "chain target ref unavailable"
-    if _git_is_ancestor(root, target, target_ref):
-        return True, f"published PR target {target[:12]} is contained in {target_ref}"
+    # ``target_base_ref`` is the chain's launch-time base.  A valid merged PR
+    # advances beyond that snapshot, so the snapshot must be an ancestor of the
+    # published merge target (not the other way around).
+    if _git_is_ancestor(root, target_ref, target):
+        return True, f"chain target {target_ref[:12]} is contained in published PR target {target[:12]}"
     return (
         False,
         f"published PR target {target[:12]} is not contained in chain target {target_ref}",
