@@ -11,6 +11,7 @@ from arnold_pipelines.megaplan.pipelines.live_supervisor.model import (
     CheckFinding,
     SignalBundle,
 )
+from arnold_pipelines.megaplan.observability.liveness import has_active_in_flight_llm
 
 
 def _read_json(path: Path) -> Any | None:
@@ -65,24 +66,13 @@ def _compute_last_event_age(events: list[dict], now_ts: float) -> float | None:
     return now_ts - last_ts
 
 
-def _compute_in_flight_llm(events: list[dict], now_ts: float) -> bool:
-    """True if there is an unmatched LLM_CALL_START within the last 2 hours."""
-    ends: set[str] = set()
-    for ev in events:
-        if ev.get("kind") == "llm_call_end":
-            rid = ev.get("payload", {}).get("request_id")
-            if rid:
-                ends.add(str(rid))
-
-    for ev in events:
-        if ev.get("kind") == "llm_call_start":
-            rid = ev.get("payload", {}).get("request_id")
-            if rid and str(rid) in ends:
-                continue
-            start_ts = _parse_iso(ev.get("ts_utc", ""))
-            if start_ts is not None and (now_ts - start_ts) < 7200:
-                return True
-    return False
+def _compute_in_flight_llm(
+    events: list[dict], state: dict | None, now_ts: float
+) -> bool:
+    """True only for an unmatched recent LLM call owned by the active step."""
+    return has_active_in_flight_llm(
+        events, state, now_ts, parse_timestamp=_parse_iso
+    )
 
 
 def _compute_liveness_and_reason(events: list[dict], state: dict | None, now_ts: float) -> tuple[str, str]:
@@ -104,7 +94,7 @@ def _compute_liveness_and_reason(events: list[dict], state: dict | None, now_ts:
         return "timeout-imminent", f"phase_age {phase_age:.0f}s > 0.8 * timeout {phase_timeout:.0f}s"
 
     last_event_age = _compute_last_event_age(events, now_ts)
-    has_in_flight = _compute_in_flight_llm(events, now_ts)
+    has_in_flight = _compute_in_flight_llm(events, state, now_ts)
 
     if last_event_age is None:
         if has_in_flight:
@@ -192,7 +182,7 @@ def compute_signal_bundle(plan_dir: Path, state: dict | None = None) -> SignalBu
         now_ts = time.time()
         liveness, liveness_reason = _compute_liveness_and_reason(events, state, now_ts)
         last_event_age_seconds = _compute_last_event_age(events, now_ts)
-        has_in_flight_llm = _compute_in_flight_llm(events, now_ts)
+        has_in_flight_llm = _compute_in_flight_llm(events, state, now_ts)
         block_details = _compute_block_details(plan_dir, state)
         doctor_findings = _doctor_findings(plan_dir, state)
 
