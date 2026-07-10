@@ -1,0 +1,80 @@
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
+from __future__ import annotations
+
+from vibecomfy.templates import ReadyMetadata, new_workflow
+from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, EmptySD3LatentImage, KSampler, ModelSamplingAuraFlow, SaveImage, UNETLoader, VAEDecode, VAELoader
+
+
+WIDGET__NAME = 'z_image_bf16.safetensors'
+WIDGET__NAME_2 = 'qwen_3_4b.safetensors'
+WIDGET__NAME_3 = 'ae.safetensors'
+
+READY_METADATA = ReadyMetadata.build(
+    capability='image',
+    provenance={'source_path': 'ready_templates/sources/official/image/z_image.json', 'source_id': 'z_image', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/official/image/z_image.json', 'output_mode': 'ready_template', 'ready_id': 'image/z_image'},
+)
+
+# === Subgraph functions ===
+
+def text_to_image_z_image_base(
+    *,
+    width: int,
+    height: int,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    prompt: str,
+    steps: int,
+    cfg: float,
+):
+    """Text to Image(Z-Image-Base).
+
+    Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in ready_templates/sources/official/image/z_image.json.
+    # vibecomfy source hash: sha256:5093fca1fcee6f4d6df426c85d09324e14882805513ee68a85b0c3a84b5aa42b
+    Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler.
+    """
+
+    cliploader = CLIPLoader(type_='lumina2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+    unetloader = UNETLoader(unet_name=unet_name)
+    emptysd3latentimage = EmptySD3LatentImage(width=width, height=height)
+    positive = CLIPTextEncode(text=prompt, clip=cliploader)
+    modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
+    negative = CLIPTextEncode(text='', clip=cliploader)
+
+    ksampler = KSampler(
+        seed=770044821593082,
+        sampler_name='res_multistep',
+        steps=steps,
+        cfg=cfg,
+        latent_image=emptysd3latentimage,
+        model=modelsamplingauraflow,
+        negative=negative,
+        positive=positive,
+    )
+
+    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+
+    return vaedecode
+
+def build() -> VibeWorkflow:
+    """Build the workflow (auto-generated)."""
+    wf = new_workflow(READY_METADATA, source_path=__file__)
+
+    edited = text_to_image_z_image_base(
+        width=1024,
+        height=1024,
+        unet_name='z_image_bf16.safetensors',
+        clip_name='qwen_3_4b.safetensors',
+        vae_name='ae.safetensors',
+        prompt='A fashion photography work full of surreal romanticism, using a low-angle upward shooting composition, with a clear light blue sky as the background, and the visual focus concentrated on the fantasy blue vegetation and the model walking through it.\n\nThe vegetation in the picture is processed into varying shades of blue, from light ice blue to deep cobalt blue. The textures of the leaves and branches are delicate and realistic. The warm brown tree trunks form a sharp contrast with the cool blue leaves, resembling a dreamy forest from another world. An African-American model wearing a yellow and white vertical striped long dress walks slowly on the sand. The warm tones of the dress echo with the surrounding cool blue vegetation. The noon sun casts clear shadows on the sand, enhancing the sense of space and reality in the picture.\n\nThe entire scene, with its clean and transparent colors and fantasy settings, not only exudes the vastness of the natural wilderness but also presents a quiet and poetic high-fashion sense due to the surreal vegetation.',
+        steps=25,
+        cfg=4,
+    )
+
+    saveimage = SaveImage(_id='9', filename_prefix='z-image', images=edited)
+
+    return wf.finalize({}, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='z-image')
+

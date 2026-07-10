@@ -1,0 +1,15 @@
+[
+  "CFGGuider",
+  "CLIPLoader",
+  "CLIPTextEncode",
+  "CLIPTextEncode",
+  "EmptyFlux2LatentImage",
+  "Flux2Scheduler",
+  "KSamplerSelect",
+  "RandomNoise",
+  "SamplerCustomAdvanced",
+  "SaveImage",
+  "UNETLoader",
+  "VAEDecode",
+  "VAELoader"
+]

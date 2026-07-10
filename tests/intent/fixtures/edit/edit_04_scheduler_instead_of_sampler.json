@@ -1,0 +1,18 @@
+{
+  "id": "edit_04_scheduler_instead_of_sampler",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/edit/qwen_image_edit.json",
+  "nl_intent": "Switch to a higher-quality sampler for the edit",
+  "post_edit_ir_patch": {
+    "node_id": "93",
+    "field": "upscale_method",
+    "old": "lanczos",
+    "new": "nearest-exact"
+  },
+  "wrongness_description": "Model changed the upscale_method on ImageScaleToTotalPixels node 93 from 'lanczos' to 'nearest-exact', confusing the image rescale interpolation method (a preprocessing step) with the diffusion sampler used during generation. The diffusion sampler is internal to the subgraph (node 75) and controls the denoising algorithm; the resize interpolation only affects how the input image is scaled before editing.",
+  "family": "edit",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["93", "upscale_method"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

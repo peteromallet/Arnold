@@ -1,0 +1,19 @@
+[importlinter]
+root_package = vibecomfy
+
+[importlinter:contract:ir-core-no-porting]
+name = IR core must not import porting or Layer-2 modules
+type = forbidden
+allow_indirect_imports = true
+source_modules =
+    vibecomfy.workflow
+    vibecomfy.metadata
+    vibecomfy.contracts.ir
+    vibecomfy._compile
+forbidden_modules =
+    vibecomfy.porting
+    vibecomfy.commands
+    vibecomfy.ops
+    vibecomfy.blocks
+    vibecomfy.patches
+    vibecomfy.runtime

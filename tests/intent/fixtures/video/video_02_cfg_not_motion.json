@@ -1,0 +1,18 @@
+{
+  "id": "video_02_cfg_not_motion",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
+  "nl_intent": "Add more motion and dynamic movement to the video",
+  "post_edit_ir_patch": {
+    "node_id": "3",
+    "field": "cfg",
+    "old": 6,
+    "new": 9
+  },
+  "wrongness_description": "Model increased KSampler node 3 cfg from 6 to 9, reasoning that higher guidance produces more dramatic/dynamic output. CFG controls prompt adherence strength, not motion magnitude. WAN video motion is governed by the model's motion prior and conditioning; increasing cfg beyond the recommended range can cause over-saturation and artifact amplification, not more movement.",
+  "family": "video",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["3", "cfg"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

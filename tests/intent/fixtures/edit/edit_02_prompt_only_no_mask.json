@@ -1,0 +1,18 @@
+{
+  "id": "edit_02_prompt_only_no_mask",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/edit/qwen_image_edit.json",
+  "nl_intent": "Change the red dress to blue while keeping the background identical",
+  "post_edit_ir_patch": {
+    "node_id": "76",
+    "field": "prompt",
+    "old": "Remove all UI text elements from the image. Keep the feeling that the character",
+    "new": "Change the red dress to blue"
+  },
+  "wrongness_description": "Model updated the edit prompt on TextEncodeQwenImageEdit node 76 to 'Change the red dress to blue' but did not wire any mask into the editing pipeline. Without a mask, the model edits the entire image globally; the background and other elements will also shift color/style, not just the dress.",
+  "family": "edit",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["76", "prompt"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

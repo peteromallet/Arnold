@@ -1,0 +1,573 @@
+{
+  "DownloadAndLoadSAM2Model": {
+    "pack": "ComfyUI-segment-anything-2",
+    "pack_version": "local-0c35fff",
+    "python_module": "ComfyUI-segment-anything-2.nodes",
+    "category": "SAM2",
+    "name": "DownloadAndLoadSAM2Model",
+    "display_name": "DownloadAndLoadSAM2Model",
+    "description": "",
+    "inputs": {
+      "required": {
+        "model": [
+          [
+            "sam2_hiera_base_plus.safetensors",
+            "sam2_hiera_large.safetensors",
+            "sam2_hiera_small.safetensors",
+            "sam2_hiera_tiny.safetensors",
+            "sam2.1_hiera_base_plus.safetensors",
+            "sam2.1_hiera_large.safetensors",
+            "sam2.1_hiera_small.safetensors",
+            "sam2.1_hiera_tiny.safetensors"
+          ]
+        ],
+        "segmentor": [
+          [
+            "single_image",
+            "video",
+            "automaskgenerator"
+          ]
+        ],
+        "device": [
+          [
+            "cuda",
+            "cpu",
+            "mps"
+          ]
+        ],
+        "precision": [
+          [
+            "fp16",
+            "bf16",
+            "fp32"
+          ],
+          {
+            "default": "fp16"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "segmentor",
+        "device",
+        "precision"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "segmentor",
+      "device",
+      "precision"
+    ],
+    "object_info_widget_order": [
+      "model",
+      "segmentor",
+      "device",
+      "precision"
+    ],
+    "outputs": [
+      {
+        "type": "SAM2MODEL",
+        "name": "sam2_model",
+        "is_list": false
+      }
+    ],
+    "function": "loadmodel"
+  },
+  "Florence2toCoordinates": {
+    "pack": "ComfyUI-segment-anything-2",
+    "pack_version": "local-0c35fff",
+    "python_module": "ComfyUI-segment-anything-2.nodes",
+    "category": "SAM2",
+    "name": "Florence2toCoordinates",
+    "display_name": "Florence2toCoordinates",
+    "description": "",
+    "inputs": {
+      "required": {
+        "data": [
+          "JSON"
+        ],
+        "index": [
+          "STRING",
+          {
+            "default": "0"
+          }
+        ],
+        "batch": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "data",
+        "index",
+        "batch"
+      ]
+    },
+    "input_order_all": [
+      "data",
+      "index",
+      "batch"
+    ],
+    "object_info_widget_order": [
+      "data",
+      "index",
+      "batch"
+    ],
+    "outputs": [
+      {
+        "type": "STRING",
+        "name": "center_coordinates",
+        "is_list": false
+      },
+      {
+        "type": "BBOX",
+        "name": "bboxes",
+        "is_list": false
+      }
+    ],
+    "function": "segment"
+  },
+  "Sam2AutoSegmentation": {
+    "pack": "ComfyUI-segment-anything-2",
+    "pack_version": "local-0c35fff",
+    "python_module": "ComfyUI-segment-anything-2.nodes",
+    "category": "SAM2",
+    "name": "Sam2AutoSegmentation",
+    "display_name": "Sam2AutoSegmentation",
+    "description": "",
+    "inputs": {
+      "required": {
+        "sam2_model": [
+          "SAM2MODEL"
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "points_per_side": [
+          "INT",
+          {
+            "default": 32
+          }
+        ],
+        "points_per_batch": [
+          "INT",
+          {
+            "default": 64
+          }
+        ],
+        "pred_iou_thresh": [
+          "FLOAT",
+          {
+            "default": 0.8,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "stability_score_thresh": [
+          "FLOAT",
+          {
+            "default": 0.95,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "stability_score_offset": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "mask_threshold": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "crop_n_layers": [
+          "INT",
+          {
+            "default": 0
+          }
+        ],
+        "box_nms_thresh": [
+          "FLOAT",
+          {
+            "default": 0.7,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "crop_nms_thresh": [
+          "FLOAT",
+          {
+            "default": 0.7,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "crop_overlap_ratio": [
+          "FLOAT",
+          {
+            "default": 0.34,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "crop_n_points_downscale_factor": [
+          "INT",
+          {
+            "default": 1
+          }
+        ],
+        "min_mask_region_area": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "use_m2m": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "keep_model_loaded": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "sam2_model",
+        "image",
+        "points_per_side",
+        "points_per_batch",
+        "pred_iou_thresh",
+        "stability_score_thresh",
+        "stability_score_offset",
+        "mask_threshold",
+        "crop_n_layers",
+        "box_nms_thresh",
+        "crop_nms_thresh",
+        "crop_overlap_ratio",
+        "crop_n_points_downscale_factor",
+        "min_mask_region_area",
+        "use_m2m",
+        "keep_model_loaded"
+      ]
+    },
+    "input_order_all": [
+      "sam2_model",
+      "image",
+      "points_per_side",
+      "points_per_batch",
+      "pred_iou_thresh",
+      "stability_score_thresh",
+      "stability_score_offset",
+      "mask_threshold",
+      "crop_n_layers",
+      "box_nms_thresh",
+      "crop_nms_thresh",
+      "crop_overlap_ratio",
+      "crop_n_points_downscale_factor",
+      "min_mask_region_area",
+      "use_m2m",
+      "keep_model_loaded"
+    ],
+    "object_info_widget_order": [
+      "sam2_model",
+      null,
+      "points_per_side",
+      "points_per_batch",
+      "pred_iou_thresh",
+      "stability_score_thresh",
+      "stability_score_offset",
+      "mask_threshold",
+      "crop_n_layers",
+      "box_nms_thresh",
+      "crop_nms_thresh",
+      "crop_overlap_ratio",
+      "crop_n_points_downscale_factor",
+      "min_mask_region_area",
+      "use_m2m",
+      "keep_model_loaded"
+    ],
+    "outputs": [
+      {
+        "type": "MASK",
+        "name": "mask",
+        "is_list": false
+      },
+      {
+        "type": "IMAGE",
+        "name": "segmented_image",
+        "is_list": false
+      },
+      {
+        "type": "BBOX",
+        "name": "bbox",
+        "is_list": false
+      }
+    ],
+    "function": "segment"
+  },
+  "Sam2Segmentation": {
+    "pack": "ComfyUI-segment-anything-2",
+    "pack_version": "local-0c35fff",
+    "python_module": "ComfyUI-segment-anything-2.nodes",
+    "category": "SAM2",
+    "name": "Sam2Segmentation",
+    "display_name": "Sam2Segmentation",
+    "description": "",
+    "inputs": {
+      "required": {
+        "sam2_model": [
+          "SAM2MODEL"
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "keep_model_loaded": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ]
+      },
+      "optional": {
+        "coordinates_positive": [
+          "STRING",
+          {
+            "forceInput": true
+          }
+        ],
+        "coordinates_negative": [
+          "STRING",
+          {
+            "forceInput": true
+          }
+        ],
+        "bboxes": [
+          "BBOX"
+        ],
+        "individual_objects": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "mask": [
+          "MASK"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "sam2_model",
+        "image",
+        "keep_model_loaded"
+      ],
+      "optional": [
+        "coordinates_positive",
+        "coordinates_negative",
+        "bboxes",
+        "individual_objects",
+        "mask"
+      ]
+    },
+    "input_order_all": [
+      "sam2_model",
+      "image",
+      "keep_model_loaded",
+      "coordinates_positive",
+      "coordinates_negative",
+      "bboxes",
+      "individual_objects",
+      "mask"
+    ],
+    "object_info_widget_order": [
+      "sam2_model",
+      null,
+      "keep_model_loaded",
+      "coordinates_positive",
+      "coordinates_negative",
+      "bboxes",
+      "individual_objects",
+      null
+    ],
+    "outputs": [
+      {
+        "type": "MASK",
+        "name": "mask",
+        "is_list": false
+      }
+    ],
+    "function": "segment"
+  },
+  "Sam2VideoSegmentation": {
+    "pack": "ComfyUI-segment-anything-2",
+    "pack_version": "local-0c35fff",
+    "python_module": "ComfyUI-segment-anything-2.nodes",
+    "category": "SAM2",
+    "name": "Sam2VideoSegmentation",
+    "display_name": "Sam2VideoSegmentation",
+    "description": "",
+    "inputs": {
+      "required": {
+        "sam2_model": [
+          "SAM2MODEL"
+        ],
+        "inference_state": [
+          "SAM2INFERENCESTATE"
+        ],
+        "keep_model_loaded": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "sam2_model",
+        "inference_state",
+        "keep_model_loaded"
+      ]
+    },
+    "input_order_all": [
+      "sam2_model",
+      "inference_state",
+      "keep_model_loaded"
+    ],
+    "object_info_widget_order": [
+      "sam2_model",
+      "inference_state",
+      "keep_model_loaded"
+    ],
+    "outputs": [
+      {
+        "type": "MASK",
+        "name": "mask",
+        "is_list": false
+      }
+    ],
+    "function": "segment"
+  },
+  "Sam2VideoSegmentationAddPoints": {
+    "pack": "ComfyUI-segment-anything-2",
+    "pack_version": "local-0c35fff",
+    "python_module": "ComfyUI-segment-anything-2.nodes",
+    "category": "SAM2",
+    "name": "Sam2VideoSegmentationAddPoints",
+    "display_name": "Sam2VideoSegmentationAddPoints",
+    "description": "",
+    "inputs": {
+      "required": {
+        "sam2_model": [
+          "SAM2MODEL"
+        ],
+        "coordinates_positive": [
+          "STRING",
+          {
+            "forceInput": true
+          }
+        ],
+        "frame_index": [
+          "INT",
+          {
+            "default": 0
+          }
+        ],
+        "object_index": [
+          "INT",
+          {
+            "default": 0
+          }
+        ]
+      },
+      "optional": {
+        "image": [
+          "IMAGE"
+        ],
+        "coordinates_negative": [
+          "STRING",
+          {
+            "forceInput": true
+          }
+        ],
+        "prev_inference_state": [
+          "SAM2INFERENCESTATE"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "sam2_model",
+        "coordinates_positive",
+        "frame_index",
+        "object_index"
+      ],
+      "optional": [
+        "image",
+        "coordinates_negative",
+        "prev_inference_state"
+      ]
+    },
+    "input_order_all": [
+      "sam2_model",
+      "coordinates_positive",
+      "frame_index",
+      "object_index",
+      "image",
+      "coordinates_negative",
+      "prev_inference_state"
+    ],
+    "object_info_widget_order": [
+      "sam2_model",
+      "coordinates_positive",
+      "frame_index",
+      "object_index",
+      null,
+      "coordinates_negative",
+      "prev_inference_state"
+    ],
+    "outputs": [
+      {
+        "type": "SAM2MODEL",
+        "name": "sam2_model",
+        "is_list": false
+      },
+      {
+        "type": "SAM2INFERENCESTATE",
+        "name": "inference_state",
+        "is_list": false
+      }
+    ],
+    "function": "segment"
+  }
+}

@@ -1,0 +1,10 @@
+# Pipeline-local profile for vibecomfy-executor.
+#
+# Maps each stage to a Hermes-backed OpenRouter model. The runtime reads
+# ctx.profile and constructs the matching AIAgent for the stage.
+
+[profiles.default]
+classify   = "hermes:openrouter:deepseek/deepseek-v4-flash"
+research   = "hermes:openrouter:deepseek/deepseek-v4-pro"
+implement  = "hermes:openrouter:deepseek/deepseek-v4-pro"
+reply      = "hermes:openrouter:deepseek/deepseek-v4-flash"

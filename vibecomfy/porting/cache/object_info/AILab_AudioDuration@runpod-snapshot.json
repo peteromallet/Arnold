@@ -1,0 +1,70 @@
+{
+  "Audio Duration": {
+    "category": "🧪AILab/🔊Audio",
+    "description": "",
+    "display_name": "Audio Duration & Frames",
+    "function": "Audio Duration",
+    "input_order": {
+      "optional": [
+        "audio_path",
+        "audio",
+        "fps"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "audio_path",
+      "audio",
+      "fps"
+    ],
+    "inputs": {
+      "optional": {
+        "audio": [
+          "AUDIO"
+        ],
+        "audio_path": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "fps": [
+          "FLOAT"
+        ]
+      },
+      "required": {}
+    },
+    "name": "Audio Duration",
+    "object_info_widget_order": [
+      "audio_path",
+      null,
+      "fps"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "duration_int",
+        "type": "INT"
+      },
+      {
+        "is_list": false,
+        "name": "duration_float",
+        "type": "FLOAT"
+      },
+      {
+        "is_list": false,
+        "name": "frames",
+        "type": "INT"
+      },
+      {
+        "is_list": false,
+        "name": "audio_path",
+        "type": "STRING"
+      }
+    ],
+    "pack": "AILab_AudioDuration",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_AudioDuration"
+  }
+}

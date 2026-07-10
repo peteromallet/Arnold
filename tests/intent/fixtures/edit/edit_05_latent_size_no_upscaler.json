@@ -1,0 +1,18 @@
+{
+  "id": "edit_05_latent_size_no_upscaler",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/edit/qwen_image_edit.json",
+  "nl_intent": "Output a higher resolution image at 2048x2048",
+  "post_edit_ir_patch": {
+    "node_id": "93",
+    "field": "megapixels",
+    "old": 1.5,
+    "new": 4.0
+  },
+  "wrongness_description": "Model increased ImageScaleToTotalPixels megapixels from 1.5 to 4.0 to raise output pixel count toward 2048x2048, but did not add an upscaler node (e.g. UpscaleModelLoader + ImageUpscaleWithModel) before the edit subgraph. Scaling the input to 4 megapixels causes the edit model to run at full 4MP resolution, increasing VRAM usage and runtime, without the quality improvement that a dedicated upscaler provides.",
+  "family": "edit",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["93", "megapixels"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

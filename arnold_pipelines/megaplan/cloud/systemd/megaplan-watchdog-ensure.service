@@ -1,8 +1,0 @@
-[Unit]
-Description=Ensure Megaplan cloud watchdog tmux session is running
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/ensure-megaplan-watchdog

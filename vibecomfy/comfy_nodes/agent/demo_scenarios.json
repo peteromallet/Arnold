@@ -1,0 +1,189 @@
+{
+  "$schema": "../agent_demo_scenarios_schema.json",
+  "description": "Curated, deterministic demo scenarios for the VibeComfy preview-query picker. Each record points to a saved agentic run under out/agentic/agentic-100-20260630-021138/ but is intentionally usable even when that directory is not present (routes read artifacts at runtime only).",
+  "source_run_tree": "out/agentic/agentic-100-20260630-021138",
+  "scenarios": [
+    {
+      "id": "tts_emotion_injection",
+      "title": "TTS emotion injection",
+      "query": "Make the TTS narrator sound excited and emotional instead of flat.",
+      "description": "Adds emotion and emphasis parameters to a text-to-speech workflow without changing the script text.",
+      "category": "audio / TTS",
+      "required_node_packs": ["ComfyUI-Qwen3-TTS", "ComfyUI-QwenTTS"],
+      "run_location": {
+        "run_dir": "tts_emotion_injection",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "qwen_face_distortion_wrong_slot",
+      "title": "Qwen face distortion / wrong output slot",
+      "query": "Fix the Qwen image-edit node so the face doesn't distort and it uses the correct output slot.",
+      "description": "Corrects a wiring/output-slot mistake in a Qwen image-editing graph that was causing facial distortion.",
+      "category": "image / edit",
+      "required_node_packs": ["ComfyUI-Qwen-Image"],
+      "run_location": {
+        "run_dir": "qwen_face_distortion_wrong_slot",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "vace_identity_padded_reference",
+      "title": "VACE identity / padded reference",
+      "query": "Keep the character's face consistent in the VACE video generation; pad the reference image so it fits the model's expected aspect ratio.",
+      "description": "Preserves character identity in a VACE-driven video generation workflow by padding the reference image to the expected resolution.",
+      "category": "video / identity",
+      "required_node_packs": ["ComfyUI-VACE"],
+      "run_location": {
+        "run_dir": "vace_identity_padded_reference",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "triporefine_stage_add",
+      "title": "3D TripoRefine stage add",
+      "query": "Add a refinement stage to the 3D Tripo workflow so the mesh comes out cleaner.",
+      "description": "Inserts a TripoRefine refinement stage into a 3D-generation workflow to improve output mesh quality.",
+      "category": "3D / mesh",
+      "required_node_packs": ["ComfyUI-Tripo"],
+      "run_location": {
+        "run_dir": "triporefine_stage_add",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "av_fps_desync",
+      "title": "Audio/video fps desync",
+      "query": "Fix the audio/video fps mismatch so the generated clip stays in sync.",
+      "description": "Aligns frame-rate and audio-sample-rate settings in a video workflow to eliminate lipsync drift.",
+      "category": "video / timing",
+      "required_node_packs": [],
+      "run_location": {
+        "run_dir": "av_fps_desync",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "sdxl_plastic_fabric",
+      "title": "SDXL plastic → fabric",
+      "query": "Change the SDXL material from shiny plastic to woven fabric.",
+      "description": "Updates prompts and conditioning in an SDXL image-generation workflow to render a woven fabric material instead of plastic.",
+      "category": "image / material",
+      "required_node_packs": ["ComfyUI-SDXL"],
+      "run_location": {
+        "run_dir": "sdxl_plastic_fabric",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "wan22_latent_scaling_fix",
+      "title": "Wan2.2 latent scaling fix",
+      "query": "The high-noise LoRA variant produces outputs identical to the low-noise variant.",
+      "description": "Adds ModelSamplingSD3 scaling into both Wan2.2 UNet chains and separates the high-noise LoRA strength.",
+      "category": "video / diffusion",
+      "required_node_packs": ["ComfyUI-WanVideoWrapper"],
+      "run_location": {
+        "run_dir": "video-wan2-2-i2v-video-generation-with-lora-and-nois-374aa9",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "llm_caption_override",
+      "title": "LLM caption override",
+      "query": "The prompt it generates doesn't capture what's in the image.",
+      "description": "Finds and removes a hardcoded caption that was overriding Florence2 image understanding before the LLM prompt stage.",
+      "category": "multi / image-to-video",
+      "required_node_packs": ["ComfyUI-Florence2", "ComfyUI-PYSSSS"],
+      "run_location": {
+        "run_dir": "multi-image-to-video-with-llm",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "animatediff_lineart_enable",
+      "title": "AnimateDiff LineArt enable",
+      "query": "The animation barely follows my input images.",
+      "description": "Discovers the LineArt preprocessor was disabled, enables the ControlNet conditioning path, and improves resolution.",
+      "category": "image/video / control",
+      "required_node_packs": ["ComfyUI-AnimateDiff-Evolved", "ComfyUI-ControlNet-Aux"],
+      "run_location": {
+        "run_dir": "image-animatediff-video-from-images-with",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "mesh_noise_cleanup",
+      "title": "3D mesh noise cleanup",
+      "query": "The generated 3D mesh is full of floating bits and noise.",
+      "description": "Uses research-backed 3D parameter changes to reduce floating mesh artifacts while preserving detail.",
+      "category": "3D / mesh",
+      "required_node_packs": ["ComfyUI-Hunyuan3DWrapper"],
+      "run_location": {
+        "run_dir": "3d-generates-a-3d-mesh-from",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "grid_cells_512",
+      "title": "Grid cells to 512px",
+      "query": "The preview grid looks too small and blurry — make each cell 512×512.",
+      "description": "Applies a multi-target batch edit that resizes all four preview-grid image resize nodes in one turn.",
+      "category": "image / batch edit",
+      "required_node_packs": ["ComfyUI-KJNodes"],
+      "run_location": {
+        "run_dir": "image-background-removal-and-grid-composition-54a681",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "seed_grid_to_row",
+      "title": "Seed grid → horizontal row",
+      "query": "Arrange the four variations in a single horizontal row instead of a 2x2 grid.",
+      "description": "Replaces a 2x2 grid-composite node with ImageConcatMulti and rewires the split images into a row layout.",
+      "category": "image / layout",
+      "required_node_packs": ["ComfyUI-KJNodes"],
+      "run_location": {
+        "run_dir": "image-generates-a-2x2-seed-variation",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "hunyuan_i2v_latent_source",
+      "title": "Hunyuan i2v latent source",
+      "query": "The video doesn't resemble my input image at all — the first frame is completely different.",
+      "description": "Diagnoses a sampler initialized from the wrong reference-frame latent and disconnects that edge so image conditioning can drive the result.",
+      "category": "video / image-to-video",
+      "required_node_packs": ["ComfyUI-HunyuanVideoWrapper"],
+      "run_location": {
+        "run_dir": "video-hunyuanvideo-image-to-video-generation-with-en-ff076a",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    }
+  ]
+}

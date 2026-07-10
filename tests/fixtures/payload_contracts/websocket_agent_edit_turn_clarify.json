@@ -1,0 +1,22 @@
+{
+  "session_id": "sess-clarify",
+  "turn_id": "0001",
+  "turn_number": 1,
+  "entry_type": "batch",
+  "status": "clarify",
+  "emitted_at": "2025-06-01T12:00:03.000Z",
+  "message": "Need clarification.",
+  "clarification_required": true,
+  "clarification_message": "Should I move the save node before the preview node?",
+  "batch_ok": true,
+  "statement_count": 1,
+  "landed_op_count": 0,
+  "statements": [
+    { "op_kind": "clarify", "status": "active", "message": "Need clarification" }
+  ],
+  "timing": {
+    "model_elapsed_ms": 1200,
+    "engine_elapsed_ms": 20,
+    "turn_elapsed_ms": 1300
+  }
+}

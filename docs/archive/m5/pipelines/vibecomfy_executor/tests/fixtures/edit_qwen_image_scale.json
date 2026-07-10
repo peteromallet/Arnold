@@ -1,4 +1,0 @@
-{
-  "query": "Set the ImageScaleToTotalPixels megapixels to 2.0 and change the SaveImage prefix to 'qwen-edited'.",
-  "graph": "ready_templates/sources/official/edit/qwen_image_edit.json"
-}

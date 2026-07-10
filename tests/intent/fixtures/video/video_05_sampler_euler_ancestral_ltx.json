@@ -1,0 +1,18 @@
+{
+  "id": "video_05_sampler_euler_ancestral_ltx",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/ltx2_3_t2v.json",
+  "nl_intent": "Switch to a more stochastic sampler for more varied outputs",
+  "post_edit_ir_patch": {
+    "node_id": "209",
+    "field": "sampler_name",
+    "old": "euler_ancestral_cfg_pp",
+    "new": "euler_ancestral"
+  },
+  "wrongness_description": "Model changed KSamplerSelect node 209 sampler_name from 'euler_ancestral_cfg_pp' to 'euler_ancestral'. The LTX-2.3 SamplerCustomAdvanced pipeline requires the _cfg_pp variant samplers because the CFGGuider node expects the classifier-free guidance post-processing pass; 'euler_ancestral' without _cfg_pp skips the CFG correction step, causing silent guidance miscalculation and degraded output quality.",
+  "family": "video",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["209", "sampler_name"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

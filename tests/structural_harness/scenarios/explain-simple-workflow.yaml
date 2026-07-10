@@ -1,0 +1,34 @@
+name: explain-simple-workflow
+tier: 6
+description: "Executor inspect: the frontend/API executor path can produce a thorough explanation for a simple text-to-image workflow via the canonical inspect route"
+mode: structural
+agents:
+  - id: builder
+    dispatcher: fake
+tags:
+  - m6
+  - inspect
+  - structural
+  - positive
+  - graph_report
+assessment:
+  subjective: true
+  enforced:
+    - "executor_result.json parses as valid JSON with ok=true, report.executor.plan.route=inspect, and report.executor.plan.implement=false."
+    - "executor_result.json contains a reply mentioning CheckpointLoaderSimple, KSampler, VAEDecode, and SaveImage."
+    - "executor_result.json has graph=null and candidate=null (inspect is read-only)."
+    - "actions.jsonl contains at least one entry with op=executor.run and one entry with op=inspect."
+  graded:
+    - "Routing correctness: For a graph-explanation request ('what does this workflow do?'), the classifier should choose the inspect route with research=false and implement=false, not route to adapt, revise, research, clarify, or respond."
+    - "The executor reply describes the data flow from text encoding / latent creation through KSampler and VAEDecode to SaveImage."
+  observed:
+    - "The executor reply lists key nodes from the fixture workflow."
+extras:
+  flow_kind: executor_full_pipeline
+  required_frozen_evidence:
+    - evidence/executor_result.json
+    - evidence/executor_report.json
+    - evidence/graph_report.txt
+    - evidence/messages.jsonl
+    - evidence/metadata.json
+    - evidence/actions.jsonl

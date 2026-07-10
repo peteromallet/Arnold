@@ -1,0 +1,18 @@
+{
+  "id": "edit_03_cfg_zero_for_faithful",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json",
+  "nl_intent": "Make the edit more faithful to the original image",
+  "post_edit_ir_patch": {
+    "node_id": "63",
+    "field": "cfg",
+    "old": 5.0,
+    "new": 0.0
+  },
+  "wrongness_description": "Model set CFGGuider node 63 cfg to 0.0 believing that zero classifier-free guidance means the model follows the original image maximally, making the edit 'faithful'. cfg=0 disables guidance entirely and causes the sampler to generate unconditioned noise; the result diverges wildly from both the original image and the edit prompt. Faithfulness to the reference image in Flux edit workflows is controlled by the reference latent strength, not cfg.",
+  "family": "edit",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["63", "cfg"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

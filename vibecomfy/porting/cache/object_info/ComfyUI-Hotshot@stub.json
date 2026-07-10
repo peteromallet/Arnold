@@ -1,0 +1,2305 @@
+{
+  "ACN_AdvancedControlNetApply": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ACN_AdvancedControlNetApply derived from Hotshot workflow JSON.",
+    "display_name": "ACN_AdvancedControlNetApply",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ACN_AdvancedControlNetApply",
+    "input_order": {
+      "optional": [
+        "mask_optional",
+        "timestep_kf",
+        "latent_kf_override",
+        "weights_override"
+      ],
+      "required": [
+        "positive",
+        "negative",
+        "control_net",
+        "image"
+      ]
+    },
+    "input_order_all": [
+      "positive",
+      "negative",
+      "control_net",
+      "image",
+      "mask_optional",
+      "timestep_kf",
+      "latent_kf_override",
+      "weights_override"
+    ],
+    "inputs": {
+      "optional": {
+        "latent_kf_override": [
+          "FLOAT",
+          {}
+        ],
+        "mask_optional": [
+          "FLOAT",
+          {}
+        ],
+        "timestep_kf": [
+          "INT",
+          {}
+        ],
+        "weights_override": [
+          "CONTROL_NET_WEIGHTS",
+          {}
+        ]
+      },
+      "required": {
+        "control_net": [
+          "CONTROL_NET",
+          {}
+        ],
+        "image": [
+          "IMAGE",
+          {}
+        ],
+        "negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "positive": [
+          "CONDITIONING",
+          {}
+        ]
+      }
+    },
+    "name": "ACN_AdvancedControlNetApply",
+    "object_info_widget_order": [
+      "positive",
+      "negative",
+      "control_net",
+      "image",
+      "mask_optional",
+      "timestep_kf",
+      "latent_kf_override",
+      "weights_override"
+    ],
+    "outputs": [
+      {
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "negative",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_AnimateDiffLoRALoader": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_AnimateDiffLoRALoader derived from Hotshot workflow JSON.",
+    "display_name": "ADE_AnimateDiffLoRALoader",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_AnimateDiffLoRALoader",
+    "input_order": {
+      "optional": [
+        "prev_motion_lora"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "prev_motion_lora"
+    ],
+    "inputs": {
+      "optional": {
+        "prev_motion_lora": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "ADE_AnimateDiffLoRALoader",
+    "object_info_widget_order": [
+      "prev_motion_lora"
+    ],
+    "outputs": [
+      {
+        "name": "MOTION_LORA",
+        "type": "MOTION_LORA"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_AnimateDiffLoaderWithContext": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_AnimateDiffLoaderWithContext derived from Hotshot workflow JSON.",
+    "display_name": "ADE_AnimateDiffLoaderWithContext",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_AnimateDiffLoaderWithContext",
+    "input_order": {
+      "optional": [
+        "motion_model_settings",
+        "sample_settings",
+        "ad_keyframes"
+      ],
+      "required": [
+        "model",
+        "context_options",
+        "motion_lora"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "context_options",
+      "motion_lora",
+      "motion_model_settings",
+      "sample_settings",
+      "ad_keyframes"
+    ],
+    "inputs": {
+      "optional": {
+        "ad_keyframes": [
+          "FLOAT",
+          {}
+        ],
+        "motion_model_settings": [
+          "STRING",
+          {}
+        ],
+        "sample_settings": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "context_options": [
+          "CONTEXT_OPTIONS",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "motion_lora": [
+          "MOTION_LORA",
+          {}
+        ]
+      }
+    },
+    "name": "ADE_AnimateDiffLoaderWithContext",
+    "object_info_widget_order": [
+      "model",
+      "context_options",
+      "motion_lora",
+      "motion_model_settings",
+      "sample_settings",
+      "ad_keyframes"
+    ],
+    "outputs": [
+      {
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_AnimateDiffLoaderV1Advanced": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_AnimateDiffLoaderV1Advanced derived from Hotshot workflow JSON.",
+    "display_name": "ADE_AnimateDiffLoaderV1Advanced",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_AnimateDiffLoaderV1Advanced",
+    "input_order": {
+      "optional": [
+        "motion_model_name",
+        "beta_schedule",
+        "context_length",
+        "context_stride",
+        "context_overlap",
+        "context_schedule",
+        "closed_loop",
+        "noise_type"
+      ],
+      "required": [
+        "latents",
+        "model"
+      ]
+    },
+    "input_order_all": [
+      "latents",
+      "model",
+      "motion_model_name",
+      "beta_schedule",
+      "context_length",
+      "context_stride",
+      "context_overlap",
+      "context_schedule",
+      "closed_loop",
+      "noise_type"
+    ],
+    "inputs": {
+      "optional": {
+        "beta_schedule": [
+          "BOOLEAN",
+          {}
+        ],
+        "closed_loop": [
+          "BOOLEAN",
+          {}
+        ],
+        "context_length": [
+          "INT",
+          {}
+        ],
+        "context_overlap": [
+          "INT",
+          {}
+        ],
+        "context_schedule": [
+          "STRING",
+          {}
+        ],
+        "context_stride": [
+          "INT",
+          {}
+        ],
+        "motion_model_name": [
+          "STRING",
+          {}
+        ],
+        "noise_type": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "latents": [
+          "LATENT",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ]
+      }
+    },
+    "name": "ADE_AnimateDiffLoaderV1Advanced",
+    "object_info_widget_order": [
+      "latents",
+      "model",
+      "motion_model_name",
+      "beta_schedule",
+      "context_length",
+      "context_stride",
+      "context_overlap",
+      "context_schedule",
+      "closed_loop",
+      "noise_type"
+    ],
+    "outputs": [
+      {
+        "name": "MODEL",
+        "type": "MODEL"
+      },
+      {
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_AnimateDiffSamplingSettings": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_AnimateDiffSamplingSettings derived from Hotshot workflow JSON.",
+    "display_name": "ADE_AnimateDiffSamplingSettings",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_AnimateDiffSamplingSettings",
+    "input_order": {
+      "optional": [
+        "noise_layers",
+        "iteration_opts",
+        "custom_cfg",
+        "sigma_schedule",
+        "seed_override"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "noise_layers",
+      "iteration_opts",
+      "custom_cfg",
+      "sigma_schedule",
+      "seed_override"
+    ],
+    "inputs": {
+      "optional": {
+        "custom_cfg": [
+          "STRING",
+          {}
+        ],
+        "iteration_opts": [
+          "STRING",
+          {}
+        ],
+        "noise_layers": [
+          "INT",
+          {}
+        ],
+        "seed_override": [
+          "INT",
+          {}
+        ],
+        "sigma_schedule": [
+          "INT",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "ADE_AnimateDiffSamplingSettings",
+    "object_info_widget_order": [
+      "noise_layers",
+      "iteration_opts",
+      "custom_cfg",
+      "sigma_schedule",
+      "seed_override"
+    ],
+    "outputs": [
+      {
+        "name": "settings",
+        "type": "SAMPLE_SETTINGS"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_AnimateDiffUniformContextOptions": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_AnimateDiffUniformContextOptions derived from Hotshot workflow JSON.",
+    "display_name": "ADE_AnimateDiffUniformContextOptions",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_AnimateDiffUniformContextOptions",
+    "input_order": {
+      "optional": [
+        "prev_context",
+        "view_opts"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "prev_context",
+      "view_opts"
+    ],
+    "inputs": {
+      "optional": {
+        "prev_context": [
+          "INT",
+          {}
+        ],
+        "view_opts": [
+          "INT",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "ADE_AnimateDiffUniformContextOptions",
+    "object_info_widget_order": [
+      "prev_context",
+      "view_opts"
+    ],
+    "outputs": [
+      {
+        "name": "CONTEXT_OPTIONS",
+        "type": "CONTEXT_OPTIONS"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_ApplyAnimateDiffModel": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_ApplyAnimateDiffModel derived from Hotshot workflow JSON.",
+    "display_name": "ADE_ApplyAnimateDiffModel",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_ApplyAnimateDiffModel",
+    "input_order": {
+      "optional": [
+        "motion_lora",
+        "scale_multival",
+        "ad_keyframes",
+        "prev_m_models"
+      ],
+      "required": [
+        "motion_model",
+        "effect_multival"
+      ]
+    },
+    "input_order_all": [
+      "motion_model",
+      "effect_multival",
+      "motion_lora",
+      "scale_multival",
+      "ad_keyframes",
+      "prev_m_models"
+    ],
+    "inputs": {
+      "optional": {
+        "ad_keyframes": [
+          "AD_KEYFRAMES",
+          {}
+        ],
+        "motion_lora": [
+          "INT",
+          {}
+        ],
+        "prev_m_models": [
+          "M_MODELS",
+          {}
+        ],
+        "scale_multival": [
+          "INT",
+          {}
+        ]
+      },
+      "required": {
+        "effect_multival": [
+          "MULTIVAL",
+          {}
+        ],
+        "motion_model": [
+          "MOTION_MODEL_ADE",
+          {}
+        ]
+      }
+    },
+    "name": "ADE_ApplyAnimateDiffModel",
+    "object_info_widget_order": [
+      "motion_model",
+      "effect_multival",
+      "motion_lora",
+      "scale_multival",
+      "ad_keyframes",
+      "prev_m_models"
+    ],
+    "outputs": [
+      {
+        "name": "M_MODELS",
+        "type": "M_MODELS"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_LoadAnimateDiffModel": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_LoadAnimateDiffModel derived from Hotshot workflow JSON.",
+    "display_name": "ADE_LoadAnimateDiffModel",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_LoadAnimateDiffModel",
+    "input_order": {
+      "optional": [
+        "ad_settings"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "ad_settings"
+    ],
+    "inputs": {
+      "optional": {
+        "ad_settings": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "ADE_LoadAnimateDiffModel",
+    "object_info_widget_order": [
+      "ad_settings"
+    ],
+    "outputs": [
+      {
+        "name": "MOTION_MODEL",
+        "type": "MOTION_MODEL_ADE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_MultivalDynamic": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_MultivalDynamic derived from Hotshot workflow JSON.",
+    "display_name": "ADE_MultivalDynamic",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_MultivalDynamic",
+    "input_order": {
+      "optional": [
+        "mask_optional"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "mask_optional"
+    ],
+    "inputs": {
+      "optional": {
+        "mask_optional": [
+          "FLOAT",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "ADE_MultivalDynamic",
+    "object_info_widget_order": [
+      "mask_optional"
+    ],
+    "outputs": [
+      {
+        "name": "MULTIVAL",
+        "type": "MULTIVAL"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_StandardStaticContextOptions": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_StandardStaticContextOptions derived from Hotshot workflow JSON.",
+    "display_name": "ADE_StandardStaticContextOptions",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_StandardStaticContextOptions",
+    "input_order": {
+      "optional": [
+        "prev_context",
+        "view_opts"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "prev_context",
+      "view_opts"
+    ],
+    "inputs": {
+      "optional": {
+        "prev_context": [
+          "INT",
+          {}
+        ],
+        "view_opts": [
+          "INT",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "ADE_StandardStaticContextOptions",
+    "object_info_widget_order": [
+      "prev_context",
+      "view_opts"
+    ],
+    "outputs": [
+      {
+        "name": "CONTEXT_OPTS",
+        "type": "CONTEXT_OPTIONS"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_StandardUniformContextOptions": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_StandardUniformContextOptions derived from Hotshot workflow JSON.",
+    "display_name": "ADE_StandardUniformContextOptions",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_StandardUniformContextOptions",
+    "input_order": {
+      "optional": [
+        "prev_context",
+        "view_opts"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "prev_context",
+      "view_opts"
+    ],
+    "inputs": {
+      "optional": {
+        "prev_context": [
+          "INT",
+          {}
+        ],
+        "view_opts": [
+          "INT",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "ADE_StandardUniformContextOptions",
+    "object_info_widget_order": [
+      "prev_context",
+      "view_opts"
+    ],
+    "outputs": [
+      {
+        "name": "CONTEXT_OPTS",
+        "type": "CONTEXT_OPTIONS"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ADE_UseEvolvedSampling": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_UseEvolvedSampling derived from Hotshot workflow JSON.",
+    "display_name": "ADE_UseEvolvedSampling",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_UseEvolvedSampling",
+    "input_order": {
+      "optional": [
+        "sample_settings"
+      ],
+      "required": [
+        "model",
+        "m_models",
+        "context_options"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "m_models",
+      "context_options",
+      "sample_settings"
+    ],
+    "inputs": {
+      "optional": {
+        "sample_settings": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "context_options": [
+          "CONTEXT_OPTIONS",
+          {}
+        ],
+        "m_models": [
+          "M_MODELS",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ]
+      }
+    },
+    "name": "ADE_UseEvolvedSampling",
+    "object_info_widget_order": [
+      "model",
+      "m_models",
+      "context_options",
+      "sample_settings"
+    ],
+    "outputs": [
+      {
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "AIO_Preprocessor": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for AIO_Preprocessor derived from Hotshot workflow JSON.",
+    "display_name": "AIO_Preprocessor",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "AIO_Preprocessor",
+    "input_order": {
+      "optional": [
+        "image"
+      ],
+      "required": [
+        "resolution"
+      ]
+    },
+    "input_order_all": [
+      "resolution",
+      "image"
+    ],
+    "inputs": {
+      "optional": {
+        "image": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "resolution": [
+          "INT",
+          {}
+        ]
+      }
+    },
+    "name": "AIO_Preprocessor",
+    "object_info_widget_order": [
+      "resolution",
+      "image"
+    ],
+    "outputs": [
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "AnyLineArtPreprocessor_aux": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for AnyLineArtPreprocessor_aux derived from Hotshot workflow JSON.",
+    "display_name": "AnyLineArtPreprocessor_aux",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "AnyLineArtPreprocessor_aux",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "image"
+      ]
+    },
+    "input_order_all": [
+      "image"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "image": [
+          "IMAGE",
+          {}
+        ]
+      }
+    },
+    "name": "AnyLineArtPreprocessor_aux",
+    "object_info_widget_order": [
+      "image"
+    ],
+    "outputs": [
+      {
+        "name": "image",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "CR Apply LoRA Stack": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for CR Apply LoRA Stack derived from Hotshot workflow JSON.",
+    "display_name": "CR Apply LoRA Stack",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "CR Apply LoRA Stack",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "model",
+        "clip",
+        "lora_stack"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "clip",
+      "lora_stack"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "clip": [
+          "CLIP",
+          {}
+        ],
+        "lora_stack": [
+          "LORA_STACK",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ]
+      }
+    },
+    "name": "CR Apply LoRA Stack",
+    "object_info_widget_order": [
+      "model",
+      "clip",
+      "lora_stack"
+    ],
+    "outputs": [
+      {
+        "name": "MODEL",
+        "type": "MODEL"
+      },
+      {
+        "name": "CLIP",
+        "type": "CLIP"
+      },
+      {
+        "name": "show_help",
+        "type": "STRING"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "CR LoRA Stack": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for CR LoRA Stack derived from Hotshot workflow JSON.",
+    "display_name": "CR LoRA Stack",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "CR LoRA Stack",
+    "input_order": {
+      "optional": [
+        "lora_stack"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "lora_stack"
+    ],
+    "inputs": {
+      "optional": {
+        "lora_stack": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "CR LoRA Stack",
+    "object_info_widget_order": [
+      "lora_stack"
+    ],
+    "outputs": [
+      {
+        "name": "LORA_STACK",
+        "type": "LORA_STACK"
+      },
+      {
+        "name": "show_help",
+        "type": "STRING"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "CR Seed": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for CR Seed derived from Hotshot workflow JSON.",
+    "display_name": "CR Seed",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "CR Seed",
+    "input_order": {
+      "optional": [],
+      "required": []
+    },
+    "input_order_all": [],
+    "inputs": {
+      "optional": {},
+      "required": {}
+    },
+    "name": "CR Seed",
+    "object_info_widget_order": [],
+    "outputs": [
+      {
+        "name": "seed",
+        "type": "INT"
+      },
+      {
+        "name": "show_help",
+        "type": "STRING"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "CheckpointLoaderSimpleWithNoiseSelect": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for CheckpointLoaderSimpleWithNoiseSelect derived from Hotshot workflow JSON.",
+    "display_name": "CheckpointLoaderSimpleWithNoiseSelect",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "CheckpointLoaderSimpleWithNoiseSelect",
+    "input_order": {
+      "optional": [],
+      "required": []
+    },
+    "input_order_all": [],
+    "inputs": {
+      "optional": {},
+      "required": {}
+    },
+    "name": "CheckpointLoaderSimpleWithNoiseSelect",
+    "object_info_widget_order": [],
+    "outputs": [
+      {
+        "name": "MODEL",
+        "type": "MODEL"
+      },
+      {
+        "name": "CLIP",
+        "type": "CLIP"
+      },
+      {
+        "name": "VAE",
+        "type": "VAE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ControlNetLoaderAdvanced": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ControlNetLoaderAdvanced derived from Hotshot workflow JSON.",
+    "display_name": "ControlNetLoaderAdvanced",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ControlNetLoaderAdvanced",
+    "input_order": {
+      "optional": [
+        "timestep_keyframe"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "timestep_keyframe"
+    ],
+    "inputs": {
+      "optional": {
+        "timestep_keyframe": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "ControlNetLoaderAdvanced",
+    "object_info_widget_order": [
+      "timestep_keyframe"
+    ],
+    "outputs": [
+      {
+        "name": "CONTROL_NET",
+        "type": "CONTROL_NET"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "Eff. Loader SDXL": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for Eff. Loader SDXL derived from Hotshot workflow JSON.",
+    "display_name": "Eff. Loader SDXL",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "Eff. Loader SDXL",
+    "input_order": {
+      "optional": [
+        "lora_stack",
+        "cnet_stack"
+      ],
+      "required": []
+    },
+    "input_order_all": [
+      "lora_stack",
+      "cnet_stack"
+    ],
+    "inputs": {
+      "optional": {
+        "cnet_stack": [
+          "INT",
+          {}
+        ],
+        "lora_stack": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {}
+    },
+    "name": "Eff. Loader SDXL",
+    "object_info_widget_order": [
+      "lora_stack",
+      "cnet_stack"
+    ],
+    "outputs": [
+      {
+        "name": "SDXL_TUPLE",
+        "type": "SDXL_TUPLE"
+      },
+      {
+        "name": "LATENT",
+        "type": "LATENT"
+      },
+      {
+        "name": "VAE",
+        "type": "VAE"
+      },
+      {
+        "name": "DEPENDENCIES",
+        "type": "DEPENDENCIES"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "FILM VFI": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for FILM VFI derived from Hotshot workflow JSON.",
+    "display_name": "FILM VFI",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "FILM VFI",
+    "input_order": {
+      "optional": [
+        "optional_interpolation_states"
+      ],
+      "required": [
+        "frames"
+      ]
+    },
+    "input_order_all": [
+      "frames",
+      "optional_interpolation_states"
+    ],
+    "inputs": {
+      "optional": {
+        "optional_interpolation_states": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "frames": [
+          "IMAGE",
+          {}
+        ]
+      }
+    },
+    "name": "FILM VFI",
+    "object_info_widget_order": [
+      "frames",
+      "optional_interpolation_states"
+    ],
+    "outputs": [
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "FaceDetailerPipe": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for FaceDetailerPipe derived from Hotshot workflow JSON.",
+    "display_name": "FaceDetailerPipe",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "FaceDetailerPipe",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "image",
+        "detailer_pipe",
+        "seed"
+      ]
+    },
+    "input_order_all": [
+      "image",
+      "detailer_pipe",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "detailer_pipe": [
+          "DETAILER_PIPE",
+          {}
+        ],
+        "image": [
+          "IMAGE",
+          {}
+        ],
+        "seed": [
+          "INT",
+          {}
+        ]
+      }
+    },
+    "name": "FaceDetailerPipe",
+    "object_info_widget_order": [
+      "image",
+      "detailer_pipe",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "name": "image",
+        "type": "IMAGE"
+      },
+      {
+        "name": "cropped_refined",
+        "type": "IMAGE"
+      },
+      {
+        "name": "cropped_enhanced_alpha",
+        "type": "IMAGE"
+      },
+      {
+        "name": "mask",
+        "type": "MASK"
+      },
+      {
+        "name": "detailer_pipe",
+        "type": "DETAILER_PIPE"
+      },
+      {
+        "name": "cnet_images",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "GetNode": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for GetNode derived from Hotshot workflow JSON.",
+    "display_name": "GetNode",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "GetNode",
+    "input_order": {
+      "optional": [],
+      "required": []
+    },
+    "input_order_all": [],
+    "inputs": {
+      "optional": {},
+      "required": {}
+    },
+    "name": "GetNode",
+    "object_info_widget_order": [],
+    "outputs": [
+      {
+        "name": "BASIC_PIPE",
+        "type": "BASIC_PIPE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "IPAdapterApply": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for IPAdapterApply derived from Hotshot workflow JSON.",
+    "display_name": "IPAdapterApply",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "IPAdapterApply",
+    "input_order": {
+      "optional": [
+        "attn_mask"
+      ],
+      "required": [
+        "ipadapter",
+        "clip_vision",
+        "image",
+        "model"
+      ]
+    },
+    "input_order_all": [
+      "ipadapter",
+      "clip_vision",
+      "image",
+      "model",
+      "attn_mask"
+    ],
+    "inputs": {
+      "optional": {
+        "attn_mask": [
+          "INT",
+          {}
+        ]
+      },
+      "required": {
+        "clip_vision": [
+          "CLIP_VISION",
+          {}
+        ],
+        "image": [
+          "IMAGE",
+          {}
+        ],
+        "ipadapter": [
+          "IPADAPTER",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ]
+      }
+    },
+    "name": "IPAdapterApply",
+    "object_info_widget_order": [
+      "ipadapter",
+      "clip_vision",
+      "image",
+      "model",
+      "attn_mask"
+    ],
+    "outputs": [
+      {
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "IPAdapterModelLoader": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for IPAdapterModelLoader derived from Hotshot workflow JSON.",
+    "display_name": "IPAdapterModelLoader",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "IPAdapterModelLoader",
+    "input_order": {
+      "optional": [],
+      "required": []
+    },
+    "input_order_all": [],
+    "inputs": {
+      "optional": {},
+      "required": {}
+    },
+    "name": "IPAdapterModelLoader",
+    "object_info_widget_order": [],
+    "outputs": [
+      {
+        "name": "IPADAPTER",
+        "type": "IPADAPTER"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ImpactKSamplerBasicPipe": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ImpactKSamplerBasicPipe derived from Hotshot workflow JSON.",
+    "display_name": "ImpactKSamplerBasicPipe",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ImpactKSamplerBasicPipe",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "basic_pipe",
+        "latent_image",
+        "seed"
+      ]
+    },
+    "input_order_all": [
+      "basic_pipe",
+      "latent_image",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "basic_pipe": [
+          "BASIC_PIPE",
+          {}
+        ],
+        "latent_image": [
+          "LATENT",
+          {}
+        ],
+        "seed": [
+          "INT",
+          {}
+        ]
+      }
+    },
+    "name": "ImpactKSamplerBasicPipe",
+    "object_info_widget_order": [
+      "basic_pipe",
+      "latent_image",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "name": "BASIC_PIPE",
+        "type": "BASIC_PIPE"
+      },
+      {
+        "name": "LATENT",
+        "type": "LATENT"
+      },
+      {
+        "name": "VAE",
+        "type": "VAE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "KSampler Adv. (Efficient)": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for KSampler Adv. (Efficient) derived from Hotshot workflow JSON.",
+    "display_name": "KSampler Adv. (Efficient)",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "KSampler Adv. (Efficient)",
+    "input_order": {
+      "optional": [
+        "script"
+      ],
+      "required": [
+        "model",
+        "positive",
+        "negative",
+        "latent_image",
+        "optional_vae"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "positive",
+      "negative",
+      "latent_image",
+      "optional_vae",
+      "script"
+    ],
+    "inputs": {
+      "optional": {
+        "script": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "latent_image": [
+          "LATENT",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "optional_vae": [
+          "VAE",
+          {}
+        ],
+        "positive": [
+          "CONDITIONING",
+          {}
+        ]
+      }
+    },
+    "name": "KSampler Adv. (Efficient)",
+    "object_info_widget_order": [
+      "model",
+      "positive",
+      "negative",
+      "latent_image",
+      "optional_vae",
+      "script"
+    ],
+    "outputs": [
+      {
+        "name": "MODEL",
+        "type": "MODEL"
+      },
+      {
+        "name": "CONDITIONING+",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "CONDITIONING-",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "LATENT",
+        "type": "LATENT"
+      },
+      {
+        "name": "VAE",
+        "type": "VAE"
+      },
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "KSampler SDXL (Eff.)": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for KSampler SDXL (Eff.) derived from Hotshot workflow JSON.",
+    "display_name": "KSampler SDXL (Eff.)",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "KSampler SDXL (Eff.)",
+    "input_order": {
+      "optional": [
+        "script"
+      ],
+      "required": [
+        "sdxl_tuple",
+        "latent_image",
+        "optional_vae"
+      ]
+    },
+    "input_order_all": [
+      "sdxl_tuple",
+      "latent_image",
+      "optional_vae",
+      "script"
+    ],
+    "inputs": {
+      "optional": {
+        "script": [
+          "INT",
+          {}
+        ]
+      },
+      "required": {
+        "latent_image": [
+          "LATENT",
+          {}
+        ],
+        "optional_vae": [
+          "VAE",
+          {}
+        ],
+        "sdxl_tuple": [
+          "SDXL_TUPLE",
+          {}
+        ]
+      }
+    },
+    "name": "KSampler SDXL (Eff.)",
+    "object_info_widget_order": [
+      "sdxl_tuple",
+      "latent_image",
+      "optional_vae",
+      "script"
+    ],
+    "outputs": [
+      {
+        "name": "SDXL_TUPLE",
+        "type": "SDXL_TUPLE"
+      },
+      {
+        "name": "LATENT",
+        "type": "LATENT"
+      },
+      {
+        "name": "VAE",
+        "type": "VAE"
+      },
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "LineArtPreprocessor": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for LineArtPreprocessor derived from Hotshot workflow JSON.",
+    "display_name": "LineArtPreprocessor",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "LineArtPreprocessor",
+    "input_order": {
+      "optional": [
+        "image"
+      ],
+      "required": [
+        "resolution"
+      ]
+    },
+    "input_order_all": [
+      "resolution",
+      "image"
+    ],
+    "inputs": {
+      "optional": {
+        "image": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "resolution": [
+          "INT",
+          {}
+        ]
+      }
+    },
+    "name": "LineArtPreprocessor",
+    "object_info_widget_order": [
+      "resolution",
+      "image"
+    ],
+    "outputs": [
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "LoadImagesFromDir //Inspire": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for LoadImagesFromDir //Inspire derived from Hotshot workflow JSON.",
+    "display_name": "LoadImagesFromDir //Inspire",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "LoadImagesFromDir //Inspire",
+    "input_order": {
+      "optional": [],
+      "required": []
+    },
+    "input_order_all": [],
+    "inputs": {
+      "optional": {},
+      "required": {}
+    },
+    "name": "LoadImagesFromDir //Inspire",
+    "object_info_widget_order": [],
+    "outputs": [
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      },
+      {
+        "name": "MASK",
+        "type": "MASK"
+      },
+      {
+        "name": "INT",
+        "type": "INT"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "MiDaS-DepthMapPreprocessor": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for MiDaS-DepthMapPreprocessor derived from Hotshot workflow JSON.",
+    "display_name": "MiDaS-DepthMapPreprocessor",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "MiDaS-DepthMapPreprocessor",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "image"
+      ]
+    },
+    "input_order_all": [
+      "image"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "image": [
+          "IMAGE",
+          {}
+        ]
+      }
+    },
+    "name": "MiDaS-DepthMapPreprocessor",
+    "object_info_widget_order": [
+      "image"
+    ],
+    "outputs": [
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "MiDaS-NormalMapPreprocessor": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for MiDaS-NormalMapPreprocessor derived from Hotshot workflow JSON.",
+    "display_name": "MiDaS-NormalMapPreprocessor",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "MiDaS-NormalMapPreprocessor",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "image"
+      ]
+    },
+    "input_order_all": [
+      "image"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "image": [
+          "IMAGE",
+          {}
+        ]
+      }
+    },
+    "name": "MiDaS-NormalMapPreprocessor",
+    "object_info_widget_order": [
+      "image"
+    ],
+    "outputs": [
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "OpenposePreprocessor": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for OpenposePreprocessor derived from Hotshot workflow JSON.",
+    "display_name": "OpenposePreprocessor",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "OpenposePreprocessor",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "image"
+      ]
+    },
+    "input_order_all": [
+      "image"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "image": [
+          "IMAGE",
+          {}
+        ]
+      }
+    },
+    "name": "OpenposePreprocessor",
+    "object_info_widget_order": [
+      "image"
+    ],
+    "outputs": [
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "Pack SDXL Tuple": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for Pack SDXL Tuple derived from Hotshot workflow JSON.",
+    "display_name": "Pack SDXL Tuple",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "Pack SDXL Tuple",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "base_model",
+        "base_clip",
+        "base_positive",
+        "base_negative",
+        "refiner_model",
+        "refiner_clip",
+        "refiner_positive",
+        "refiner_negative"
+      ]
+    },
+    "input_order_all": [
+      "base_model",
+      "base_clip",
+      "base_positive",
+      "base_negative",
+      "refiner_model",
+      "refiner_clip",
+      "refiner_positive",
+      "refiner_negative"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "base_clip": [
+          "CLIP",
+          {}
+        ],
+        "base_model": [
+          "MODEL",
+          {}
+        ],
+        "base_negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "base_positive": [
+          "CONDITIONING",
+          {}
+        ],
+        "refiner_clip": [
+          "CLIP",
+          {}
+        ],
+        "refiner_model": [
+          "MODEL",
+          {}
+        ],
+        "refiner_negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "refiner_positive": [
+          "CONDITIONING",
+          {}
+        ]
+      }
+    },
+    "name": "Pack SDXL Tuple",
+    "object_info_widget_order": [
+      "base_model",
+      "base_clip",
+      "base_positive",
+      "base_negative",
+      "refiner_model",
+      "refiner_clip",
+      "refiner_positive",
+      "refiner_negative"
+    ],
+    "outputs": [
+      {
+        "name": "SDXL_TUPLE",
+        "type": "SDXL_TUPLE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "PrepImageForClipVision": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for PrepImageForClipVision derived from Hotshot workflow JSON.",
+    "display_name": "PrepImageForClipVision",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "PrepImageForClipVision",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "image"
+      ]
+    },
+    "input_order_all": [
+      "image"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "image": [
+          "IMAGE",
+          {}
+        ]
+      }
+    },
+    "name": "PrepImageForClipVision",
+    "object_info_widget_order": [
+      "image"
+    ],
+    "outputs": [
+      {
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "SAMLoader": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for SAMLoader derived from Hotshot workflow JSON.",
+    "display_name": "SAMLoader",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "SAMLoader",
+    "input_order": {
+      "optional": [],
+      "required": []
+    },
+    "input_order_all": [],
+    "inputs": {
+      "optional": {},
+      "required": {}
+    },
+    "name": "SAMLoader",
+    "object_info_widget_order": [],
+    "outputs": [
+      {
+        "name": "SAM_MODEL",
+        "type": "SAM_MODEL"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ScaledSoftControlNetWeights": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ScaledSoftControlNetWeights derived from Hotshot workflow JSON.",
+    "display_name": "ScaledSoftControlNetWeights",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ScaledSoftControlNetWeights",
+    "input_order": {
+      "optional": [],
+      "required": []
+    },
+    "input_order_all": [],
+    "inputs": {
+      "optional": {},
+      "required": {}
+    },
+    "name": "ScaledSoftControlNetWeights",
+    "object_info_widget_order": [],
+    "outputs": [
+      {
+        "name": "CONTROL_NET_WEIGHTS",
+        "type": "CONTROL_NET_WEIGHTS"
+      },
+      {
+        "name": "TIMESTEP_KEYFRAME",
+        "type": "TIMESTEP_KEYFRAME"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "SetNode": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for SetNode derived from Hotshot workflow JSON.",
+    "display_name": "SetNode",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "SetNode",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "INT"
+      ]
+    },
+    "input_order_all": [
+      "INT"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "INT": [
+          "INT",
+          {}
+        ]
+      }
+    },
+    "name": "SetNode",
+    "object_info_widget_order": [
+      "INT"
+    ],
+    "outputs": [
+      {
+        "name": "*",
+        "type": "*"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ToBasicPipe": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ToBasicPipe derived from Hotshot workflow JSON.",
+    "display_name": "ToBasicPipe",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ToBasicPipe",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "model",
+        "clip",
+        "vae",
+        "positive",
+        "negative"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "clip",
+      "vae",
+      "positive",
+      "negative"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "clip": [
+          "CLIP",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "positive": [
+          "CONDITIONING",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {}
+        ]
+      }
+    },
+    "name": "ToBasicPipe",
+    "object_info_widget_order": [
+      "model",
+      "clip",
+      "vae",
+      "positive",
+      "negative"
+    ],
+    "outputs": [
+      {
+        "name": "basic_pipe",
+        "type": "BASIC_PIPE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "ToDetailerPipe": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ToDetailerPipe derived from Hotshot workflow JSON.",
+    "display_name": "ToDetailerPipe",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ToDetailerPipe",
+    "input_order": {
+      "optional": [
+        "segm_detector_opt",
+        "detailer_hook"
+      ],
+      "required": [
+        "model",
+        "clip",
+        "vae",
+        "positive",
+        "negative",
+        "bbox_detector",
+        "sam_model_opt"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "clip",
+      "vae",
+      "positive",
+      "negative",
+      "bbox_detector",
+      "sam_model_opt",
+      "segm_detector_opt",
+      "detailer_hook"
+    ],
+    "inputs": {
+      "optional": {
+        "detailer_hook": [
+          "STRING",
+          {}
+        ],
+        "segm_detector_opt": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "bbox_detector": [
+          "BBOX_DETECTOR",
+          {}
+        ],
+        "clip": [
+          "CLIP",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "positive": [
+          "CONDITIONING",
+          {}
+        ],
+        "sam_model_opt": [
+          "SAM_MODEL",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {}
+        ]
+      }
+    },
+    "name": "ToDetailerPipe",
+    "object_info_widget_order": [
+      "model",
+      "clip",
+      "vae",
+      "positive",
+      "negative",
+      "bbox_detector",
+      "sam_model_opt",
+      "segm_detector_opt",
+      "detailer_hook"
+    ],
+    "outputs": [
+      {
+        "name": "detailer_pipe",
+        "type": "DETAILER_PIPE"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "UltralyticsDetectorProvider": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for UltralyticsDetectorProvider derived from Hotshot workflow JSON.",
+    "display_name": "UltralyticsDetectorProvider",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "UltralyticsDetectorProvider",
+    "input_order": {
+      "optional": [],
+      "required": []
+    },
+    "input_order_all": [],
+    "inputs": {
+      "optional": {},
+      "required": {}
+    },
+    "name": "UltralyticsDetectorProvider",
+    "object_info_widget_order": [],
+    "outputs": [
+      {
+        "name": "BBOX_DETECTOR",
+        "type": "BBOX_DETECTOR"
+      },
+      {
+        "name": "SEGM_DETECTOR",
+        "type": "SEGM_DETECTOR"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
+  "Unpack SDXL Tuple": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for Unpack SDXL Tuple derived from Hotshot workflow JSON.",
+    "display_name": "Unpack SDXL Tuple",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "Unpack SDXL Tuple",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "sdxl_tuple"
+      ]
+    },
+    "input_order_all": [
+      "sdxl_tuple"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "sdxl_tuple": [
+          "SDXL_TUPLE",
+          {}
+        ]
+      }
+    },
+    "name": "Unpack SDXL Tuple",
+    "object_info_widget_order": [
+      "sdxl_tuple"
+    ],
+    "outputs": [
+      {
+        "name": "BASE_MODEL",
+        "type": "MODEL"
+      },
+      {
+        "name": "BASE_CLIP",
+        "type": "CLIP"
+      },
+      {
+        "name": "BASE_CONDITIONING+",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "BASE_CONDITIONING-",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "REFINER_MODEL",
+        "type": "MODEL"
+      },
+      {
+        "name": "REFINER_CLIP",
+        "type": "CLIP"
+      },
+      {
+        "name": "REFINER_CONDITIONING+",
+        "type": "CONDITIONING"
+      },
+      {
+        "name": "REFINER_CONDITIONING-",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  }
+}

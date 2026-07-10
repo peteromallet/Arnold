@@ -1,0 +1,21 @@
+{
+  "1": {
+    "class_type": "EmptyImage",
+    "inputs": {
+      "width": 64,
+      "height": 64,
+      "batch_size": 1,
+      "color": 16711680
+    }
+  },
+  "2": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "vibecomfy_ready_smoke_red",
+      "images": [
+        "1",
+        0
+      ]
+    }
+  }
+}

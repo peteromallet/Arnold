@@ -1,71 +1,55 @@
-name: CI
+# Maintained CI suite.
+#
+# Runs on every push and on every pull_request.
+#
+# Steps:
+#   1. Checkout (fetch-depth: 2 so PR diffs see the merge base if needed).
+#   2. Install uv.
+#   3. Install the package plus the pinned AppMana ComfyUI optional dependency
+#      used by the oracle converter.
+#   4. Run `make ci`, the shared local/GitHub contract for root hygiene, the
+#      maintained Python suite, browser smoke, snapshot freshness, and the Comfy
+#      oracle gate.
+#   5. Upload coverage.xml as a workflow artifact.
+#
+# Branch protection on `main` requires repo-admin action and is tracked as a
+# user_action; this workflow only exposes the `test` status check.
+
+name: ci
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  push: {}
+  pull_request: {}
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
-          python-version: '3.11'
-      - name: Install
-        run: |
-          python -m pip install -U pip
-          python -m pip install -e '.[agent]' pytest
-      - name: Check generated Arnold docs
-        run: python scripts/generate_arnold_docs.py --check
-      - name: Validate Arnold generated examples
-        run: python -m pytest tests/docs/test_m5_generated_scans.py -q
-      - name: Validate M7 default-off and export regressions
-        run: |
-          unset MEGAPLAN_M7_SINKS
-          MEGAPLAN_MOCK_WORKERS=1 pytest tests/test_chain_epic_briefs_lint.py tests/store/test_capsule_storage.py tests/store/test_warrant_sources.py -q
-      - name: Test
-        run: python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_chain_done_gate.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/cli/test_m5_workflow_cli.py tests/arnold/conformance -q
+          fetch-depth: 2
 
-  docker-test:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install
+      - name: Set up uv
         run: |
-          python -m pip install -U pip
-          python -m pip install -e '.[agent]' pytest
-      - name: Run Docker-dependent tests (best-effort)
-        continue-on-error: true
-        run: python -m pytest -m slow tests/test_cloud_docker_build.py -q
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-  merge-result-conformance:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Install dependencies
+        run: |
+          uv venv --seed
+          make PYTHON=.venv/bin/python install-ci
+
+      - name: Run maintained repo gate
+        # Makefile is the local/GitHub contract for repo hygiene, Python tests,
+        # browser smoke, snapshot freshness, and the Comfy oracle.
+        run: make PYTHON=.venv/bin/python ci
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          python-version: '3.11'
-      - name: Install
-        run: |
-          python -m pip install -U pip
-          python -m pip install -e '.[agent]' pytest build
-      - name: Check generated assets and package disposition
-        run: |
-          python scripts/generate_arnold_docs.py --check
-          python scripts/render_package_disposition_md.py --check
-          python scripts/validate_package_disposition.py --summary
-          python scripts/check_workflow_pipeline_inventory.py --check-docs
-          python scripts/check_pipeline_id_registry.py --no-drift --check-identity-report
-      - name: Run merge-result gates
-        run: |
-          python scripts/m6_purge_gate.py
-          python scripts/chain_done_gate.py --blockers-only --blockers docs/arnold/workflow-manifest-runtime-review/blockers.json
-      - name: Run installed-artifact smoke tests
-        run: python -m pytest -m wheel_smoke tests/installed_wheel tests/arnold_pipelines/megaplan/test_wheel_smoke.py -q
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn

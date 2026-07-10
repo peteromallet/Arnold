@@ -1,0 +1,18 @@
+{
+  "id": "cal_correct_03_video_steps",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
+  "nl_intent": "Increase sampling steps for the video generator to improve output detail",
+  "post_edit_ir_patch": {
+    "node_id": "3",
+    "field": "steps",
+    "old": 30,
+    "new": 50
+  },
+  "wrongness_description": "N/A — this edit is intentionally correct: changing KSampler node 3 steps from 30 to 50 directly increases the number of sampling steps, which is precisely what the intent requests.",
+  "family": "video",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["3", "steps"]]
+  },
+  "expected_text_judge_verdict": "PASS"
+}

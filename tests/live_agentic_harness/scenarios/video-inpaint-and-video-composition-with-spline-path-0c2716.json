@@ -1,0 +1,32 @@
+{
+  "id": "video-inpaint-and-video-composition-with-spline-path-0c2716",
+  "query": "What role does the spline editor play in this inpainting-and-compositing workflow? Explain how the path controls the inpainting mask over time and how the final video frames are assembled from the processed results.",
+  "workflow_path": "external_workflows/corpus/0c27166fc31b7ead.json",
+  "network": true,
+  "timeout": 320,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "explain",
+    "abstraction": "med",
+    "complexity": "med",
+    "manifest_complexity": 3,
+    "task_type": "inpainting",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "inpainting",
+      "spline-editor",
+      "video-combine",
+      "image-processing",
+      "path-animation"
+    ],
+    "source_workflow_id": "0c27166fc31b7ead",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Focuses on the distinctive spline-path-animation technique and the merge/compositing logic, forcing the agent to trace mask-driven video assembly."
+  }
+}

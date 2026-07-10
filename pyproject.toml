@@ -1,126 +1,126 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.20"]
 build-backend = "hatchling.build"
 
 [project]
-name = "arnold"
-version = "0.23.0"
-description = "Arnold — AI agent harness for coordinating Claude and GPT to make and execute extremely robust plans, with Megaplan as the flagship planning pipeline plugin"
+name = "vibecomfy"
+version = "2.8.0"
+description = "Python scratchpads for discovering, editing, validating, and running ComfyUI workflows."
+readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "OSNL-0.2" }
-authors = [
-    { name = "Peter O'Malley" },
-]
-keywords = ["ai", "planning", "orchestration", "claude", "codex", "arnold", "megaplan"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Environment :: Console",
-    "Intended Audience :: Developers",
-    "Topic :: Software Development :: Quality Assurance",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-]
 dependencies = [
-    "pyyaml>=6.0",
-    "pydantic>=2.0",
-    "python-ulid>=3.0",
-    "psutil>=5.9",
-    # --- Hermes/agent backend (core) ---------------------------------------
-    # The hermes/agent runtime backs prep research, critique, fanout, and the
-    # agentic phases. It is NOT optional: the canonical prep models route to
-    # `hermes:deepseek:...` for every run, so a chain that does prep WILL import
-    # this backend. Historically these lived in the `[agent]` optional extra
-    # plus a `[tool.uv] default-extras = ["agent"]` hint, but some uv versions
-    # silently ignore `default-extras`, producing a fresh install that imports
-    # fine until prep iteration N fails with a confusing `agent_deps_missing`.
-    # Moving them into core makes `pip install -e .` / `uv pip install -e .`
-    # ALWAYS ship a working backend. (The `[agent]` extra below is kept as a
-    # back-compat alias for callers that still reference it.)
-    "openai",
-    "anthropic>=0.39.0",
-    "python-dotenv",
-    "fire",
-    "httpx",
-    "rich",
-    "requests",
-    "prompt_toolkit",
-    "firecrawl-py",
-    "fal-client",
-    "edge-tts",
-    "faster-whisper>=1.0.0",
-    "PyJWT[crypto]",
-    "discord.py>=2.6,<3",
+  "huggingface_hub[hf_xet]>=0.32.0",
+  "httpx>=0.25",
+  "pyyaml>=6",
+  "websockets>=12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6.100",
+  "import-linter>=2.3",
+  "pytest>=7",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=4",
+  "pytest-rerunfailures>=14",
+]
+comfy = [
+  # Optional adoption hook only. No core VibeComfy feature depends on this;
+  # vibecomfy.comfy_backend.ensure_nodes() falls back to pure-Python when this
+  # extra is not installed. The package is published on AppMana's Python index;
+  # pip callers must pass --extra-index-url https://nodes.appmana.com/simple/.
+  "comfyui==0.26.0",
+]
+png = [
+  # Optional image-ingest hook (M2 Step 11): read a ComfyUI workflow chunk
+  # embedded in a PNG/WebP. Kept in its OWN group (NOT [comfy]) so neither
+  # depends on the other; load_port_source raises a clear ImportError when a
+  # PNG/WebP source is requested without Pillow installed.
+  "Pillow>=10.0",
+]
+agent = [
+  # The agent-edit runtime backend (the package is named ``arnold``).
+  # OPTIONAL: only the VibeComfy agent-edit panel routing to the local
+  # Arnold/Hermes backend needs it. vibecomfy installs and tests without it; the
+  # runtime is pluggable via VIBECOMFY_ARNOLD_RUNTIME_MODULE and falls back to a
+  # pure-Python path when the package is absent. Mirrors the runpod-lifecycle
+  # git-pin pattern below. Pinned to the latest pushed Arnold SHA we validate
+  # against; bump as Arnold stabilizes (a real release tag would replace this).
+  "arnold @ git+https://github.com/peteromallet/Arnold.git@9d8b2a4af93ba764e7e82381656a8fffb3678cf7",
+]
+runpod-local = [
+  "python-dotenv>=1.0",
+  "runpod-lifecycle @ git+https://github.com/banodoco/runpod-lifecycle.git@v0.1.1",
+]
+runpod-launch = [
+  "python-dotenv>=1.0",
+  "runpod-lifecycle @ git+https://github.com/banodoco/runpod-lifecycle.git@v0.1.1",
+]
+intent = [
+  # Optional extra for the intent-oracle gate (S3).  anthropic is needed for
+  # text-judge / vision-judge LLM calls; Pillow is needed for pHash-based
+  # structural diff detection.  Neither is required for any other module.
+  "anthropic>=0.40",
+  "Pillow>=10",
 ]
 
 [project.scripts]
-arnold = "arnold.cli:main"
-agentbox = "agentbox.cli:main"
+vibecomfy = "vibecomfy.cli:main"
+vibecomfy-agent = "vibecomfy.agent.__main__:main"
 
-[project.optional-dependencies]
-db = [
-    "psycopg[binary]>=3.1",
-]
-# Back-compat alias: the agent backend's packages are now core dependencies
-# (see [project].dependencies). This extra is retained so existing install
-# commands / docs that say `pip install '.[agent]'` keep working as a no-op.
-agent = []
+[project.entry-points."vibecomfy.plugins"]
+# my_plugin = "my_pkg:register"
 
-[tool.uv]
-# The hermes/agent backend's packages are now core [project].dependencies, so a
-# plain `uv pip install -e .` / `uv sync` always ships a working backend. We no
-# longer rely on `default-extras` (some uv versions silently ignore it, which is
-# what produced the confusing mid-prep `agent_deps_missing` failures).
-
-[tool.hatch.build]
-exclude = [
-    "**/__pycache__/**",
-    "**/*.pyc",
-    "arnold/pipelines/**",
-    "docs/archive/**",
-    "tests/archive/**",
-    "tests/arnold/pipelines/megaplan/**",
-    ".megaplan/**",
-]
+[project.entry-points."comfyui.custom_nodes"]
+vibecomfy = "vibecomfy.comfy_nodes"
 
 [tool.hatch.build.targets.wheel]
-packages = ["arnold", "arnold_pipelines", "agentbox"]
+packages = ["vibecomfy"]
 artifacts = [
-    "py.typed",
-    "arnold/pipelines/evidence_pack/SKILL.md",
-    "arnold/pipelines/evidence_pack/pipeline_ids.json",
-    "arnold_pipelines/**/pipeline_ids.json",
-    "arnold_pipelines/**/SKILL.md",
-    "arnold_pipelines/**/*.pypeline",
-    "arnold_pipelines/megaplan/skills/**/*.py",
-    "agentbox/systemd/*.service",
-]
-exclude = [
-    "**/__pycache__/**",
-    "**/*.pyc",
-    "arnold/pipelines/**",
-    "arnold_pipelines/megaplan/cloud/_reference/**",
-    "arnold_pipelines/megaplan/agent/pyproject.toml",
-    "docs/archive/**",
-    "tests/archive/**",
-    ".megaplan/**",
+  "vibecomfy/py.typed",
+  "vibecomfy/**/*.pyi",
 ]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["."]
-addopts = "--import-mode=importlib"
-python_files = ["test_*.py", "editorial_*.py"]
-norecursedirs = ["tests/archive", "tests/arnold/pipelines/deliberation", ".*", "build", "dist", "CVS", "_darcs", "{arch}", "*.egg"]
+addopts = "-m 'not gpu'"
+timeout = 60
 markers = [
-    "asyncio: async tests, primarily for the vendored agent runtime",
-    "conformance: opt-in live conformance tests that require external authenticated CLIs",
-    "integration: integration tests that may exercise external process boundaries",
-    "slow: tests that require Docker or other external runtime dependencies",
-    "crash_isolation: tests verifying crash isolation between subprocess drivers",
-    "version_skew: tests verifying compatibility across version skew scenarios",
-    "hinge_gate: gate test for the M3 hinge (R1 authority flip)",
-    "substrate_swap: M4 oracle tests that must remain green under substrate substitution (lease/budget/journal swap)",
-    "replay_oracle: M5c replay tests that capture legacy control outputs and opt into routed parity action by action",
-    "m8_benchmark: M8 acceptance-gate benchmark tests (opt-in, width-32 thresholds)",
-    "wheel_smoke: build and install wheel/sdist into a clean venv",
-    "live_smoke: opt-in real backend smoke tests requiring credentials",
+  "comfy_version_compat: marks opt-in multi-ComfyUI-version compatibility tests (Sprint 4 scope).",
+  "gpu: marks tests that provision live GPU resources",
+  "intent_ci: marks fast, deterministic intent-oracle CI gate tests (invoke with `pytest -m intent_ci tests/intent`).",
+  "runpod: opt-in smoke tests that provision real RunPod GPU pods (requires --runpod and RUNPOD_API_KEY).",
+  "runpod_full: opt-in production-resolution matrix tests; multi-pod, ~$5-10 per run (requires --runpod-full and RUNPOD_API_KEY).",
+  "comfy: opt-in release gate that imports ComfyUI and runs convert_ui_to_api; skipped offline (requires VIBECOMFY_COMFY_SMOKE=1).",
+  "live: tests that call real model/provider APIs and require credentials (skipped when unavailable).",
+  "characterization: deterministic behavioural snapshot gate; requires PYTHONHASHSEED=0.",
+  "sprint_a: acceptance gate that must pass after Sprint A (see docs/megaplan_chains/node_resolution_epic/testing/testing.md).",
+
+  "sprint_b: acceptance gate that must pass after Sprint B (see docs/megaplan_chains/node_resolution_epic/testing/testing.md).",
+  "sprint_c: acceptance gate that must pass after Sprint C (see docs/megaplan_chains/node_resolution_epic/testing/testing.md).",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.coverage.run]
+source = ["vibecomfy"]
+branch = false
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true
+fail_under = 70
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if TYPE_CHECKING:"]
+
+[project.entry-points.pytest11]
+vibecomfy = "vibecomfy.testing._pytest_plugin"
+
+[tool.uv.sources]
+comfyui = { index = "appmana" }
+
+[[tool.uv.index]]
+name = "appmana"
+url = "https://nodes.appmana.com/simple/"
+explicit = true

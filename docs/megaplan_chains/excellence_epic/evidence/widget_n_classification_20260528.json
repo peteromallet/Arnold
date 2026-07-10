@@ -1,0 +1,5076 @@
+{
+  "changed_templates": [
+    {
+      "delta": -70,
+      "post_widget_n_fields": 124,
+      "pre_widget_n_fields": 194,
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 181,
+      "pre_widget_n_fields": 181,
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram"
+    },
+    {
+      "delta": -22,
+      "post_widget_n_fields": 97,
+      "pre_widget_n_fields": 119,
+      "ready_id": "video/ltx2_3_iamccs_long_i2v"
+    },
+    {
+      "delta": -2,
+      "post_widget_n_fields": 13,
+      "pre_widget_n_fields": 15,
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 12,
+      "pre_widget_n_fields": 12,
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame"
+    },
+    {
+      "delta": -2,
+      "post_widget_n_fields": 9,
+      "pre_widget_n_fields": 11,
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window"
+    },
+    {
+      "delta": -4,
+      "post_widget_n_fields": 6,
+      "pre_widget_n_fields": 10,
+      "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk"
+    },
+    {
+      "delta": -5,
+      "post_widget_n_fields": 4,
+      "pre_widget_n_fields": 9,
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track"
+    },
+    {
+      "delta": -9,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 9,
+      "ready_id": "video/wanvideo_wrapper_22_wan_animate_preprocess_kijai"
+    },
+    {
+      "delta": -1,
+      "post_widget_n_fields": 8,
+      "pre_widget_n_fields": 9,
+      "ready_id": "video/wanvideo_wrapper_wan_animate"
+    },
+    {
+      "delta": -2,
+      "post_widget_n_fields": 6,
+      "pre_widget_n_fields": 8,
+      "ready_id": "video/ltx2_3_i2v"
+    },
+    {
+      "delta": -2,
+      "post_widget_n_fields": 6,
+      "pre_widget_n_fields": 8,
+      "ready_id": "video/ltx2_3_t2v"
+    },
+    {
+      "delta": -4,
+      "post_widget_n_fields": 4,
+      "pre_widget_n_fields": 8,
+      "ready_id": "video/wanvideo_wrapper_21_14b_wanmove_i2v"
+    },
+    {
+      "delta": -7,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 7,
+      "ready_id": "video/ltx2_3_lightricks_iclora_union_control"
+    },
+    {
+      "delta": -3,
+      "post_widget_n_fields": 3,
+      "pre_widget_n_fields": 6,
+      "ready_id": "video/wanvideo_wrapper_21_14b_fun_control_camera"
+    },
+    {
+      "delta": -5,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 5,
+      "ready_id": "video/wanvideo_wrapper_22_14b_t2i"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 4,
+      "pre_widget_n_fields": 4,
+      "ready_id": "video/wan_i2v"
+    },
+    {
+      "delta": -1,
+      "post_widget_n_fields": 3,
+      "pre_widget_n_fields": 4,
+      "ready_id": "video/wanvideo_wrapper_22_s2v_framepack_pose"
+    },
+    {
+      "delta": -2,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 2,
+      "ready_id": "video/ltx2_3_lightricks_iclora_hdr"
+    },
+    {
+      "delta": -2,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 2,
+      "ready_id": "video/ltx2_3_lightricks_two_stage"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 2,
+      "pre_widget_n_fields": 2,
+      "ready_id": "video/ltx2_3_runexx_first_last_frame"
+    },
+    {
+      "delta": -2,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 2,
+      "ready_id": "video/ltx2_3_runexx_first_last_raw_video_guide"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 2,
+      "pre_widget_n_fields": 2,
+      "ready_id": "video/wanvideo_wrapper_13b_control_lora"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 1,
+      "pre_widget_n_fields": 1,
+      "ready_id": "audio/ace_step_1_5_t2a_song"
+    },
+    {
+      "delta": -1,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 1,
+      "ready_id": "audio/qwen3_tts_voice_clone"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 1,
+      "pre_widget_n_fields": 1,
+      "ready_id": "edit/qwen_image_edit"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 1,
+      "pre_widget_n_fields": 1,
+      "ready_id": "video/ltx2_3_runexx_video_to_video_extend"
+    },
+    {
+      "delta": -1,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 1,
+      "ready_id": "video/wanvideo_wrapper_21_14b_fun_control"
+    },
+    {
+      "delta": 0,
+      "post_widget_n_fields": 1,
+      "pre_widget_n_fields": 1,
+      "ready_id": "video/wanvideo_wrapper_21_14b_t2v"
+    },
+    {
+      "delta": -1,
+      "post_widget_n_fields": 0,
+      "pre_widget_n_fields": 1,
+      "ready_id": "video/wanvideo_wrapper_22_5b_ovi_audio_i2v"
+    }
+  ],
+  "current_occurrences": [
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ImageBatchMulti",
+      "line": 479,
+      "path": "ready_templates/video/ltx2_3_runexx_video_to_video_extend.py",
+      "ready_id": "video/ltx2_3_runexx_video_to_video_extend",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "DownloadAndLoadGIMMVFIModel",
+      "line": 94,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "DownloadAndLoadGIMMVFIModel",
+      "line": 94,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "DownloadAndLoadGIMMVFIModel",
+      "line": 94,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "WanVideoAddS2VEmbeds",
+      "line": 167,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "frame_window_size",
+      "resolution_source": "object_info_index",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "GIMMVFI_interpolate",
+      "line": 202,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "GIMMVFI_interpolate",
+      "line": 202,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "GIMMVFI_interpolate",
+      "line": 202,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "GIMMVFI_interpolate",
+      "line": 202,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "GIMMVFI_interpolate",
+      "line": 202,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "SplineEditor",
+      "line": 115,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "SplineEditor",
+      "line": 115,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "RepeatImageBatch",
+      "line": 128,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "WanVideoImageToVideoEncode",
+      "line": 135,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_t2v.py",
+      "ready_id": "video/ltx2_3_t2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_t2v.py",
+      "ready_id": "video/ltx2_3_t2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_t2v.py",
+      "ready_id": "video/ltx2_3_t2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_t2v.py",
+      "ready_id": "video/ltx2_3_t2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_t2v.py",
+      "ready_id": "video/ltx2_3_t2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "MultimodalGuider",
+      "line": 183,
+      "path": "ready_templates/video/ltx2_3_t2v.py",
+      "ready_id": "video/ltx2_3_t2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "PointsEditor",
+      "line": 135,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "PointsEditor",
+      "line": 135,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "PixelPerfectResolution",
+      "line": 150,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "PixelPerfectResolution",
+      "line": 150,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ImageCropByMaskAndResize",
+      "line": 192,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ImageCropByMaskAndResize",
+      "line": 192,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ImageCropByMaskAndResize",
+      "line": 192,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ImageCropByMaskAndResize",
+      "line": 192,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSparseTrackEditor",
+      "line": 133,
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSparseTrackEditor",
+      "line": 133,
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSparseTrackEditor",
+      "line": 133,
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSparseTrackEditor",
+      "line": 133,
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "DownloadAndLoadFlorence2Model",
+      "line": 55,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "DownloadAndLoadFlorence2Model",
+      "line": 55,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "DownloadAndLoadFlorence2Model",
+      "line": 55,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Florence2Run",
+      "line": 97,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ImageBlur",
+      "line": 72,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_control_lora.py",
+      "ready_id": "video/wanvideo_wrapper_13b_control_lora",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ImageBlur",
+      "line": 72,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_control_lora.py",
+      "ready_id": "video/wanvideo_wrapper_13b_control_lora",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ADE_CameraPoseBasic",
+      "line": 85,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ADE_CameraPoseBasic",
+      "line": 85,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ADE_CameraPoseBasic",
+      "line": 85,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ResizeImageMaskNode",
+      "line": 166,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ResizeImageMaskNode",
+      "line": 166,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 186,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 186,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 186,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 186,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 186,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 186,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 186,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_15",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_15"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 210,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 232,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 232,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 232,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 232,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 232,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 232,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 265,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 265,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 265,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 265,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 265,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 265,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 265,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_15",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_15"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 290,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 312,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 312,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 312,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 312,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 312,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 312,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 337,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 337,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 337,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 337,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 337,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 337,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtensionMath",
+      "line": 337,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_15",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_15"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioExtender",
+      "line": 364,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 386,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 386,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 386,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 386,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 386,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_AudioTimelineGate",
+      "line": 386,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 413,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 429,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 446,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 446,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 446,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 446,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 446,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 446,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 446,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 476,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 492,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 510,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 510,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 510,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 510,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 510,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 510,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_StartDirToVideoLatent",
+      "line": 510,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeToDisk",
+      "line": 540,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule_Disk",
+      "line": 556,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VideoCombineFromDir",
+      "line": 574,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VideoCombineFromDir",
+      "line": 574,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VideoCombineFromDir",
+      "line": 574,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VideoCombineFromDir",
+      "line": 574,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VideoCombineFromDir",
+      "line": 574,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VideoCombineFromDir",
+      "line": 574,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_i2v.py",
+      "ready_id": "video/ltx2_3_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_i2v.py",
+      "ready_id": "video/ltx2_3_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_i2v.py",
+      "ready_id": "video/ltx2_3_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_i2v.py",
+      "ready_id": "video/ltx2_3_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ClownSampler_Beta",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_i2v.py",
+      "ready_id": "video/ltx2_3_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "MultimodalGuider",
+      "line": 183,
+      "path": "ready_templates/video/ltx2_3_i2v.py",
+      "ready_id": "video/ltx2_3_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "MultiTalkWav2VecEmbeds",
+      "line": 115,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "MultiTalkWav2VecEmbeds",
+      "line": 115,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "MultiTalkWav2VecEmbeds",
+      "line": 115,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "MultiTalkWav2VecEmbeds",
+      "line": 115,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "MultiTalkWav2VecEmbeds",
+      "line": 115,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "WanVideoImageToVideoMultiTalk",
+      "line": 158,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "WanImageToVideo",
+      "line": 62,
+      "path": "ready_templates/video/wan_i2v.py",
+      "ready_id": "video/wan_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "WanImageToVideo",
+      "line": 62,
+      "path": "ready_templates/video/wan_i2v.py",
+      "ready_id": "video/wan_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "WanImageToVideo",
+      "line": 62,
+      "path": "ready_templates/video/wan_i2v.py",
+      "ready_id": "video/wan_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "WanImageToVideo",
+      "line": 62,
+      "path": "ready_templates/video/wan_i2v.py",
+      "ready_id": "video/wan_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 361,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 361,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 361,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 361,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 361,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 361,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 361,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 412,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 412,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 412,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 412,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVAddGuideMulti",
+      "line": 412,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ColorMatch",
+      "line": 269,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_framepack_pose.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ColorMatch",
+      "line": 269,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_framepack_pose.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "ColorMatch",
+      "line": 269,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_framepack_pose.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "WanVideoSampler",
+      "line": 81,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_t2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_t2v",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Seed_rgthree",
+      "line": 63,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Seed_rgthree",
+      "line": 63,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Seed_rgthree",
+      "line": 63,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Text Multiline",
+      "line": 71,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStack",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStack",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStack",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStack",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStack",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStack",
+      "line": 97,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Load Whisper (mtb)",
+      "line": 115,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Load Whisper (mtb)",
+      "line": 115,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FL_ChatterboxTurboTTS",
+      "line": 149,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Audio To Text (mtb)",
+      "line": 164,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "Audio To Text (mtb)",
+      "line": 164,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 171,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 171,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 171,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 171,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 171,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 171,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 181,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 181,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 181,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 189,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 189,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 189,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 197,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 197,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 197,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 220,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 220,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 220,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "ShowText_pysssss",
+      "line": 228,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 234,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 234,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 234,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 234,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 234,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 234,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 234,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+      "line": 245,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+      "line": 245,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+      "line": 245,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+      "line": 245,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+      "line": 245,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+      "line": 245,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+      "line": 245,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_15",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_15"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_16",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_16"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_17",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_17"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_18",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_18"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporter",
+      "line": 257,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_15",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_15"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_HwSupporterAny",
+      "line": 302,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_15",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_15"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "FB_Qwen3TTSVoiceClone",
+      "line": 328,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 358,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 358,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_MultiSwitch",
+      "line": 358,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "MathExpression_pysssss",
+      "line": 375,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_SamplerAdvancedVersion1",
+      "line": 417,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_SamplerAdvancedVersion1",
+      "line": 417,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_VAEDecodeTiledSafe",
+      "line": 432,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_EnsureFrames8nPlus1",
+      "line": 144,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_EnsureFrames8nPlus1",
+      "line": 144,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_EnsureFrames8nPlus1",
+      "line": 151,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_EnsureFrames8nPlus1",
+      "line": 151,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 208,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 208,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 208,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 208,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 208,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 208,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 208,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_EnsureFrames8nPlus1",
+      "line": 304,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_EnsureFrames8nPlus1",
+      "line": 304,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_EnsureFrames8nPlus1",
+      "line": 311,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_EnsureFrames8nPlus1",
+      "line": 311,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 368,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 368,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 368,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 368,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 368,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 368,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+      "line": 368,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackStaged",
+      "line": 406,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_FrameRateSync",
+      "line": 440,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_FrameRateSync",
+      "line": 440,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_TimeFrameCount",
+      "line": 443,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_TimeFrameCount",
+      "line": 443,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_TimeFrameCount",
+      "line": 443,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 456,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 456,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 456,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 456,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 456,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_LoRAStackModelIO",
+      "line": 456,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 503,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 503,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 503,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 503,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 503,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 503,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 503,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 514,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 514,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 514,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 514,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 514,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 514,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_GGUF_accelerator",
+      "line": 514,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_GetImageFromBatch",
+      "line": 581,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_15",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_15"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 628,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_1",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_1"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_10",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_10"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_11",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_11"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_12",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_12"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_13",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_13"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_14",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_14"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_15",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_15"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_2",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_2"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_5",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_5"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_6",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_6"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_7",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_7"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_8",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_8"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "IAMCCS_LTX2_ExtensionModule",
+      "line": 682,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "resolution_name": "widget_9",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_9"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVImgToVideoInplaceKJ",
+      "line": 279,
+      "path": "ready_templates/video/ltx2_3_runexx_first_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_last_frame",
+      "resolution_name": "widget_3",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_3"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "LTXVImgToVideoInplaceKJ",
+      "line": 279,
+      "path": "ready_templates/video/ltx2_3_runexx_first_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_last_frame",
+      "resolution_name": "widget_4",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_4"
+    },
+    {
+      "category": "schema-addition-needed",
+      "class_type": "CFGNorm",
+      "line": 69,
+      "path": "ready_templates/edit/qwen_image_edit.py",
+      "ready_id": "edit/qwen_image_edit",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    },
+    {
+      "category": "custom-node unknown",
+      "class_type": "EmptyAceStep1_5LatentAudio",
+      "line": 44,
+      "path": "ready_templates/audio/ace_step_1_5_t2a_song.py",
+      "ready_id": "audio/ace_step_1_5_t2a_song",
+      "resolution_name": "widget_0",
+      "resolution_source": "unresolved",
+      "widget_key": "widget_0"
+    }
+  ],
+  "summary": {
+    "category_counts_current_occurrences": {
+      "custom-node unknown": 421,
+      "schema-addition-needed": 67
+    },
+    "post_templates_with_widget_n": 21,
+    "post_widget_n_fields_total": 488,
+    "pre_templates_with_widget_n": 30,
+    "pre_widget_n_fields_total": 636
+  }
+}

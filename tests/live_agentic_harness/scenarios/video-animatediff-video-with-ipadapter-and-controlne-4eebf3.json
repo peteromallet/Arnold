@@ -1,0 +1,35 @@
+{
+  "id": "video-animatediff-video-with-ipadapter-and-controlne-4eebf3",
+  "query": "The output video has a persistent tiling grid pattern visible in uniform areas like sky or walls, as if the IPAdapter style is being applied in blocks rather than smoothly. Which node and setting is the likely culprit?",
+  "workflow_path": "external_workflows/corpus/4eebf3dc07942c52.json",
+  "network": true,
+  "timeout": 320,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "diagnose",
+    "abstraction": "med",
+    "complexity": "high",
+    "manifest_complexity": 4,
+    "task_type": "controlnet",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "animatediff",
+      "video-generation",
+      "ipadapter",
+      "controlnet",
+      "sdxl-lightning",
+      "lora",
+      "video-combine",
+      "frame-interpolation"
+    ],
+    "source_workflow_id": "4eebf3dc07942c52",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Grid artifacts are a classic symptom of tiled IPAdapter processing, targeting overlap or tile size misconfiguration."
+  }
+}

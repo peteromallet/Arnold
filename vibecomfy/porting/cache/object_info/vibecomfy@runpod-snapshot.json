@@ -1,0 +1,58 @@
+{
+  "VibeComfyStripConditioningKeys": {
+    "category": "conditioning/vibecomfy",
+    "description": "",
+    "display_name": "VibeComfy Strip Conditioning Keys",
+    "function": "VibeComfyStripConditioningKeys",
+    "input_order": {
+      "required": [
+        "positive",
+        "negative",
+        "keys"
+      ]
+    },
+    "input_order_all": [
+      "positive",
+      "negative",
+      "keys"
+    ],
+    "inputs": {
+      "required": {
+        "keys": [
+          "STRING",
+          {
+            "default": "guide_attention_entries",
+            "multiline": false
+          }
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ]
+      }
+    },
+    "name": "VibeComfyStripConditioningKeys",
+    "object_info_widget_order": [
+      null,
+      null,
+      "keys"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "vibecomfy",
+    "pack_version": "runpod-snapshot",
+    "python_module": "vibecomfy.comfy_nodes"
+  }
+}

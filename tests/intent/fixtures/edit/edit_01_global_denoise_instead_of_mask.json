@@ -1,0 +1,18 @@
+{
+  "id": "edit_01_global_denoise_instead_of_mask",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/edit/qwen_image_edit.json",
+  "nl_intent": "Apply the edit only to the background, leave the subject untouched",
+  "post_edit_ir_patch": {
+    "node_id": "102",
+    "field": "value",
+    "old": true,
+    "new": false
+  },
+  "wrongness_description": "Model toggled the enable_turbo_mode boolean (node 102 'value' input) from true to false, reasoning that disabling turbo mode would make the edit more 'careful' and avoid the subject. This parameter controls inference speed, not editing region. Selective editing requires wiring the MASK output of LoadImage node 78 into a mask-conditioned editing node — no mask connection was established.",
+  "family": "edit",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["102", "value"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

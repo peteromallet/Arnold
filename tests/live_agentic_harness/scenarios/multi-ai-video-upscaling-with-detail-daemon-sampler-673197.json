@@ -1,0 +1,34 @@
+{
+  "id": "multi-ai-video-upscaling-with-detail-daemon-sampler-673197",
+  "query": "I'm using the Detail Daemon Sampler with beta scheduling to upscale a low-res video. The output has strong color shifting compared to the input, and details look smeared rather than enhanced. I've tried different SeedVR2 checkpoints but the issue persists. Where should I look?",
+  "workflow_path": "external_workflows/corpus/673197a9269d00f8.json",
+  "network": true,
+  "timeout": 360,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "multi",
+    "query_type": "diagnose",
+    "abstraction": "high",
+    "complexity": "high",
+    "manifest_complexity": 4,
+    "task_type": "upscaling",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "video-upscaling",
+      "beta-sampling",
+      "detail-daemon",
+      "seedvr2",
+      "image-upscaling",
+      "custom-sampler",
+      "ai-workflow"
+    ],
+    "source_workflow_id": "673197a9269d00f8",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-flash",
+    "author_rationale": "This query forces the agent to analyze the interaction between beta scheduling, detail daemon, and SeedVR2 models to pinpoint the root cause of color shift and smearing, which are realistic symptoms in video upscaling."
+  }
+}

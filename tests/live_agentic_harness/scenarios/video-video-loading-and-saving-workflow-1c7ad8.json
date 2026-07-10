@@ -1,0 +1,32 @@
+{
+  "id": "video-video-loading-and-saving-workflow-1c7ad8",
+  "query": "This workflow loads a video and an image, applies boolean logic, and saves three separate video outputs. Explain what each boolean operation is doing and how the three resulting videos differ from one another.",
+  "workflow_path": "external_workflows/corpus/1c7ad8a2a8c0224b.json",
+  "network": true,
+  "timeout": 320,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "explain",
+    "abstraction": "med",
+    "complexity": "med",
+    "manifest_complexity": 3,
+    "task_type": "other",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "video",
+      "image",
+      "save-video",
+      "boolean",
+      "workflow"
+    ],
+    "source_workflow_id": "1c7ad8a2a8c0224b",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "The boolean-logic core is the only notable feature here; the query forces the agent to deduce the logic branch outcomes instead of naming nodes."
+  }
+}

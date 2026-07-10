@@ -1,0 +1,88 @@
+{
+  "system": {
+    "name": "Agent Jury Orchestrator",
+    "version": "1.0.0",
+    "description": "Master controller for the blind multi-agent jury deliberation system. Orchestrates parallel juror execution, enforces resource caps, and routes outputs to the blind synthesizer."
+  },
+  "runtime_constraints": {
+    "max_total_wall_clock_seconds": 300,
+    "max_per_juror_seconds": 120,
+    "max_synthesis_seconds": 60,
+    "max_tokens_per_juror": 1024,
+    "max_tokens_synthesis": 2048,
+    "parallel_jurors": true,
+    "max_concurrent_jurors": 3,
+    "retry_on_parse_failure": 1
+  },
+  "pi_hardware_target": {
+    "device": "Raspberry Pi 5 (8GB)",
+    "inference_engine": "llama.cpp",
+    "quantization": "Q4_K_M",
+    "max_model_size_gb": 4.5,
+    "expected_tokens_per_second": 10
+  },
+  "workflow": {
+    "phase_1_input_validation": {
+      "description": "Validate the proposal is well-formed and within scope",
+      "checks": [
+        "Proposal is non-empty and under 2000 words",
+        "Decision stakes are articulated",
+        "No obviously malicious or self-harm content",
+        "At least one concrete option is presented"
+      ],
+      "on_failure": "Return structured rejection with reasons; do not proceed to jury"
+    },
+    "phase_2_anonymization": {
+      "description": "Strip identity markers to prevent juror bias",
+      "rules": [
+        "Remove names, genders, locations",
+        "Normalize monetary values to abstract units",
+        "Replace organization names with generic labels (Entity A, Entity B)",
+        "Remove temporal markers that could date the decision"
+      ]
+    },
+    "phase_3_juror_selection": {
+      "description": "Select 3-5 jurors based on decision category",
+      "default_jury": ["risk_analyst", "ethicist", "utility_maximizer", "systems_thinker", "devils_advocate"],
+      "minimum_jurors": 3,
+      "category_overrides": {
+        "safety_critical": {
+          "required": ["risk_analyst", "systems_thinker"],
+          "double_weight": "risk_analyst"
+        },
+        "ethical_dilemma": {
+          "required": ["ethicist", "devils_advocate"],
+          "add_juror": "cultural_context_advisor"
+        },
+        "resource_allocation": {
+          "required": ["utility_maximizer", "systems_thinker"],
+          "add_juror": "equity_auditor"
+        }
+      }
+    },
+    "phase_4_blind_parallel_deliberation": {
+      "description": "Each juror receives ONLY the anonymized proposal + their specific lens instructions. No juror sees any other juror's output.",
+      "strict_rules": [
+        "Juror prompts must NOT include other jurors' outputs",
+        "Juror prompts must NOT hint at what other lenses exist",
+        "Each juror runs in isolated context window",
+        "Output must conform to verdict_schema.json"
+      ]
+    },
+    "phase_5_blind_synthesis": {
+      "description": "Synthesizer receives ALL juror verdicts simultaneously but does NOT know which model/lens produced which verdict (unless lens self-identifies in output — jurors are instructed not to).",
+      "rules": [
+        "Synthesizer sees verdicts labeled Juror A, B, C, D, E (randomized order)",
+        "Synthesizer must identify: consensus points, polarized points, lone dissents",
+        "Disagreement amplification: if ANY juror flags a catastrophic risk, it must be surfaced prominently",
+        "Confidence-weighted ensemble for quantitative scores"
+      ]
+    }
+  },
+  "output_routing": {
+    "individual_verdicts": "Written to ./deliberations/{session_id}/verdicts/",
+    "synthesis": "Written to ./deliberations/{session_id}/final_judgment.json",
+    "audit_log": "Written to ./deliberations/{session_id}/audit.jsonl",
+    "human_summary": "Written to ./deliberations/{session_id}/summary.md"
+  }
+}

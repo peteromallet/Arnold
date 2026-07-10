@@ -1,0 +1,18 @@
+{
+  "id": "image_01_denoise_for_sharper",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
+  "nl_intent": "Make the image sharper and more defined",
+  "post_edit_ir_patch": {
+    "node_id": "238:230",
+    "field": "denoise",
+    "old": 1.0,
+    "new": 0.7
+  },
+  "wrongness_description": "Model reduced KSampler denoise from 1.0 to 0.7 thinking partial denoising preserves fine detail and sharpness. In a text-to-image context denoise=1.0 is required for full generation; lowering it introduces noise artifacts rather than sharpness. Correct fix would be a sharpening post-process node (e.g. ImageSharpen).",
+  "family": "image",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["238:230", "denoise"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

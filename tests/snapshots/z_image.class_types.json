@@ -1,0 +1,12 @@
+[
+  "CLIPLoader",
+  "CLIPTextEncode",
+  "CLIPTextEncode",
+  "EmptySD3LatentImage",
+  "KSampler",
+  "ModelSamplingAuraFlow",
+  "SaveImage",
+  "UNETLoader",
+  "VAEDecode",
+  "VAELoader"
+]

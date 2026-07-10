@@ -1,0 +1,203 @@
+{
+  "affected_templates": [
+    {
+      "check_artifact": "/private/tmp/vibecomfy_t10/image_z_image.check.json",
+      "check_diagnostics": 16,
+      "check_message": null,
+      "check_ok": false,
+      "check_sha256": "97e70ad5f2219c9bf0335f33529c71ed6ed1e315051802ccdb02c3ee66388db4",
+      "check_status": "error",
+      "check_strict_ready_ok": false,
+      "check_validation": {
+        "error": null,
+        "ok": null,
+        "parity_error": null,
+        "parity_ok": null,
+        "strict_ready_ok": null
+      },
+      "convert_artifact": "/private/tmp/vibecomfy_t10/image_z_image.convert.json",
+      "convert_diagnostics": 19,
+      "convert_message": "port convert stopped because port check found hard errors.",
+      "convert_report_ok": false,
+      "convert_sha256": "768b51c1f557a19395e2b1cb9c0be96fd27417b2c3ae48c7b1f5961fea3c3562",
+      "convert_status": "error",
+      "convert_strict_ready_ok": true,
+      "path": "ready_templates/image/z_image.py",
+      "ready_id": "image/z_image",
+      "reason": [
+        "failing-first fixture",
+        "audited seed mapping"
+      ],
+      "source": "ready_templates/sources/official/image/z_image.json"
+    },
+    {
+      "check_artifact": "/private/tmp/vibecomfy_t10/video_ltx2_3_runexx_talking_avatar_qwen_tts.check.json",
+      "check_diagnostics": 131,
+      "check_message": null,
+      "check_ok": false,
+      "check_sha256": "00ffd69f1a30dcf682a67fc2adddd10b421e2862c62b29b121b30492bd616ba3",
+      "check_status": "error",
+      "check_strict_ready_ok": false,
+      "check_validation": {
+        "error": null,
+        "ok": null,
+        "parity_error": null,
+        "parity_ok": null,
+        "strict_ready_ok": null
+      },
+      "convert_artifact": "/private/tmp/vibecomfy_t10/video_ltx2_3_runexx_talking_avatar_qwen_tts.convert.json",
+      "convert_diagnostics": 140,
+      "convert_message": "port convert stopped because port check found hard errors.",
+      "convert_report_ok": false,
+      "convert_sha256": "fe958e5644648d05c1ba49c68b37def38feda25d245d8a9e9f2238414be4643a",
+      "convert_status": "error",
+      "convert_strict_ready_ok": true,
+      "path": "ready_templates/video/ltx2_3_runexx_talking_avatar_qwen_tts.py",
+      "ready_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "reason": [
+        "failing-first fixture",
+        "audited seed mapping"
+      ],
+      "source": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
+    },
+    {
+      "check_artifact": "/private/tmp/vibecomfy_t10/audio_qwen3_tts_voice_clone.check.json",
+      "check_diagnostics": 1,
+      "check_message": null,
+      "check_ok": false,
+      "check_sha256": "5ad10831ed45afa143fbf9d81eb07b6e0ed1bd963189ce765e2b8fe35200c28b",
+      "check_status": "error",
+      "check_strict_ready_ok": false,
+      "check_validation": {
+        "error": null,
+        "ok": null,
+        "parity_error": null,
+        "parity_ok": null,
+        "strict_ready_ok": null
+      },
+      "convert_artifact": "/private/tmp/vibecomfy_t10/audio_qwen3_tts_voice_clone.convert.json",
+      "convert_diagnostics": 0,
+      "convert_message": "Validation failed for /private/tmp/vibecomfy_t10/audio_qwen3_tts_voice_clone.py: schema validation failed. Parity OK: True. Fix issues before writing.",
+      "convert_report_ok": true,
+      "convert_sha256": "e78a2d255ee47f5395b67be06ba6cfc45973c33752e960f6c17e6c0a4eeee922",
+      "convert_status": "error",
+      "convert_strict_ready_ok": null,
+      "path": "ready_templates/audio/qwen3_tts_voice_clone.py",
+      "ready_id": "audio/qwen3_tts_voice_clone",
+      "reason": [
+        "pre-fix inventory-proven resolvable leak"
+      ],
+      "source": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json"
+    },
+    {
+      "check_artifact": "/private/tmp/vibecomfy_t10/video_wanvideo_wrapper_21_14b_wanmove_i2v.check.json",
+      "check_diagnostics": 17,
+      "check_message": null,
+      "check_ok": false,
+      "check_sha256": "c70450d634e8fed4528edfba5c084682cb8048414e6204ec4fbe773f21c74e42",
+      "check_status": "error",
+      "check_strict_ready_ok": false,
+      "check_validation": {
+        "error": null,
+        "ok": null,
+        "parity_error": null,
+        "parity_ok": null,
+        "strict_ready_ok": null
+      },
+      "convert_artifact": "/private/tmp/vibecomfy_t10/video_wanvideo_wrapper_21_14b_wanmove_i2v.convert.json",
+      "convert_diagnostics": 19,
+      "convert_message": "port convert stopped because port check found hard errors.",
+      "convert_report_ok": false,
+      "convert_sha256": "d9a4c448b9e73ad144e02feeed3424365c41cae19bf491fb7cf8ca1f105fb073",
+      "convert_status": "error",
+      "convert_strict_ready_ok": null,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
+      "reason": [
+        "pre-fix inventory-proven resolvable leak"
+      ],
+      "source": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json"
+    },
+    {
+      "check_artifact": "/private/tmp/vibecomfy_t10/video_ltx2_3_runexx_first_last_raw_video_guide.check.json",
+      "check_diagnostics": 10,
+      "check_message": null,
+      "check_ok": false,
+      "check_sha256": "2f4159b7ffd7c87107af30470996c79a7cb6e0330b43e937456ad471b5977e29",
+      "check_status": "error",
+      "check_strict_ready_ok": true,
+      "check_validation": {
+        "error": null,
+        "ok": null,
+        "parity_error": null,
+        "parity_ok": null,
+        "strict_ready_ok": null
+      },
+      "convert_artifact": "/private/tmp/vibecomfy_t10/video_ltx2_3_runexx_first_last_raw_video_guide.convert.json",
+      "convert_diagnostics": 13,
+      "convert_message": "port convert stopped because port check found hard errors.",
+      "convert_report_ok": false,
+      "convert_sha256": "083749b7bfd3351b5122be8dc1c09f1b22c1ed4c116f6091893c81af41e01526",
+      "convert_status": "error",
+      "convert_strict_ready_ok": null,
+      "path": "ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py",
+      "ready_id": "video/ltx2_3_runexx_first_last_raw_video_guide",
+      "reason": [
+        "pre-fix inventory-proven resolvable leak",
+        "self-referential source"
+      ],
+      "source": "ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py"
+    },
+    {
+      "check_artifact": "/private/tmp/vibecomfy_t10/video_wanvideo_wrapper_22_14b_t2i.check.json",
+      "check_diagnostics": 5,
+      "check_message": null,
+      "check_ok": true,
+      "check_sha256": "206d7eaa0131624d6be3cd48bbaba4b94f968d76cf33842ef245e8c089757426",
+      "check_status": "ok",
+      "check_strict_ready_ok": true,
+      "check_validation": {
+        "error": null,
+        "ok": null,
+        "parity_error": null,
+        "parity_ok": null,
+        "strict_ready_ok": null
+      },
+      "convert_artifact": "/private/tmp/vibecomfy_t10/video_wanvideo_wrapper_22_14b_t2i.convert.json",
+      "convert_diagnostics": 5,
+      "convert_message": null,
+      "convert_report_ok": true,
+      "convert_sha256": "bf47e1c51bbf8b29471427c8624276a8c7883801c861fcf8c6fb75aa7d864ac4",
+      "convert_status": "ok",
+      "convert_strict_ready_ok": null,
+      "path": "ready_templates/video/wanvideo_wrapper_22_14b_t2i.py",
+      "ready_id": "video/wanvideo_wrapper_22_14b_t2i",
+      "reason": [
+        "pre-fix inventory-proven resolvable leak",
+        "self-referential source"
+      ],
+      "source": "ready_templates/video/wanvideo_wrapper_22_14b_t2i.py"
+    }
+  ],
+  "blocked_reemissions": [
+    "image/z_image",
+    "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+    "audio/qwen3_tts_voice_clone",
+    "video/wanvideo_wrapper_21_14b_wanmove_i2v",
+    "video/ltx2_3_runexx_first_last_raw_video_guide"
+  ],
+  "changed_templates": [],
+  "notes": [
+    "No checked-in ready template was overwritten in T10 because convert/write gates blocked all source-backed candidates except self-referential wanvideo_wrapper_22_14b_t2i, whose temp re-emission only added a trailing blank line.",
+    "Strict port-check/convert JSON artifacts were preserved under /private/tmp/vibecomfy_t10 and hashed here."
+  ],
+  "schema": "vibecomfy.t10_reemit_evidence.v1",
+  "successful_temp_reemissions": [
+    "video/wanvideo_wrapper_22_14b_t2i"
+  ],
+  "verification": {
+    "compile_affected": "passed for 6/6 checked-in affected templates",
+    "differential_harness": "python -m pytest tests/test_template_roundtrip.py -q -> 52 failed, 3 passed, 16 skipped; failures match known broad pre-existing red harness state and include audited talking-avatar voice type drift",
+    "py_compile_affected": "passed"
+  }
+}

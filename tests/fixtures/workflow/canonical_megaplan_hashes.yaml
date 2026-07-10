@@ -1,5 +1,0 @@
-id: canonical-megaplan
-manifest_hash: sha256:3d4ea92751ad65bd99aa43967c3b4fc617dd63c43cd53d85bc816bf1daa4ce51
-schema_version: arnold.workflow.manifest.v1
-topology_hash: sha256:581e9469a0edd4d075e2a9e91cb6fab39685113cbc59bfd4a066ac6201bfbc3c
-version: conformance-v1

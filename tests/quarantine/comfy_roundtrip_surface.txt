@@ -1,0 +1,5 @@
+# owner: comfy-roundtrip-surface
+# reason: pre-existing roundtrip route needs live ComfyUI oracle offline
+# audit: added during sprint-3 diagnostics verification
+
+tests/test_comfy_roundtrip_route.py::test_exec_emit_rebuilds_raw_ui_generic_port_pool_from_widgets_io

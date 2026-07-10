@@ -1,0 +1,217 @@
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
+from __future__ import annotations
+
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
+from vibecomfy.nodes.core import CLIPVisionLoader, LoadImage, RepeatImageBatch
+from vibecomfy.nodes.kjnodes import ImageResizeKJv2, SplineEditor
+from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
+from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoAddWanMoveTracks, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncode, WanVideoVAELoader, WanVideoWanDrawWanMoveTracks
+
+
+CLIP_NAME = 'clip_vision_h.safetensors'
+CLIP_NAME_2 = 'umt5-xxl-enc-bf16.safetensors'
+DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
+DEFAULT_SEED = 1057359483639287
+GUIDE_STRENGTH = 1
+LORA_NAME = 'WanVideo/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
+MODEL_NAME = 'WanVideo/WanMove/Wan21-WanMove_fp8_scaled_e4m3fn_KJ.safetensors'
+VAE_NAME = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
+VIDEO_H264_MP4 = 'video/h264-mp4'
+YUV420P = 'yuv420p'
+
+
+PUBLIC_INPUT_METADATA = {
+    'seed': InputSpec(node='27', field='seed', default=DEFAULT_SEED, type='INT'),
+    'image': InputSpec(node='58', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='68', field='width', default=640, type='INT'),
+    'height': InputSpec(node='68', field='height', default=640, type='INT'),
+}
+
+READY_METADATA = ReadyMetadata.build(
+    capability='video',
+    inputs=PUBLIC_INPUT_METADATA,
+    requirements={'models': ['clip_vision_h.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'wanvideo/Wan2_1_VAE_bf16.safetensors']},
+    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoImageToVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEncode', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
+    provenance={'source_path': 'ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json', 'source_id': 'wan21_14b_wanmove_i2v', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_21_14b_wanmove_i2v'},
+)
+
+def build() -> VibeWorkflow:
+    """Build the workflow (auto-generated)."""
+    wf = new_workflow(READY_METADATA, source_path=__file__)
+
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
+        _id='11',
+        model_name=CLIP_NAME_2,
+    )
+
+    wanvideomodelloader = WanVideoModelLoader(
+        _id='22',
+        model=MODEL_NAME,
+        base_precision='fp16',
+        attention_mode='sageattn',
+    )
+
+    wanvideovaeloader = WanVideoVAELoader(
+        _id='38',
+        model_name=VAE_NAME,
+        compile_args=False,
+    )
+
+    wanvideoblockswap = WanVideoBlockSwap(
+        _id='39',
+        blocks_to_swap=25,
+        use_non_blocking=True,
+        prefetch_blocks=1,
+    )
+
+    # Inputs
+    image, _ = LoadImage(_id='58', image='oldman_upscaled.png')
+
+    # Loaders
+    clipvisionloader = CLIPVisionLoader(_id='59', clip_name=CLIP_NAME)
+    wanvideoloraselect = WanVideoLoraSelect(_id='69', lora=LORA_NAME, merge_loras=False)
+
+    wanvideotextencode = WanVideoTextEncode(
+        _id='16',
+        positive_prompt='video of an old man',
+        negative_prompt=DEFAULT_NEGATIVE,
+        use_disk_cache=True,
+        model_to_offload=wanvideomodelloader,
+        t5=loadwanvideot5textencoder,
+    )
+
+    image_2, width, height, _ = ImageResizeKJv2(
+        _id='68',
+        width=640,
+        height=640,
+        upscale_method='lanczos',
+        keep_proportion='crop',
+        divisible_by=16,
+        device='cpu',
+        image=image,
+    )
+
+    wanvideosetloras = WanVideoSetLoRAs(
+        _id='75',
+        lora=wanvideoloraselect,
+        model=wanvideomodelloader,
+    )
+
+    wanvideoclipvisionencode = WanVideoClipVisionEncode(
+        _id='65',
+        ratio=0.20000000000000004,
+        clip_vision=clipvisionloader,
+        image_1=image_2,
+    )
+
+    wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='70',
+        block_swap_args=wanvideoblockswap,
+        model=wanvideosetloras,
+    )
+
+    _, coord_str, _, count, _ = SplineEditor(
+        _id='77',
+        coordinates='[[{"x":309.03009033203125,"y":338.4615478515625},{"x":304.7218322753906,"y":333.7557067871094},{"x":300.4680480957031,"y":329.0005798339844},{"x":296.2775573730469,"y":324.1896057128906},{"x":292.16131591796875,"y":319.3149719238281},{"x":288.1344909667969,"y":314.36627197265625},{"x":284.21636962890625,"y":309.33111572265625},{"x":280.43511962890625,"y":304.1925048828125},{"x":276.83233642578125,"y":298.92742919921875},{"x":273.47186279296875,"y":293.5048828125},{"x":270.4659423828125,"y":287.8789978027344},{"x":268.02728271484375,"y":281.9877624511719},{"x":266.634033203125,"y":275.77642822265625},{"x":267.44195556640625,"y":269.5126037597656},{"x":271.0517272949219,"y":264.2775573730469},{"x":275.5921325683594,"y":259.80364990234375},{"x":280.6703186035156,"y":255.94668579101562},{"x":286.10455322265625,"y":252.60763549804688},{"x":291.78814697265625,"y":249.7119598388672},{"x":297.6553955078125,"y":247.20834350585938},{"x":303.66290283203125,"y":245.06248474121094},{"x":309.78057861328125,"y":243.25405883789062},{"x":315.986083984375,"y":241.774658203125},{"x":322.2609558105469,"y":240.62457275390625},{"x":328.5887756347656,"y":239.8154296875},{"x":334.9522705078125,"y":239.3683319091797},{"x":341.3310546875,"y":239.3177032470703},{"x":347.69744873046875,"y":239.71331787109375},{"x":354.0099182128906,"y":240.6256561279297},{"x":360.201904296875,"y":242.1505126953125},{"x":366.16265869140625,"y":244.41184997558594},{"x":371.7440490722656,"y":247.49278259277344},{"x":376.8460998535156,"y":251.3139190673828},{"x":381.28900146484375,"y":255.8828125},{"x":384.9034423828125,"y":261.1309509277344},{"x":387.59295654296875,"y":266.9087219238281},{"x":389.36480712890625,"y":273.0321044921875},{"x":390.3052062988281,"y":279.3385009765625},{"x":390.5349426269531,"y":285.71173095703125},{"x":390.1739807128906,"y":292.07977294921875},{"x":389.32659912109375,"y":298.402099609375},{"x":388.0774841308594,"y":304.6578674316406},{"x":386.4941101074219,"y":310.8377380371094},{"x":384.62884521484375,"y":316.9386291503906},{"x":382.5249328613281,"y":322.9615783691406},{"x":380.212646484375,"y":328.9076232910156},{"x":377.68255615234375,"y":334.76422119140625},{"x":374.89642333984375,"y":340.5031433105469},{"x":371.8153076171875,"y":346.08905029296875},{"x":368.40093994140625,"y":351.4773864746094},{"x":364.6192932128906,"y":356.6141357421875},{"x":360.4477233886719,"y":361.439208984375},{"x":355.88116455078125,"y":365.8919677734375},{"x":350.9376525878906,"y":369.9219970703125},{"x":345.65643310546875,"y":373.4981384277344},{"x":340.09100341796875,"y":376.61407470703125},{"x":334.2998046875,"y":379.2880554199219},{"x":328.3372497558594,"y":381.5551452636719},{"x":322.2490234375,"y":383.4603271484375},{"x":316.0707092285156,"y":385.0499267578125},{"x":309.8260803222656,"y":386.3546447753906},{"x":303.5069580078125,"y":387.2225036621094},{"x":297.13702392578125,"y":387.5397033691406},{"x":290.7676086425781,"y":387.22509765625},{"x":284.470947265625,"y":386.2176513671875},{"x":278.33062744140625,"y":384.4978942871094},{"x":272.420654296875,"y":382.102294921875},{"x":266.7846984863281,"y":379.11712646484375},{"x":261.4264221191406,"y":375.6566467285156},{"x":256.31378173828125,"y":371.8414611816406},{"x":251.39317321777344,"y":367.7808837890625},{"x":246.6000213623047,"y":363.57012939453125},{"x":241.8663787841797,"y":359.29241943359375},{"x":237.19577026367188,"y":354.9486999511719},{"x":233.47332763671875,"y":349.7870788574219},{"x":231.0011749267578,"y":343.91717529296875},{"x":229.6009063720703,"y":337.6989440917969},{"x":229.03160095214844,"y":331.34771728515625},{"x":229.09124755859375,"y":324.9698181152344},{"x":229.6313934326172,"y":318.6137390136719},{"x":230.5462646484375,"y":312.3002624511719}]]',
+        mask_height=640,
+        mask_width=640,
+        points_store='[{"points":[{"x":309.03010266217507,"y":338.4615410109536},{"x":268.15310495553814,"y":268.15310495553814},{"x":367.8929793597322,"y":245.26198623982145},{"x":380.97361862585603,"y":327.0159816530953},{"x":312.300262478706,"y":385.8788583506524},{"x":238.72166660675956,"y":356.44742000187387},{"x":230.54626706543218,"y":312.300262478706}],"color":"#1f77b4","name":"Spline 1"}]',
+        points_to_sample=81,
+        sampling_method='path',
+        widget_12='',
+        widget_13=None,
+        widget_2=640,
+        widget_3=640,
+        widget_4=81,
+        bg_image=image_2,
+    )
+
+    repeatimagebatch = RepeatImageBatch(
+        _id='91',
+        amount=81,
+        widget_0=81,
+        image=image_2,
+    )
+
+    wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
+        _id='63',
+        fun_or_fl2v_model=False,
+        widget_9=0,
+        width=width,
+        height=height,
+        num_frames=count,
+        clip_embeds=wanvideoclipvisionencode,
+        start_image=image_2,
+        vae=wanvideovaeloader,
+    )
+
+    image_embeds, tracks = WanVideoAddWanMoveTracks(
+        _id='80',
+        image_embeds=wanvideoimagetovideoencode,
+        track_coords=coord_str,
+    )
+
+    samples, _ = WanVideoSampler(
+        _id='27',
+        steps=4,
+        cfg=GUIDE_STRENGTH,
+        seed=DEFAULT_SEED,
+        scheduler='dpm++_sde',
+        batched_cfg='',
+        image_embeds=image_embeds,
+        model=wanvideosetblockswap,
+        text_embeds=wanvideotextencode,
+    )
+
+    wanvideowandrawwanmovetracks_2 = WanVideoWanDrawWanMoveTracks(
+        _id='88',
+        images=repeatimagebatch,
+        tracks=tracks,
+    )
+
+    wanvideodecode = WanVideoDecode(
+        _id='28',
+        normalization='default',
+        samples=samples,
+        vae=wanvideovaeloader,
+    )
+
+    # Outputs
+    vhs_videocombine_2 = VHS_VideoCombine(
+        _id='90',
+        frame_rate=16,
+        filename_prefix='WanVideoWrapper_I2V',
+        format=VIDEO_H264_MP4,
+        save_output=False,
+        crf=19,
+        pix_fmt=YUV420P,
+        save_metadata=True,
+        trim_to_audio=False,
+        videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideoWrapper_I2V_00024.mp4', 'subfolder': '', 'type': 'temp', 'format': 'video/h264-mp4', 'frame_rate': 16, 'workflow': 'WanVideoWrapper_I2V_00024.png', 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideoWrapper_I2V_00024.mp4'}},
+        images=wanvideowandrawwanmovetracks_2,
+    )
+
+    wanvideowandrawwanmovetracks = WanVideoWanDrawWanMoveTracks(
+        _id='81',
+        images=wanvideodecode,
+        tracks=tracks,
+    )
+
+    vhs_videocombine = VHS_VideoCombine(
+        _id='30',
+        frame_rate=16,
+        filename_prefix='WanVideoWrapper_I2V',
+        format=VIDEO_H264_MP4,
+        save_output=False,
+        crf=19,
+        pix_fmt=YUV420P,
+        save_metadata=True,
+        trim_to_audio=False,
+        videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideoWrapper_I2V_00019.mp4', 'subfolder': '', 'type': 'temp', 'format': 'video/h264-mp4', 'frame_rate': 16, 'workflow': 'WanVideoWrapper_I2V_00019.png', 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideoWrapper_I2V_00019.mp4'}},
+        images=wanvideowandrawwanmovetracks,
+    )
+
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideoWrapper_I2V')
+

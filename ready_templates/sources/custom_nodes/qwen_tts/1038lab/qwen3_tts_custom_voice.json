@@ -1,0 +1,25 @@
+{
+  "1": {
+    "class_type": "AILab_Qwen3TTSCustomVoice",
+    "inputs": {
+      "text": "VibeComfy generated this short Qwen voice smoke test from a reusable Python template.",
+      "speaker": "Ryan",
+      "model_size": "0.6B",
+      "language": "English",
+      "instruct": "Calm, clear, friendly delivery.",
+      "unload_models": true,
+      "seed": 123
+    }
+  },
+  "2": {
+    "class_type": "SaveAudioMP3",
+    "inputs": {
+      "audio": [
+        "1",
+        0
+      ],
+      "filename_prefix": "audio/qwen3_tts_custom_voice",
+      "quality": "V0"
+    }
+  }
+}

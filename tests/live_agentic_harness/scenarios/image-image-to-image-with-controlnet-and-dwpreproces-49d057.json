@@ -1,0 +1,38 @@
+{
+  "id": "image-image-to-image-with-controlnet-and-dwpreproces-49d057",
+  "query": "Change the ControlNet strength to 0.8 so the pose guidance is more subtle.",
+  "workflow_path": "external_workflows/corpus/49d0579ed9932457.json",
+  "network": true,
+  "timeout": 160,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "The generated image follows the input pose/edges less strictly, allowing the sampler more creative freedom while still retaining the pose outline.",
+    "quality": "The ControlNet strength parameter is updated, all node connections remain intact, and the workflow still outputs two preview images.",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "image",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "controlnet",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "controlnet",
+      "dwpreprocessor",
+      "image-to-image",
+      "sampling",
+      "vae",
+      "preview"
+    ],
+    "source_workflow_id": "49d0579ed9932457",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "This precise, testable parameter edit targets the core ControlNet mechanism and avoids generic improvement phrasing."
+  }
+}

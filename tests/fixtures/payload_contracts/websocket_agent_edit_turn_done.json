@@ -1,0 +1,29 @@
+{
+  "session_id": "sess-batch-done",
+  "turn_id": "0002",
+  "turn_number": 3,
+  "entry_type": "batch",
+  "status": "done",
+  "emitted_at": "2025-06-01T12:00:05.678Z",
+  "message": "Edit complete: added PreviewImage node.",
+  "batch_ok": true,
+  "statement_count": 7,
+  "landed_op_count": 2,
+  "statements": [
+    { "op_kind": "query", "status": "done" },
+    { "op_kind": "add_node", "status": "done", "message": "Added PreviewImage" },
+    { "op_kind": "connect", "status": "done", "message": "Connected to SaveImage output" },
+    { "op_kind": "done", "status": "done" }
+  ],
+  "exit_mode": "done",
+  "done_summary": "Added PreviewImage node and connected to output.",
+  "budget": {
+    "remaining_batches": 4,
+    "consecutive_errors": 0
+  },
+  "timing": {
+    "model_elapsed_ms": 3200,
+    "engine_elapsed_ms": 150,
+    "turn_elapsed_ms": 3450
+  }
+}

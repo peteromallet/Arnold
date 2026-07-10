@@ -1,0 +1,387 @@
+{
+  "version": 1,
+  "description": "Regeneration manifest for Sprint 7 generated-required routes promoted to manual when gated regeneration could not safely preserve app-active parity.",
+  "generated_at": null,
+  "generated_by": "sprint7.batch1.t8_manual_promotion",
+  "entries": [
+    {
+      "ready_id": "audio/ace_step_1_5_t2a_song",
+      "template_path": "ready_templates/audio/ace_step_1_5_t2a_song.py",
+      "template_sha256": "d98138bf60b4a4e2aaaa52651c77dd52f20361f2a0fe9b9d2ab65b854b2e916a",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "text_to_audio_song",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json",
+      "resolved_source_path": "ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json",
+      "source_sha256": "6cbab4f5679824d0c33518953582613dea10e21dfe9ab8e66ff1d4e5d7a6c7ba",
+      "source_resolution_status": "resolved",
+      "remediation_state": "manual_promoted_parity_preserved",
+      "diagnostics": [],
+      "review_packet": "out/review_packets/sprint7_t8/ace_step_1_5_t2a_song.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "edit/qwen_image_edit",
+      "template_path": "ready_templates/edit/qwen_image_edit.py",
+      "template_sha256": "2620132e816257fe7ad3ab06e5c226ca0f59438161e48dedc6364267820f5b37",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "image_edit",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/official/edit/qwen_image_edit.json",
+      "resolved_source_path": "ready_templates/sources/official/edit/qwen_image_edit.json",
+      "source_sha256": "34d4a94e9a60c9e60ccd96b965834eee92d0428288cbe000cea6837d9b2f9a94",
+      "source_resolution_status": "resolved",
+      "remediation_state": "manual_promoted_parity_preserved",
+      "diagnostics": [],
+      "review_packet": "out/review_packets/sprint7_t8/qwen_image_edit.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "edit/flux2_klein_4b_image_edit_distilled",
+      "template_path": "ready_templates/edit/flux2_klein_4b_image_edit_distilled.py",
+      "template_sha256": "43fb95ae28c72be9e495e64754558bc9ca7852486bbf4269fde409fb06cd3fb2",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "image_edit",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
+      "resolved_source_path": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
+      "source_sha256": "0f80c2530a50fad061dea855c55c50f586a331c5f2d3f37efe7fea59b4ab9610",
+      "source_resolution_status": "resolved",
+      "remediation_state": "manual_promoted_parity_preserved",
+      "diagnostics": [],
+      "review_packet": "out/review_packets/sprint7_t8/flux2_klein_4b_image_edit_distilled.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "image/qwen_image_2512",
+      "template_path": "ready_templates/image/qwen_image_2512.py",
+      "template_sha256": "c0716acf518923907b78c1d8e3f9bc0ab1c2dae54589c2a3a289998e8d4baf44",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "text_to_image",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/official/image/qwen_image_2512.json",
+      "resolved_source_path": "ready_templates/sources/official/image/qwen_image_2512.json",
+      "source_sha256": "1825da34e2124e9d6d54c8fbcf5b9f1ab901d2fe39be03b358130bb30f06fbdb",
+      "source_resolution_status": "resolved",
+      "remediation_state": "manual_promoted_parity_preserved",
+      "diagnostics": [],
+      "review_packet": "out/review_packets/sprint7_t8/qwen_image_2512.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "image/flux2_klein_4b_t2i",
+      "template_path": "ready_templates/image/flux2_klein_4b_t2i.py",
+      "template_sha256": "fffaa050167671cd5e3ce3c906c3ea774b0dc0c70b00bcedeca9678c1810bd2c",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "text_to_image",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
+      "resolved_source_path": "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
+      "source_sha256": "237b436e577cdd2a97527766637e87af162b4c14fb293c9c269b470b7a2d0166",
+      "source_resolution_status": "resolved",
+      "remediation_state": "manual_promoted_parity_preserved",
+      "diagnostics": [],
+      "review_packet": "out/review_packets/sprint7_t8/flux2_klein_4b_t2i.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "image/flux2_klein_9b_gguf_t2i",
+      "template_path": "ready_templates/image/flux2_klein_9b_gguf_t2i.py",
+      "template_sha256": "9d81115cd576f962effa5da01caf4065fd63ca9f62aba219ea938945b846d733",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "text_to_image",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json",
+      "resolved_source_path": null,
+      "source_sha256": null,
+      "source_resolution_status": "unresolved",
+      "remediation_state": "manual_promoted_missing_source",
+      "diagnostics": [
+        {
+          "code": "source_unresolved",
+          "severity": "warning",
+          "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
+          "detail": {
+            "source_workflow": "ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"
+          }
+        }
+      ],
+      "review_packet": "out/review_packets/sprint7_t8/flux2_klein_9b_gguf_t2i.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "video/wan_t2v",
+      "template_path": "ready_templates/video/wan_t2v.py",
+      "template_sha256": "466800d5623adc4f6f78c508639bd2df9bdb6725cc46e48936240ebb2946678c",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "text_to_video",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/official/video/wan_t2v.json",
+      "resolved_source_path": "ready_templates/sources/official/video/wan_t2v.json",
+      "source_sha256": "6cfcb2bcc842926d462667f1858651a7a73d698591013e4d0370bdc2984a6fea",
+      "source_resolution_status": "resolved",
+      "remediation_state": "manual_promoted_parity_preserved",
+      "diagnostics": [],
+      "review_packet": "out/review_packets/sprint7_t8/wan_t2v.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "video/wan_i2v",
+      "template_path": "ready_templates/video/wan_i2v.py",
+      "template_sha256": "fa96c1bd3422d583ab70bc3d9a5554f48fd07272dd50c02bce0f5d54920eeb0b",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "image_to_video",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/official/video/wan_i2v.json",
+      "resolved_source_path": "ready_templates/sources/official/video/wan_i2v.json",
+      "source_sha256": "e455b28ec1eb5c2312ec4bb65dd2e2e69e9193ee766bdfc251a9c001a15edee4",
+      "source_resolution_status": "resolved",
+      "remediation_state": "manual_promoted_parity_preserved",
+      "diagnostics": [],
+      "review_packet": "out/review_packets/sprint7_t8/wan_i2v.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "video/ltx2_3_t2v",
+      "template_path": "ready_templates/video/ltx2_3_t2v.py",
+      "template_sha256": "572de0f257257305dd5b2e8c099e4076434801c286fa8a4666dee2f9671e3261",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "text_to_video",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
+      "resolved_source_path": null,
+      "source_sha256": null,
+      "source_resolution_status": "unresolved",
+      "remediation_state": "manual_promoted_missing_source",
+      "diagnostics": [
+        {
+          "code": "source_unresolved",
+          "severity": "warning",
+          "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
+          "detail": {
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
+          }
+        }
+      ],
+      "review_packet": "out/review_packets/sprint7_t8/ltx2_3_t2v.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "video/ltx2_3_i2v",
+      "template_path": "ready_templates/video/ltx2_3_i2v.py",
+      "template_sha256": "b093fd5e439a2f862789c50661bc3d4ba4500791be6b954661f12db3ccc9cc31",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "image_to_video",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
+      "resolved_source_path": null,
+      "source_sha256": null,
+      "source_resolution_status": "unresolved",
+      "remediation_state": "manual_promoted_missing_source",
+      "diagnostics": [
+        {
+          "code": "source_unresolved",
+          "severity": "warning",
+          "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
+          "detail": {
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
+          }
+        }
+      ],
+      "review_packet": "out/review_packets/sprint7_t8/ltx2_3_i2v.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "video/ltx2_3_lightricks_two_stage",
+      "template_path": "ready_templates/video/ltx2_3_lightricks_two_stage.py",
+      "template_sha256": "5e2cb7afa29eb7471b36d5834d46a7ee8dfd509d26b88f0c2c56a5010a8ae2ea",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "text_or_image_to_video_upscale",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json",
+      "resolved_source_path": null,
+      "source_sha256": null,
+      "source_resolution_status": "unresolved",
+      "remediation_state": "manual_promoted_missing_source",
+      "diagnostics": [
+        {
+          "code": "source_unresolved",
+          "severity": "warning",
+          "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
+          "detail": {
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json"
+          }
+        }
+      ],
+      "review_packet": "out/review_packets/sprint7_t8/ltx2_3_lightricks_two_stage.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "video/ltx2_3_lightricks_iclora_hdr",
+      "template_path": "ready_templates/video/ltx2_3_lightricks_iclora_hdr.py",
+      "template_sha256": "27bdbe8f50ef6715a96aaa61e6dedb5c1f88bad0ce7af294005ff490aa7fbbbd",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "video_guided_hdr",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json",
+      "resolved_source_path": null,
+      "source_sha256": null,
+      "source_resolution_status": "unresolved",
+      "remediation_state": "manual_promoted_missing_source",
+      "diagnostics": [
+        {
+          "code": "source_unresolved",
+          "severity": "warning",
+          "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
+          "detail": {
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json"
+          }
+        }
+      ],
+      "review_packet": "out/review_packets/sprint7_t8/ltx2_3_lightricks_iclora_hdr.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    },
+    {
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "template_path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
+      "template_sha256": "5001df59ed621f338f5b3569bf89dbc009a955587aef66d02b26a09d884c5e44",
+      "marker": "manual",
+      "coverage_tier": "required",
+      "app_active": true,
+      "capability": "motion_track_control",
+      "source_role": "materialized_ready_python_template",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json",
+      "resolved_source_path": null,
+      "source_sha256": null,
+      "source_resolution_status": "unresolved",
+      "remediation_state": "manual_promoted_missing_source",
+      "diagnostics": [
+        {
+          "code": "source_unresolved",
+          "severity": "warning",
+          "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
+          "detail": {
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json"
+          }
+        }
+      ],
+      "review_packet": "out/review_packets/sprint7_t8/ltx2_3_lightricks_iclora_motion_track.semantic.review.json",
+      "emitter": {
+        "id": "manual_promoted_from_generated_required",
+        "schema_version": 1
+      },
+      "parity_evidence": {
+        "status": "snapshot_or_manual_parity_preserved",
+        "parity_ok": true
+      }
+    }
+  ]
+}

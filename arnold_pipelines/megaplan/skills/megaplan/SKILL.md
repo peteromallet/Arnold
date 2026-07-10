@@ -1,1 +1,0 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/_composed/claude_skill.md

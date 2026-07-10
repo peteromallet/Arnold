@@ -1,0 +1,40 @@
+{
+  "id": "audio-acestep-audio-latent-workflow-with-vocal-separ-0eb676",
+  "query": "Restructure the workflow to combine the separated vocals and background after separate decoding stages instead of before decoding, then save each as separate files.",
+  "workflow_path": "external_workflows/corpus/0eb67659bfc4dc63.json",
+  "network": true,
+  "timeout": 380,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "Vocals and background are decoded separately and saved as individual audio files, then optionally recombined.",
+    "quality": "Both decoding paths work independently and the final outputs are correct, with no dangling connections."
+  },
+  "_tags": {
+    "modality": "audio",
+    "query_type": "big_adjustment",
+    "abstraction": "high",
+    "complexity": "high",
+    "manifest_complexity": 5,
+    "task_type": "compositing",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "audio-processing",
+      "vocal-separation",
+      "ace-step",
+      "latent-audio",
+      "conditioning",
+      "noise-masking",
+      "audio-combining",
+      "audio-filtering",
+      "rgthree-nodes"
+    ],
+    "source_workflow_id": "0eb67659bfc4dc63",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-flash",
+    "author_rationale": "Requires restructuring the decode/recombine flow, a genuine structural change for a complex audio pipeline."
+  }
+}

@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+from vibecomfy.comfy_nodes.agent import runtime
+from vibecomfy.comfy_nodes.agent import provider as agent_provider
+
+
+def test_openrouter_agent_kwargs_use_openrouter_model_slug(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+
+    kwargs = runtime._build_agent_kwargs(
+        "hermes",
+        route="openrouter",
+        model="openrouter:deepseek/deepseek-v4-pro",
+    )
+
+    assert kwargs["provider"] == "openrouter"
+    assert kwargs["base_url"] == "https://openrouter.ai/api/v1"
+    assert kwargs["model"] == "deepseek/deepseek-v4-pro"
+    assert kwargs["max_tokens"] == 2048
+
+
+def test_agent_edit_contract_model_uses_openrouter_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+
+    kwargs = runtime._build_agent_kwargs(
+        "hermes",
+        route="openrouter",
+        model="agent-edit",
+    )
+
+    assert kwargs["provider"] == "openrouter"
+    assert kwargs["model"] == "deepseek/deepseek-v4-pro"
+
+
+def test_openrouter_readiness_does_not_report_contract_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+
+    readiness = runtime.readiness(route="openrouter", model="agent-edit")
+
+    assert readiness["ready"] is True
+    assert readiness["route"] == "openrouter"
+    assert readiness["model"] == "deepseek/deepseek-v4-pro"
+
+
+def test_hermes_route_readiness_maps_to_openrouter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+
+    readiness = runtime.readiness(route="hermes", model="agent-edit")
+
+    assert readiness["ready"] is True
+    assert readiness["route"] == "openrouter"
+    assert readiness["model"] == "deepseek/deepseek-v4-pro"
+
+
+def test_normalize_route_maps_hermes_to_openrouter() -> None:
+    assert runtime._normalize_route("hermes") == "openrouter"
+    assert runtime._requested_route("hermes") == "openrouter"
+
+
+def test_provider_status_preserves_runtime_model_over_contract_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Runtime:
+        @staticmethod
+        def readiness(*, route: str, model: str | None = None) -> dict[str, object]:
+            assert model == "agent-edit"
+            return {
+                "ready": True,
+                "route": "openrouter",
+                "model": "deepseek/deepseek-v4-pro",
+                "reason": "ready",
+            }
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: Runtime)
+    monkeypatch.setattr(agent_provider, "_openrouter_key_present", lambda: True)
+
+    status = agent_provider.readiness(route="auto")
+
+    assert status["ready"] is True
+    assert status["route"] == "openrouter"
+    assert status["model"] == "deepseek/deepseek-v4-pro"
+
+
+def test_resolve_openrouter_key_prefers_openrouter_shaped_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY_2", raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_read_env_file_entries",
+        lambda path=runtime._HERMES_ENV_PATH: [
+            ("OPENROUTER_API_KEY", "sk-or-v1-valid-openrouter-key"),
+            ("OPENROUTER_API_KEY", "sk-stale-direct-key"),
+        ],
+    )
+
+    assert runtime._resolve_openrouter_key() == "sk-or-v1-valid-openrouter-key"
+
+
+def test_run_worker_mirrors_openrouter_key_into_backend_env_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "sk-or-v1-test-key")
+    captured_env: dict[str, str] = {}
+
+    def fake_run(args, **kwargs):
+        captured_env.update(kwargs["env"])
+        with open(args[3], "w", encoding="utf-8") as fh:
+            json.dump({"content": "hello"}, fh)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+
+    result = runtime._run_worker(
+        {"api_key": "sk-or-v1-test-key"},
+        "system",
+        "user",
+        response_contract="batch_repl",
+        agent_id="hermes",
+    )
+
+    assert result["content"] == "hello"
+    assert captured_env["OPENROUTER_API_KEY"] == "sk-or-v1-test-key"
+    assert captured_env["OPENAI_API_KEY"] == "sk-or-v1-test-key"
+    assert captured_env["HERMES_API_KEY"] == "sk-or-v1-test-key"
+
+
+def test_run_worker_mirrors_parent_resolved_native_deepseek_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "sk-or-v1-stale-key")
+    captured_env: dict[str, str] = {}
+
+    def fake_run(args, **kwargs):
+        captured_env.update(kwargs["env"])
+        with open(args[3], "w", encoding="utf-8") as fh:
+            json.dump({"content": "hello"}, fh)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+
+    result = runtime._run_worker(
+        {
+            "api_key": "sk-native-deepseek-key",
+            "base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-v4-flash",
+        },
+        "system",
+        "user",
+        response_contract="batch_repl",
+        agent_id="hermes",
+    )
+
+    assert result["content"] == "hello"
+    assert captured_env["OPENROUTER_API_KEY"] == "sk-native-deepseek-key"
+    assert captured_env["OPENAI_API_KEY"] == "sk-native-deepseek-key"
+    assert captured_env["HERMES_API_KEY"] == "sk-native-deepseek-key"
+
+
+def test_worker_bootstraps_repo_root_from_neutral_cwd(tmp_path) -> None:
+    request_path = tmp_path / "request.json"
+    result_path = tmp_path / "result.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "agent_id": "__missing_test_adapter__",
+                "agent_kwargs": {
+                    "max_iterations": 1,
+                    "enabled_toolsets": [],
+                    "save_trajectories": False,
+                    "skip_context_files": True,
+                    "skip_memory": True,
+                    "quiet_mode": True,
+                },
+                "system_message": None,
+                "user_message": "hello",
+                "response_contract": "text",
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+
+    proc = subprocess.run(
+        [sys.executable, runtime._WORKER_PATH, str(request_path), str(result_path)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert proc.returncode == 0
+    assert result_path.is_file(), proc.stderr or proc.stdout
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["error_type"] == "LookupError"
+    assert "No module named 'vibecomfy'" not in (proc.stderr + proc.stdout + json.dumps(result))
+
+
+def test_run_worker_preserves_stdout_stderr_tail_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "sk-or-v1-test-key")
+
+    def fake_run(args, **kwargs):
+        with open(args[3], "w", encoding="utf-8") as fh:
+            json.dump({"error": "Agent returned an empty batch_repl response.", "error_type": "ValueError"}, fh)
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout="Error code: 402 - This request requires more credits",
+            stderr="HTTP/1.1 402 Payment Required",
+        )
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+
+    result = runtime._run_worker(
+        {"api_key": "sk-or-v1-test-key"},
+        "system",
+        "user",
+        response_contract="batch_repl",
+        agent_id="hermes",
+    )
+
+    assert result["worker_stdout_tail"] == "Error code: 402 - This request requires more credits"
+    assert result["worker_stderr_tail"] == "HTTP/1.1 402 Payment Required"
+
+
+def test_openrouter_empty_batch_response_surfaces_worker_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+    monkeypatch.setattr(
+        runtime,
+        "_run_worker",
+        lambda *args, **kwargs: {
+            "error": "Agent returned an empty batch_repl response.",
+            "error_type": "ValueError",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="empty batch_repl response"):
+        runtime.run_agent_turn_batch(
+            task="make it brighter",
+            route="openrouter",
+            messages=[{"role": "user", "content": "User request:\nmake it brighter"}],
+        )
+
+
+def test_openrouter_worker_error_message_includes_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+    monkeypatch.setattr(
+        runtime,
+        "_run_worker",
+        lambda *args, **kwargs: {
+            "error": "Connection error.",
+            "error_type": "APIConnectionError",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="APIConnectionError: Connection error\\."):
+        runtime.run_agent_turn_batch(
+            task="make it brighter",
+            route="openrouter",
+            messages=[{"role": "user", "content": "User request:\nmake it brighter"}],
+        )
+
+
+def test_openrouter_worker_401_error_is_permission_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+    monkeypatch.setattr(
+        runtime,
+        "_run_worker",
+        lambda *args, **kwargs: {
+            "error": "ProviderCallError: Error code: 401 - Missing Authentication header",
+            "error_type": "ProviderCallError",
+        },
+    )
+
+    with pytest.raises(PermissionError, match="Missing Authentication header"):
+        runtime.run_agent_turn_batch(
+            task="make it brighter",
+            route="openrouter",
+            messages=[{"role": "user", "content": "User request:\nmake it brighter"}],
+        )

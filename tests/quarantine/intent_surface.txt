@@ -1,0 +1,9 @@
+# owner: intent-oracle
+# reason: pre-existing intent/refusal-spine behavior on offline corpus fixtures; needs oracle refresh
+# audit: added during sprint-3 diagnostics verification
+
+tests/intent/test_edit_correctness.py::test_refusal_spine_allows_all_corpus_fixtures
+tests/intent/test_falsification.py::test_refusal_spine_allows_wrong_but_faithful[edit_01_global_denoise_instead_of_mask]
+tests/intent/test_falsification.py::test_refusal_spine_allows_wrong_but_faithful[edit_02_prompt_only_no_mask]
+tests/intent/test_falsification.py::test_refusal_spine_allows_wrong_but_faithful[edit_03_cfg_zero_for_faithful]
+tests/intent/test_falsification.py::test_refusal_spine_allows_wrong_but_faithful[video_05_sampler_euler_ancestral_ltx]

@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "action": "rebaseline",
+  "session_id": "session-stale-submit",
+  "baseline_turn_id": null,
+  "baseline_graph_hash": "baseline-current-canvas",
+  "baseline_graph_hash_kind": "structural",
+  "baseline_graph_hash_version": 2,
+  "baseline_source": "rebaseline",
+  "baseline_rebaseline_id": "rebaseline-0001",
+  "baseline_graph_source_path": "_rebaseline/rebaseline-0001/graph.ui.json",
+  "apply_allowed": false,
+  "canvas_apply_allowed": false,
+  "queue_allowed": false,
+  "apply_eligibility": {
+    "applyable": false,
+    "reason": "no_candidate",
+    "message": "No candidate is available to apply.",
+    "warnings": []
+  }
+}

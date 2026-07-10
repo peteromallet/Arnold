@@ -1,0 +1,185 @@
+{
+  "78": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "image_qwen_image_edit_input_image.png"
+    }
+  },
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_fp8_e4m3fn.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": false
+    }
+  },
+  "5": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": false
+    }
+  },
+  "6": {
+    "class_type": "TextEncodeQwenImageEdit",
+    "inputs": {
+      "prompt": "Remove all UI text elements from the image. Keep the feeling that the characters and scene are in water. Also, remove the green UI elements at the bottom.",
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "image": [
+        "78",
+        0
+      ]
+    }
+  },
+  "7": {
+    "class_type": "TextEncodeQwenImageEdit",
+    "inputs": {
+      "prompt": "",
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "image": [
+        "78",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "78",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors",
+      "model": [
+        "1",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": false,
+      "on_false": [
+        "1",
+        0
+      ],
+      "on_true": [
+        "9",
+        0
+      ]
+    }
+  },
+  "11": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "shift": 3,
+      "model": [
+        "10",
+        0
+      ]
+    }
+  },
+  "12": {
+    "class_type": "CFGNorm",
+    "inputs": {
+      "widget_0": 1,
+      "model": [
+        "11",
+        0
+      ]
+    }
+  },
+  "13": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 344147753686358,
+      "sampler_name": "euler",
+      "model": [
+        "12",
+        0
+      ],
+      "steps": [
+        "5",
+        0
+      ],
+      "cfg": [
+        "4",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "8",
+        0
+      ]
+    }
+  },
+  "14": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "13",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "60": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "14",
+        0
+      ]
+    }
+  }
+}

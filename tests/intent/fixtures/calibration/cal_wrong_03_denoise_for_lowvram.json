@@ -1,0 +1,18 @@
+{
+  "id": "cal_wrong_03_denoise_for_lowvram",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
+  "nl_intent": "Enable low VRAM mode so the workflow can run on a GPU with only 8 GB of memory",
+  "post_edit_ir_patch": {
+    "node_id": "238:230",
+    "field": "denoise",
+    "old": 1.0,
+    "new": 0.5
+  },
+  "wrongness_description": "Editor halved KSampler denoise from 1.0 to 0.5 reasoning that fewer effective denoising operations would require less GPU memory. Denoise strength controls how much of the diffusion trajectory is traversed, not GPU memory allocation. Reducing denoise in a t2i workflow produces blurry, under-denoised outputs and does not free VRAM. Enabling low VRAM mode requires model offloading (e.g. a LowVRAM or GGUF model variant) or applying a tiled-VAE/sequential-CPU-offload patch.",
+  "family": "image",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["238:230", "denoise"]]
+  },
+  "expected_text_judge_verdict": "FAIL"
+}

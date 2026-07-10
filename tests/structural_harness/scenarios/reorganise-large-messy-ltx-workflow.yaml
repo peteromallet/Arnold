@@ -1,0 +1,35 @@
+name: reorganise-large-messy-ltx-workflow
+tier: 6
+description: "Workflow reorganisation: a large messy 119-node LTX workflow can be reorganised into non-overlapping colored sections with structural hash preserved"
+mode: structural
+agents:
+  - id: builder
+    dispatcher: fake
+tags:
+  - reorganise
+  - workflow-layout
+  - visual
+  - structural
+  - large-workflow
+  - ltx
+assessment:
+  enforced:
+    - "layout_observation.json records structural_noop=true and matching structural hashes before/after."
+    - "layout_observation.json records before_metrics.overlap_count greater than 0 and after_metrics.overlap_count equal to 0."
+    - "layout_observation.json records after_metrics.spacing_density lower than before_metrics.spacing_density."
+    - "layout_observation.json records after_metrics.group_signal_strength at least 1.0 and after_metrics.group_coherence at least 0.65."
+    - "layout_before.png and layout_after.png are present as abstract visual evidence for image-understanding review."
+    - "actions.jsonl records reorganise.preview, reorganise.apply_layout_candidate, and reorganise.observe_layout."
+  graded:
+    - "The after layout should read as clearer colored semantic sections rather than a dense overlapping canvas."
+    - "Remaining long helper/backward edges may be warnings, but they should not hide node/group overlap regressions."
+  observed:
+    - "vision_prompt.txt explains the intended image-understanding comparison."
+extras:
+  flow_kind: workflow_reorganisation_structural
+  required_frozen_evidence:
+    - evidence/layout_observation.json
+    - evidence/layout_before.png
+    - evidence/layout_after.png
+    - evidence/vision_prompt.txt
+    - evidence/actions.jsonl

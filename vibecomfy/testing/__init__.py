@@ -1,0 +1,80 @@
+"""Public testing surface for VibeComfy users.
+
+This subpackage gives users a `pytest`-style toolkit for asserting on
+`VibeWorkflow` graphs and compiled API dicts, plus a dry-run runtime
+and snapshot helpers.
+
+Implementation modules (`assertions`, `dry_run`, `fixtures`, `snapshot`)
+provide the public testing helpers exported here.
+
+Import-cost contract: this module (and everything it imports at module
+level) MUST NOT pull in `vibecomfy.schema.provider`, `vibecomfy.runtime.*`,
+or `vibecomfy.comfy_command`. Use the local Protocols in
+`vibecomfy.testing._schema` (`SchemaProviderLike`, `NodeSchemaLike`)
+when type annotations are needed.
+"""
+
+from __future__ import annotations
+
+from vibecomfy.testing._schema import NodeSchemaLike, SchemaProviderLike
+from vibecomfy.testing.assertions import (
+    assert_compiles_cleanly,
+    assert_edge,
+    assert_input_bound,
+    assert_input_value,
+    assert_no_dangling_handles,
+    assert_node_present,
+    assert_output_kind,
+)
+from vibecomfy.testing.dry_run import DryRunResult, WouldInvoke, dry_run
+from vibecomfy.testing.snapshot import canonicalize_api
+
+_FIXTURE_EXPORTS = {
+    "WorkflowFactory",
+    "HandleFactory",
+    "DryRuntime",
+    "vibecomfy_workflow_factory",
+    "vibecomfy_handle_factory",
+    "dry_runtime",
+    "make_workflow_factory",
+    "make_handle_factory",
+}
+
+
+def __getattr__(name: str):
+    if name in _FIXTURE_EXPORTS:
+        from vibecomfy.testing import fixtures
+
+        value = getattr(fixtures, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module 'vibecomfy.testing' has no attribute {name!r}")
+
+__all__ = [
+    # Schema Protocols (local, runtime-free)
+    "NodeSchemaLike",
+    "SchemaProviderLike",
+    "WorkflowFactory",
+    "HandleFactory",
+    "DryRuntime",
+    # Assertions (filled in by T2)
+    "assert_node_present",
+    "assert_edge",
+    "assert_input_value",
+    "assert_output_kind",
+    "assert_input_bound",
+    "assert_compiles_cleanly",
+    "assert_no_dangling_handles",
+    # Dry-run runtime (filled in by T3)
+    "dry_run",
+    "DryRunResult",
+    "WouldInvoke",
+    # Fixtures (filled in by T4)
+    "vibecomfy_workflow_factory",
+    "vibecomfy_handle_factory",
+    "dry_runtime",
+    "make_workflow_factory",
+    "make_handle_factory",
+    # Snapshot helpers (filled in by T6)
+    "canonicalize_api",
+]

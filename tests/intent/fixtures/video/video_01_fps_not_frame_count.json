@@ -1,0 +1,18 @@
+{
+  "id": "video_01_fps_not_frame_count",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
+  "nl_intent": "Make the video longer, at least 5 seconds",
+  "post_edit_ir_patch": {
+    "node_id": "49",
+    "field": "fps",
+    "old": 16,
+    "new": 8
+  },
+  "wrongness_description": "Model reduced CreateVideo node 49 fps from 16 to 8, reasoning that halving the frame rate would double the playback duration. This halves the playback speed rather than generating more frames. Increasing video length requires raising num_frames on EmptyHunyuanLatentVideo node 40 (currently 33 frames at 16 fps = ~2 s). To reach 5 s, num_frames should be set to ~80.",
+  "family": "video",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["49", "fps"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

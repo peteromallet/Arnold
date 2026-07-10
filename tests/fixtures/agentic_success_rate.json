@@ -1,0 +1,66 @@
+{
+  "budgets": {
+    "doctor_all": 5.0,
+    "json_to_template": 5.0,
+    "node_splice": 5.0,
+    "tweak_and_run": 5.0
+  },
+  "dry_run": true,
+  "max_budget_per_category": 5.0,
+  "model": "deepseek:deepseek-v4-pro",
+  "results": [
+    {
+      "category": "tweak_and_run",
+      "description": "Tweak prompt, seed, and steps on a ready template, then compile to API JSON",
+      "detail": "Tweaked 3 inputs; API has 1 nodes",
+      "dry_run": true,
+      "duration_ms": 0.0,
+      "status": "ok",
+      "success": true,
+      "success_metric": "Workflow compiled with tweaked inputs; API JSON contains expected nodes",
+      "task_id": "tweak_and_run"
+    },
+    {
+      "category": "json_to_template",
+      "description": "Create a workflow from a ComfyUI API JSON file",
+      "detail": "Workflow created from JSON source: ready_templates/sources/official/video/wan_i2v.json, 5 nodes",
+      "dry_run": true,
+      "duration_ms": 0.0,
+      "status": "ok",
+      "success": true,
+      "success_metric": "JSON validated and workflow object created from file",
+      "task_id": "json_to_template"
+    },
+    {
+      "category": "doctor_all",
+      "description": "Debug a failing template with port doctor-all",
+      "detail": "Doctor-all status=ok, 0 findings, 1 sections",
+      "dry_run": true,
+      "duration_ms": 0.0,
+      "status": "ok",
+      "success": true,
+      "success_metric": "Doctor-all ran without crashing and produced diagnostic sections",
+      "task_id": "doctor_all"
+    },
+    {
+      "category": "node_splice",
+      "description": "Splice a custom node-pack class into a workflow",
+      "detail": "Spliced class 'VHS_VideoCombine' into workflow with 1 nodes",
+      "dry_run": true,
+      "duration_ms": 0.0,
+      "status": "ok",
+      "success": true,
+      "success_metric": "Custom node class appears in the workflow graph",
+      "task_id": "node_splice"
+    }
+  ],
+  "spent": {
+    "doctor_all": 0.0,
+    "json_to_template": 0.0,
+    "node_splice": 0.0,
+    "tweak_and_run": 0.0
+  },
+  "success_rate": 1.0,
+  "successes": 4,
+  "total_tasks": 4
+}

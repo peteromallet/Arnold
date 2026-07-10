@@ -1,0 +1,1240 @@
+{
+  "entries": [
+    {
+      "app_active": false,
+      "capability": "audio",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 1
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/audio/ace_step_1_5_t2a_song.py",
+      "ready_id": "audio/ace_step_1_5_t2a_song",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json"
+    },
+    {
+      "app_active": false,
+      "capability": "audio",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/audio/qwen3_tts_custom_voice.py",
+      "ready_id": "audio/qwen3_tts_custom_voice",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_custom_voice.json"
+    },
+    {
+      "app_active": false,
+      "capability": "audio",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 1
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/audio/qwen3_tts_voice_clone.py",
+      "ready_id": "audio/qwen3_tts_voice_clone",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json"
+    },
+    {
+      "app_active": false,
+      "capability": "audio",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/audio/qwen3_tts_voice_design.py",
+      "ready_id": "audio/qwen3_tts_voice_design",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/edit/flux2_klein_4b_image_edit_base.py",
+      "ready_id": "edit/flux2_klein_4b_image_edit_base",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/edit/flux2_klein_4b_image_edit_distilled.py",
+      "ready_id": "edit/flux2_klein_4b_image_edit_distilled",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/edit/flux2_klein_9b_image_edit_base.py",
+      "ready_id": "edit/flux2_klein_9b_image_edit_base",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/edit/flux2_klein_9b_image_edit_distilled.py",
+      "ready_id": "edit/flux2_klein_9b_image_edit_distilled",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 1
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/edit/qwen_image_edit.py",
+      "ready_id": "edit/qwen_image_edit",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/edit/qwen_image_edit.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image_upscale",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/image/basic_image_upscale.py",
+      "ready_id": "image/basic_image_upscale",
+      "source_role": null,
+      "source_workflow": "ready_templates/image/basic_image_upscale.py"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/image/flux2_klein_4b_t2i.py",
+      "ready_id": "image/flux2_klein_4b_t2i",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/image/flux2_klein_4b_t2i.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/image/flux2_klein_9b_gguf_t2i.py",
+      "ready_id": "image/flux2_klein_9b_gguf_t2i",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/image/flux2_klein_9b_t2i.py",
+      "ready_id": "image/flux2_klein_9b_t2i",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/image/flux2_klein_9b_t2i.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/image/qwen_image_2512.py",
+      "ready_id": "image/qwen_image_2512",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/image/qwen_image_2512.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/image/z_image.py",
+      "ready_id": "image/z_image",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/image/z_image.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image_to_image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/image/z_image_img2img.py",
+      "ready_id": "image/z_image_img2img",
+      "source_role": null,
+      "source_workflow": "ready_templates/image/z_image_img2img.py"
+    },
+    {
+      "app_active": false,
+      "capability": "runtime_smoke",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "",
+      "marker": "generated",
+      "missing_source_provenance": true,
+      "path": "ready_templates/smoke/empty_image_red.py",
+      "ready_id": "smoke/empty_image_red",
+      "source_role": null,
+      "source_workflow": null
+    },
+    {
+      "app_active": false,
+      "capability": "video_enhance",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/basic_video_enhance.py",
+      "ready_id": "video/basic_video_enhance",
+      "source_role": null,
+      "source_workflow": "ready_templates/video/basic_video_enhance.py"
+    },
+    {
+      "app_active": false,
+      "capability": "first_last_frame_control_video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_first_last_frame_travel_iclora_control.py",
+      "ready_id": "video/ltx2_3_first_last_frame_travel_iclora_control",
+      "source_role": null,
+      "source_workflow": "manual"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 1,
+        "uuid_class_types": 0,
+        "widget_n_fields": 8
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_i2v.py",
+      "ready_id": "video/ltx2_3_i2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
+    },
+    {
+      "app_active": false,
+      "capability": "unknown",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 33,
+        "uuid_class_types": 0,
+        "widget_n_fields": 181
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 42,
+        "uuid_class_types": 0,
+        "widget_n_fields": 194
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_AU_IMG2V.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 26,
+        "uuid_class_types": 0,
+        "widget_n_fields": 119
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "ready_id": "video/ltx2_3_iamccs_long_i2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json"
+    },
+    {
+      "app_active": false,
+      "capability": "first_last_frame_video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "",
+      "marker": "generated",
+      "missing_source_provenance": true,
+      "path": "ready_templates/video/ltx2_3_lightricks_first_last_parity.py",
+      "ready_id": "video/ltx2_3_lightricks_first_last_parity",
+      "source_role": null,
+      "source_workflow": null
+    },
+    {
+      "app_active": false,
+      "capability": "first_last_frame_video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "",
+      "marker": "generated",
+      "missing_source_provenance": true,
+      "path": "ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py",
+      "ready_id": "video/ltx2_3_lightricks_first_last_two_stage_lowvram",
+      "source_role": null,
+      "source_workflow": null
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 2
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_hdr.py",
+      "ready_id": "video/ltx2_3_lightricks_iclora_hdr",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 9
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 2,
+        "uuid_class_types": 0,
+        "widget_n_fields": 7
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_union_control.py",
+      "ready_id": "video/ltx2_3_lightricks_iclora_union_control",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Union_Control_Distilled.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 2
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_lightricks_two_stage.py",
+      "ready_id": "video/ltx2_3_lightricks_two_stage",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 2,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_runexx_custom_audio.py",
+      "ready_id": "video/ltx2_3_runexx_custom_audio",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Custom_Audio.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 2
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_runexx_first_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_last_frame",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json"
+    },
+    {
+      "app_active": false,
+      "capability": "first_last_frame_raw_video_guide",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 2
+      },
+      "coverage_tier": "",
+      "marker": "generated",
+      "missing_source_provenance": true,
+      "path": "ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py",
+      "ready_id": "video/ltx2_3_runexx_first_last_raw_video_guide",
+      "source_role": null,
+      "source_workflow": null
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 12
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 3,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_runexx_lipsync_custom_audio.py",
+      "ready_id": "video/ltx2_3_runexx_lipsync_custom_audio",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Just_Talk_custom_audio_lipsync.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 1,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_runexx_motion_transfer_dwpose.py",
+      "ready_id": "video/ltx2_3_runexx_motion_transfer_dwpose",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Motion_Transfer_DWPose.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 2,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_runexx_music_video_low_ram.py",
+      "ready_id": "video/ltx2_3_runexx_music_video_low_ram",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 6,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_runexx_talking_avatar_qwen_tts.py",
+      "ready_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 1
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_runexx_video_to_video_extend.py",
+      "ready_id": "video/ltx2_3_runexx_video_to_video_extend",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 1,
+        "uuid_class_types": 0,
+        "widget_n_fields": 8
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/ltx2_3_t2v.py",
+      "ready_id": "video/ltx2_3_t2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
+    },
+    {
+      "app_active": false,
+      "capability": "animate_character",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wan22_animate_native_first_stage.py",
+      "ready_id": "video/wan22_animate_native_first_stage",
+      "source_role": null,
+      "source_workflow": "ready_templates/video/wan22_animate_native_first_stage.py"
+    },
+    {
+      "app_active": false,
+      "capability": "image_to_video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "",
+      "marker": "generated",
+      "missing_source_provenance": true,
+      "path": "ready_templates/video/wan22_i2v_comfy_lightx2v.py",
+      "ready_id": "video/wan22_i2v_comfy_lightx2v",
+      "source_role": null,
+      "source_workflow": null
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 4
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wan_i2v.py",
+      "ready_id": "video/wan_i2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/video/wan_i2v.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "required",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wan_t2v.py",
+      "ready_id": "video/wan_t2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/official/video/wan_t2v.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 2
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_control_lora.py",
+      "ready_id": "video/wanvideo_wrapper_13b_control_lora",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 3,
+        "uuid_class_types": 0,
+        "widget_n_fields": 15
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "ready_id": "video/wanvideo_wrapper_13b_recammaster",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_13b_vace.py",
+      "ready_id": "video/wanvideo_wrapper_13b_vace",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_flf2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_flf2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_flf2v.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 1
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_fun_control",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 2,
+        "uuid_class_types": 0,
+        "widget_n_fields": 6
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_i2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_i2v.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 1
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_t2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_t2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_t2v.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 2,
+        "uuid_class_types": 0,
+        "widget_n_fields": 10
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 8
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json"
+    },
+    {
+      "app_active": false,
+      "capability": "image_to_video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_14b_i2v_kijai.py",
+      "ready_id": "video/wanvideo_wrapper_22_14b_i2v_kijai",
+      "source_role": null,
+      "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_i2v_kijai.py"
+    },
+    {
+      "app_active": false,
+      "capability": "text_to_image_single_frame",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 5
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_14b_t2i.py",
+      "ready_id": "video/wanvideo_wrapper_22_14b_t2i",
+      "source_role": null,
+      "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_t2i.py"
+    },
+    {
+      "app_active": false,
+      "capability": "video_vace_travel_join",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_14b_vace_cocktail.py",
+      "ready_id": "video/wanvideo_wrapper_22_14b_vace_cocktail",
+      "source_role": null,
+      "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_vace_cocktail.py"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_22_5b_i2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 1,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v_controlnet.py",
+      "ready_id": "video/wanvideo_wrapper_22_5b_i2v_controlnet",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v_controlnet.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 1
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_5b_ovi_audio_i2v.py",
+      "ready_id": "video/wanvideo_wrapper_22_5b_ovi_audio_i2v",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 1,
+        "uuid_class_types": 0,
+        "widget_n_fields": 0
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_5b_t2v_controlnet.py",
+      "ready_id": "video/wanvideo_wrapper_22_5b_t2v_controlnet",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_t2v_controlnet.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 4,
+        "uuid_class_types": 0,
+        "widget_n_fields": 11
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_context_window.json"
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 2,
+        "uuid_class_types": 0,
+        "widget_n_fields": 4
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_framepack_pose.py",
+      "ready_id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json"
+    },
+    {
+      "app_active": false,
+      "capability": "animate_character",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 0,
+        "uuid_class_types": 0,
+        "widget_n_fields": 9
+      },
+      "coverage_tier": "",
+      "marker": "generated",
+      "missing_source_provenance": true,
+      "path": "ready_templates/video/wanvideo_wrapper_22_wan_animate_preprocess_kijai.py",
+      "ready_id": "video/wanvideo_wrapper_22_wan_animate_preprocess_kijai",
+      "source_role": null,
+      "source_workflow": null
+    },
+    {
+      "app_active": false,
+      "capability": "video",
+      "counts": {
+        "local_node_copies": 0,
+        "missing_output_contract": false,
+        "n_uuid_variables": 0,
+        "positional_outs": 1,
+        "uuid_class_types": 0,
+        "widget_n_fields": 9
+      },
+      "coverage_tier": "supplemental",
+      "marker": "generated",
+      "missing_source_provenance": false,
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "ready_id": "video/wanvideo_wrapper_wan_animate",
+      "source_role": null,
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan_animate.json"
+    }
+  ],
+  "exclude_rule": "exclude __init__.py and files whose basename starts with '_'",
+  "generated_from": "repo-only ready_templates/**/*.py glob",
+  "include_rule": "find ready_templates -type f -name '*.py' ! -name '_*' ! -name '__init__.py' | sort",
+  "summary": {
+    "app_active": 0,
+    "local_node_copies_total": 0,
+    "marker_generated": 64,
+    "missing_output_contract": 0,
+    "missing_source_provenance": 6,
+    "n_uuid_variables_total": 0,
+    "positional_outs_total": 135,
+    "templates_with_issues": 37,
+    "tier_required": 15,
+    "tier_supplemental": 43,
+    "tier_unset": 6,
+    "uuid_class_types_total": 0,
+    "widget_n_fields_total": 636
+  },
+  "template_count": 64,
+  "version": 1
+}

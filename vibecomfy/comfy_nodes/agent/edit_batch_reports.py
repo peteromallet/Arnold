@@ -1,0 +1,437 @@
+# Generated from edit.py. Keep behavior changes in the installed source body.
+# Contents: Batch reports, terminal clarify parsing, and budget classification.
+
+SOURCE = r'''
+def _format_batch_report(
+    batch_result: Any,
+    *,
+    consecutive_errors: int,
+    budget_remaining: int,
+    lint_dropped_count: int = 0,
+    lint_diagnostics: tuple[dict[str, Any], ...] = (),
+) -> str:
+    """Build a deterministic text teaching report from a :class:`BatchResult`.
+
+    The report is grounded only in ``BatchResult.statements`` and
+    ``CompactDiagnostic`` fields — it never invents schema hints or other
+    generated content.
+    """
+    statement_lines: list[str] = []
+    landed_count = 0
+    failed_count = 0
+    for statement in batch_result.statements:
+        if statement.landed:
+            landed_count += 1
+        if not statement.ok:
+            failed_count += 1
+        marker = "✓" if statement.ok else "✗"
+        status = "landed" if statement.landed else "not landed"
+        op_kind = statement.op_kind or "statement"
+        source_text = _format_statement_source(statement.source)
+        line = (
+            f"{marker} Statement {statement.statement_index}: "
+            f"{op_kind} — {status}"
+        )
+        extras: list[str] = []
+        if source_text:
+            extras.append(f'source: "{source_text}"')
+        if statement.touched_uids:
+            extras.append(
+                "touched uids: [{}]".format(", ".join(statement.touched_uids))
+            )
+        if statement.dependency_cause:
+            extras.append(f"cause: {statement.dependency_cause}")
+        if statement.diagnostics:
+            primary = statement.diagnostics[0]
+            extras.append(f"{primary.code}: {primary.message}")
+        if statement.teaching_hint:
+            extras.append(f"hint: {statement.teaching_hint}")
+        if extras:
+            line += f" ({'; '.join(extras)})"
+        statement_lines.append(line)
+        query_output = statement.detail.get("query_output") if isinstance(statement.detail, dict) else None
+        if isinstance(query_output, str) and query_output:
+            query_name = statement.detail.get("query") if isinstance(statement.detail, dict) else None
+            statement_lines.append(
+                _format_query_output(
+                    query_output,
+                    max_chars=None if query_name == "python" else 4000,
+                )
+            )
+
+    diagnostic_lines = [
+        f"! {diagnostic.code}: {diagnostic.message}"
+        for diagnostic in batch_result.diagnostics
+    ]
+    # Append lint diagnostics so the model sees them inline.
+    if lint_diagnostics:
+        diagnostic_lines.extend(
+            f"! [lint] {d['code']}: {d['message']}"
+            for d in lint_diagnostics
+        )
+    lint_note = (
+        f", {lint_dropped_count} lint-dropped no-op(s)"
+        if lint_dropped_count
+        else ""
+    )
+    summary = (
+        f"Turn summary: {landed_count} landed, {failed_count} failed, "
+        f"{len(batch_result.diagnostics)} diagnostic(s)"
+        f"{lint_note}, "
+        f"{budget_remaining} turn(s) remaining, "
+        f"{consecutive_errors} consecutive error turn(s)."
+    )
+    query_only_note = ""
+    statements = tuple(batch_result.statements or ())
+    if statements and landed_count == 0 and all((statement.op_kind or "") == "query" for statement in statements):
+        query_only_note = (
+            "No edits were made this turn. Search/query output is discovery only. "
+            "If it returned a usable signature or precedent, construct and wire the edit now; "
+            "do not search again unless the last query failed to identify a usable path. "
+            "If a workflow-derived class has a usable signature, use that exact class as the "
+            "workflow pattern even when its name is generic; do not invent or search for a "
+            "branded variant that did not appear in the workflow evidence. Treat weak "
+            "external mentions as evidence only; they do not make a node authorable. "
+            "If an exact local schema lookup missed, stop using local lookup as research "
+            "and either adapt with available authorable classes or clarify with the "
+            "specific missing authoring surface."
+        )
+    lines = [summary, *statement_lines, query_only_note, *diagnostic_lines]
+    return "\n".join(line for line in lines if line)
+
+
+def _format_batch_report_json(
+    batch_result: Any,
+    *,
+    consecutive_errors: int,
+    budget_remaining: int,
+    lint_dropped_count: int = 0,
+    lint_diagnostics: tuple[dict[str, Any], ...] = (),
+) -> dict[str, Any]:
+    """Build a deterministic JSON teaching report from a :class:`BatchResult`.
+
+    Every field is derived from ``BatchResult.statements`` and
+    ``CompactDiagnostic`` fields — no invented content.
+    """
+    landed_count = sum(1 for s in batch_result.statements if s.landed)
+    failed_count = sum(1 for s in batch_result.statements if not s.ok)
+    result: dict[str, Any] = {
+        "summary": {
+            "landed": landed_count,
+            "failed": failed_count,
+            "budget_remaining": budget_remaining,
+            "consecutive_errors": consecutive_errors,
+        },
+        "statements": [
+            {
+                "statement_index": item.statement_index,
+                "source": item.source,
+                "ok": item.ok,
+                "landed": item.landed,
+                "op_kind": item.op_kind,
+                "detail": _json_safe(dict(item.detail)),
+                "touched_uids": list(item.touched_uids),
+                "dependency_cause": item.dependency_cause,
+                "teaching_hint": item.teaching_hint,
+                "diagnostics": [
+                    _compact_diag_to_dict(diag) for diag in item.diagnostics
+                ],
+            }
+            for item in batch_result.statements
+        ],
+        "diagnostics": [
+            _compact_diag_to_dict(item) for item in batch_result.diagnostics
+        ],
+    }
+    if lint_dropped_count:
+        result["summary"]["lint_dropped"] = lint_dropped_count
+    if lint_diagnostics:
+        result["lint_diagnostics"] = [
+            dict(d) for d in lint_diagnostics
+        ]
+    return result
+
+
+_CLARIFY_CALL_RE = re.compile(
+    r'(?m)^\s*clarify\("((?:[^"\\]|\\.)*)"\)\s*$'
+)
+
+_BATCH_EXIT_PURE_CLARIFY = "pure_clarify"
+_BATCH_EXIT_EDIT_CLARIFY = "edit_clarify"
+_BATCH_EXIT_DONE = "done"
+_BATCH_EXIT_BUDGET = "budget"
+_BATCH_EXIT_NOOP = "noop"
+
+
+@dataclass(frozen=True)
+class TerminalClarifySplit:
+    batch: str
+    message: str | None
+
+
+def _extract_clarify_message(batch: str) -> str | None:
+    matches = _CLARIFY_CALL_RE.findall(batch)
+    if not matches:
+        return None
+    try:
+        return json.loads(f'"{matches[0]}"')
+    except json.JSONDecodeError:
+        return matches[0]
+
+
+def _is_terminal_clarify_expr(node: ast.stmt) -> bool:
+    if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+        return False
+    call = node.value
+    if not isinstance(call.func, ast.Name) or call.func.id != "clarify":
+        return False
+    return (
+        len(call.args) == 1
+        and not call.keywords
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+    )
+
+
+def _is_done_expr(node: ast.stmt) -> bool:
+    if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+        return False
+    call = node.value
+    return (
+        isinstance(call.func, ast.Name)
+        and call.func.id == "done"
+        and not call.args
+        and not call.keywords
+    )
+
+
+def _contains_clarify_call(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id == "clarify"
+        for child in ast.walk(node)
+    )
+
+
+def _offset_from_ast_position(batch: str, lineno: int, col_offset: int) -> int:
+    lines = batch.splitlines(keepends=True)
+    if lineno <= 0:
+        return 0
+    before = sum(len(line) for line in lines[: lineno - 1])
+    line = lines[lineno - 1] if lineno - 1 < len(lines) else ""
+    # AST column offsets are UTF-8 byte offsets. Convert them back to Python
+    # character offsets before slicing the original source string.
+    char_col = len(line.encode("utf-8")[:col_offset].decode("utf-8", errors="ignore"))
+    return before + char_col
+
+
+def _decode_clarify_literal(raw: str) -> str:
+    try:
+        return json.loads(f'"{raw}"')
+    except json.JSONDecodeError:
+        return raw
+
+
+def _split_terminal_clarify_line_regex(batch: str) -> TerminalClarifySplit:
+    matches = list(_CLARIFY_CALL_RE.finditer(batch))
+    if not matches:
+        return TerminalClarifySplit(batch=batch, message=None)
+    terminal_match = matches[-1]
+    if any(match.start() != terminal_match.start() for match in matches[:-1]):
+        return TerminalClarifySplit(batch=batch, message=None)
+    trailing = batch[terminal_match.end() :]
+    trailing_lines = trailing.splitlines()
+    allowed_done_seen = False
+    for line in trailing_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not allowed_done_seen and stripped == "done()":
+            allowed_done_seen = True
+            continue
+        return TerminalClarifySplit(batch=batch, message=None)
+    return TerminalClarifySplit(
+        batch=batch[: terminal_match.start()].rstrip(),
+        message=_decode_clarify_literal(terminal_match.group(1)),
+    )
+
+
+def split_terminal_clarify(batch: str) -> TerminalClarifySplit:
+    """Split a final top-level clarify("...") call from editable batch code."""
+    try:
+        module = ast.parse(batch)
+    except SyntaxError:
+        return _split_terminal_clarify_line_regex(batch)
+    if not module.body:
+        return TerminalClarifySplit(batch=batch, message=None)
+
+    body = list(module.body)
+    trailing_done: ast.stmt | None = None
+    if body and _is_done_expr(body[-1]):
+        trailing_done = body.pop()
+    if not body:
+        return TerminalClarifySplit(batch=batch, message=None)
+
+    terminal = body[-1]
+    if not _is_terminal_clarify_expr(terminal):
+        return TerminalClarifySplit(batch=batch, message=None)
+    if any(_contains_clarify_call(stmt) for stmt in body[:-1]):
+        return TerminalClarifySplit(batch=batch, message=None)
+
+    call = terminal.value
+    assert isinstance(call, ast.Call)
+    message_node = call.args[0]
+    assert isinstance(message_node, ast.Constant)
+    start = _offset_from_ast_position(batch, terminal.lineno, terminal.col_offset)
+    editable_batch = batch[:start].rstrip()
+    if editable_batch.endswith(";"):
+        editable_batch = editable_batch[:-1].rstrip()
+    if trailing_done is not None:
+        trailing_start = _offset_from_ast_position(batch, trailing_done.lineno, trailing_done.col_offset)
+        if terminal.end_lineno is None or terminal.end_col_offset is None:
+            terminal_end = start
+        else:
+            terminal_end = _offset_from_ast_position(batch, terminal.end_lineno, terminal.end_col_offset)
+        between = batch[terminal_end:trailing_start]
+        if any(line.strip() and not line.lstrip().startswith("#") for line in between.splitlines()):
+            return TerminalClarifySplit(batch=batch, message=None)
+    return TerminalClarifySplit(batch=editable_batch, message=message_node.value)
+
+
+def _batch_has_landed_edits(state: "AgentEditState") -> bool:
+    return any(
+        isinstance(turn, Mapping) and int(turn.get("landed_op_count", 0)) > 0
+        for turn in state.batch_turns
+    )
+
+
+_BATCH_UNREPRESENTABLE_DIAGNOSTIC_CODES = {
+    "statement_not_allowed",
+    "call_not_allowed",
+    "nested_call_not_allowed",
+    "raw_coordinate_kwarg_not_allowed",
+    "intent_class_construction_not_allowed",
+    "cross_scope_add_node_unsupported",
+    "scope_escape_not_allowed",
+    "original_virtual_node_immutable",
+    "kwargs_unpack_not_allowed",
+    "dict_unpack_not_allowed",
+    "lambda_not_allowed",
+    "comprehension_not_allowed",
+    "f_string_not_allowed",
+    "for_else_not_allowed",
+    "import_not_allowed",
+}
+
+
+def _batch_turn_diagnostics(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    for turn in turns:
+        if not isinstance(turn, Mapping):
+            continue
+        for diagnostic in turn.get("diagnostics") or []:
+            if isinstance(diagnostic, Mapping):
+                diagnostics.append(dict(diagnostic))
+        for statement in turn.get("statements") or []:
+            if not isinstance(statement, Mapping):
+                continue
+            for diagnostic in statement.get("diagnostics") or []:
+                if isinstance(diagnostic, Mapping):
+                    diagnostics.append(dict(diagnostic))
+    return diagnostics
+
+
+def _batch_budget_artifixer_report(
+    state: "AgentEditState",
+    failure_kind: FailureKind,
+) -> dict[str, Any]:
+    """Classify a terminal batch stop for a future repair pass without mutating it."""
+    diagnostics = _batch_turn_diagnostics(state.batch_turns)
+    diagnostic_codes = sorted(
+        {
+            str(diagnostic.get("code"))
+            for diagnostic in diagnostics
+            if diagnostic.get("code") is not None
+        }
+    )
+    hard_codes = sorted(
+        set(diagnostic_codes).intersection(_BATCH_UNREPRESENTABLE_DIAGNOSTIC_CODES)
+    )
+    try:
+        candidate_graph_changed = bool(_batch_candidate_graph_changed(state))
+    except Exception:
+        candidate_graph_changed = False
+    landed_edits = _batch_has_landed_edits(state)
+    hard_refusal = bool(hard_codes) or failure_kind is FailureKind.UNREPRESENTABLE
+    if hard_refusal:
+        outcome = "hard_refusal"
+        reason = "unrepresentable_edit_surface"
+    elif not candidate_graph_changed:
+        outcome = "not_attempted"
+        reason = "no_candidate_graph_change"
+    elif not landed_edits:
+        outcome = "not_attempted"
+        reason = "no_landed_edits"
+    else:
+        outcome = "candidate_available"
+        reason = "diagnostics_only"
+    return {
+        "stage": "artifixer",
+        "version": 1,
+        "policy": "diagnostics_only",
+        "attempted": False,
+        "outcome": outcome,
+        "reason": reason,
+        "failure_kind": failure_kind.value,
+        "hard_refusal": hard_refusal,
+        "candidate_graph_changed": candidate_graph_changed,
+        "landed_edits": landed_edits,
+        "turn_count": state.batch_turn_count,
+        "budget_state": dict(state.batch_budget_state),
+        "diagnostic_codes": diagnostic_codes,
+        "hard_refusal_codes": hard_codes,
+    }
+
+
+def _batch_budget_failure_kind(turns: list[dict[str, Any]]) -> FailureKind:
+    schema_gap_markers = (
+        "schema",
+        "schema-backed",
+        "socket type",
+        "compatible output",
+        "confidence",
+    )
+    category_turn_hits = {
+        FailureKind.MODEL_MISTAKE: 0,
+        FailureKind.UNREPRESENTABLE: 0,
+        FailureKind.SCHEMA_GAP: 0,
+    }
+    for turn in turns:
+        turn_categories: set[FailureKind] = set()
+        diagnostics = _batch_turn_diagnostics([turn])
+        for diagnostic in diagnostics:
+            code = str(diagnostic.get("code", "")).lower()
+            message = str(diagnostic.get("message", "")).lower()
+            teaching_hint = str(diagnostic.get("teaching_hint", "")).lower()
+            haystack = " ".join((code, message, teaching_hint))
+            if any(marker in haystack for marker in schema_gap_markers):
+                turn_categories.add(FailureKind.SCHEMA_GAP)
+                continue
+            if code in _BATCH_UNREPRESENTABLE_DIAGNOSTIC_CODES or "not allowed" in haystack or "immutable" in haystack:
+                turn_categories.add(FailureKind.UNREPRESENTABLE)
+                continue
+            turn_categories.add(FailureKind.MODEL_MISTAKE)
+        for category in turn_categories:
+            category_turn_hits[category] += 1
+    ranked = sorted(
+        category_turn_hits.items(),
+        key=lambda item: (item[1], item[0] == FailureKind.SCHEMA_GAP, item[0] == FailureKind.UNREPRESENTABLE),
+        reverse=True,
+    )
+    if ranked and ranked[0][1] > 0:
+        return ranked[0][0]
+    return FailureKind.MODEL_MISTAKE
+
+
+'''

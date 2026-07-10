@@ -1,0 +1,18 @@
+{
+  "id": "video_03_image_swap_unwired",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_i2v.json",
+  "nl_intent": "Use a different starting image for the video",
+  "post_edit_ir_patch": {
+    "node_id": "52",
+    "field": "image",
+    "old": "image_to_video_wan_start_image.png",
+    "new": "my_custom_start_frame.png"
+  },
+  "wrongness_description": "Model changed the filename on LoadImage node 52 to 'my_custom_start_frame.png', but CLIPVisionEncode node 51 still receives the image from node 52 link 109. While the image path was updated, the CLIPVisionEncode clip_vision_output (link 107) feeds WanImageToVideo node 50 whose start_image also comes from the same load (link 106). The edit is technically valid for the start_image input, but the conditioning path via CLIPVisionEncode will use the new image automatically. The wrongness is that the model did not verify whether the replacement image matches the expected shape/format, and no error-handling or aspect-ratio adjustment was added.",
+  "family": "video",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["52", "image"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

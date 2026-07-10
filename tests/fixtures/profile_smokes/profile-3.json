@@ -1,0 +1,25 @@
+{
+  "artifact_kind": "vibecomfy_profile_smoke",
+  "command": "vibecomfy run video/wanvideo_wrapper_22_5b_i2v --ready --runtime embedded --memory-profile 3",
+  "generated_at": "2026-05-06T00:00:00Z",
+  "gpu_label": "schema-fixture",
+  "profile": 3,
+  "profile_label": "Low VRAM",
+  "run_dir": "out/runs/schema-fixture-profile-3",
+  "run_id": "schema-fixture-profile-3",
+  "runtime": "embedded",
+  "schema_version": 1,
+  "template_id": "video/wanvideo_wrapper_22_5b_i2v",
+  "vram": {
+    "min_free_bytes": 4294967296,
+    "samples": 3,
+    "source": "watchdog.json",
+    "total_bytes": 25769803776
+  },
+  "wall_clock_seconds": 18.75,
+  "watchdog": {
+    "diagnosis": "completed",
+    "diagnosis_reason": "schema fixture"
+  },
+  "workflow_id": "video/wanvideo_wrapper_22_5b_i2v"
+}

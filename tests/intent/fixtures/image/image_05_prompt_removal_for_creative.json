@@ -1,0 +1,18 @@
+{
+  "id": "image_05_prompt_removal_for_creative",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
+  "nl_intent": "Make the image more creative and open-ended, less constrained",
+  "post_edit_ir_patch": {
+    "node_id": "238:227",
+    "field": "text",
+    "old": "Urban alleyway at dusk. Tall, statuesque high-fashion model striding elegantly, mid distant full body shot from an angular perspective, cinematic/editorial with bold contrasts and tactile materials. They wear a rose-gold metallic trench coat with deconstructed elements over a black long-sleeved turtleneck with subtle texture; paired with forest-green pleated pants with raw hems and a soft texture. Long braided dark hair, medium complexion. They carry a vibrant yellow designer handbag with geometric details and a structured silhouette. White architectural sneakers with bold geometric cutouts. Bold, high-contrast, tactile, urban-grit meets high-fashion impact, extreme clarity, extreme layering, post-processing with transparent light-transmitting ultra-smooth high-definition film effect, removing all noise and grain, removing all blur, removing all vintage feel, removing all roughness, drawn with 32K pixel precision, unparalleled fine line drawing of every single detail, the entire image like a brand new photograph, photorealistic\n",
+    "new": "Urban alleyway at dusk. A model striding, photorealistic\n"
+  },
+  "wrongness_description": "Model removed most prompt tokens thinking fewer constraints equals more creativity. This reduces specificity and quality rather than adding creative variation. Making the output 'more creative' in a generative sense requires cfg reduction or sampler adjustments, not prompt truncation.",
+  "family": "image",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["238:227", "text"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

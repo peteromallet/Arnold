@@ -1,0 +1,32 @@
+{
+  "id": "image-llava-image-captioning-and-keyword-extraction-d38dc8",
+  "query": "What alternative image captioning models could I replace LLaVA with to produce longer, more detailed prompts? Are there any that also extract keywords directly, or should I keep separate steps?",
+  "workflow_path": "external_workflows/corpus/d38dc8be1bfcda49.json",
+  "network": true,
+  "timeout": 200,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "image",
+    "query_type": "research",
+    "abstraction": "med",
+    "complexity": "med",
+    "manifest_complexity": 3,
+    "task_type": "image_to_image",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "llava",
+      "image-captioning",
+      "keyword-extraction",
+      "prompt-generation",
+      "suggestion"
+    ],
+    "source_workflow_id": "d38dc8be1bfcda49",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Questions the model choice rather than superficial tuning, requiring investigation of captioning SOTA and architecture trade-offs."
+  }
+}

@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from tools import check_canonical_parity as parity
+
+
+def test_canonical_parity_baseline_matches_current_ready_templates() -> None:
+    report = parity.check_baseline()
+
+    assert report["ok"], report["errors"]
+
+
+def test_canonical_parity_reports_hash_mismatch(tmp_path: Path) -> None:
+    ready_root = _write_ready_template(tmp_path, literal=1)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(parity.build_baseline(ready_root)), encoding="utf-8")
+
+    _write_ready_template(tmp_path, literal=2)
+    report = parity.check_baseline(baseline, ready_root=ready_root)
+
+    assert not report["ok"]
+    assert report["mismatched"][0]["id"] == "image/example"
+    assert "canonical hash changed for image/example" in report["errors"][0]
+
+
+def test_canonical_parity_reports_missing_and_extra_templates(tmp_path: Path) -> None:
+    ready_root = _write_ready_template(tmp_path, literal=1)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(parity.build_baseline(ready_root)), encoding="utf-8")
+
+    (ready_root / "image" / "example.py").unlink()
+    _write_ready_template(tmp_path, template_id="image/new_example", literal=1)
+    report = parity.check_baseline(baseline, ready_root=ready_root)
+
+    assert not report["ok"]
+    assert report["missing"] == ["image/example"]
+    assert report["extra"] == ["image/new_example"]
+
+
+def test_canonical_parity_update_rewrites_baseline(tmp_path: Path) -> None:
+    ready_root = _write_ready_template(tmp_path, literal=1)
+    baseline = tmp_path / "baseline.json"
+
+    assert parity.main(["--ready-root", str(ready_root), "--baseline", str(baseline), "--update"]) == 0
+
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    assert payload["template_count"] == 1
+    assert payload["templates"][0]["id"] == "image/example"
+
+
+def test_canonical_parity_excludes_manual_templates(tmp_path: Path) -> None:
+    ready_root = _write_ready_template(tmp_path, literal=1)
+    _write_ready_template(tmp_path, template_id="image/manual", literal=1, marker="# vibecomfy: manual")
+
+    payload = parity.build_baseline(ready_root)
+
+    assert [row["id"] for row in payload["templates"]] == ["image/example"]
+
+
+def _write_ready_template(
+    tmp_path: Path,
+    *,
+    template_id: str = "image/example",
+    literal: int,
+    marker: str = "# vibecomfy: generated\n# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>",
+) -> Path:
+    ready_root = tmp_path / "ready_templates"
+    path = ready_root / f"{template_id}.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""{marker}
+from __future__ import annotations
+
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+
+
+def build() -> VibeWorkflow:
+    wf = VibeWorkflow("{template_id}", WorkflowSource("{template_id}", path=__file__, source_type="ready_template"))
+    wf.add_node("Constant", _id="1", value={literal})
+    wf.add_node("SaveImage", _id="2", filename_prefix="example")
+    wf.connect("1.0", "2.images")
+    return wf
+""",
+        encoding="utf-8",
+    )
+    return ready_root

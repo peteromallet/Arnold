@@ -1,0 +1,199 @@
+{
+  "DepthAnything_V2": {
+    "pack": "ComfyUI-DepthAnythingV2",
+    "pack_version": "local-5531878",
+    "python_module": "ComfyUI-DepthAnythingV2.nodes",
+    "category": "DepthAnythingV2",
+    "name": "DepthAnything_V2",
+    "display_name": "\nhttps://depth-anything-v2.github.io\n",
+    "description": "",
+    "inputs": {
+      "required": {
+        "da_model": [
+          "DAMODEL"
+        ],
+        "images": [
+          "IMAGE"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "da_model",
+        "images"
+      ]
+    },
+    "input_order_all": [
+      "da_model",
+      "images"
+    ],
+    "object_info_widget_order": [
+      "da_model",
+      null
+    ],
+    "outputs": [
+      {
+        "type": "IMAGE",
+        "name": "image",
+        "is_list": false
+      }
+    ],
+    "function": "process"
+  },
+  "DownloadAndLoadDepthAnythingV2Model": {
+    "pack": "ComfyUI-DepthAnythingV2",
+    "pack_version": "local-5531878",
+    "python_module": "ComfyUI-DepthAnythingV2.nodes",
+    "category": "DepthAnythingV2",
+    "name": "DownloadAndLoadDepthAnythingV2Model",
+    "display_name": "\nModels autodownload to `ComfyUI/models/depthanything` from   \nhttps://huggingface.co/Kijai/DepthAnythingV2-safetensors/tree/main   \n   \nfp16 reduces quality by a LOT, not recommended.\n",
+    "description": "",
+    "inputs": {
+      "required": {
+        "model": [
+          [
+            "depth_anything_v2_vits_fp16.safetensors",
+            "depth_anything_v2_vits_fp32.safetensors",
+            "depth_anything_v2_vitb_fp16.safetensors",
+            "depth_anything_v2_vitb_fp32.safetensors",
+            "depth_anything_v2_vitl_fp16.safetensors",
+            "depth_anything_v2_vitl_fp32.safetensors",
+            "depth_anything_v2_vitg_fp32.safetensors",
+            "depth_anything_v2_metric_hypersim_vitl_fp32.safetensors",
+            "depth_anything_v2_metric_vkitti_vitl_fp32.safetensors"
+          ],
+          {
+            "default": "depth_anything_v2_vitl_fp32.safetensors"
+          }
+        ]
+      },
+      "optional": {
+        "precision": [
+          [
+            "auto",
+            "bf16",
+            "fp16",
+            "fp32"
+          ],
+          {
+            "default": "auto"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model"
+      ],
+      "optional": [
+        "precision"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "precision"
+    ],
+    "object_info_widget_order": [
+      "model",
+      "precision"
+    ],
+    "outputs": [
+      {
+        "type": "DAMODEL",
+        "name": "da_v2_model",
+        "is_list": false
+      }
+    ],
+    "function": "loadmodel"
+  },
+  "VideoDepthAnythingProcess": {
+    "category": "depth",
+    "description": "Process video frames with Depth Anything V2",
+    "display_name": "Video Depth Anything Process",
+    "input_order": {
+      "required": [
+        "model",
+        "images"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "images"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "DEPTHANYTHING_V2"
+        ],
+        "images": [
+          "IMAGE"
+        ]
+      }
+    },
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "depth"
+    ],
+    "output_node": false
+  },
+  "LoadVideoDepthAnythingModel": {
+    "category": "depth",
+    "description": "Load video depth anything model",
+    "display_name": "Load Video Depth Anything Model",
+    "input_order": {
+      "required": [
+        "model"
+      ]
+    },
+    "input_order_all": [
+      "model"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          [
+            "v2-vits",
+            "v2-vitb",
+            "v2-vitl"
+          ]
+        ]
+      }
+    },
+    "output": [
+      "DEPTHANYTHING_V2"
+    ],
+    "output_name": [
+      "model"
+    ],
+    "output_node": false
+  },
+  "VideoDepthAnythingOutput": {
+    "category": "depth",
+    "description": "Output video depth",
+    "display_name": "Video Depth Anything Output",
+    "input_order": {
+      "required": [
+        "images"
+      ]
+    },
+    "input_order_all": [
+      "images"
+    ],
+    "inputs": {
+      "required": {
+        "images": [
+          "IMAGE"
+        ]
+      }
+    },
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "depth_image"
+    ],
+    "output_node": false
+  }
+}

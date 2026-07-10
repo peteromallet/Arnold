@@ -1,0 +1,7 @@
+{
+  "id": "speed-distillation-research",
+  "query": "This video workflow is too slow. Is there a distilled or faster way to run it without changing the creative intent?",
+  "assessment": {
+    "expect_graph_changed": false
+  }
+}

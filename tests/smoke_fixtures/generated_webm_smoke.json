@@ -1,0 +1,38 @@
+{
+  "1": {
+    "class_type": "EmptyImage",
+    "inputs": {
+      "width": 160,
+      "height": 96,
+      "batch_size": 1,
+      "color": 16711680
+    }
+  },
+  "2": {
+    "class_type": "EmptyImage",
+    "inputs": {
+      "width": 160,
+      "height": 96,
+      "batch_size": 1,
+      "color": 65280
+    }
+  },
+  "3": {
+    "class_type": "ImageBatchMulti",
+    "inputs": {
+      "inputcount": 2,
+      "image_1": ["1", 0],
+      "image_2": ["2", 0]
+    }
+  },
+  "4": {
+    "class_type": "SaveWEBM",
+    "inputs": {
+      "images": ["3", 0],
+      "filename_prefix": "vibecomfy_generated_video",
+      "codec": "vp9",
+      "fps": 2.0,
+      "crf": 30.0
+    }
+  }
+}

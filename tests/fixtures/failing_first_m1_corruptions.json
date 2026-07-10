@@ -1,0 +1,56 @@
+{
+  "audited_templates": {
+    "image/z_image": {
+      "diffs": [
+        "node class multiset differs",
+        "normalized edge semantics differ",
+        "non-link values or exact Python value types differ"
+      ],
+      "ok": false,
+      "source": "ready_templates/sources/official/image/z_image.json",
+      "source_reason": "index_metadata",
+      "status": "comparable",
+      "verdict": "red"
+    },
+    "video/ltx2_3_runexx_talking_avatar_qwen_tts": {
+      "diffs": [
+        "node class multiset differs",
+        "normalized edge semantics differ",
+        "non-link values or exact Python value types differ"
+      ],
+      "ok": false,
+      "source": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json",
+      "source_reason": "index_metadata",
+      "status": "comparable",
+      "verdict": "red"
+    }
+  },
+  "captured_at_pytest": true,
+  "corruptions": [
+    {
+      "expected_type": "str",
+      "field": "voice",
+      "node_id": "1944",
+      "template_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "wrong_type": "int",
+      "wrong_value": 986337553816914
+    },
+    {
+      "expected_type": "bool",
+      "field": "unload_models",
+      "node_id": "1944",
+      "template_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "wrong_type": "int",
+      "wrong_value": 116899311982882
+    },
+    {
+      "expected_type": "int",
+      "field": "seed",
+      "node_id": "1944",
+      "template_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "wrong_type": "str",
+      "wrong_value": "randomize"
+    }
+  ],
+  "schema": "vibecomfy.m1_pre_fix_corruptions.v1"
+}

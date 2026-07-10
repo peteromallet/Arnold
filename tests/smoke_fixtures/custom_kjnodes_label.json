@@ -1,0 +1,32 @@
+{
+  "1": {
+    "class_type": "EmptyImage",
+    "inputs": {
+      "width": 320,
+      "height": 192,
+      "batch_size": 1,
+      "color": 3368703
+    }
+  },
+  "2": {
+    "class_type": "ImageResizeKJv2",
+    "inputs": {
+      "image": ["1", 0],
+      "width": 160,
+      "height": 96,
+      "upscale_method": "nearest-exact",
+      "keep_proportion": "stretch",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 1,
+      "device": "cpu"
+    }
+  },
+  "3": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["2", 0],
+      "filename_prefix": "vibecomfy_kjnodes_resize"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "query": "tighten the prompt",
+  "graph": {
+    "nodes": [
+      {
+        "id": 1,
+        "type": "Input",
+        "properties": { "vibecomfy_uid": "uid-1" }
+      },
+      {
+        "id": 2,
+        "type": "SaveImage",
+        "properties": { "vibecomfy_uid": "uid-2" }
+      }
+    ],
+    "links": [[1, 1, 0, 2, 0, "IMAGE"]]
+  },
+  "profile": "default",
+  "session_id": "sess-abc",
+  "idempotency_key": "submit:new:arnold:default:abc123def456:uuid-1",
+  "route": "arnold",
+  "model": "default",
+  "client_id": "client-1",
+  "client_graph_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "client_structural_graph_hash": "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
+  "client_live_canvas_token": "live:rev:1",
+  "baseline_turn_id": null
+}

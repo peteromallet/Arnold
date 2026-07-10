@@ -1,6 +1,0 @@
-/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/firecrawl/v2/types.py:988: UserWarning: Field name "json" in "MonitorPageDiff" shadows an attribute in parent "BaseModel"
-  class MonitorPageDiff(BaseModel):
-/Users/peteromalley/.pyenv/versions/3.11.11/lib/python3.11/site-packages/firecrawl/v2/types.py:1003: UserWarning: Field name "json" in "MonitorPageSnapshot" shadows an attribute in parent "BaseModel"
-  class MonitorPageSnapshot(BaseModel):
-/Users/peteromalley/Documents/megaplan/arnold/pipelines/megaplan/observability/events.py:325: RuntimeWarning: observability.events: emit() invoked with no RunEnvelope in _envelope_ctx; emitting without run_id (M4 T9 WARN_ONCE).
-  _rid = _resolve_run_id()

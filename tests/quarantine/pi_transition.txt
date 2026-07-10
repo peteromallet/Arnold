@@ -1,0 +1,15 @@
+# Pi Transition Quarantine Baseline
+# owner: pi-transition-team
+# reason: Known pre-existing differences between Arnold and Pi backends
+#
+# Format: one pytest nodeid per line.
+# These tests are expected to fail until the corresponding integration work is complete.
+# Remove entries as they are resolved.
+
+# tests/pi_transition/integration/test_pi_worker_fixtures.py::test_contract_produces_expected_keys[python-...]
+#   Pi worker Node.js integration not yet complete — contract parsing in pi_worker.py pending.
+#   Remove when pi_worker.mjs is wired and all contracts round-trip.
+# tests/pi_transition/integration/test_pi_worker_fixtures.py::test_openrouter_key_passed_through_env
+#   Credential passthrough to Pi's provider layer pending.
+# tests/pi_transition/bakeoff/test_pi_bakeoff.py::test_bakeoff_aggregate_scorecard
+#   Live bakeoff pending Pi worker live-mode integration.

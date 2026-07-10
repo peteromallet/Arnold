@@ -1,0 +1,35 @@
+{
+  "id": "video-wan-video-generation-with-vace-and-multi-outpu-d1caec",
+  "query": "The video output has severe temporal flickering and only the first image in my batch produces a coherent result \u2014 the rest are pure noise. What's causing this?",
+  "workflow_path": "external_workflows/corpus/d1caece85b04698e.json",
+  "network": true,
+  "timeout": 320,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "diagnose",
+    "abstraction": "high",
+    "complexity": "high",
+    "manifest_complexity": 5,
+    "task_type": "image_to_video",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "wan-video",
+      "vace",
+      "video-generation",
+      "image-batch",
+      "ksampler",
+      "model-sampling",
+      "lora",
+      "gguf"
+    ],
+    "source_workflow_id": "d1caece85b04698e",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-flash",
+    "author_rationale": "Forces investigation of both VACE integration and multi-image batch handling, which are central to this workflow."
+  }
+}

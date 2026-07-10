@@ -1,0 +1,77 @@
+{
+  "fixtures": {
+    "smoke_python_contract": {
+      "description": "Basic python contract smoke fixture",
+      "contract": "python",
+      "request": {
+        "user_message": "Generate an image of a red cube.",
+        "system_message": "You are a VibeComfy coding agent."
+      },
+      "response": {
+        "python": "image.t2i('a red cube')",
+        "message": "Generated an image of a red cube using image.t2i."
+      }
+    },
+    "smoke_delta_contract": {
+      "description": "Basic delta contract smoke fixture",
+      "contract": "delta",
+      "request": {
+        "user_message": "Add ControlNet depth to this workflow."
+      },
+      "response": {
+        "delta": [
+          {"op": "add_node", "class_type": "ControlNetLoader"},
+          {"op": "connect", "from": "5.control_net", "to": "3.control_net"}
+        ],
+        "message": "Added ControlNet depth conditioning."
+      }
+    },
+    "smoke_batch_repl_contract": {
+      "description": "Basic batch_repl contract smoke fixture",
+      "contract": "batch_repl",
+      "request": {
+        "user_message": "Add CLIPTextEncode and KSampler."
+      },
+      "response": {
+        "content": "Here is the batch:\n\n```batch\nfrom vibecomfy import image\nnode = add_node('CLIPTextEncode', text='prompt')\nsampler = add_node('KSampler', steps=20)\nconnect(node.id + '.0', sampler.id + '.positive')\n```\n\ndone()"
+      }
+    },
+    "smoke_json_contract": {
+      "description": "Classification via json contract",
+      "contract": "json",
+      "request": {
+        "user_message": "Is this a video request?"
+      },
+      "response": {
+        "content": "{\"category\": \"video\", \"confidence\": 0.95}",
+        "json": {"category": "video", "confidence": 0.95}
+      }
+    },
+    "smoke_text_contract": {
+      "description": "Plain text response",
+      "contract": "text",
+      "request": {
+        "user_message": "Hello, introduce yourself."
+      },
+      "response": {
+        "content": "I am VibeComfy, a creative coding agent for building media workflows."
+      }
+    },
+    "smoke_refusal": {
+      "description": "Refusal for impossible request",
+      "contract": "python",
+      "request": {
+        "user_message": "Generate 8K 5000-frame video on free tier."
+      },
+      "response": {
+        "python": "",
+        "message": "This request exceeds free tier limits. The maximum resolution is 1920x1080 at 150 frames. Consider reducing frame count or upgrading to a higher VRAM tier."
+      }
+    },
+    "slow_fixture": {
+      "description": "Deliberately slow fixture for timeout testing",
+      "contract": "text",
+      "delay_ms": 300000
+    }
+  }
+}

@@ -1,0 +1,22 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+const logs = [];
+page.on('console', msg => logs.push(`[${msg.type()}] ${msg.text()}`));
+page.on('pageerror', err => logs.push(`[pageerror] ${err.message}`));
+await page.goto('http://127.0.0.1:8190/', { waitUntil: 'networkidle' });
+await page.waitForTimeout(3000);
+await page.evaluate(() => {
+  const ext = window.comfyAPI?.app?.registeredExtensions?.find(e => e.name === 'VibeComfy.Roundtrip');
+  const cmd = ext?.commands?.find(c => c.id === 'VibeComfy.AgentEdit');
+  if (cmd) cmd.function();
+});
+await page.waitForTimeout(3000);
+await page.screenshot({ path: '/tmp/vibecomfy_panel.png', fullPage: true });
+const html = await page.content();
+await (await import('fs')).promises.writeFile('/tmp/vibecomfy_panel.html', html);
+await (await import('fs')).promises.writeFile('/tmp/vibecomfy_logs.txt', logs.join('\n'));
+console.log('screenshot /tmp/vibecomfy_panel.png');
+console.log('html /tmp/vibecomfy_panel.html');
+console.log('logs /tmp/vibecomfy_logs.txt');
+await browser.close();

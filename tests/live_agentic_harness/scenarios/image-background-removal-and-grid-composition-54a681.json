@@ -1,0 +1,37 @@
+{
+  "id": "image-background-removal-and-grid-composition-54a681",
+  "query": "The preview grid looks too small and blurry. Make each image in the 2x2 grid 512x512 pixels before compositing.",
+  "workflow_path": "external_workflows/corpus/54a681138bec8a37.json",
+  "network": true,
+  "timeout": 160,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "Each image is upscaled to 512x512 before being placed in the grid, resulting in a sharp, clear preview.",
+    "quality": "All resize nodes are correctly configured with 512x512 output dimensions, and the grid composition node receives the resized images without breaking.",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "image",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "upscaling",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "background-removal",
+      "image-compositing",
+      "grid",
+      "resize",
+      "preview"
+    ],
+    "source_workflow_id": "54a681138bec8a37",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Directly addresses a concrete, plausible visual issue with a specific target resolution, forcing agent to locate and modify resize nodes."
+  }
+}

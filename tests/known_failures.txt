@@ -1,0 +1,2 @@
+# Legacy known-failure baseline migrated to scoped tests/quarantine/*.txt files.
+# Keep this file comment-only; active quarantine entries must declare owner and reason metadata.

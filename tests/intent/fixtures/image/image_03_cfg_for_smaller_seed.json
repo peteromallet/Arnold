@@ -1,0 +1,18 @@
+{
+  "id": "image_03_cfg_for_smaller_seed",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
+  "nl_intent": "Use a smaller seed value for a different composition",
+  "post_edit_ir_patch": {
+    "node_id": "238:223",
+    "field": "value",
+    "old": 4.0,
+    "new": 1.0
+  },
+  "wrongness_description": "Model reduced PrimitiveFloat 238:223 (cfg guidance scale) from 4.0 to 1.0 instead of changing the seed. The cfg float node feeds the KSampler's cfg input via ComfySwitchNode 238:243. The actual seed is on KSampler node 238:230 field 'seed'.",
+  "family": "image",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["238:223", "value"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

@@ -1,0 +1,37 @@
+{
+  "id": "audio-acestep-audio-generation-workflow-2a31ec",
+  "query": "Load a different AceStep base model checkpoint: use 'acestep-sft-v2.safetensors' instead of the current one.",
+  "workflow_path": "external_workflows/corpus/2a31ec45fd22a623.json",
+  "network": true,
+  "timeout": 280,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "The workflow generates audio using the specified new model checkpoint.",
+    "quality": "All connections remain intact and the new model is properly loaded."
+  },
+  "_tags": {
+    "modality": "audio",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "other",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "audio-generation",
+      "acestep",
+      "sft",
+      "lora",
+      "unet",
+      "audio-processing"
+    ],
+    "source_workflow_id": "2a31ec45fd22a623",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-flash",
+    "author_rationale": "Direct model swap is the simplest concrete edit for this low-complexity audio generation workflow."
+  }
+}

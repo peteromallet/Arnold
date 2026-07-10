@@ -1,0 +1,460 @@
+{
+  "2004": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "example.png"
+    }
+  },
+  "3059": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": 384,
+      "height": 256,
+      "length": 9,
+      "batch_size": 1
+    }
+  },
+  "3940": {
+    "class_type": "LowVRAMCheckpointLoader",
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
+      "dependencies": [
+        "4960",
+        0
+      ]
+    }
+  },
+  "4010": {
+    "class_type": "LTXVAudioVAELoader",
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+    }
+  },
+  "4814": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    }
+  },
+  "4831": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler_ancestral_cfg_pp"
+    }
+  },
+  "4832": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 43
+    }
+  },
+  "4960": {
+    "class_type": "LTXAVTextEncoderLoader",
+    "inputs": {
+      "text_encoder": "comfy_gemma_3_12B_it.safetensors",
+      "ckpt_name": "ltx-2.3-22b-dev.safetensors",
+      "device": "default"
+    }
+  },
+  "4963": {
+    "class_type": "GuiderParameters",
+    "inputs": {
+      "modality": "AUDIO",
+      "cfg": 7,
+      "modality_scale": 3,
+      "stg": 1.0,
+      "perturb_attn": true,
+      "rescale": 0.7,
+      "skip_step": 0,
+      "cross_attn": true
+    }
+  },
+  "4967": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler_ancestral_cfg_pp"
+    }
+  },
+  "4971": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    }
+  },
+  "4985": {
+    "class_type": "LTXFloatToInt",
+    "inputs": {
+      "a": 24.0,
+      "rounding": 0
+    }
+  },
+  "2483": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "A traditional Japanese tea ceremony takes place in a tatami room as a host carefully prepares matcha. Soft traditional koto music plays in the background, adding to the serene atmosphere. The bamboo whisk taps rhythmically against the ceramic bowl while water simmers in an iron kettle. Guests kneel in formal seiza position, watching in respectful silence. The host bows and presents the tea bowl, turning it precisely before offering it to the first guest with soft-spoken words.",
+      "clip": [
+        "4960",
+        0
+      ]
+    }
+  },
+  "2612": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "pc game, console game, video game, cartoon, childish, ugly",
+      "clip": [
+        "4960",
+        0
+      ]
+    }
+  },
+  "3980": {
+    "class_type": "LTXVEmptyLatentAudio",
+    "inputs": {
+      "frames_number": 9,
+      "frame_rate": [
+        "4985",
+        0
+      ],
+      "batch_size": 1,
+      "audio_vae": [
+        "4010",
+        0
+      ]
+    }
+  },
+  "4922": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength_model": 0.5,
+      "model": [
+        "3940",
+        0
+      ]
+    }
+  },
+  "4964": {
+    "class_type": "GuiderParameters",
+    "inputs": {
+      "cfg": 3,
+      "rescale": 0.9,
+      "modality_scale": 3,
+      "modality": "VIDEO",
+      "stg": 1.0,
+      "perturb_attn": true,
+      "skip_step": 0,
+      "cross_attn": true,
+      "parameters": [
+        "4963",
+        0
+      ]
+    }
+  },
+  "4968": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength_model": 0.2,
+      "model": [
+        "3940",
+        0
+      ]
+    }
+  },
+  "4981": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "resize_type": "scale longer dimension",
+      "scale_method": "lanczos",
+      "longer_size": 384,
+      "resize_type.longer_size": 384,
+      "input": [
+        "2004",
+        0
+      ]
+    }
+  },
+  "1241": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "frame_rate": 24.0,
+      "positive": [
+        "2483",
+        0
+      ],
+      "negative": [
+        "2612",
+        0
+      ]
+    }
+  },
+  "3336": {
+    "class_type": "LTXVPreprocess",
+    "inputs": {
+      "img_compression": 18,
+      "image": [
+        "4981",
+        0
+      ]
+    }
+  },
+  "3159": {
+    "class_type": "LTXVImgToVideoConditionOnly",
+    "inputs": {
+      "strength": 0.7,
+      "bypass": true,
+      "vae": [
+        "3940",
+        2
+      ],
+      "image": [
+        "3336",
+        0
+      ],
+      "latent": [
+        "3059",
+        0
+      ]
+    }
+  },
+  "4808": {
+    "class_type": "MultimodalGuider",
+    "inputs": {
+      "skip_blocks": "28",
+      "model": [
+        "4968",
+        0
+      ],
+      "positive": [
+        "1241",
+        0
+      ],
+      "negative": [
+        "1241",
+        1
+      ],
+      "parameters": [
+        "4964",
+        0
+      ]
+    }
+  },
+  "4828": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "4922",
+        0
+      ],
+      "positive": [
+        "1241",
+        0
+      ],
+      "negative": [
+        "1241",
+        1
+      ]
+    }
+  },
+  "4528": {
+    "class_type": "LTXVConcatAVLatent",
+    "inputs": {
+      "video_latent": [
+        "3159",
+        0
+      ],
+      "audio_latent": [
+        "3980",
+        0
+      ]
+    }
+  },
+  "4829": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "4832",
+        0
+      ],
+      "guider": [
+        "4828",
+        0
+      ],
+      "sampler": [
+        "4831",
+        0
+      ],
+      "sigmas": [
+        "4971",
+        0
+      ],
+      "latent_image": [
+        "4528",
+        0
+      ]
+    }
+  },
+  "4966": {
+    "class_type": "LTXVScheduler",
+    "inputs": {
+      "steps": 15,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "stretch": true,
+      "terminal": 0.1,
+      "latent": [
+        "4528",
+        0
+      ]
+    }
+  },
+  "4802": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "4814",
+        0
+      ],
+      "guider": [
+        "4808",
+        0
+      ],
+      "sampler": [
+        "4967",
+        0
+      ],
+      "sigmas": [
+        "4966",
+        0
+      ],
+      "latent_image": [
+        "4528",
+        0
+      ]
+    }
+  },
+  "4845": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "4829",
+        0
+      ]
+    }
+  },
+  "4824": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "4802",
+        0
+      ]
+    }
+  },
+  "4848": {
+    "class_type": "LTXVAudioVAEDecode",
+    "inputs": {
+      "samples": [
+        "4845",
+        1
+      ],
+      "audio_vae": [
+        "4010",
+        0
+      ]
+    }
+  },
+  "4982": {
+    "class_type": "LTXVTiledVAEDecode",
+    "inputs": {
+      "horizontal_tiles": 2,
+      "vertical_tiles": 2,
+      "overlap": 6,
+      "last_frame_fix": false,
+      "vae": [
+        "3940",
+        2
+      ],
+      "latents": [
+        "4845",
+        0
+      ]
+    }
+  },
+  "4818": {
+    "class_type": "LTXVAudioVAEDecode",
+    "inputs": {
+      "samples": [
+        "4824",
+        1
+      ],
+      "audio_vae": [
+        "4010",
+        0
+      ]
+    }
+  },
+  "4849": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "fps": 24.0,
+      "images": [
+        "4982",
+        0
+      ]
+    }
+  },
+  "4983": {
+    "class_type": "LTXVTiledVAEDecode",
+    "inputs": {
+      "horizontal_tiles": 2,
+      "vertical_tiles": 2,
+      "overlap": 6,
+      "last_frame_fix": false,
+      "vae": [
+        "3940",
+        2
+      ],
+      "latents": [
+        "4824",
+        0
+      ]
+    }
+  },
+  "4819": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "fps": 24.0,
+      "images": [
+        "4983",
+        0
+      ]
+    }
+  },
+  "4852": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "filename_prefix": "output_D",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "4849",
+        0
+      ]
+    }
+  },
+  "4823": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "filename_prefix": "output_F",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "4819",
+        0
+      ]
+    }
+  }
+}

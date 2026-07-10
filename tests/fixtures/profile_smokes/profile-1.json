@@ -1,0 +1,25 @@
+{
+  "artifact_kind": "vibecomfy_profile_smoke",
+  "command": "vibecomfy run video/wan_t2v --ready --runtime embedded --memory-profile 1",
+  "generated_at": "2026-05-06T00:00:00Z",
+  "gpu_label": "schema-fixture",
+  "profile": 1,
+  "profile_label": "Low RAM",
+  "run_dir": "out/runs/schema-fixture-profile-1",
+  "run_id": "schema-fixture-profile-1",
+  "runtime": "embedded",
+  "schema_version": 1,
+  "template_id": "video/wan_t2v",
+  "vram": {
+    "min_free_bytes": 8589934592,
+    "samples": 2,
+    "source": "watchdog.json",
+    "total_bytes": 25769803776
+  },
+  "wall_clock_seconds": 12.5,
+  "watchdog": {
+    "diagnosis": "completed",
+    "diagnosis_reason": "schema fixture"
+  },
+  "workflow_id": "video/wan_t2v"
+}

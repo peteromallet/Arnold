@@ -1,0 +1,134 @@
+{
+  "ok": true,
+  "exists": true,
+  "session_id": "sess-123",
+  "latest_turn_id": "0001",
+  "messages": [
+    {
+      "role": "user",
+      "text": "previous user request",
+      "turn_id": "0001",
+      "timestamp": "2025-06-01T12:00:00.000Z"
+    },
+    {
+      "role": "agent",
+      "text": "previous agent reply",
+      "turn_id": "0001",
+      "timestamp": "2025-06-01T12:00:01.000Z",
+      "outcome": {
+        "kind": "candidate",
+        "changes": [
+          {
+            "uid": "uid-7",
+            "field_path": "widgets.preview",
+            "old": false,
+            "new": true
+          }
+        ]
+      }
+    }
+  ],
+  "latest_candidate": {
+    "session_id": "sess-123",
+    "turn_id": "0001",
+    "baseline_turn_id": "0000",
+    "message": "Latest candidate is ready.",
+    "outcome": {
+      "kind": "candidate",
+      "changes": [
+        {
+          "uid": "uid-7",
+          "field_path": "widgets.preview",
+          "old": false,
+          "new": true
+        }
+      ]
+    },
+    "graph": {
+      "nodes": [
+        {
+          "id": 7,
+          "type": "PreviewImage",
+          "properties": {
+            "vibecomfy_uid": "uid-7"
+          }
+        }
+      ],
+      "links": []
+    },
+    "candidate": {
+      "state": "candidate",
+      "graph": {
+        "nodes": [
+          {
+            "id": 7,
+            "type": "PreviewImage",
+            "properties": {
+              "vibecomfy_uid": "uid-7"
+            }
+          }
+        ],
+        "links": []
+      },
+      "graph_hash": "candidate-hash-new",
+      "baseline_graph_hash": "base-hash-old",
+      "turn_identity": {
+        "session_id": "sess-123",
+        "turn_id": "0001",
+        "baseline_turn_id": "0000"
+      }
+    },
+    "candidate_graph_hash": "candidate-hash-new",
+    "baseline_graph_hash": "base-hash-old",
+    "baseline_graph_hash_kind": "structural",
+    "baseline_graph_hash_version": 1,
+    "apply_eligibility": {
+      "applyable": true,
+      "reason": "queue_blocked_warning",
+      "message": "Ready to apply. Queue remains blocked.",
+      "warnings": ["queue_blocked"]
+    },
+    "canvas_apply_allowed": true,
+    "apply_allowed": true,
+    "queue_allowed": false
+  },
+  "diagnostics": [
+    {
+      "turn_id": "0001",
+      "source": "messages.change_details",
+      "code": "queue_blocked",
+      "severity": "warning",
+      "message": "Queue remains blocked.",
+      "lifecycle": "candidate",
+      "stage": "queue_validate",
+      "ok": false,
+      "queue_allowed": false,
+      "candidate_nodes": 1
+    },
+    {
+      "turn_id": "0001",
+      "source": "latest_candidate.change_details.batch_turns[0]",
+      "code": "batch_step_complete",
+      "message": "Validated candidate reload step.",
+      "stage": "agent_response",
+      "ok": true,
+      "landed_operation_count": 1
+    }
+  ],
+  "audit_artifacts": [
+    {
+      "turn_id": "0001",
+      "source": "messages",
+      "sha256": "abc123",
+      "byte_count": 42,
+      "preview": "audit ok"
+    },
+    {
+      "turn_id": "0001",
+      "source": "latest_candidate",
+      "sha256": "def456",
+      "byte_count": 24,
+      "preview": "latest candidate audit ok"
+    }
+  ]
+}

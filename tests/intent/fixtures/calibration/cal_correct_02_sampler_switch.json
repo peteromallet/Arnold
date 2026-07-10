@@ -1,0 +1,18 @@
+{
+  "id": "cal_correct_02_sampler_switch",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
+  "nl_intent": "Switch to the DPM++ 2M sampler for higher quality output",
+  "post_edit_ir_patch": {
+    "node_id": "238:230",
+    "field": "sampler_name",
+    "old": "euler",
+    "new": "dpm_2"
+  },
+  "wrongness_description": "N/A — this edit is intentionally correct: changing the KSampler sampler_name field from 'euler' to 'dpm_2' directly implements the stated intent of switching the sampler.",
+  "family": "image",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["238:230", "sampler_name"]]
+  },
+  "expected_text_judge_verdict": "PASS"
+}

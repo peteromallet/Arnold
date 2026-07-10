@@ -1,96 +1,77 @@
-__pycache__/
 .venv/
-.ruff_cache/
+__pycache__/
 .pytest_cache/
-.codex/
-.claude/
-.megaplan/
-!.megaplan/
-!.megaplan/initiatives/
-!.megaplan/initiatives/**
-!.megaplan/tickets/
-# Re-ignore runtime artifacts that accumulate under committed initiative
-# directories.  ``!.megaplan/initiatives/**`` above un-ignores the entire
-# initiative tree, but chain-state files, repair-queue markers, and any
-# *.megaplan/* runtime scaffolding inside initiatives must stay ignored so
-# they cannot dirty git_tracked launch preconditions.
-.megaplan/initiatives/**/.megaplan/
-.megaplan/initiatives/**/chain_state.json
-.megaplan/initiatives/**/repair-queue/
-!.megaplan/tickets/**
-!.megaplan/ideas/
-!.megaplan/ideas/**
-.megaplan/**/.DS_Store
-.megaplan/worker_tmp/
-.megaplan/.state-locks/
-.megaplan/cloud-chain.log
-.megaplan/m2-auto.log
-.megaplan/m6-test.log
-.megaplan/system_logs/
-.megaplan/resident/
-.megaplan/debt.json
-.megaplan/epics/
-.megaplan/profiles.toml
-.megaplan/schemas/
-.megaplan/telemetry/
-.megaplan/verification/
-.megaplan/plans/
-chain_state.json
-.desloppify/
-.desloppify.bak-*
-.doubledip/
-.env
-.env.*
-*.env
-!.env.example
+.ruff_cache/
+.import_linter_cache/
 .DS_Store
-dist/
-*.egg-info/
-activity-summary-*.md
-megaplan/cloud/_reference/
-arnold_pipelines/megaplan/data/_codex_skills/
+*.pyc
 
-# Local/generated planning inputs and cloud runner specs.
-cloud.yaml
-cloud.*.yaml
-chain.yaml
-!.megaplan/initiatives/**/chain.yaml
-plan.md
-/plan_v*.md
-/.plan_v*.md
-planning-bot-spec.md
-idea-*.txt
-ideas/
-*-critique_output.json
-sample_*.json
+# Generated indexes and runtime artifacts
+.coverage
+coverage.xml
+workflow_index.json
+external_workflow_index.json
+node_index.json
+out/
+/output/
+temp/
+/input/
+/input/.DS_Store
 
-# Generated audit/design reports from one-off planning runs.
-docs/arnold-merge-design.md
-docs/sprint-0-spike-report.md
-docs/persistence-storage-audit.md
+# Large local runtime/vendor checkouts
+/recipes/
+/vendor/ComfyUI/
+/vendor/workflow_templates/
+/vendor/external_workflows/
+/external_workflows/
+/custom_nodes/
+/user/
 
-# Vendored Hermes runtime should stay lean; these paths are external docs,
-# benchmarks, generated runs, or standalone apps.
-megaplan/agent/assets/
-megaplan/agent/auto_improve/
-megaplan/agent/batch_runner.py
-megaplan/agent/cli-config.yaml.example
-megaplan/agent/datagen-config-examples/
-megaplan/agent/evals/
-megaplan/agent/landingpage/
-megaplan/agent/mini-swe-agent
-megaplan/agent/package*.json
-megaplan/agent/RELEASE_v*.md
-megaplan/agent/rl_cli.py
-megaplan/agent/setup-hermes.sh
-megaplan/agent/tinker-atropos
-megaplan/agent/website/
+# Tool working directories
+.agents/
+.claude/
+.desloppify/
+.megaplan/*
+!.megaplan/briefs/
+.megaplan/briefs/*
+!.megaplan/briefs/pristine-agent-architecture/
+.megaplan/briefs/pristine-agent-architecture/*
+!.megaplan/briefs/pristine-agent-architecture/**
+!.megaplan/briefs/messaging-boundary-cleanup.md
+docs/megaplan_chains/**/.megaplan/
+*.patch
 
-# Supabase CLI local cache
-supabase/.temp/
+# Agent task briefs and prompts — historical scratchpads, not project docs
+docs/megaplan_briefs/
+docs/subagent_prompts/
+docs/megaplan_chains/node_resolution_epic/evidence/object_info_*.json
+docs/local_agent_text_to_graph_e2e.md
+.env
+this.env
+_debug_*.py
+_fix_t6.py
+_regen_templates.py
+finalize.json
+install.log
+.hypothesis/
+.tmp/
+node_modules/
+*.pid
+*.zip
+comfyui_*.png
+comfyui_screenshot*.png
+comfyui_panel_open*.png
+agent_edit_e2e.mjs
+local_env.sh
 
-# Ephemeral agentic run scaffolding
-.megaplan-agentic/
+# e2e test tier — isolated dependency management
+tests/e2e/node_modules/
+tests/e2e/playwright-report/
+tests/e2e/test-results/
+test-results/
 
-# Runtime mirror; not source
-.megaplan/runtime/editable-engine
+# Generated cache-busted web assets
+vibecomfy/comfy_nodes/web_dist/
+
+# Live agentic watchdog run artifacts (logs, backups, baselines, codex outputs)
+.watchdog-runs/

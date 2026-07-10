@@ -1,0 +1,18 @@
+{
+  "id": "cal_wrong_02_ancestral_for_determinism",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
+  "nl_intent": "Make the image generation more deterministic and reproducible across runs",
+  "post_edit_ir_patch": {
+    "node_id": "238:230",
+    "field": "sampler_name",
+    "old": "euler",
+    "new": "euler_ancestral"
+  },
+  "wrongness_description": "Editor switched KSampler sampler_name from 'euler' to 'euler_ancestral' believing the 'ancestral' variant is more controlled. In fact euler_ancestral introduces additional stochasticity via Langevin dynamics at each step, making outputs LESS reproducible than plain euler. To improve determinism the correct fix is to use a non-ancestral sampler (e.g. euler, dpm_2) and pin the seed via control_after_generate='fixed'.",
+  "family": "image",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["238:230", "sampler_name"]]
+  },
+  "expected_text_judge_verdict": "FAIL"
+}

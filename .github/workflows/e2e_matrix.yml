@@ -1,0 +1,56 @@
+# End-to-end RunPod matrix workflow.
+#
+# Schedule: midnight Monday (UTC) every week, plus manual `workflow_dispatch`
+# for ops. Runs the E2E matrix across ~43 regeneratable ready templates.
+#
+# Required repo secrets (configured by a human under
+# Settings -> Secrets and variables -> Actions; see user_action U1, U2):
+#   RUNPOD_API_KEY               RunPod account API key
+#   VIBECOMFY_RUNPOD_STORAGE     Name of the RunPod network volume to mount
+#
+# Notes:
+# - Dry-run ALWAYS runs before real execution (scheduled or manual).
+# - Real execution is gated on both secrets being present; if absent,
+#   the job prints a clear skip message and exits successfully.
+# - This workflow is SEPARATE from normal PR CI — it does NOT add GPU
+#   dependency to push/PR pipeline.
+
+name: e2e-matrix
+
+on:
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch: {}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+      VIBECOMFY_RUNPOD_STORAGE: ${{ secrets.VIBECOMFY_RUNPOD_STORAGE }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: |
+          uv venv --seed
+          .venv/bin/python -m pip install -e ".[dev,runpod-launch]"
+
+      - name: Dry-run E2E matrix (always)
+        run: .venv/bin/python scripts/runpod_e2e_matrix.py --dry-run
+
+      - name: Run E2E matrix (gated on secrets)
+        run: |
+          if [ -z "$RUNPOD_API_KEY" ] || [ -z "$VIBECOMFY_RUNPOD_STORAGE" ]; then
+            echo "SKIPPED: RUNPOD_API_KEY and/or VIBECOMFY_RUNPOD_STORAGE secrets are not configured."
+            echo "Real RunPod execution requires both secrets. Dry-run completed above."
+            exit 0
+          fi
+          .venv/bin/python scripts/runpod_e2e_matrix.py

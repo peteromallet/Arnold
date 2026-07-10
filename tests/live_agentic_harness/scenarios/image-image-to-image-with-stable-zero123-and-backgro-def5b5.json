@@ -1,0 +1,38 @@
+{
+  "id": "image-image-to-image-with-stable-zero123-and-backgro-def5b5",
+  "query": "Set the number of sampling steps to 30 to speed up generation without drastically affecting quality.",
+  "workflow_path": "external_workflows/corpus/def5b5d3b3b372dd.json",
+  "network": true,
+  "timeout": 160,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "The Stable Zero123 image generation runs faster while maintaining acceptable output quality.",
+    "quality": "Sampling steps are changed, the background removal and scaling stages remain functional, and the final preview still appears.",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "image",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "image_to_image",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "image-to-image",
+      "background-removal",
+      "stable-zero123",
+      "image-scaling",
+      "sampling",
+      "preview"
+    ],
+    "source_workflow_id": "def5b5d3b3b372dd",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "A straightforward, single\u2011parameter change that a real user would request to manage trade\u2011offs between speed and quality."
+  }
+}

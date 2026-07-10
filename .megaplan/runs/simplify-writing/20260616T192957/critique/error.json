@@ -1,4 +1,0 @@
-{
-  "error": "RuntimeError('Subcommand failed (exit 1):\\ncmd: /Users/peteromalley/Documents/megaplan/.venv/bin/python /Users/peteromalley/.agents/skills/subagent-launcher/fan.py --briefs-dir=.megaplan/runs/simplify-writing/20260616T192957/critique_briefs --output-dir=.megaplan/runs/simplify-writing/20260616T192957/critique_results --max-workers=10 --model=deepseek:deepseek-v4-pro --toolsets=file,web,terminal --task-timeout=300 --project-dir=.megaplan/runs/simplify-writing/20260616T192957\\nstderr: [fan] warning: could not prefer legacy megaplan distribution: No package metadata was found for megaplan\\nerror: --project-dir is not a directory: /Users/peteromalley/Documents/megaplan/.megaplan/runs/simplify-writing/20260616T192957/.megaplan/runs/simplify-writing/20260616T192957\\n\\nstdout: ')",
-  "stage": "critique"
-}

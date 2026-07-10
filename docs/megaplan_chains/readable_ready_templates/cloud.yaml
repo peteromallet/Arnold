@@ -1,0 +1,42 @@
+provider: ssh
+mode: idle
+
+repo:
+  url: https://github.com/peteromallet/VibeComfy.git
+  branch: main
+  workspace: /workspace/vibecomfy-readable-ready-templates
+
+secrets:
+  - OPENAI_API_KEY
+  - GITHUB_TOKEN
+  - DEEPSEEK_API_KEY
+
+agents:
+  default: codex
+  plan: codex
+  prep: codex
+  critique: codex
+  revise: codex
+  gate: codex
+  finalize: codex
+  execute: codex
+  review: codex
+
+codex:
+  model: gpt-5.5
+  reasoning: high
+
+megaplan:
+  ref: main
+
+resources:
+  volume: vibecomfy-readable-ready-templates
+  port: 8080
+
+ssh:
+  host: 159.69.51.216
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent

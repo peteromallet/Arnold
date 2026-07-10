@@ -1,0 +1,38 @@
+name: hotshot-16-frames-agent-edit
+tier: 6
+description: "Agent-edit finds Hotshot workflow precedent first, then uses registry evidence for missing custom nodes"
+mode: structural
+agents:
+  - id: builder
+    dispatcher: fake
+tags:
+  - m6
+  - agent-edit
+  - structural
+  - hotshot
+  - registry
+assessment:
+  subjective: true
+  enforced: []
+  graded:
+    - "Routing correctness: For a clear edit request on an existing graph, the classifier should choose an edit route (adapt or revise) with implement=true, not route to clarify, respond, or inspect."
+    - "Fulfillment: Did the full executor pipeline actually switch the workflow toward generating 16 frames with Hotshot? The candidate graph (candidate.ui.json / graph_summary.json / compiled_api.json) should include Hotshot/AnimateDiff custom nodes (ADE_AnimateDiffLoaderWithContext and ADE_UseEvolvedSampling) and should not have replaced the user's Hotshot request with unrelated installed nodes."
+    - "Research discipline: Was the research sequence sensible and efficient? The agent should search workflow precedent first (sources=[\"workflows\"]), then registry/schema for missing classes (sources=[\"registry\"]), then perform edits — without redundant or circular searches."
+    - "Wiring plausibility: Are the added nodes placed and wired in a way that could plausibly inject Hotshot/AnimateDiff motion into the existing sampler path, or is the edit structurally incomplete? (Use graph_summary.json and compiled_api.json; UI graphs use the 'type' field for node class names.)"
+    - "Explanation quality: Does the agent report back what it did and why in terms the user can understand?"
+  observed:
+    - "The frozen evidence mentions ComfyUI-AnimateDiff-Evolved as the candidate custom-node pack."
+    - "Any inefficiencies, unnecessary searches, or missed opportunities to wire the new nodes."
+extras:
+  flow_kind: executor_full_pipeline
+  required_frozen_evidence:
+    - evidence/actions.jsonl
+    - evidence/messages.jsonl
+    - evidence/graph_summary.json
+    - evidence/candidate.ui.json
+    - evidence/executor_report.json
+    - evidence/implementation_result.json
+    - evidence/research_result.json
+    - evidence/compiled_api.json
+    - evidence/executor_result.json
+    - evidence/metadata.json

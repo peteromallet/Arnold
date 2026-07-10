@@ -1,0 +1,571 @@
+"""Tests for control_after_generate retention through JSON→IR ingest (T3).
+
+Proves:
+1. 'randomize' and 'fixed' captured from the named-inputs dict (api-format path).
+2. 'fixed' captured from _ui.widgets_values KSampler None-slot path.
+3. Absent control_after_generate → metadata key unset (never guessed).
+4. compile("api") guard: control_after_generate absent from compiled output
+   even when captured in metadata (byte-identical compile path preserved).
+"""
+from __future__ import annotations
+
+import json
+import pytest
+
+from vibecomfy.ingest.normalize import convert_to_vibe_format
+
+
+def _ksampler_api_node(*, control: str | None = None) -> dict:
+    inputs: dict = {
+        "seed": 42,
+        "steps": 20,
+        "cfg": 7.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0,
+    }
+    if control is not None:
+        inputs["control_after_generate"] = control
+    return {"class_type": "KSampler", "inputs": inputs}
+
+
+def _ksampler_api_node_with_ui(*, control: str) -> dict:
+    """KSampler node as produced by _normalize_ui_to_api with _ui.widgets_values.
+
+    KSampler widget schema: ["seed", None, "steps", "cfg", "sampler_name", "scheduler", "denoise"]
+    Slot index 1 is None (the control_after_generate UI slot).
+    """
+    return {
+        "class_type": "KSampler",
+        "inputs": {
+            "seed": 42,
+            "steps": 20,
+            "cfg": 7.0,
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "denoise": 1.0,
+        },
+        "_ui": {"widgets_values": [42, control, 20, 7.0, "euler", "normal", 1.0]},
+    }
+
+
+def _workflow_from_node(node: dict, node_id: str = "1"):  # type: ignore[return]
+    return convert_to_vibe_format({node_id: node})
+
+
+# ── Case 1a: 'randomize' captured from named inputs dict ─────────────────────
+
+
+def test_control_after_generate_randomize_from_inputs() -> None:
+    wf = _workflow_from_node(_ksampler_api_node(control="randomize"))
+    assert wf.nodes["1"].metadata.get("control_after_generate") == "randomize"
+
+
+# ── Case 1b: 'fixed' captured from named inputs dict ─────────────────────────
+
+
+def test_control_after_generate_fixed_from_inputs() -> None:
+    wf = _workflow_from_node(_ksampler_api_node(control="fixed"))
+    assert wf.nodes["1"].metadata.get("control_after_generate") == "fixed"
+
+
+# ── Case 2: 'fixed' captured from _ui.widgets_values None-slot ───────────────
+
+
+def test_control_after_generate_fixed_from_ui_widgets() -> None:
+    wf = _workflow_from_node(_ksampler_api_node_with_ui(control="fixed"))
+    assert wf.nodes["1"].metadata.get("control_after_generate") == "fixed"
+
+
+def test_public_raw_widgets_alias_is_preserved_as_raw_widget_payload() -> None:
+    wf = _workflow_from_node(
+        {
+            "class_type": "PrimitiveInt",
+            "inputs": {"widget_0": 7, "widget_1": "fixed"},
+            "raw_widgets": {
+                "values": [7, "fixed"],
+                "shape": "list",
+                "source": "ui.widgets_values",
+                "has_dict_rows": False,
+                "length": 2,
+            },
+        }
+    )
+
+    node = wf.nodes["1"]
+    assert node.raw_widgets is not None
+    assert node.raw_widgets.values == [7, "fixed"]
+    assert node.raw_widgets.length == 2
+    assert "raw_widgets" not in node.metadata
+
+
+def test_vibe_shape_merges_rich_node_raw_widgets_into_compiled_api() -> None:
+    wf = convert_to_vibe_format(
+        {
+            "vibecomfy_format_version": "1.0",
+            "compiled_api": {
+                "1": {
+                    "class_type": "PrimitiveInt",
+                    "inputs": {"widget_0": 7, "widget_1": "fixed"},
+                }
+            },
+            "nodes": {
+                "1": {
+                    "id": "1",
+                    "class_type": "PrimitiveInt",
+                    "raw_widgets": {
+                        "values": [7, "fixed"],
+                        "shape": "list",
+                        "source": "ui.widgets_values",
+                        "has_dict_rows": False,
+                        "length": 2,
+                    },
+                    "metadata": {
+                        "_ui": {
+                            "id": 1,
+                            "type": "PrimitiveInt",
+                            "widgets_values": [7, "fixed"],
+                        }
+                    },
+                }
+            },
+        }
+    )
+
+    node = wf.nodes["1"]
+    assert node.raw_widgets is not None
+    assert node.raw_widgets.values == [7, "fixed"]
+    assert "_ui" not in node.metadata
+
+
+def test_vibe_shape_carries_dynamic_dict_raw_ui_for_widget_pin() -> None:
+    wf = convert_to_vibe_format(
+        {
+            "vibecomfy_format_version": "1.0",
+            "compiled_api": {
+                "81": {
+                    "class_type": "VHS_SplitImages",
+                    "inputs": {"images": ["105", 0], "split_index": 24},
+                }
+            },
+            "nodes": {
+                "81": {
+                    "id": "81",
+                    "class_type": "VHS_SplitImages",
+                    "raw_widgets": {
+                        "values": {"split_index": 24},
+                        "shape": "dict",
+                        "source": "ui.widgets_values",
+                        "has_dict_rows": True,
+                        "length": 1,
+                    },
+                    "metadata": {
+                        "_ui": {
+                            "id": 81,
+                            "type": "VHS_SplitImages",
+                            "pos": [1075, 1136],
+                            "size": [315, 118],
+                            "flags": {},
+                            "order": 28,
+                            "mode": 0,
+                            "inputs": [{"name": "images", "type": "IMAGE", "link": 198}],
+                            "outputs": [{"name": "IMAGE_A", "type": "IMAGE", "links": []}],
+                            "properties": {"Node name for S&R": "VHS_SplitImages"},
+                            "widgets_values": {"split_index": 24},
+                        }
+                    },
+                }
+            },
+        }
+    )
+
+    node = wf.nodes["81"]
+    assert node.raw_widgets is not None
+    assert node.raw_widgets.values == {"split_index": 24}
+    assert node.metadata["_ui"]["widgets_values"] == {"split_index": 24}
+    assert node.metadata["_ui"]["inputs"][0]["link"] == 198
+
+
+# ── Case 3: absent → metadata key unset (never guessed) ──────────────────────
+
+
+def test_control_after_generate_absent_leaves_metadata_unset() -> None:
+    wf = _workflow_from_node(_ksampler_api_node())
+    assert "control_after_generate" not in wf.nodes["1"].metadata, (
+        "control_after_generate must not be guessed when absent from source"
+    )
+
+
+# ── Case 4a: compile("api") excludes control_after_generate ──────────────────
+
+
+def test_compile_api_excludes_control_after_generate() -> None:
+    """compile('api') must not include control_after_generate even when metadata carries it."""
+    wf = _workflow_from_node(_ksampler_api_node(control="randomize"))
+    assert wf.nodes["1"].metadata.get("control_after_generate") == "randomize", "precondition: metadata captured"
+    compiled = wf.compile("api")
+    assert "control_after_generate" not in compiled.get("1", {}).get("inputs", {}), (
+        "compile('api') must filter control_after_generate via _is_ui_only_prompt_input"
+    )
+
+
+# ── Case 4b: compile("api") byte-identical with and without the capture ───────
+
+
+def test_compile_api_byte_identical_with_and_without_control_capture() -> None:
+    """compile('api') output is identical regardless of control_after_generate presence.
+
+    This is the guard asserting the T2 ingest change leaves the compiled API dict
+    byte-for-byte unchanged: a node with control_after_generate captured in metadata
+    compiles identically to the same node without it at all.
+    """
+    wf_without = _workflow_from_node(_ksampler_api_node())
+    wf_with = _workflow_from_node(_ksampler_api_node(control="randomize"))
+
+    compiled_without = wf_without.compile("api")
+    compiled_with = wf_with.compile("api")
+
+    assert json.dumps(compiled_without, sort_keys=True) == json.dumps(compiled_with, sort_keys=True), (
+        "compile('api') output must be byte-for-byte identical with and without "
+        "control_after_generate — the ingest metadata capture must not alter the compiled dict"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# T6 — Identity capture & determinism on the flat walking-skeleton fixture
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _load_flat_wf():
+    """Load the flat.json walking-skeleton fixture → VibeWorkflow (cached helper)."""
+    import json as _json
+
+    with open("tests/fixtures/walking_skeleton/flat.json") as fh:
+        raw = _json.load(fh)
+    return convert_to_vibe_format(raw)
+
+
+def test_flat_every_node_has_nonempty_uid_equal_to_litegraph_id() -> None:
+    """Every node gets a non-empty uid equal to its source litegraph id."""
+    wf = _load_flat_wf()
+    raw = json.load(open("tests/fixtures/walking_skeleton/flat.json"))
+    raw_ids = {str(n["id"]) for n in raw["nodes"]}
+
+    for nid, node in wf.nodes.items():
+        assert node.uid, f"node {nid} has empty uid"
+        assert node.uid in raw_ids, f"node {nid} uid {node.uid!r} not in raw ids {raw_ids}"
+        assert node.uid == nid, (
+            f"node {nid} uid {node.uid!r} does not equal its own litegraph id {nid}"
+        )
+
+
+def test_flat_pre_existing_vibecomfy_uid_read_back_not_fresh_mint() -> None:
+    """A node with pre-existing properties['vibecomfy_uid'] reads that value back."""
+    import json as _json
+
+    raw = _json.load(open("tests/fixtures/walking_skeleton/flat.json"))
+    # Stamp a synthetic vibecomfy_uid onto KSampler (id=5) properties
+    for node in raw["nodes"]:
+        if node["id"] == 5:
+            node.setdefault("properties", {})["vibecomfy_uid"] = "custom-ksampler-uuid"
+
+    wf = convert_to_vibe_format(raw)
+    ksampler = wf.nodes["5"]
+    assert ksampler.uid == "custom-ksampler-uuid", (
+        f"Pre-existing vitecomfy_uid not preserved: got {ksampler.uid!r}"
+    )
+
+
+def test_flat_pos_size_reachable_via_metadata_ui() -> None:
+    """Captured pos/size are reachable via metadata['_ui']."""
+    wf = _load_flat_wf()
+    raw = json.load(open("tests/fixtures/walking_skeleton/flat.json"))
+    raw_by_id = {str(n["id"]): n for n in raw["nodes"]}
+
+    for nid, node in wf.nodes.items():
+        _ui = node.metadata.get("_ui")
+        assert isinstance(_ui, dict), f"node {nid} missing _ui metadata"
+        assert "pos" in _ui, f"node {nid} _ui missing pos"
+        assert "size" in _ui, f"node {nid} _ui missing size"
+        expected = raw_by_id[nid]
+        assert _ui["pos"] == expected["pos"], (
+            f"node {nid} pos mismatch: {_ui['pos']} != {expected['pos']}"
+        )
+        assert _ui["size"] == expected["size"], (
+            f"node {nid} size mismatch: {_ui['size']} != {expected['size']}"
+        )
+
+
+def test_flat_determinism_same_source_identical_uids() -> None:
+    """Same source → identical uids across two ingests."""
+    wf1 = _load_flat_wf()
+    wf2 = _load_flat_wf()
+
+    for nid in sorted(wf1.nodes.keys(), key=lambda x: int(x) if x.isdigit() else 0):
+        assert nid in wf2.nodes, f"node {nid} missing from second ingest"
+        assert wf1.nodes[nid].uid == wf2.nodes[nid].uid, (
+            f"node {nid}: non-deterministic uid {wf1.nodes[nid].uid!r} vs {wf2.nodes[nid].uid!r}"
+        )
+
+
+# ── T4: mode/flags/color/bgcolor retention (K3 invariant) ────────────────────
+
+
+def _node_with_mode(mode: int = 4, **extra_vis: object) -> dict:
+    """API-format node with _ui carrying litegraph visual fields."""
+    _ui: dict = {"id": 1, "mode": mode}
+    for k, v in extra_vis.items():
+        _ui[k] = v
+    return {"class_type": "KSampler", "inputs": {"seed": 1}, "_ui": _ui}
+
+
+def _node_without_mode() -> dict:
+    return {"class_type": "KSampler", "inputs": {"seed": 1}}
+
+
+def test_mode_captured_from_pure_python_path() -> None:
+    """Pure-Python path: mode:4 lands in metadata['mode'] (via full _ui)."""
+    raw_ui = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "KSampler",
+                "mode": 4,
+                "inputs": [],
+                "widgets_values": [42, "fixed", 20, 7.0, "euler", "normal", 1.0],
+            }
+        ],
+        "links": [],
+    }
+    from vibecomfy.ingest.normalize import normalize_to_api
+    api = normalize_to_api(raw_ui, use_comfy_converter=False)
+    wf = convert_to_vibe_format(api)
+    assert wf.nodes["1"].metadata.get("mode") == 4
+
+
+def test_mode_captured_from_comfy_converter_path() -> None:
+    """Comfy-converter path: mode:4 in _merge_slim_ui lands in metadata['mode']."""
+    # Simulate the result of convert_ui_to_api + _merge_slim_ui by providing
+    # an API-format node that already has a slim _ui with mode set.
+    api_node = _node_with_mode(mode=4)
+    wf = convert_to_vibe_format({"1": api_node})
+    assert wf.nodes["1"].metadata.get("mode") == 4
+
+
+def test_flags_color_bgcolor_captured() -> None:
+    """flags, color, bgcolor are also captured into metadata."""
+    api_node = _node_with_mode(mode=0, flags={"pinned": True}, color="#ff0000", bgcolor="#000000")
+    wf = convert_to_vibe_format({"1": api_node})
+    assert wf.nodes["1"].metadata.get("flags") == {"pinned": True}
+    assert wf.nodes["1"].metadata.get("color") == "#ff0000"
+    assert wf.nodes["1"].metadata.get("bgcolor") == "#000000"
+
+
+def test_mode_absent_leaves_metadata_unset() -> None:
+    """Nodes with no mode field do not get a metadata['mode'] key."""
+    wf = convert_to_vibe_format({"1": _node_without_mode()})
+    assert "mode" not in wf.nodes["1"].metadata
+
+
+def test_mode_does_not_enter_inputs_or_widgets() -> None:
+    """mode must never appear in node.inputs or node.widgets (K3 invariant)."""
+    api_node = _node_with_mode(mode=4)
+    wf = convert_to_vibe_format({"1": api_node})
+    node = wf.nodes["1"]
+    assert "mode" not in node.inputs
+    assert "mode" not in node.widgets
+
+
+def test_compile_api_byte_identical_with_and_without_mode() -> None:
+    """compile('api') output is identical regardless of mode in metadata."""
+    api_with_mode = _node_with_mode(mode=4)
+    api_without_mode = _node_without_mode()
+
+    wf_with = convert_to_vibe_format({"1": api_with_mode})
+    wf_without = convert_to_vibe_format({"1": api_without_mode})
+
+    import json
+    compiled_with = json.dumps(wf_with.compile(), sort_keys=True)
+    compiled_without = json.dumps(wf_without.compile(), sort_keys=True)
+    assert compiled_with == compiled_without, (
+        "compile('api') output must not change when mode is present in metadata"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T19 — comfy_converter_strict parameter semantics (offline, no comfy needed)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Minimal UI-shaped workflow usable as a normalize_to_api input.
+_MINIMAL_UI_RAW: dict = {
+    "nodes": [{"id": 1, "type": "SaveImage", "inputs": [], "widgets_values": ["output"]}],
+    "links": [],
+}
+
+
+def test_comfy_converter_strict_absent_comfy_falls_through_to_offline() -> None:
+    """comfy_converter_strict=True with comfy absent: import guard skips cleanly.
+
+    When ``use_comfy_converter=True`` (default) but the comfy package cannot be
+    imported, the ImportError guard fires before strict mode is ever consulted.
+    The call must succeed by falling through to the offline converter — no
+    exception propagated, result is a valid API dict.
+    """
+    from unittest.mock import patch
+    from vibecomfy.ingest.normalize import normalize_to_api
+
+    # Simulate comfy being absent by making the import raise ImportError.
+    with patch.dict("sys.modules", {"comfy": None, "comfy.component_model": None,
+                                    "comfy.component_model.workflow_convert": None}):
+        result = normalize_to_api(_MINIMAL_UI_RAW, comfy_converter_strict=True)
+
+    assert isinstance(result, dict), "offline fallback must produce a dict"
+    assert "1" in result, "offline result must contain the single node"
+
+
+def test_comfy_converter_strict_no_op_when_use_comfy_converter_false() -> None:
+    """comfy_converter_strict is a no-op when use_comfy_converter=False.
+
+    When the comfy converter is disabled entirely (``use_comfy_converter=False``),
+    the strict flag must have no effect — the call succeeds using the offline
+    converter regardless of the flag value.
+    """
+    from vibecomfy.ingest.normalize import normalize_to_api
+
+    result_default = normalize_to_api(
+        _MINIMAL_UI_RAW, use_comfy_converter=False, comfy_converter_strict=False
+    )
+    result_strict = normalize_to_api(
+        _MINIMAL_UI_RAW, use_comfy_converter=False, comfy_converter_strict=True
+    )
+
+    import json
+    assert json.dumps(result_default, sort_keys=True) == json.dumps(result_strict, sort_keys=True), (
+        "comfy_converter_strict must be a no-op when use_comfy_converter=False — "
+        "both calls must produce identical output"
+    )
+
+
+def test_comfy_converter_default_raises_when_converter_errors() -> None:
+    """Default normalize_to_api() is strict when convert_ui_to_api raises.
+
+    When comfy IS importable but ``convert_ui_to_api`` raises an exception, the
+    default call must propagate that exception rather than silently falling back
+    to the offline converter.
+    """
+    from unittest.mock import MagicMock, patch
+    from vibecomfy.comfy_backend import ComfyCompatibility
+    from vibecomfy.ingest.normalize import normalize_to_api
+
+    failing_converter = MagicMock(side_effect=RuntimeError("converter_exploded"))
+    fake_module = MagicMock()
+    fake_module.convert_ui_to_api = failing_converter
+    compatible = ComfyCompatibility(
+        ok=True,
+        reason_code="ok",
+        expected={"commit": "expected", "version": "pinned"},
+        actual={"commit": "expected", "version": None},
+        safe_families=[],
+    )
+
+    with patch.dict("sys.modules", {
+        "comfy": MagicMock(),
+        "comfy.component_model": MagicMock(),
+        "comfy.component_model.workflow_convert": fake_module,
+    }), patch("vibecomfy.ingest.normalize.check_comfy_compatibility", return_value=compatible):
+        try:
+            normalize_to_api(_MINIMAL_UI_RAW)
+        except RuntimeError as exc:
+            assert "converter_exploded" in str(exc)
+        else:
+            raise AssertionError(
+                "Expected RuntimeError to propagate by default when "
+                "convert_ui_to_api raises"
+            )
+
+
+def test_comfy_converter_strict_false_tolerant_when_converter_errors() -> None:
+    """comfy_converter_strict=False keeps the explicit tolerant fallback path.
+
+    When comfy IS importable but ``convert_ui_to_api`` raises, the explicit
+    ``comfy_converter_strict=False`` opt-out must still fall through to the
+    offline converter.
+    """
+    from unittest.mock import MagicMock, patch
+    from vibecomfy.ingest.normalize import normalize_to_api
+
+    failing_converter = MagicMock(side_effect=RuntimeError("converter_exploded"))
+    fake_module = MagicMock()
+    fake_module.convert_ui_to_api = failing_converter
+
+    with patch.dict("sys.modules", {
+        "comfy": MagicMock(),
+        "comfy.component_model": MagicMock(),
+        "comfy.component_model.workflow_convert": fake_module,
+    }), pytest.warns(UserWarning, match="falling back to the offline normalizer"):
+        result = normalize_to_api(_MINIMAL_UI_RAW, comfy_converter_strict=False)
+
+    assert isinstance(result, dict), "offline fallback must produce a dict"
+    assert "1" in result, "offline result must contain the single node"
+
+
+def test_comfy_converter_strict_surfaces_version_skew_before_converter_exec() -> None:
+    """Strict live-converter paths fence on skew before calling convert_ui_to_api."""
+    from unittest.mock import MagicMock, patch
+
+    from vibecomfy.comfy_backend import ComfyCompatibility, ComfyCompatibilityError
+    from vibecomfy.ingest.normalize import normalize_to_api
+
+    converter = MagicMock(side_effect=RuntimeError("raw_traceback_should_not_escape"))
+    fake_module = MagicMock()
+    fake_module.convert_ui_to_api = converter
+    mismatch = ComfyCompatibility(
+        ok=False,
+        reason_code="comfyui_version_skew",
+        expected={"commit": "expected", "version": "pinned"},
+        actual={"commit": "actual", "version": "other"},
+        safe_families=[],
+    )
+
+    with patch.dict("sys.modules", {
+        "comfy": MagicMock(),
+        "comfy.component_model": MagicMock(),
+        "comfy.component_model.workflow_convert": fake_module,
+    }), patch("vibecomfy.ingest.normalize.check_comfy_compatibility", return_value=mismatch):
+        with pytest.raises(ComfyCompatibilityError, match="comfyui_version_skew") as excinfo:
+            normalize_to_api(_MINIMAL_UI_RAW, comfy_converter_strict=True)
+
+    converter.assert_not_called()
+    assert excinfo.value.compatibility == mismatch
+
+
+def test_comfy_converter_lenient_skew_falls_back_offline_without_converter_exec() -> None:
+    """Lenient live-converter paths still skip converter execution on version skew."""
+    from unittest.mock import MagicMock, patch
+
+    from vibecomfy.comfy_backend import ComfyCompatibility
+    from vibecomfy.ingest.normalize import normalize_to_api
+
+    converter = MagicMock(side_effect=RuntimeError("raw_traceback_should_not_escape"))
+    fake_module = MagicMock()
+    fake_module.convert_ui_to_api = converter
+    mismatch = ComfyCompatibility(
+        ok=False,
+        reason_code="comfyui_version_skew",
+        expected={"commit": "expected", "version": "pinned"},
+        actual={"commit": "actual", "version": "other"},
+        safe_families=[],
+    )
+
+    with patch.dict("sys.modules", {
+        "comfy": MagicMock(),
+        "comfy.component_model": MagicMock(),
+        "comfy.component_model.workflow_convert": fake_module,
+    }), patch("vibecomfy.ingest.normalize.check_comfy_compatibility", return_value=mismatch), pytest.warns(
+        UserWarning, match="comfyui_version_skew"
+    ):
+        result = normalize_to_api(_MINIMAL_UI_RAW, comfy_converter_strict=False)
+
+    converter.assert_not_called()
+    assert isinstance(result, dict)
+    assert "1" in result

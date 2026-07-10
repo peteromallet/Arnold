@@ -1,0 +1,18 @@
+{
+  "id": "cal_wrong_01_scheduler_for_quality",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
+  "nl_intent": "Significantly improve the quality of the generated video output",
+  "post_edit_ir_patch": {
+    "node_id": "3",
+    "field": "scheduler",
+    "old": "simple",
+    "new": "ddim_uniform"
+  },
+  "wrongness_description": "Editor changed KSampler node 3 scheduler from 'simple' to 'ddim_uniform' reasoning that a different scheduler would improve output quality. Changing the scheduler alone has minimal effect on perceptual quality; meaningful quality improvements require increasing the number of steps or switching to a higher-quality sampler. The scheduler change is a faithful attempt (right node, adjacent parameter) but does not achieve the stated quality improvement.",
+  "family": "video",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["3", "scheduler"]]
+  },
+  "expected_text_judge_verdict": "FAIL"
+}

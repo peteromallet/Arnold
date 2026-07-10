@@ -1,0 +1,12 @@
+# owner: core-api-surface
+# reason: pre-existing public API, packaging, wrapper, and utility failures from the legacy baseline
+# audit: migrated from tests/known_failures.txt during sprint-3 diagnostics T7
+
+tests/edgecases/test_json_formats.py::test_boolean_and_null_like_inputs
+tests/test_blocks.py::test_authoring_dsl_builds_compileable_text_to_image_chain
+tests/test_blocks.py::test_block_compile_smoke_widget_keys
+tests/test_generated_node_wrappers.py::test_generated_wrapper_rejects_multiple_positional_workflows
+tests/test_packaging.py::test_nodes_package_layout_stays_collapsed
+tests/test_packaging.py::test_top_level_public_api_exports_promised_names
+tests/test_wrapper_codegen.py::test_render_imports_cleanly
+tests/test_wrapper_codegen.py::test_render_round_trip_to_api_json

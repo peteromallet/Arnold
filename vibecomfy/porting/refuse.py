@@ -1,0 +1,376 @@
+"""Refusal-spine for re-emit (M5 Step 16).
+
+``guard_emit(original_ui, candidate_ui, snapshot_delta)`` is the safety gate
+applied on APPLIED re-emit: it runs both UI JSONs through ComfyUI's
+``convert_ui_to_api`` and refuses the emit whenever the *candidate*
+diverges from the *original* on a uid-matched, snapshot-present node in any
+field NOT named in ``snapshot_delta``.
+
+The ComfyUI converter is resolved lazily on the first ``guard_emit`` call. If
+the pinned optional dependency is not importable, the failure is captured and
+re-raised from that ``guard_emit`` call with a clear diagnostic, rather than
+silently degrading to a no-op gate.
+
+Spec: ``vibecomfy/porting/refuse.py`` is torch-free, no Node, no HTTP. All
+schema needs are served from the installed ComfyUI package via
+``vibecomfy.comfy_backend.ensure_nodes``.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable
+from enum import Enum
+from typing import Any, Mapping
+
+_ConvertUiToApi = Callable[[dict[str, Any]], Mapping[str, Any]]
+_convert_ui_to_api: _ConvertUiToApi | None = None
+_IMPORT_ERROR: BaseException | None = None
+
+
+def _load_convert_ui_to_api() -> _ConvertUiToApi:
+    """Load the ComfyUI converter only when a non-empty guard scope needs it."""
+    global _IMPORT_ERROR, _convert_ui_to_api
+    if _convert_ui_to_api is not None:
+        return _convert_ui_to_api
+    if _IMPORT_ERROR is not None:
+        raise ImportError(
+            "vibecomfy.porting.refuse: ComfyUI convert_ui_to_api is "
+            f"unavailable ({_IMPORT_ERROR!r}). Install VibeComfy with the "
+            "pinned [comfy] extra."
+        )
+    from vibecomfy.comfy_backend import ensure_nodes as _ensure_nodes
+
+    try:
+        _ensure_nodes()
+        from comfy.component_model.workflow_convert import (
+            convert_ui_to_api as _loaded_convert_ui_to_api,
+        )
+    except Exception as exc:  # pragma: no cover - exercised when vendor absent
+        _IMPORT_ERROR = exc
+        raise ImportError(
+            "vibecomfy.porting.refuse: ComfyUI convert_ui_to_api is "
+            f"unavailable ({exc!r}). Install VibeComfy with the pinned "
+            "[comfy] extra."
+        ) from exc
+    _convert_ui_to_api = _loaded_convert_ui_to_api
+    return _convert_ui_to_api
+
+
+class RefusedEmit(Exception):
+    """Raised when ``guard_emit`` detects an unauthorized re-emit divergence.
+
+    Attributes
+    ----------
+    reason:
+        Short human-readable summary of why the emit was refused.
+    diff:
+        ``{uid: {axis: ...}}`` — per-uid breakdown of the offending differences
+        between ``convert_ui_to_api(original)`` and ``convert_ui_to_api(candidate)``.
+    """
+
+    def __init__(self, reason: str, diff: Mapping[str, Any]):
+        super().__init__(reason)
+        self.reason = reason
+        self.diff = dict(diff)
+
+
+def widget_shape_refusal_diff(verdicts: Iterable[Any]) -> dict[str, dict[str, Any]]:
+    """Build a node-keyed ``RefusedEmit.diff`` mapping for widget-shape refusals.
+
+    The helper accepts verdict-like objects instead of importing the verdict
+    class.  That keeps the refusal spine side-effect-light and lets tests build
+    small stand-ins without touching ComfyUI conversion machinery.
+    """
+    diff: dict[str, dict[str, Any]] = {}
+    for verdict in verdicts:
+        node_id = str(_read_attr(verdict, "node_id"))
+        details = _widget_shape_details(verdict)
+        reasons = details.pop("reasons")
+        diff[node_id] = {
+            "axis": "widget_shape",
+            "node_id": node_id,
+            "class_type": str(_read_attr(verdict, "class_type", "")),
+            "reason": reasons[0] if reasons else "unknown",
+            "reasons": reasons,
+            "details": details,
+        }
+    return diff
+
+
+def refused_widget_shape(verdicts: Iterable[Any]) -> RefusedEmit:
+    """Return a ``RefusedEmit`` carrying node-keyed widget-shape details."""
+    diff = widget_shape_refusal_diff(verdicts)
+    return RefusedEmit(
+        f"widget shape refused: {len(diff)} node(s) cannot be emitted safely",
+        diff,
+    )
+
+
+def _read_attr(obj: Any, name: str, default: Any = None) -> Any:
+    if isinstance(obj, Mapping):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Mapping):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return repr(value)
+
+
+def _widget_shape_details(verdict: Any) -> dict[str, Any]:
+    reasons = [_jsonable(reason) for reason in (_read_attr(verdict, "reasons", ()) or ())]
+    evidence = _read_attr(verdict, "evidence")
+    details: dict[str, Any] = {
+        "decision": _jsonable(_read_attr(verdict, "decision")),
+        "reasons": reasons,
+        "safe_to_regenerate": bool(_read_attr(verdict, "safe_to_regenerate", False)),
+        "pin_opaque": bool(_read_attr(verdict, "pin_opaque", False)),
+        "refuse": bool(_read_attr(verdict, "refuse", True)),
+        "evidence": _jsonable(_evidence_summary(evidence)),
+    }
+    field_delta = _read_attr(verdict, "field_delta", None)
+    link_delta = _read_attr(verdict, "link_delta", None)
+    if field_delta:
+        details["field_delta"] = _jsonable(field_delta)
+    if link_delta:
+        details["link_delta"] = _jsonable(link_delta)
+    return details
+
+
+def _evidence_summary(evidence: Any) -> dict[str, Any]:
+    if evidence is None:
+        return {}
+    fields = (
+        "node_id",
+        "class_type",
+        "schema_less",
+        "confidence",
+        "raw_widget_count",
+        "candidate_widget_count",
+        "schema_widget_count",
+        "raw_widget_shape",
+        "has_dict_rows",
+        "overflow",
+        "provider",
+    )
+    return {field: _read_attr(evidence, field) for field in fields}
+
+
+class EditorAheadError(Exception):
+    """Raised when ``emit_ui_json`` detects editor-only uids in the prior store.
+
+    An editor-only uid is one that exists in the prior store but is absent from
+    the IR and was not authored by a prior VibeComfy emit (i.e. the node was
+    added directly in the ComfyUI editor after the last VibeComfy export).
+
+    Attributes
+    ----------
+    editor_only_uids:
+        List of ``{uid, class_type}`` dicts for each editor-only uid detected,
+        sorted by uid for deterministic output.
+    """
+
+    def __init__(self, editor_only_uids: list[dict[str, str]]):
+        super().__init__(
+            f"editor_ahead: {len(editor_only_uids)} uid(s) in the prior store "
+            "were not authored by VibeComfy — use --force-drop to allow dropping them"
+        )
+        self.editor_only_uids = list(editor_only_uids)
+
+
+def _uid_to_litegraph_id(ui_json: Mapping[str, Any]) -> dict[str, str]:
+    """Build a ``{vibecomfy_uid: str(litegraph_id)}`` map from a UI JSON."""
+    out: dict[str, str] = {}
+    for node in ui_json.get("nodes", []) or []:
+        if not isinstance(node, dict):
+            continue
+        props = node.get("properties") or {}
+        uid = props.get("vibecomfy_uid")
+        if uid:
+            out[str(uid)] = str(node.get("id"))
+    return out
+
+
+def _api_node(api: Mapping[str, Any], node_id: str) -> Any:
+    """Look up an api-node by id, tolerating int/str key drift."""
+    if node_id in api:
+        return api[node_id]
+    if node_id.isdigit():
+        as_int = int(node_id)
+        if as_int in api:  # type: ignore[operator]
+            return api[as_int]  # type: ignore[index]
+    return None
+
+
+# Snapshot field names whose changes flow into the API ``inputs`` axis.
+_INPUT_AXIS_FIELDS = frozenset(
+    {
+        "widget_values_sig",
+        "incoming_edge_sig",
+        "outgoing_edge_sig",
+        "public_input_binding",
+    }
+)
+
+
+def guard_emit(
+    original_ui: Mapping[str, Any],
+    candidate_ui: Mapping[str, Any],
+    snapshot_delta: Mapping[str, Mapping[str, tuple]] | None,
+    *,
+    resolved_ops: Iterable[Any] | None = None,
+) -> None:
+    """Refusal-spine on APPLIED re-emit.
+
+    Compares ``convert_ui_to_api(candidate_ui)`` against
+    ``convert_ui_to_api(original_ui)`` over the *scope set* — nodes that are
+    (a) uid-matched in both ``original_ui`` and ``candidate_ui`` AND (b) present
+    in the original ingest snapshot.  Because the original UI IS the snapshot
+    source by construction in the M5 preserve flow, condition (b) reduces to
+    uid-presence in ``original_ui``.
+
+    Inside the scope set, any change *outside* the fields enumerated by
+    ``snapshot_delta[uid]`` raises :class:`RefusedEmit` with the offending
+    per-uid diff.  Nodes outside the scope set are always allowed.
+
+    Parameters
+    ----------
+    original_ui:
+        UI JSON dict for the pre-edit state (what was on disk before re-emit).
+    candidate_ui:
+        UI JSON dict for the post-edit emit candidate (about to be written).
+    snapshot_delta:
+        ``{uid: {field_name: (old, new)}}`` from
+        :func:`vibecomfy.porting.layout.delta.compute_field_delta`.  Names the
+        fields the user is intentionally changing.  ``None`` is treated as the
+        empty dict.
+    resolved_ops:
+        Optional resolved edit-op attribution from the deterministic edit path.
+        When supplied, nodes touched by those ops may legitimately change their
+        emitted API ``class_type``/``inputs`` axes.
+
+    Raises
+    ------
+    RefusedEmit
+        When a uid in the scope set differs on a field not in ``snapshot_delta``.
+    ImportError
+        When ComfyUI ``convert_ui_to_api`` is unavailable.
+    """
+    delta: Mapping[str, Mapping[str, tuple]] = snapshot_delta or {}
+    attributed_uids = _attributed_uids_from_resolved_ops(resolved_ops)
+
+    orig_uid_to_id = _uid_to_litegraph_id(original_ui)
+    cand_uid_to_id = _uid_to_litegraph_id(candidate_ui)
+    scope_uids = set(orig_uid_to_id) & set(cand_uid_to_id)
+    if not scope_uids:
+        return
+
+    convert_ui_to_api = _load_convert_ui_to_api()
+    orig_api = convert_ui_to_api(dict(original_ui))
+    cand_api = convert_ui_to_api(dict(candidate_ui))
+
+    diff: dict[str, dict[str, Any]] = {}
+    for uid in scope_uids:
+        orig_node = _api_node(orig_api, orig_uid_to_id[uid])
+        cand_node = _api_node(cand_api, cand_uid_to_id[uid])
+
+        if orig_node is None and cand_node is None:
+            continue
+        if orig_node is None or cand_node is None:
+            diff[uid] = {
+                "presence": (orig_node is not None, cand_node is not None)
+            }
+            continue
+
+        # Strip the slim ``_ui`` merge (litegraph furniture only — no graph
+        # semantics).  Compare ``class_type`` and ``inputs`` axes.
+        orig_class = orig_node.get("class_type")
+        cand_class = cand_node.get("class_type")
+        orig_inputs = dict(orig_node.get("inputs") or {})
+        cand_inputs = dict(cand_node.get("inputs") or {})
+
+        allowed = set(delta.get(uid, {}).keys())
+        target_attributed = uid in delta or uid in attributed_uids
+        class_axis_allowed = target_attributed or "class_type" in allowed
+        inputs_axis_allowed = target_attributed or bool(allowed & _INPUT_AXIS_FIELDS)
+
+        node_diff: dict[str, Any] = {}
+        if orig_class != cand_class and not class_axis_allowed:
+            node_diff["class_type"] = (orig_class, cand_class)
+        if orig_inputs != cand_inputs and not inputs_axis_allowed:
+            differing: dict[str, tuple] = {}
+            for k in set(orig_inputs) | set(cand_inputs):
+                if orig_inputs.get(k) != cand_inputs.get(k):
+                    differing[k] = (orig_inputs.get(k), cand_inputs.get(k))
+            if differing:
+                node_diff["inputs"] = differing
+        if node_diff:
+            diff[uid] = node_diff
+
+    if diff:
+        raise RefusedEmit(
+            "guard_emit refused re-emit: "
+            f"{len(diff)} uid-matched node(s) changed outside snapshot_delta",
+            diff,
+        )
+
+
+def _attributed_uids_from_resolved_ops(resolved_ops: Iterable[Any] | None) -> set[str]:
+    if resolved_ops is None:
+        return set()
+
+    uids: set[str] = set()
+
+    def add_uid(value: Any) -> None:
+        if isinstance(value, str) and value:
+            uids.add(value)
+
+    def add_target(obj: Any) -> None:
+        target = _read_attr(obj, "target")
+        add_uid(_read_attr(target, "uid"))
+
+    def add_ref(obj: Any) -> None:
+        ref = _read_attr(obj, "ref")
+        add_uid(_read_attr(ref, "uid"))
+
+    for item in resolved_ops:
+        op = item
+        resolved = None
+        if isinstance(item, tuple) and len(item) == 2:
+            op, resolved = item
+        add_target(op)
+        add_ref(op)
+        source = _read_attr(op, "source")
+        add_uid(_read_attr(source, "uid"))
+        if resolved is None:
+            continue
+        if isinstance(resolved, tuple):
+            for endpoint in resolved:
+                add_ref(endpoint)
+            continue
+        add_target(resolved)
+        add_ref(resolved)
+        add_uid(_read_attr(resolved, "uid"))
+        node_ref = _read_attr(resolved, "node_ref")
+        add_target(node_ref)
+        for source_uid in _read_attr(resolved, "source_uids", ()) or ():
+            add_uid(source_uid)
+
+    return uids
+
+
+__all__ = [
+    "EditorAheadError",
+    "RefusedEmit",
+    "guard_emit",
+    "refused_widget_shape",
+    "widget_shape_refusal_diff",
+]

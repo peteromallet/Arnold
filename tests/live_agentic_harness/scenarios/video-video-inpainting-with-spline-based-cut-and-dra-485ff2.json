@@ -1,0 +1,37 @@
+{
+  "id": "video-video-inpainting-with-spline-based-cut-and-dra-485ff2",
+  "query": "Lower the inpainting denoising strength to 0.6 to preserve more original image details around the dragged region",
+  "workflow_path": "external_workflows/corpus/485ff2fa6dcc1917.json",
+  "network": true,
+  "timeout": 280,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "desired": {
+    "outcome": "The inpainting blends more conservatively, keeping more of the source pixels intact and reducing visible seams around the cut-and-drag area.",
+    "quality": "The denoising strength parameter on the inpainting node is correctly identified and set to 0.6; spline-editing and video-combine stages are untouched and functional.",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "inpainting",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "video-inpainting",
+      "spline-editing",
+      "cut-and-drag",
+      "image-inpainting",
+      "video-combine"
+    ],
+    "source_workflow_id": "485ff2fa6dcc1917",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "This targets a specific technique in the spline-cut-and-drag pipeline (inpainting blend) and tests whether the agent can distinguish it from generic model settings."
+  }
+}

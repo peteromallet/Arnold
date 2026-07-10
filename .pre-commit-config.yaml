@@ -1,0 +1,21 @@
+repos:
+  - repo: local
+    hooks:
+      - id: vibecomfy-strict-ready-templates
+        name: vibecomfy strict ready templates
+        entry: python -m tools.check_strict_ready_templates
+        language: system
+        files: ^ready_templates/.*\.py$
+        pass_filenames: false
+      - id: vibecomfy-templates-against-packs
+        name: vibecomfy templates against packs
+        entry: python -m tools.validate_templates_against_packs
+        language: system
+        files: ^ready_templates/.*\.py$
+        pass_filenames: false
+      - id: vibecomfy-template-traceability
+        name: vibecomfy template traceability
+        entry: python -m tools.validate_template_traceability --strict
+        language: system
+        files: ^ready_templates/.*\.py$
+        pass_filenames: false

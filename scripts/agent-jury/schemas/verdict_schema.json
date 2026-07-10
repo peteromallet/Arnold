@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-jury/schemas/verdict_schema.json",
+  "title": "Juror Verdict",
+  "description": "A single juror's blind verdict. Each juror fills the section relevant to their lens; other sections remain null.",
+  "type": "object",
+  "required": ["verdict", "confidence", "confidence_rationale", "key_dissent_point", "information_gaps"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["APPROVE", "CONDITIONAL_APPROVE", "ABSTAIN", "CONDITIONAL_REJECT", "REJECT"],
+      "description": "The juror's final verdict on the proposal"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "How confident the juror is in their verdict. 0.0 = complete uncertainty, 1.0 = absolute certainty."
+    },
+    "confidence_rationale": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Why the juror assigned this confidence level"
+    },
+    "risk_assessment": {
+      "description": "Filled ONLY by the risk analyst juror. Null for other jurors.",
+      "type": ["object", "null"],
+      "properties": {
+        "overall_risk_level": {"type": "string", "enum": ["LOW", "MODERATE", "HIGH", "CRITICAL"]},
+        "failure_modes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["mode", "severity", "probability", "probability_rationale"],
+            "properties": {
+              "mode": {"type": "string"},
+              "severity": {"type": "string", "enum": ["CATASTROPHIC", "MAJOR", "MODERATE", "MINOR"]},
+              "probability": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+              "probability_rationale": {"type": "string"},
+              "cascade_potential": {"type": "string"},
+              "mitigable": {"type": "boolean"},
+              "mitigation": {"type": "string"}
+            }
+          }
+        },
+        "reversibility": {"type": "string", "enum": ["FULLY_REVERSIBLE", "PARTIALLY_REVERSIBLE", "IRREVERSIBLE"]},
+        "reversibility_rationale": {"type": "string"},
+        "precautionary_trigger": {"type": "boolean"},
+        "precautionary_rationale": {"type": "string"}
+      }
+    },
+    "ethics_assessment": {
+      "description": "Filled ONLY by the ethicist juror. Null for other jurors.",
+      "type": ["object", "null"],
+      "properties": {
+        "overall_ethical_stance": {"type": "string", "enum": ["ETHICAL", "MOSTLY_ETHICAL", "ETHICALLY_AMBIGUOUS", "PROBLEMATIC", "UNETHICAL"]},
+        "rights_analysis": {
+          "type": "object",
+          "properties": {
+            "rights_affected": {"type": "array", "items": {"type": "string"}},
+            "violation_severity": {"type": "string", "enum": ["NONE", "MINOR", "MODERATE", "SERIOUS", "EGREGIOUS"]},
+            "can_be_mitigated": {"type": "boolean"},
+            "mitigation": {"type": "string"}
+          }
+        },
+        "fairness_analysis": {
+          "type": "object",
+          "properties": {
+            "beneficiaries": {"type": "string"},
+            "cost_bearers": {"type": "string"},
+            "distribution_assessment": {"type": "string", "enum": ["EQUITABLE", "NEUTRAL", "REGRESSIVE", "EXPLOITATIVE"]},
+            "vulnerable_groups_affected": {"type": "array", "items": {"type": "string"}},
+            "disproportionate_impact": {"type": "boolean"}
+          }
+        },
+        "consent_analysis": {
+          "type": "object",
+          "properties": {
+            "affected_parties_can_consent": {"type": ["boolean", "string"]},
+            "coercion_present": {"type": "boolean"},
+            "transparency_level": {"type": "string", "enum": ["FULL", "PARTIAL", "OPAQUE", "DECEPTIVE"]}
+          }
+        },
+        "precedent_concern": {"type": "string"},
+        "moral_disagreement_zones": {"type": "array", "items": {"type": "string"}},
+        "intent_outcome_alignment": {"type": "string", "enum": ["ALIGNED", "MISALIGNED_GOOD_INTENT", "MISALIGNED_BAD_INTENT", "UNCLEAR"]}
+      }
+    },
+    "utility_assessment": {
+      "description": "Filled ONLY by the utility maximizer juror. Null for other jurors.",
+      "type": ["object", "null"],
+      "properties": {
+        "overall_expected_value": {"type": "string", "enum": ["STRONGLY_POSITIVE", "POSITIVE", "NEUTRAL", "NEGATIVE", "STRONGLY_NEGATIVE"]},
+        "ev_rationale": {"type": "string"},
+        "benefits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "benefit": {"type": "string"},
+              "magnitude": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+              "measurable": {"type": "boolean"},
+              "time_to_realize": {"type": "string", "enum": ["IMMEDIATE", "SHORT_TERM", "MEDIUM_TERM", "LONG_TERM"]},
+              "certainty": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+            }
+          }
+        },
+        "costs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cost": {"type": "string"},
+              "magnitude": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+              "measurable": {"type": "boolean"},
+              "certainty": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+            }
+          }
+        },
+        "opportunity_cost": {"type": "string"},
+        "sensitivity_analysis": {
+          "type": "object",
+          "properties": {
+            "key_assumptions": {"type": "array", "items": {"type": "string"}},
+            "if_assumption_fails": {"type": "string"},
+            "flip_point": {"type": "string"}
+          }
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "alternative": {"type": "string"},
+              "relative_ev": {"type": "string", "enum": ["BETTER", "COMPARABLE", "WORSE", "INCOMPARABLE"]},
+              "rationale": {"type": "string"}
+            }
+          }
+        },
+        "implementation_feasibility": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+        "implementation_barriers": {"type": "array", "items": {"type": "string"}},
+        "metrics_proposed": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "systems_assessment": {
+      "description": "Filled ONLY by the systems thinker juror. Null for other jurors.",
+      "type": ["object", "null"],
+      "properties": {
+        "system_name": {"type": "string"},
+        "system_boundary": {"type": "string"},
+        "causal_map_summary": {"type": "string"},
+        "feedback_loops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "loop_type": {"type": "string", "enum": ["REINFORCING", "BALANCING"]},
+              "description": {"type": "string"},
+              "effect": {"type": "string", "enum": ["BENEFICIAL", "HARMFUL", "NEUTRAL", "UNCERTAIN"]},
+              "speed": {"type": "string", "enum": ["FAST", "MEDIUM", "SLOW"]}
+            }
+          }
+        },
+        "second_order_effects": {"type": "array"},
+        "unintended_consequences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "consequence": {"type": "string"},
+              "type": {"type": "string", "enum": ["BLOWBACK", "SERENDIPITY", "PERVERSE_INCENTIVE"]},
+              "likelihood": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+              "severity_if_occurs": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]}
+            }
+          }
+        },
+        "delay_concerns": {"type": "array", "items": {"type": "string"}},
+        "non_linearity_concerns": {"type": "array", "items": {"type": "string"}},
+        "resilience_impact": {"type": "string", "enum": ["MORE_RESILIENT", "NEUTRAL", "LESS_RESILIENT", "FRAGILE"]},
+        "resilience_rationale": {"type": "string"},
+        "path_dependency": {"type": "string", "enum": ["LOCK_IN", "REVERSIBLE", "FLEXIBLE"]},
+        "path_dependency_rationale": {"type": "string"},
+        "externalities": {"type": "array", "items": {"type": "string"}},
+        "adaptive_responses": {"type": "string"}
+      }
+    },
+    "adversarial_assessment": {
+      "description": "Filled ONLY by the devil's advocate juror. Null for other jurors.",
+      "type": ["object", "null"],
+      "properties": {
+        "assumptions_identified": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "assumption": {"type": "string"},
+              "explicit_or_implicit": {"type": "string", "enum": ["EXPLICIT", "IMPLICIT"]},
+              "justified": {"type": ["boolean", "string"]},
+              "if_false_impact": {"type": "string", "enum": ["CATASTROPHIC", "MAJOR", "MODERATE", "MINOR"]},
+              "if_false": {"type": "string"}
+            }
+          }
+        },
+        "steel_manned_opposition": {"type": "string", "maxLength": 600},
+        "base_rate_check": {
+          "type": "object",
+          "properties": {
+            "relevant_historical_precedent": {"type": "string"},
+            "historical_success_rate": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "proposal_differs_because": {"type": "string"}
+          }
+        },
+        "overconfidence_indicators": {"type": "array", "items": {"type": "string"}},
+        "motivated_reasoning_indicators": {"type": "array", "items": {"type": "string"}},
+        "worst_case_scenario": {
+          "type": "object",
+          "properties": {
+            "scenario": {"type": "string"},
+            "plausibility": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "preconditions": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "implementation_failure_points": {"type": "array", "items": {"type": "string"}},
+        "unknown_unknown_vulnerabilities": {"type": "array", "items": {"type": "string"}},
+        "graded_criticisms": {
+          "type": "object",
+          "properties": {
+            "highly_likely_concerns": {"type": "array", "items": {"type": "string"}},
+            "speculative_concerns": {"type": "array", "items": {"type": "string"}},
+            "dismissed_concerns": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "key_dissent_point": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "The STRONGEST argument AGAINST the juror's own verdict. Required of every juror."
+    },
+    "fatal_flaw": {
+      "type": ["string", "null"],
+      "description": "A single flaw that alone justifies rejection. Null if none found."
+    },
+    "required_conditions": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Non-negotiable conditions that must be met for approval"
+    },
+    "information_gaps": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Crucial missing information that could change the verdict"
+    }
+  }
+}

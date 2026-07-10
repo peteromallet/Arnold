@@ -1,0 +1,18 @@
+{
+  "id": "image_04_width_only_720p",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
+  "nl_intent": "Change the output resolution to 720p (1280x720)",
+  "post_edit_ir_patch": {
+    "node_id": "238:232",
+    "field": "width",
+    "old": 1328,
+    "new": 1280
+  },
+  "wrongness_description": "Model changed only the width of EmptySD3LatentImage from 1328 to 1280, leaving height at 1328. True 720p requires both width=1280 AND height=720. The resulting latent is 1280x1328, not 1280x720.",
+  "family": "image",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["238:232", "width"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

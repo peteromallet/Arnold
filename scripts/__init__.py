@@ -1,1 +1,1 @@
-"""Repository scripts package used by focused regression tests."""
+"""Repository-local maintenance scripts package (importable during tests)."""

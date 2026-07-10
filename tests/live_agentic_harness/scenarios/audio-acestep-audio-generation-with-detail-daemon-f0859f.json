@@ -1,0 +1,32 @@
+{
+  "id": "audio-acestep-audio-generation-with-detail-daemon-f0859f",
+  "query": "The DetailDaemon sampler is used for enhancing audio detail. How does it work compared to standard audio diffusion samplers, and what settings would you recommend for generating a cinematic soundscape?",
+  "workflow_path": "external_workflows/corpus/f0859f5d99dc9bdf.json",
+  "network": true,
+  "timeout": 320,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "audio",
+    "query_type": "research",
+    "abstraction": "med",
+    "complexity": "med",
+    "manifest_complexity": 3,
+    "task_type": "text_to_image",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "audio-generation",
+      "ace-step",
+      "text-to-audio",
+      "detail-daemon",
+      "sampling"
+    ],
+    "source_workflow_id": "f0859f5d99dc9bdf",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "It leverages the workflow's actual technique to demand in-depth comparison and concrete recommendation, fully testing research capability."
+  }
+}

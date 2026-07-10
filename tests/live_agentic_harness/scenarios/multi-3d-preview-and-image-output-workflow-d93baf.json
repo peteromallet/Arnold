@@ -1,0 +1,37 @@
+{
+  "id": "multi-3d-preview-and-image-output-workflow-d93baf",
+  "query": "Switch the first preview to a top\u2011down view of the 3D model.",
+  "workflow_path": "external_workflows/corpus/d93baf73c8a43f57.json",
+  "network": true,
+  "timeout": 320,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "desired": {
+    "outcome": "First preview renders the 3D model from directly above.",
+    "quality": "GLB file still saves correctly; second preview unchanged; no dangling nodes.",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "multi",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "other",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "3d",
+      "glb",
+      "image-loading",
+      "preview",
+      "save"
+    ],
+    "source_workflow_id": "d93baf73c8a43f57",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Specific, simple edit that tests parameter change without breaking the 3D pipeline."
+  }
+}

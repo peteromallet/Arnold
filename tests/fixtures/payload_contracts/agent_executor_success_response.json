@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "mode": "respond",
+  "reply": "executor reply rendered",
+  "session_id": "session-1",
+  "report": {
+    "executor": {
+      "plan": { "reply": true },
+      "research": null,
+      "implementation": null
+    }
+  }
+}

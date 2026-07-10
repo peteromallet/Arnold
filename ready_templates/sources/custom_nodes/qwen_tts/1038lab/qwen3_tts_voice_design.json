@@ -1,0 +1,24 @@
+{
+  "1": {
+    "class_type": "AILab_Qwen3TTSVoiceDesign",
+    "inputs": {
+      "text": "This is a compact Qwen voice design smoke test for reusable VibeComfy audio templates.",
+      "instruct": "A warm narrator voice with crisp diction and a neutral studio tone.",
+      "model_size": "1.7B",
+      "language": "English",
+      "unload_models": true,
+      "seed": 124
+    }
+  },
+  "2": {
+    "class_type": "SaveAudioMP3",
+    "inputs": {
+      "audio": [
+        "1",
+        0
+      ],
+      "filename_prefix": "audio/qwen3_tts_voice_design",
+      "quality": "V0"
+    }
+  }
+}

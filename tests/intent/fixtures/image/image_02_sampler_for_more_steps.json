@@ -1,0 +1,18 @@
+{
+  "id": "image_02_sampler_for_more_steps",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
+  "nl_intent": "Run with more sampling steps for better quality",
+  "post_edit_ir_patch": {
+    "node_id": "238:230",
+    "field": "sampler_name",
+    "old": "euler",
+    "new": "dpm_2"
+  },
+  "wrongness_description": "Model swapped sampler_name from 'euler' to 'dpm_2' instead of increasing the step count. DPM-2 is a different sampling algorithm and does not increase the number of denoising steps. Increasing quality via more steps requires changing PrimitiveInt node 238:224 which feeds the steps input.",
+  "family": "image",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["238:230", "sampler_name"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

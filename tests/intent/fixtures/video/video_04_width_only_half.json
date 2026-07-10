@@ -1,0 +1,18 @@
+{
+  "id": "video_04_width_only_half",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
+  "nl_intent": "Reduce the video resolution by half to speed up generation",
+  "post_edit_ir_patch": {
+    "node_id": "40",
+    "field": "width",
+    "old": 832,
+    "new": 416
+  },
+  "wrongness_description": "Model halved only the width of EmptyHunyuanLatentVideo node 40 from 832 to 416 while leaving height at 480. This breaks the 832x480 16:9 aspect ratio, producing a 416x480 portrait crop that distorts motion and composition. A correct resolution reduction must halve both width and height (to 416x240) or choose a valid aspect-correct resolution pair.",
+  "family": "video",
+  "expected_refusal_spine_verdict": "allow",
+  "intended_delta": {
+    "changed": [["40", "width"]]
+  },
+  "expected_text_judge_verdict": "wrong_but_faithful"
+}

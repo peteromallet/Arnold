@@ -1,4 +1,0 @@
-{
-  "query": "Make the video 512x512 with 49 frames.",
-  "graph": "ready_templates/sources/official/video/wan_t2v.json"
-}
