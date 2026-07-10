@@ -37,6 +37,10 @@ from arnold.control.interface import (
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.profiles import effective_premium_vendor
 from arnold_pipelines.megaplan.profiles.policy import DEFAULT_AGENT_ROUTING, ROBUSTNESS_ACCEPTED, normalize_robustness
+from arnold_pipelines.megaplan.replan_state import (
+    REPLAN_STATE_KEYS_TO_CLEAR,
+    reset_replan_loop_state,
+)
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, select_fallback_spec
 from arnold_pipelines.megaplan.types import (
     AgentSpec,
@@ -69,6 +73,7 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from arnold_pipelines.megaplan.control_interface import declared_override_policy_target
 from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
 
 
@@ -247,7 +252,6 @@ def _blocked_phase_rerun_target(
     state: Mapping[str, object],
     *,
     phase: str,
-    recovered_state: str,
     source: str | None,
 ) -> ControlTargetRef | None:
     blocked_rerunnable_phases = {"execute"}
@@ -274,7 +278,6 @@ def _blocked_phase_rerun_target(
     return _workflow_step_target(
         phase,
         direction="recovery",
-        target_state=recovered_state,
         source=source,
     )
 
@@ -283,17 +286,19 @@ def _awaiting_human_target(state: Mapping[str, object]) -> ControlTargetRef:
     clarification = state.get("clarification")
     source = clarification.get("source") if isinstance(clarification, Mapping) else None
     if source == "prep":
-        step = "resume-clarify"
-        target_state = "prepped"
-    else:
-        step = "verify-human"
-        target_state = "awaiting_human_verify"
+        return declared_override_policy_target(
+            "resume-clarify",
+            direction="operator",
+            source="awaiting_human",
+            target_state="prepped",
+            operator_action="resume-clarify",
+        )
     return _workflow_step_target(
-        step,
+        "verify-human",
         direction="operator",
-        target_state=target_state,
+        target_state="awaiting_human_verify",
         source="awaiting_human",
-        operator_action=step,
+        operator_action="verify-human",
     )
 
 
@@ -849,6 +854,23 @@ class PlanningControlBinding:
                 ),
             )
 
+        if current_state == STATE_BLOCKED:
+            rerun_target = _blocked_phase_rerun_target(
+                state,
+                phase=phase,
+                source=source,
+            )
+            if rerun_target is not None:
+                return (rerun_target,)
+            return (
+                declared_override_policy_target(
+                    "recover-blocked",
+                    direction="recovery",
+                    source=source,
+                    operator_action="recover-blocked",
+                ),
+            )
+
         recovered_state = topology.predecessors(phase, policy="recovery")
         if recovered_state is None:
             return (
@@ -858,25 +880,6 @@ class PlanningControlBinding:
                     current_state=current_state,
                     phase=phase,
                     source=source,
-                ),
-            )
-
-        if current_state == STATE_BLOCKED:
-            rerun_target = _blocked_phase_rerun_target(
-                state,
-                phase=phase,
-                recovered_state=recovered_state,
-                source=source,
-            )
-            if rerun_target is not None:
-                return (rerun_target,)
-            return (
-                _workflow_step_target(
-                    "recover-blocked",
-                    direction="recovery",
-                    target_state=recovered_state,
-                    source=source,
-                    operator_action="recover-blocked",
                 ),
             )
 
@@ -1233,31 +1236,36 @@ class PlanningControlBinding:
             note = transition.payload.get("note")
             plan_dir = _plan_dir(state, transition)
             plan_file = latest_plan_path(plan_dir, state)  # type: ignore[arg-type]
+            timestamp = now_utc()
             override_entry = {
                 "action": "replan",
-                "timestamp": now_utc(),
+                "timestamp": timestamp,
                 "reason": reason,
+                "from_state": current_state,
+                "plan_file": plan_file.name,
             }
             note_entry = None
             if isinstance(note, str) and note:
-                note_entry = {"timestamp": now_utc(), "note": note}
+                note_entry = {"timestamp": timestamp, "note": note}
+            next_state = dict(state)
+            next_state["meta"] = _next_meta(
+                state,
+                note_entry=note_entry,
+                override_entry=override_entry,
+            )
+            reset_replan_loop_state(next_state, target_state=STATE_PLANNED)
             return ControlTransitionResult(
                 accepted=True,
                 mutated=True,
                 reason="replan",
-                artifacts={"plan_file": str(plan_file)},
+                artifacts={
+                    "plan_file": str(plan_file),
+                    "remove_state_keys": REPLAN_STATE_KEYS_TO_CLEAR,
+                },
                 state_deltas=(
-                    _replace_delta(state, "current_state", STATE_PLANNED),
-                    _replace_delta(state, "last_gate", {}),
-                    _replace_delta(
-                        state,
-                        "meta",
-                        _next_meta(
-                            state,
-                            note_entry=note_entry,
-                            override_entry=override_entry,
-                        ),
-                    ),
+                    _replace_delta(state, "current_state", next_state["current_state"]),
+                    _replace_delta(state, "last_gate", next_state["last_gate"]),
+                    _replace_delta(state, "meta", next_state["meta"]),
                 ),
             )
 

@@ -122,7 +122,7 @@ def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> No
     assert first.claimed
     owner_path = first.lock_dir / "owner.json"
 
-    reclaimed = repair_requests.claim_active_repair_request(
+    stale = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id="blocker:v1:stale",
         request_id="req-stale",
@@ -133,43 +133,15 @@ def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> No
         is_pid_live=lambda pid: False,
     )
 
-    assert reclaimed.claimed
-    assert reclaimed.owner is not None
-    assert reclaimed.owner["pid"] == 444
-    assert reclaimed.owner["actor"] == "trigger-b"
-    assert reclaimed.owner["request_id"] == "req-stale"
-    assert json.loads(owner_path.read_text(encoding="utf-8")) == reclaimed.owner
+    assert stale.stale
+    assert stale.owner is not None
+    assert stale.owner["pid"] == 333
+    assert stale.owner["actor"] == "trigger-a"
+    assert json.loads(owner_path.read_text(encoding="utf-8")) == stale.owner
     assert first.lock_dir.exists()
 
 
-def test_active_repair_claim_reclaims_dead_owner_without_custom_probe(tmp_path: Path) -> None:
-    queue_dir = tmp_path / "repair-queue"
-    first = repair_requests.claim_active_repair_request(
-        queue_dir,
-        blocker_id="blocker:v1:default-probe",
-        request_id="req-default-probe",
-        actor="trigger-a",
-        session="demo-session",
-        pid=99_999_999,
-        started_at="2026-07-04T01:00:00+00:00",
-    )
-    assert first.claimed
-
-    reclaimed = repair_requests.claim_active_repair_request(
-        queue_dir,
-        blocker_id="blocker:v1:default-probe",
-        request_id="req-default-probe",
-        actor="trigger-b",
-        session="demo-session",
-        pid=555,
-    )
-
-    assert reclaimed.claimed
-    assert reclaimed.owner is not None
-    assert reclaimed.owner["pid"] == 555
-
-
-def test_active_repair_claim_reclaims_live_pid_when_process_no_longer_matches_session(
+def test_active_repair_claim_reports_live_pid_session_mismatch_without_reclaiming(
     tmp_path: Path,
 ) -> None:
     queue_dir = tmp_path / "repair-queue"
@@ -186,7 +158,7 @@ def test_active_repair_claim_reclaims_live_pid_when_process_no_longer_matches_se
     )
     assert first.claimed
 
-    reclaimed = repair_requests.claim_active_repair_request(
+    stale = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id="blocker:v1:process-mismatch",
         request_id="req-process-mismatch",
@@ -197,10 +169,36 @@ def test_active_repair_claim_reclaims_live_pid_when_process_no_longer_matches_se
         is_pid_live=lambda pid: pid in {os.getpid(), 556},
     )
 
-    assert reclaimed.claimed
-    assert reclaimed.owner is not None
-    assert reclaimed.owner["pid"] == 556
-    assert reclaimed.owner["actor"] == "trigger-b"
+    assert stale.stale
+    assert stale.owner is not None
+    assert stale.owner["pid"] == os.getpid()
+    assert stale.owner["actor"] == "trigger-a"
+
+def test_active_repair_claim_defaults_to_pid_liveness_probe(tmp_path: Path) -> None:
+    queue_dir = tmp_path / "repair-queue"
+    first = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:dead-owner",
+        request_id="req-dead",
+        actor="trigger-a",
+        session="demo-session",
+        pid=99999999,
+    )
+
+    assert first.claimed
+
+    stale = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:dead-owner",
+        request_id="req-new",
+        actor="trigger-b",
+        session="demo-session",
+        pid=444,
+    )
+
+    assert stale.stale
+    assert stale.evidence is not None
+    assert "owner_pid_not_live" in stale.evidence["stale_evidence"]["reasons"]
 
 
 def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path) -> None:

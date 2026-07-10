@@ -263,6 +263,7 @@
           "warrant_source_refs": [
             "arnold_pipelines/megaplan/handlers/gate.py",
             "arnold_pipelines/megaplan/handlers/execute.py",
+            "arnold_pipelines/megaplan/content_types.py",
             "arnold_pipelines/megaplan/workflows/components.py"
           ],
           "renamed_equivalents": {

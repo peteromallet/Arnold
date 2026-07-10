@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan import handlers as _pkg
+from arnold_pipelines.megaplan.outcomes import PrepOutcome
 from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED
 from arnold_pipelines.megaplan._core import (
@@ -246,6 +247,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                 prep_signal = _build_prep_clarify_signal(state, worker.payload)
                 next_state = _apply_prep_signal(state, prep_signal)
                 state["current_state"] = next_state
+                prep_outcome = PrepOutcome.AWAITING_HUMAN if next_state == STATE_AWAITING_HUMAN else PrepOutcome.CONTINUE
                 if next_state == STATE_AWAITING_HUMAN:
                     blocking_count = len(state["clarification"]["questions"])
                     summary = (
@@ -265,6 +267,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                     response_fields={
                         "iteration": state["iteration"],
                         "prep_signal": prep_signal,
+                        "prep_outcome": prep_outcome,
                     },
                 )
             from arnold_pipelines.megaplan.orchestration.prep_research import (
@@ -288,6 +291,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
             prep_signal = _build_prep_clarify_signal(state, worker.payload)
             next_state = _apply_prep_signal(state, prep_signal)
             state["current_state"] = next_state
+            prep_outcome = PrepOutcome.AWAITING_HUMAN if next_state == STATE_AWAITING_HUMAN else PrepOutcome.CONTINUE
             if next_state == STATE_AWAITING_HUMAN:
                 blocking_count = len(state["clarification"]["questions"])
                 summary = (
@@ -311,6 +315,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                     "iteration": state["iteration"],
                     "prep_metrics_hash": orchestration.prep_metrics_hash,
                     "prep_signal": prep_signal,
+                    "prep_outcome": prep_outcome,
                 },
                 run_id=run_id,
             )

@@ -429,10 +429,33 @@ def test_authority_divergence_payload_ignores_explained_noops() -> None:
     assert _authority_divergence_payload(task, decision) is None
 
 
-def test_execute_completion_authority_uses_execution_window_and_explained_skips(
+def test_execute_completion_authority_blocks_pending_finalize_tasks_without_execution_updates(
     tmp_path: Path,
 ) -> None:
     plan_dir, _tasks, _state = _make_execute_authority_plan(tmp_path)
+
+    ok, missing = _execute_completion_authority(plan_dir)
+
+    assert ok is False
+    assert missing == ["v3_api_tests:not_executed:pending"]
+
+
+def test_execute_completion_authority_accepts_pending_finalize_task_with_fresh_execution_update(
+    tmp_path: Path,
+) -> None:
+    plan_dir, _tasks, _state = _make_execute_authority_plan(tmp_path)
+    payload = json.loads((plan_dir / "execution_batch_1.json").read_text(encoding="utf-8"))
+    payload["task_updates"].append(
+        {
+            "task_id": "v3_api_tests",
+            "status": "done",
+            "commands_run": [_PYTEST_API_CMD],
+        }
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(payload) + "\n",
+        encoding="utf-8",
+    )
 
     ok, missing = _execute_completion_authority(plan_dir)
 

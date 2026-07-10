@@ -439,21 +439,10 @@ def claim_active_repair_request(
         now=now,
         is_pid_live=is_pid_live,
     )
-    result = _reclaim_stale_claim(
-        result,
-        claim_lock_dir=claim_lock_dir,
-        session=normalized_session,
-        blocker_id=normalized_blocker_id,
-        pid=pid,
-        command=command,
-        started_at=started_at,
-        cwd=cwd,
-        timeout_seconds=timeout_seconds,
-        hostname=hostname,
-        extra=metadata,
-        now=now,
-        is_pid_live=is_pid_live,
-    )
+    # A stale claim is evidence for the operator/repair loop, not authority to
+    # delete another worker's lock and seize it.  PID reuse and delayed writes
+    # make automatic reclamation unsafe; a subsequent explicit recovery owns
+    # any mutation after evaluating the captured evidence.
     return _claim_result_from_lock(
         result,
         blocker_id=normalized_blocker_id,

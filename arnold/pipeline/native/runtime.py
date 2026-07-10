@@ -16,6 +16,12 @@ Parity with graph executor
 - Schema-registry-backed handoff via ``StepIOContractContext``.
 - ``state["__contract_results__"]`` publication matching executor shape.
 - Telemetry-sink handling via ``telemetry_path``.
+
+Ownership:
+    The runtime executes topology owned by ``.pypeline`` modules and named
+    native subworkflows.  Boundary contracts and boundary receipts are
+    durable-effect declarations and checks consumed during execution — they
+    do not define or alter the runtime execution path.
 """
 
 from __future__ import annotations

@@ -20,7 +20,6 @@ if str(SCRIPT_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_REPO_ROOT))
 
 from arnold.conformance.checks import check_generic_arnold_megaplan_coupling
-from arnold.conformance.authoring_terms import FORBIDDEN_MEGAPLAN_IMPORT_PREFIXES
 from arnold.conformance.deleted_surfaces import DELETED_IMPORT_MODULES, DELETED_SOURCE_PATHS
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
@@ -1138,13 +1137,15 @@ def _deleted_product_import_violations(repo_root: Path) -> dict[str, tuple[str, 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        for prefix in FORBIDDEN_MEGAPLAN_IMPORT_PREFIXES:
-                            if alias.name == prefix or alias.name.startswith(prefix + "."):
-                                hits.add(alias.name)
+                        if alias.name == "arnold.pipelines.megaplan" or alias.name.startswith(
+                            "arnold.pipelines.megaplan."
+                        ):
+                            hits.add(alias.name)
                 elif isinstance(node, ast.ImportFrom) and node.module:
-                    for prefix in FORBIDDEN_MEGAPLAN_IMPORT_PREFIXES:
-                        if node.module == prefix or node.module.startswith(prefix + "."):
-                            hits.add(node.module)
+                    if node.module == "arnold.pipelines.megaplan" or node.module.startswith(
+                        "arnold.pipelines.megaplan."
+                    ):
+                        hits.add(node.module)
 
             if hits:
                 violations[str(source.relative_to(repo_root))] = tuple(sorted(hits))

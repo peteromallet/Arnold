@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from arnold_pipelines.megaplan.store import StoredEvent, Store
+from arnold_pipelines.megaplan.workflows.events import workflow_cursor
 
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -48,6 +49,9 @@ def _event_from_stored(plan_id: str, seq: int, event: StoredEvent) -> dict[str, 
     }
     if event.run_id is not None:
         projected["run_id"] = event.run_id
+    cursor = workflow_cursor(event.phase)
+    if cursor is not None:
+        projected["workflow_cursor"] = cursor.to_dict()
     return projected
 
 
