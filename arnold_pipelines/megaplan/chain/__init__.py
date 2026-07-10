@@ -3727,6 +3727,89 @@ def _rearm_fresh_session_execute_block(
     return True
 
 
+def _rearm_stale_incomplete_execute_cursor_mismatch(
+    plan_dir: Path,
+    *,
+    writer,
+) -> bool:
+    """Reopen the specific cursor failure invalidated by current projection rules.
+
+    A partial or blocked execute intentionally leaves the plan in ``finalized``
+    so pending batches can be dispatched again.  Older workflow-backed drivers
+    incorrectly promoted that incomplete history record into an execute->review
+    cursor and then persisted ``workflow_cursor_mismatch``.  Once that record
+    is present, ordinary chain admission stops before the corrected driver can
+    observe it.  Reopen only the mechanically identifiable stale shape; a
+    genuine cursor mismatch (a different cursor source, route, or outcome)
+    remains blocked for repair.
+    """
+
+    state_path = plan_dir / "state.json"
+    try:
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(state_payload, dict):
+        return False
+    if state_payload.get("current_state") != STATE_BLOCKED or state_payload.get("active_step"):
+        return False
+    latest_failure = state_payload.get("latest_failure")
+    resume_cursor = state_payload.get("resume_cursor")
+    if not isinstance(latest_failure, dict) or not isinstance(resume_cursor, dict):
+        return False
+    if latest_failure.get("kind") != "workflow_cursor_mismatch":
+        return False
+    if latest_failure.get("phase") != "execute":
+        return False
+    if resume_cursor.get("phase") != "execute":
+        return False
+    if resume_cursor.get("retry_strategy") != "repair_workflow_projection":
+        return False
+    metadata = latest_failure.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("observed_phase_source") != "last_step":
+        return False
+    message = latest_failure.get("message")
+    if not isinstance(message, str) or "expects one of [review]" not in message or "offered [execute]" not in message:
+        return False
+    history = state_payload.get("history")
+    last_entry = history[-1] if isinstance(history, list) and history else None
+    if not isinstance(last_entry, dict):
+        return False
+    if last_entry.get("step") != "execute" or last_entry.get("result") not in {"blocked", "partial"}:
+        return False
+
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    recovery_event = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "chain relaunch cleared stale incomplete-execute workflow cursor mismatch",
+        "history_result": last_entry.get("result"),
+    }
+
+    def _patch_stale_cursor(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("workflow_cursor_recoveries", [])
+            if isinstance(entries, list):
+                entries.append(recovery_event)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_FINALIZED},
+        mutation=_patch_stale_cursor,
+    )
+    writer(
+        "[chain] cleared stale incomplete-execute workflow cursor mismatch; "
+        "reset plan to finalized so pending execute work can resume\n"
+    )
+    return True
+
+
 def _drive_plan_with_blocked_execute_recovery(
     root: Path,
     spec_path: Path,
@@ -5395,6 +5478,7 @@ def run_chain(
                 except CliError:
                     plan_dir = None
                 if plan_dir is not None:
+                    _rearm_stale_incomplete_execute_cursor_mismatch(plan_dir, writer=writer)
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
