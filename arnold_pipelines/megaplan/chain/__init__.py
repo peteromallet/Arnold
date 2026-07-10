@@ -4997,6 +4997,21 @@ def run_chain(
 
         if state.current_milestone_index == idx and state.pr_number is not None and use_pr:
             pr_state = _pr_state(root, state.pr_number, writer=writer)
+            if pr_state == "closed" and state.last_state == "blocked":
+                log(
+                    f"clearing stale closed PR context for {milestone.label} while "
+                    "resuming blocked plan"
+                )
+                state.last_state = "pr_closed"
+                state.pr_state = "closed"
+                chain_spec.save_chain_state(spec_path, state)
+                state = _clear_stale_closed_pr_state(
+                    spec_path=spec_path,
+                    state=state,
+                    milestone_label=milestone.label,
+                    log_fn=log,
+                )
+                continue
             if pr_state == "merged":
                 state.pr_state = "merged"
                 chain_spec.save_chain_state(spec_path, state)
