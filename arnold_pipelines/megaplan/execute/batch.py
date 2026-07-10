@@ -57,6 +57,7 @@ from arnold_pipelines.megaplan.execute.aggregation import (
     _append_scope_drift_blocker,
     _build_aggregate_execution_payload,
     _compute_scope_drift_for_execute_surface,
+    phase_quality_deviations_for_current_attempt,
 )
 from arnold_pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
@@ -3947,6 +3948,16 @@ def handle_execute_auto_loop(
                 if notes:
                     blocked_task_notes[tid] = str(notes)
 
+    # ``execution.json`` is intentionally cumulative evidence.  The phase
+    # result drives retry policy, so it must only carry diagnostics produced by
+    # this invocation.  A no-pending resume loads old artifacts solely to
+    # corroborate completed work; none of their old deviations can gate this
+    # new transition.
+    phase_deviations, deferred_evidence = phase_quality_deviations_for_current_attempt(
+        batch_payloads if not no_pending_execution else [],
+        blocking_reasons=blocking_reasons,
+    )
+
     response: StepResponse = {
         "success": not blocked and timeout_error is None,
         "step": "execute",
@@ -3962,7 +3973,7 @@ def handle_execute_auto_loop(
             else STATE_FINALIZED if blocked or timeout_error is not None else STATE_EXECUTED
         ),
         "files_changed": aggregate_payload.get("files_changed", []),
-        "deviations": deviations,
+        "deviations": phase_deviations,
         "warnings": [summary] if blocked or timeout_error is not None else [],
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,
@@ -3970,6 +3981,8 @@ def handle_execute_auto_loop(
     }
     if active_blocked_task_ids:
         response["blocked_task_ids"] = sorted(active_blocked_task_ids)
+    if deferred_evidence:
+        response["deferred_evidence"] = deferred_evidence
     if routing_blocked:
         response["result"] = "blocked"
     if blocked_task_notes:
