@@ -36,8 +36,8 @@ Each phase can run on a different model. For example, here's how the default **`
 |---|---|
 | `prep` — repository research | `plan` / `revise` — design the plan |
 | `gate` — mechanical pass/fail | `finalize` — **adjudicates** task difficulty 1–5 |
-| `critique` — independent review *(directed by the premium critique-evaluator)* | `execute` — hard tasks (tiers 4–5 → Sonnet/Opus) |
-| `execute` — easy tasks (tiers 1–3) | `review` |
+| `critique` — independent review *(directed by the premium critique-evaluator)* | `execute` — hard tasks (tiers 7–10 → premium models) |
+| `execute` — easy tasks (tiers 1–6) | `review` |
 
 `finalize` is the **adjudicator**: it scores each task's complexity 1–5, and that score routes execution — trivial tasks to DeepSeek-flash, ordinary tasks to DeepSeek-pro, and only cross-cutting (4) or fundamental (5) tasks up to Sonnet/Opus. Independent critique and gating prevent rubber-stamping, and the visible `prep` phase makes repository investigation observable instead of hiding it inside `plan`. Open models critique reliably **when a premium model directs them**: a premium critique-evaluator picks the lenses and rejects weak findings while a cheap DeepSeek critic runs them.
 

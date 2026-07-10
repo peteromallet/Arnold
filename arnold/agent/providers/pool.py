@@ -40,6 +40,7 @@ _PROVIDER_KEY_VARS = {
     "google": "GEMINI_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
     "fireworks": "FIREWORKS_API_KEY",
+    "xai": "XAI_API_KEY",
 }
 _ENV_ALIASES = {
     "ZHIPU_API_KEY": ("ZHIPU_API_KEY", "GLM_API_KEY"),
@@ -57,6 +58,7 @@ _PROVIDER_BASE_URL_VARS = {
     "mimo": "MIMO_BASE_URL",
     "deepseek": "DEEPSEEK_BASE_URL",
     "fireworks": "FIREWORKS_BASE_URL",
+    "xai": "XAI_BASE_URL",
 }
 _DEFAULT_BASE_URLS = {
     "zhipu": "https://open.bigmodel.cn/api/paas/v4",
@@ -67,6 +69,7 @@ _DEFAULT_BASE_URLS = {
     "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
     "deepseek": "https://api.deepseek.com",
     "fireworks": "https://api.fireworks.ai/inference/v1",
+    "xai": "https://api.x.ai/v1",
 }
 KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1"
 

@@ -5865,7 +5865,7 @@ if failure_kind in {"execution_blocked", "blocked_recovery_not_resolved"}:
         f"{failure_kind}:{message[:140]}"
     )
     raise SystemExit(0)
-if latest_failure.get("kind") != "phase_failed":
+if failure_kind != "phase_failed":
     print("ok")
     raise SystemExit(0)
 

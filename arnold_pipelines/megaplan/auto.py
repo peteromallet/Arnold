@@ -1632,7 +1632,7 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
     if not isinstance(execute_tiers, dict) or not execute_tiers:
         return {}
     max_execute_tier = config.get("max_execute_tier")
-    if not isinstance(max_execute_tier, int) or not 1 <= max_execute_tier <= 5:
+    if not isinstance(max_execute_tier, int) or not 1 <= max_execute_tier <= 10:
         max_execute_tier = None
     ladder: dict[int, str] = {}
     for raw_tier, spec in execute_tiers.items():
@@ -1785,7 +1785,7 @@ def _current_task_override(plan_dir: Path | None, task_id: str) -> int | None:
     for task in tasks:
         if isinstance(task, dict) and task.get("id") == task_id:
             override = task.get("tier_override")
-            if isinstance(override, int) and 1 <= override <= 5:
+            if isinstance(override, int) and 1 <= override <= 10:
                 return override
             return None
     return None
@@ -1884,7 +1884,7 @@ def _task_complexity(plan_dir: Path | None, task_id: str) -> int | None:
         if not isinstance(task, dict) or task.get("id") != task_id:
             continue
         complexity = task.get("complexity")
-        if isinstance(complexity, int) and 1 <= complexity <= 5:
+        if isinstance(complexity, int) and 1 <= complexity <= 10:
             return complexity
     return None
 
