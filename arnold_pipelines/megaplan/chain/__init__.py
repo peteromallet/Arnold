@@ -1886,6 +1886,50 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
 
+    from arnold_pipelines.megaplan.orchestration.authority_readers import (
+        has_durable_terminal_task_evidence,
+    )
+
+    # A branch replay changes commit IDs while retaining the milestone diff.
+    # Re-anchor terminal finalize evidence only when every claimed file is
+    # present in the declared milestone range; arbitrary stale claims stay
+    # non-authoritative.
+    if authoritative_finalize_records and project_dir is not None and current_head:
+        chain_policy = meta.get("chain_policy") if isinstance(meta, dict) else None
+        base_ref = chain_policy.get("milestone_base_sha") if isinstance(chain_policy, dict) else None
+        if isinstance(base_ref, str) and base_ref.strip():
+            try:
+                from arnold_pipelines.megaplan.loop.git import _collect_committed_range_paths
+                from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                    _evidence_from_task_record,
+                )
+                committed_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
+                reanchored_refs = []
+                reanchored_records: list[dict[str, Any]] = []
+                for task in authoritative_finalize_records:
+                    files = {
+                        str(path).lstrip("./")
+                        for path in task.get("files_changed", [])
+                        if isinstance(path, str) and path.strip()
+                    }
+                    if (
+                        has_durable_terminal_task_evidence(task)
+                        and files
+                        and files.issubset(committed_paths)
+                    ):
+                        task = dict(task)
+                        task["head_sha"] = current_head
+                        reanchored_refs.extend(
+                            _evidence_from_task_record(
+                                task, finalize_path, root=plan_dir, default_head=current_head
+                            )
+                        )
+                    reanchored_records.append(task)
+                authoritative_finalize_records = reanchored_records
+                evidence_nucleus = (*evidence_nucleus, *reanchored_refs)
+            except Exception:
+                pass
+
     # finalize.json defines the required task universe. A later execution batch
     # may override stale finalize rows for individual tasks, but it may not
     # shrink the universe to just the latest touched task. This is the incident
