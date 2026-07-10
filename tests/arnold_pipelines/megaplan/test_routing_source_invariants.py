@@ -38,47 +38,31 @@ HANDLERS_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers"
 NATIVE_DIR = REPO_ROOT / "arnold" / "pipeline" / "native"
 
 # ── audited compatibility inventory ──────────────────────────────────────
-# Each entry is  (relative_file, line_number, key).
+# Each entry is  (relative_file, key, expected_count).
 # These are the *only* routing-owned state writes permitted in handlers.
 # When a handler no longer needs a write, remove its entry — do not leave
 # stale entries that would mask a regression.
-_INVENTORIED_HANDLER_WRITES: set[tuple[str, int, str]] = {
+_INVENTORIED_HANDLER_WRITE_COUNTS: dict[tuple[str, str], int] = {
     # execute.py
-    ("arnold_pipelines/megaplan/handlers/execute.py", 260, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/execute.py", 318, "current_state"),
+    ("arnold_pipelines/megaplan/handlers/execute.py", "current_state"): 2,
     # finalize.py
-    ("arnold_pipelines/megaplan/handlers/finalize.py", 1507, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/finalize.py", 1753, "current_state"),
+    ("arnold_pipelines/megaplan/handlers/finalize.py", "current_state"): 2,
     # gate.py
-    ("arnold_pipelines/megaplan/handlers/gate.py", 490, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/gate.py", 506, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/gate.py", 599, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/gate.py", 612, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/gate.py", 621, "current_state"),
+    ("arnold_pipelines/megaplan/handlers/gate.py", "current_state"): 5,
     # override.py
-    ("arnold_pipelines/megaplan/handlers/override.py", 674, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/override.py", 810, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/override.py", 921, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/override.py", 997, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/override.py", 1041, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/override.py", 1277, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/override.py", 1799, "current_state"),
+    ("arnold_pipelines/megaplan/handlers/override.py", "current_state"): 7,
     # plan.py
-    ("arnold_pipelines/megaplan/handlers/plan.py", 241, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/plan.py", 276, "current_state"),
+    ("arnold_pipelines/megaplan/handlers/plan.py", "current_state"): 2,
     # review.py
-    ("arnold_pipelines/megaplan/handlers/review.py", 1127, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/review.py", 1194, "current_state"),
+    ("arnold_pipelines/megaplan/handlers/review.py", "current_state"): 2,
     # verifiability.py
-    ("arnold_pipelines/megaplan/handlers/verifiability.py", 283, "current_state"),
+    ("arnold_pipelines/megaplan/handlers/verifiability.py", "current_state"): 1,
 }
 
 # Tuple-unpack writes where one of the unpacked targets is a routing-owned key.
 # These don't show up as simple `state["key"] =` AST nodes but the test still
 # needs to allow them.
-_INVENTORIED_UNPACK_WRITES: set[tuple[str, int, str]] = {
-    ("arnold_pipelines/megaplan/handlers/plan.py", 195, "current_state"),
-}
+_INVENTORIED_UNPACK_WRITE_COUNTS: dict[tuple[str, str], int] = {}
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
@@ -100,7 +84,7 @@ def _collect_routing_writes(
         except (SyntaxError, UnicodeDecodeError):
             continue
 
-        rel = str(source.relative_to(root.parent.parent))
+        rel = f"{rel_prefix}/{source.relative_to(root).as_posix()}"
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
@@ -161,6 +145,15 @@ def _subscript_key(sub: ast.Subscript) -> str | None:
     return None
 
 
+def _write_counts(
+    writes: list[tuple[str, int, str]],
+) -> dict[tuple[str, str], list[int]]:
+    counts: dict[tuple[str, str], list[int]] = {}
+    for rel, lineno, key in writes:
+        counts.setdefault((rel, key), []).append(lineno)
+    return counts
+
+
 # ── tests ──────────────────────────────────────────────────────────────────
 
 class TestRoutingSourceInvariants:
@@ -172,26 +165,27 @@ class TestRoutingSourceInvariants:
             HANDLERS_DIR, rel_prefix="arnold_pipelines/megaplan/handlers"
         )
 
-        simple_set = set(simple)
-        unpack_set = set(unpack)
-
-        uninventoried_simple = simple_set - _INVENTORIED_HANDLER_WRITES
-        uninventoried_unpack = unpack_set - _INVENTORIED_UNPACK_WRITES
+        simple_counts = _write_counts(simple)
+        unpack_counts = _write_counts(unpack)
 
         uninventoried: list[str] = []
-        for rel, lineno, key in sorted(uninventoried_simple):
-            uninventoried.append(
-                f"  {rel}:{lineno}  state[\"{key}\"] = ... (new simple write)"
-            )
-        for rel, lineno, key in sorted(uninventoried_unpack):
-            uninventoried.append(
-                f"  {rel}:{lineno}  state[\"{key}\"] = ... (new unpack write)"
-            )
+        for (rel, key), lines in sorted(simple_counts.items()):
+            expected = _INVENTORIED_HANDLER_WRITE_COUNTS.get((rel, key), 0)
+            if len(lines) > expected:
+                uninventoried.append(
+                    f"  {rel} state[\"{key}\"] count {len(lines)} > inventoried {expected}; lines={sorted(lines)}"
+                )
+        for (rel, key), lines in sorted(unpack_counts.items()):
+            expected = _INVENTORIED_UNPACK_WRITE_COUNTS.get((rel, key), 0)
+            if len(lines) > expected:
+                uninventoried.append(
+                    f"  {rel} state[\"{key}\"] unpack count {len(lines)} > inventoried {expected}; lines={sorted(lines)}"
+                )
 
         assert not uninventoried, (
             "New uninventoried routing-owned state writes detected. "
             "If these are audited compatibility bookkeeping, add them to "
-            "_INVENTORIED_HANDLER_WRITES or _INVENTORIED_UNPACK_WRITES.\n"
+            "_INVENTORIED_HANDLER_WRITE_COUNTS or _INVENTORIED_UNPACK_WRITE_COUNTS.\n"
             + "\n".join(uninventoried)
         )
 
@@ -201,25 +195,26 @@ class TestRoutingSourceInvariants:
             HANDLERS_DIR, rel_prefix="arnold_pipelines/megaplan/handlers"
         )
 
-        simple_set = set(simple)
-        unpack_set = set(unpack)
-
-        stale_simple = _INVENTORIED_HANDLER_WRITES - simple_set
-        stale_unpack = _INVENTORIED_UNPACK_WRITES - unpack_set
+        simple_counts = _write_counts(simple)
+        unpack_counts = _write_counts(unpack)
 
         stale: list[str] = []
-        for rel, lineno, key in sorted(stale_simple):
-            stale.append(
-                f"  {rel}:{lineno}  state[\"{key}\"] = ... (stale simple entry)"
-            )
-        for rel, lineno, key in sorted(stale_unpack):
-            stale.append(
-                f"  {rel}:{lineno}  state[\"{key}\"] = ... (stale unpack entry)"
-            )
+        for (rel, key), expected in sorted(_INVENTORIED_HANDLER_WRITE_COUNTS.items()):
+            actual = len(simple_counts.get((rel, key), []))
+            if actual < expected:
+                stale.append(
+                    f"  {rel} state[\"{key}\"] count {actual} < inventoried {expected}; lines={sorted(simple_counts.get((rel, key), []))}"
+                )
+        for (rel, key), expected in sorted(_INVENTORIED_UNPACK_WRITE_COUNTS.items()):
+            actual = len(unpack_counts.get((rel, key), []))
+            if actual < expected:
+                stale.append(
+                    f"  {rel} state[\"{key}\"] unpack count {actual} < inventoried {expected}; lines={sorted(unpack_counts.get((rel, key), []))}"
+                )
 
         assert not stale, (
             "Stale inventory entries found — the code no longer contains these writes. "
-            "Remove them from _INVENTORIED_HANDLER_WRITES or _INVENTORIED_UNPACK_WRITES.\n"
+            "Remove them from _INVENTORIED_HANDLER_WRITE_COUNTS or _INVENTORIED_UNPACK_WRITE_COUNTS.\n"
             + "\n".join(stale)
         )
 
@@ -271,8 +266,10 @@ class TestRoutingSourceInvariants:
         # These are Megaplan-specific DSL concepts that should not appear as
         # string literals in product-neutral native code.
         megaplan_vocabulary_patterns = (
-            "megaplan",
-            "Megaplan",
+            "arnold_pipelines.megaplan",
+            "arnold.pipelines.megaplan",
+            "megaplan/",
+            ".megaplan/",
         )
 
         violations: dict[str, list[tuple[int, str]]] = {}

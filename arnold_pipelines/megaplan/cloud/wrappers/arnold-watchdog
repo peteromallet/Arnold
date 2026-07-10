@@ -420,12 +420,18 @@ def chain_completion_summary(chain_state: dict[str, object]) -> tuple[bool, int,
         current_index = int(chain_state.get("current_milestone_index") or 0)
     except Exception:
         current_index = 0
+    last_state = str(chain_state.get("last_state") or "").strip().lower()
     if spec_known and milestone_count == 0:
         # Empty chains are valid completed fixtures in wrapper tests.
         return True, current_index, milestone_count
     if not spec_known:
         return False, current_index, milestone_count
-    complete = current_index >= milestone_count or set(labels).issubset(completed_labels)
+    if last_state not in {"done", "complete", "completed"}:
+        return False, current_index, milestone_count
+    # Index advancement is not durable completion evidence on its own; require
+    # the completed milestone records to cover the chain spec before reporting
+    # terminal success.
+    complete = len(completed_list) >= milestone_count or set(labels).issubset(completed_labels)
     return complete, current_index, milestone_count
 
 
@@ -5836,7 +5842,30 @@ for log_path in log_candidates[:3]:
         raise SystemExit(0)
 
 latest_failure = state.get("latest_failure") or {}
-if latest_failure.get("kind") != "phase_failed":
+failure_kind = latest_failure.get("kind")
+if failure_kind in {"execution_blocked", "blocked_recovery_not_resolved"}:
+    phase = latest_failure.get("phase") or "execute"
+    recorded_at = latest_failure.get("recorded_at") or ""
+    active = state.get("active_step") or {}
+    active_phase = active.get("phase") or ""
+    active_pid = active.get("worker_pid") or ""
+    active_started = active.get("started_at") or ""
+    current_state = state.get("current_state") or ""
+    message = latest_failure.get("message") or ""
+    print(
+        "phase_failure:"
+        f"{state_path.parent.name}:"
+        f"{phase}:"
+        "consecutive=1:"
+        f"recorded={recorded_at or 'unknown'}:"
+        f"state={current_state or 'unknown'}:"
+        f"active={active_phase or 'none'}:"
+        f"started={active_started or 'unknown'}:"
+        f"pid={active_pid or 'none'}:"
+        f"{failure_kind}:{message[:140]}"
+    )
+    raise SystemExit(0)
+if failure_kind != "phase_failed":
     print("ok")
     raise SystemExit(0)
 
@@ -6467,7 +6496,36 @@ def chain_health_blocks_terminal_shortcut() -> bool:
     return True
 
 
-if current_target_marks_terminal_stale_chain() and not chain_health_blocks_terminal_shortcut():
+def current_chain_state_blocks_terminal_shortcut() -> bool:
+    try:
+        digest = hashlib.sha1(str(remote_spec.resolve()).encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        digest = ""
+    chain_dirs = [workspace / ".megaplan" / "plans" / ".chains"]
+    if remote_spec.parent != workspace:
+        chain_dirs.append(remote_spec.parent / ".megaplan" / "plans" / ".chains")
+    candidate_names = ["chain.json"]
+    if digest:
+        candidate_names.extend([f"{remote_spec.stem}-{digest}.json", f"chain-{digest}.json"])
+    for chain_dir in chain_dirs:
+        for name in candidate_names:
+            path = chain_dir / name
+            if not path.exists():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(payload, dict) and not is_complete_state(payload):
+                return True
+    return False
+
+
+if (
+    current_target_marks_terminal_stale_chain()
+    and not chain_health_blocks_terminal_shortcut()
+    and not current_chain_state_blocks_terminal_shortcut()
+):
     print("complete\tterminal plan state supersedes stale chain state")
     raise SystemExit(0)
 
@@ -6773,7 +6831,7 @@ PY
   if [[ -n "$plan_status_env" ]]; then
     eval "$plan_status_env"
   fi
-  if [[ "$run_kind" == "chain" && -z "${PLAN_STATUS_PLAN_NAME:-}" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" && "${PLAN_STATUS_CHAIN_COMPLETE:-0}" == "1" ]]; then
+  if [[ "$run_kind" == "chain" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" && "${PLAN_STATUS_CHAIN_COMPLETE:-0}" == "1" ]]; then
     log "chain complete; skipping repair/relaunch session=$session state=done"
     report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
     return 0

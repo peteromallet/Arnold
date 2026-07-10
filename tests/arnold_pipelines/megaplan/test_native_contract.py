@@ -190,9 +190,13 @@ class TestCanonicalMegaplanNativeContract:
 
         The absolute number is not enforced — just that we can count them.
         """
-        from arnold_pipelines.megaplan.pipeline import build_pipeline
+        from arnold_pipelines.megaplan.pipeline import (
+            build_and_compile_pipeline,
+            build_pipeline,
+        )
 
         pipeline = build_pipeline()
+        compiled = build_and_compile_pipeline()
         # DSL pipelines have .steps, neutral pipelines have .stages
         if hasattr(pipeline, "steps"):
             step_count = len(pipeline.steps)
@@ -204,8 +208,9 @@ class TestCanonicalMegaplanNativeContract:
         assert step_count > 0, (
             "Canonical megaplan pipeline must have steps or stages"
         )
-        assert step_count == 12, (
-            f"Canonical megaplan must have 12 steps; got {step_count}"
+        assert step_count == len(compiled.native_program.instructions), (
+            "Canonical megaplan shell must preserve the visible stage count "
+            f"(pipeline={step_count}, native={len(compiled.native_program.instructions)})"
         )
 
     def test_canonical_metadata_consistent_dsl_vs_native(self) -> None:
@@ -235,16 +240,37 @@ class TestCanonicalMegaplanNativeContract:
             )
 
     def test_authoring_source_can_expand_wrapper_nodes_without_breaking_native_shell(self) -> None:
+        from arnold_pipelines.megaplan.pipeline import (
+            build_and_compile_pipeline,
+            build_pipeline,
+        )
+
+        shell = build_and_compile_pipeline()
+        pipeline = build_pipeline()
+        lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
+
+        assert len(shell.native_program.instructions) == len(pipeline.steps)
+        assert len(lowered.steps) > len(shell.native_program.instructions)
+        assert {step.id for step in lowered.steps}.issuperset(
+            {"gate_abort", "tiebreaker_finalize", "override_finalize"}
+        )
+
+    def test_native_program_shell_is_projection_not_canonical_traceability_proof(self) -> None:
         from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
 
         shell = build_and_compile_pipeline()
         lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
 
-        assert len(shell.native_program.instructions) == 12
-        assert len(lowered.steps) > len(shell.native_program.instructions)
-        assert {step.id for step in lowered.steps}.issuperset(
-            {"gate_abort", "tiebreaker_finalize", "override_finalize"}
+        instruction_names = {instruction.name for instruction in shell.native_program.instructions}
+        lowered_step_ids = {step.id for step in lowered.steps}
+
+        # The projected shell intentionally collapses wrapper nodes, so it cannot
+        # stand in for row-level correctness proof when canonical source exists.
+        assert {"gate_abort", "tiebreaker_finalize", "override_finalize"} <= lowered_step_ids
+        assert {"gate_abort", "tiebreaker_finalize", "override_finalize"}.isdisjoint(
+            instruction_names
         )
+        assert str(AUTHORING_SOURCE_PATH).endswith("workflow.pypeline")
 
 
 class TestNativeRoutingIndependence:

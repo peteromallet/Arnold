@@ -397,7 +397,7 @@ def run_chain(
                     milestone_results = list(chain_state.completed)
                     chain_state.current_milestone_index = index + 1
                     chain_state.current_plan_name = None
-                    chain_state.last_state = raw_outcome.status
+                    chain_state.last_state = "done"
                     chain_spec.save_chain_state(spec_path, chain_state)
                     _bridge_lifecycle(
                         "milestone_complete",

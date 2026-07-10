@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -21,15 +22,15 @@ from arnold_pipelines.megaplan.calibration import (
 )
 from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
 from arnold_pipelines.megaplan.planning.state import (
-    STATE_CRITIQUED,
-    STATE_FINALIZED,
     STATE_GATED,
     STATE_PLANNED,
 )
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
     atomic_write_json,
     atomic_write_text,
+    batch_artifact_index,
     configured_robustness,
     infer_next_steps,
     is_creative_mode,
@@ -52,12 +53,14 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
     resolve_baseline_test_selection,
 )
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
+from arnold_pipelines.megaplan._core.topology import STAGE_TO_STATE
 from arnold_pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot_recursive,
     _git_head,
     _is_harness_generated_path,
     capture_uncommitted_baseline,
 )
+from arnold_pipelines.megaplan.workflows.components import FINALIZE_POLICY
 
 from .shared import _attach_next_step_runtime, _finish_step, _raise_step_validation_error, _run_worker
 
@@ -86,6 +89,107 @@ def _finalize_baseline_contract_message(test_selection: dict[str, Any]) -> str:
         "intended."
         + details
     )
+
+
+def _required_mapping(value: object, *, context: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise AssertionError(f"{context} must be a mapping")
+    return dict(value)
+
+
+def _required_string(mapping: dict[str, Any], key: str, *, context: str) -> str:
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value:
+        raise AssertionError(f"{context}.{key} must be a non-empty string")
+    return value
+
+
+def _finalize_route_surface() -> dict[str, Any]:
+    metadata = _required_mapping(FINALIZE_POLICY.metadata, context="FINALIZE_POLICY.metadata")
+    return _required_mapping(
+        metadata.get("route_surface"),
+        context="FINALIZE_POLICY.metadata.route_surface",
+    )
+
+
+def _finalize_success_projection() -> dict[str, str]:
+    success = _required_mapping(
+        _finalize_route_surface().get("success_route"),
+        context="FINALIZE_POLICY.metadata.route_surface.success_route",
+    )
+    return {
+        "route_signal": _required_string(
+            success,
+            "route_signal",
+            context="FINALIZE_POLICY.metadata.route_surface.success_route",
+        ),
+        "next_step": _required_string(
+            success,
+            "target_ref",
+            context="FINALIZE_POLICY.metadata.route_surface.success_route",
+        ),
+        "state": _required_string(
+            success,
+            "state_ref",
+            context="FINALIZE_POLICY.metadata.route_surface.success_route",
+        ),
+    }
+
+
+def _finalize_revise_fallback_projection() -> dict[str, str]:
+    route_surface = _finalize_route_surface()
+    fallback = _required_mapping(
+        _required_mapping(
+            route_surface.get("fallback_routes"),
+            context="FINALIZE_POLICY.metadata.route_surface.fallback_routes",
+        ).get("plan_contract_revise_needed"),
+        context="FINALIZE_POLICY.metadata.route_surface.fallback_routes.plan_contract_revise_needed",
+    )
+    projection = _required_mapping(
+        _required_mapping(
+            route_surface.get("final_projection_routes"),
+            context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes",
+        ).get("revise_fallback"),
+        context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes.revise_fallback",
+    )
+    route_signal = _required_string(
+        fallback,
+        "route_signal",
+        context="FINALIZE_POLICY.metadata.route_surface.fallback_routes.plan_contract_revise_needed",
+    )
+    target_ref = _required_string(
+        fallback,
+        "target_ref",
+        context="FINALIZE_POLICY.metadata.route_surface.fallback_routes.plan_contract_revise_needed",
+    )
+    projected_phase = _required_string(
+        projection,
+        "projected_phase",
+        context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes.revise_fallback",
+    )
+    if route_signal != _required_string(
+        projection,
+        "route_signal",
+        context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes.revise_fallback",
+    ):
+        raise AssertionError("Finalize revise fallback route_signal must match its projection route")
+    if target_ref != _required_string(
+        projection,
+        "target_ref",
+        context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes.revise_fallback",
+    ):
+        raise AssertionError("Finalize revise fallback target_ref must match its projection route")
+    projected_state = STAGE_TO_STATE.get(projected_phase)
+    if not isinstance(projected_state, str) or not projected_state:
+        raise AssertionError(
+            "FINALIZE_POLICY.metadata.route_surface.final_projection_routes."
+            "revise_fallback.projected_phase must map to a known plan state"
+        )
+    return {
+        "route_signal": route_signal,
+        "next_step": target_ref,
+        "state": projected_state,
+    }
 
 
 def _strict_finalize_validation_enabled() -> bool:
@@ -370,7 +474,7 @@ def _finalize_semantic_postcheck(
     """Residual semantic checks not expressible in the C1 schema subset.
 
     Enforces: non-empty tasks list; non-empty-after-strip strings on tasks and
-    user_actions; integer-not-bool complexity in 1..5; status == "pending";
+    user_actions; integer-not-bool complexity in 1..10; status == "pending";
     phase enum membership; re-run-until-pass scrubber (strict mode); and
     U-prefixed plan_steps_covered coverage rules.
     """
@@ -428,10 +532,10 @@ def _finalize_semantic_postcheck(
         if (
             not isinstance(complexity, int)
             or isinstance(complexity, bool)
-            or not 1 <= complexity <= 5
+            or not 1 <= complexity <= 10
         ):
             _reject(
-                f"Finalize task {tid} must include an integer `complexity` score in 1..5 "
+                f"Finalize task {tid} must include an integer `complexity` score in 1..10 "
                 f"(got {complexity!r}). Adjudicate it against the rubric — do not omit or guess."
             )
         justification = task.get("complexity_justification")
@@ -919,11 +1023,10 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
     validation — the verification task and the user-action gate tasks — which the
     model never scored.  These are read-and-check tasks (verify a file exists,
     confirm a user-action completed), not deep implementation work — so missing/
-    out-of-range scores are coerced to 4 (Sonnet) rather than the absolute-conservative
-    5 (Opus): still a premium tier capable of any verification logic, but ~5–10×
-    cheaper than defaulting to Opus for what is structurally not Opus work.
-    A synthetic justification is stamped so the written artifact still satisfies
-    the required schema field.
+    out-of-range scores are coerced to a high-but-not-max tier (8) rather than the absolute-conservative
+    10: still a premium tier capable of any verification logic, but cheaper than defaulting to the
+    absolute highest tier for what may not require it. A synthetic justification is stamped so the
+    written artifact still satisfies the required schema field.
     """
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
@@ -932,11 +1035,11 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
         if not isinstance(task, dict):
             continue
         complexity = task.get("complexity")
-        if not isinstance(complexity, int) or isinstance(complexity, bool) or complexity < 1 or complexity > 5:
-            task["complexity"] = 4
+        if not isinstance(complexity, int) or isinstance(complexity, bool) or complexity < 1 or complexity > 10:
+            task["complexity"] = 8
             task.setdefault(
                 "complexity_justification",
-                "Auto-injected by finalize after adjudication; defaulted to tier 4 (Sonnet) "
+                "Auto-injected by finalize after adjudication; defaulted to tier 8 "
                 "because the model never scored this task — verification/gate tasks are read-and-check work.",
             )
         justification = task.get("complexity_justification")
@@ -1046,15 +1149,9 @@ def _task_execute_claim_context(
             if isinstance(raw_batch_number, int) and not isinstance(raw_batch_number, bool):
                 aggregate_tier_by_batch[raw_batch_number] = batch_entry
     context_by_task_id: dict[str, dict[str, Any]] = {}
-    for batch_path in sorted(plan_dir.glob("execution_batch_*.json")):
+    for batch_path in sorted(list_batch_artifacts(plan_dir)):
         history = history_by_output.get(batch_path.name)
-        batch_number: int | None = None
-        name = batch_path.name
-        if name.startswith("execution_batch_") and name.endswith(".json"):
-            try:
-                batch_number = int(name[len("execution_batch_") : -len(".json")])
-            except ValueError:
-                batch_number = None
+        batch_number = batch_artifact_index(batch_path)
         aggregate_tier = aggregate_tier_by_batch.get(batch_number) if batch_number is not None else None
         if history is None and aggregate_tier is None:
             continue
@@ -1457,8 +1554,6 @@ def _require_explicit_finalize_baseline_selection(test_selection: dict[str, Any]
     mode = test_selection.get("mode")
     if mode == "full":
         return
-    if mode == "none":
-        return
     if mode == "scoped" and test_selection.get("command_override"):
         return
     raise FinalizeBaselineSelectionError(test_selection)
@@ -1470,6 +1565,7 @@ def _route_finalize_baseline_selection_failure_to_revise(
     worker: WorkerResult,
     error: FinalizeBaselineSelectionError,
 ) -> StepResponse:
+    projection = _finalize_revise_fallback_projection()
     message = _finalize_baseline_contract_message(error.test_selection)
     gate_feedback = {
         "recommendation": "ITERATE",
@@ -1519,7 +1615,7 @@ def _route_finalize_baseline_selection_failure_to_revise(
             "test_selection": error.test_selection,
         },
     }
-    state["current_state"] = STATE_CRITIQUED
+    state["current_state"] = projection["state"]
     state["last_gate"] = gate_feedback
     meta = state.setdefault("meta", {})
     if isinstance(meta, dict):
@@ -1570,10 +1666,11 @@ def _route_finalize_baseline_selection_failure_to_revise(
         "success": False,
         "step": "finalize",
         "result": "plan_contract_revise_needed",
+        "route_signal": projection["route_signal"],
         "summary": message,
         "artifacts": ["gate.json", "gate_carry.json", "finalize_revise_feedback.json"],
-        "next_step": "revise",
-        "state": STATE_CRITIQUED,
+        "next_step": projection["next_step"],
+        "state": projection["state"],
         "iteration": state["iteration"],
         "details": {
             "code": "missing_scoped_baseline_test_contract",
@@ -1862,8 +1959,9 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
                 worker,
                 error,
             )
+        success_projection = _finalize_success_projection()
         _ensure_execution_baseline(state)
-        state["current_state"] = STATE_FINALIZED
+        state["current_state"] = success_projection["state"]
         return _finish_step(
             plan_dir, state, args,
             step="finalize",
@@ -1872,5 +1970,6 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             artifacts=["contract.json", "final.md", "finalize.json", "user_actions.md"],
             output_file="finalize.json",
             artifact_hash=artifact_hash,
-            next_step="execute",
+            next_step=success_projection["next_step"],
+            response_fields={"route_signal": success_projection["route_signal"]},
         )

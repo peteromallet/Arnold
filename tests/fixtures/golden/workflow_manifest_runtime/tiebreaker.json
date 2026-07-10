@@ -4,82 +4,147 @@
   "manifest_contract": {
     "edges": [
       {
-        "condition_ref": "tiebreaker:branch-a",
-        "id": "tiebreaker-branch-a-tiebreaker-tiebreaker",
-        "label": "tiebreaker",
+        "condition_ref": "tiebreaker:researcher",
+        "id": "tiebreaker-researcher-tiebreaker-challenger",
+        "label": "default",
         "route_metadata": {
-          "behavioral_step": "branch-a",
-          "decision_input": "candidate-a",
-          "route_semantics": "candidate branch participates in explicit tie resolution"
+          "behavioral_step": "researcher",
+          "route_semantics": "researcher produces initial findings for tiebreaker resolution"
         },
-        "source": "tiebreaker-branch-a",
-        "target": "tiebreaker-tiebreaker"
+        "source": "tiebreaker-researcher",
+        "target": "tiebreaker-challenger"
       },
       {
-        "condition_ref": "tiebreaker:branch-b",
-        "id": "tiebreaker-branch-b-tiebreaker-tiebreaker",
-        "label": "tiebreaker",
+        "condition_ref": "tiebreaker:challenger",
+        "id": "tiebreaker-challenger-tiebreaker-synthesis",
+        "label": "default",
         "route_metadata": {
-          "behavioral_step": "branch-b",
-          "decision_input": "candidate-b",
-          "route_semantics": "candidate branch participates in explicit tie resolution"
+          "behavioral_step": "challenger",
+          "route_semantics": "challenger stress-tests researcher findings"
         },
-        "source": "tiebreaker-branch-b",
-        "target": "tiebreaker-tiebreaker"
+        "source": "tiebreaker-challenger",
+        "target": "tiebreaker-synthesis"
       },
       {
-        "condition_ref": "tiebreaker:resolved",
-        "id": "tiebreaker-tiebreaker-tiebreaker-selected",
-        "label": "selected",
+        "condition_ref": "tiebreaker:synthesis",
+        "id": "tiebreaker-synthesis-tiebreaker-decision",
+        "label": "default",
         "route_metadata": {
-          "behavioral_step": "tiebreaker",
-          "route_semantics": "single deterministic winner is selected after ambiguous branch scores"
+          "behavioral_step": "synthesis",
+          "route_semantics": "synthesis merges research and challenge into unified payload"
         },
-        "source": "tiebreaker-tiebreaker",
-        "target": "tiebreaker-selected"
+        "source": "tiebreaker-synthesis",
+        "target": "tiebreaker-decision"
+      },
+      {
+        "condition_ref": "tiebreaker:proceed",
+        "id": "tiebreaker-decision-tiebreaker-complete",
+        "label": "proceed",
+        "route_metadata": {
+          "behavioral_step": "decision",
+          "route_semantics": "tiebreaker PROCEED routes to normal finalize"
+        },
+        "source": "tiebreaker-decision",
+        "target": "tiebreaker-complete"
+      },
+      {
+        "condition_ref": "tiebreaker:iterate",
+        "id": "tiebreaker-decision-tiebreaker-iterate",
+        "label": "iterate",
+        "route_metadata": {
+          "behavioral_step": "decision",
+          "route_semantics": "tiebreaker ITERATE routes back through critique gate loop"
+        },
+        "source": "tiebreaker-decision",
+        "target": "tiebreaker-iterate"
+      },
+      {
+        "condition_ref": "tiebreaker:escalate",
+        "id": "tiebreaker-decision-tiebreaker-escalate",
+        "label": "escalate",
+        "route_metadata": {
+          "behavioral_step": "decision",
+          "route_semantics": "tiebreaker ESCALATE routes to override authority"
+        },
+        "source": "tiebreaker-decision",
+        "target": "tiebreaker-escalate"
+      },
+      {
+        "condition_ref": "tiebreaker:replan",
+        "id": "tiebreaker-decision-tiebreaker-replan",
+        "label": "replan",
+        "route_metadata": {
+          "behavioral_step": "decision",
+          "route_semantics": "tiebreaker REPLAN routes back through critique gate loop"
+        },
+        "source": "tiebreaker-decision",
+        "target": "tiebreaker-replan"
       }
     ],
     "id": "tiebreaker",
     "nodes": [
       {
-        "id": "tiebreaker-branch-a",
-        "kind": "branch",
-        "route_metadata": {
-          "behavioral_step": "branch-a",
-          "decision_input": "candidate-a"
-        }
-      },
-      {
-        "id": "tiebreaker-branch-b",
-        "kind": "branch",
-        "route_metadata": {
-          "behavioral_step": "branch-b",
-          "decision_input": "candidate-b"
-        }
-      },
-      {
-        "id": "tiebreaker-selected",
+        "id": "tiebreaker-researcher",
         "kind": "agent",
         "route_metadata": {
-          "behavioral_step": "selected",
-          "route_semantics": "continuation receives only the selected branch"
+          "behavioral_step": "researcher",
+          "route_semantics": "gathers evidence for tiebreaker resolution"
         }
       },
       {
-        "id": "tiebreaker-tiebreaker",
-        "kind": "branch",
-        "policy": {
-          "tiebreaker": {
-            "requires_explicit_winner": true,
-            "source_routes": [
-              "branch-a",
-              "branch-b"
-            ]
-          }
-        },
+        "id": "tiebreaker-challenger",
+        "kind": "agent",
         "route_metadata": {
-          "behavioral_step": "tiebreaker",
-          "route_semantics": "resolve equal-ranked branch recommendations without implicit ordering"
+          "behavioral_step": "challenger",
+          "route_semantics": "adversarial stress-test of researcher findings"
+        }
+      },
+      {
+        "id": "tiebreaker-synthesis",
+        "kind": "agent",
+        "route_metadata": {
+          "behavioral_step": "synthesis",
+          "route_semantics": "unified tiebreaker payload from research and challenge"
+        }
+      },
+      {
+        "id": "tiebreaker-decision",
+        "kind": "branch",
+        "route_metadata": {
+          "behavioral_step": "decision",
+          "route_semantics": "resolve tiebreaker with PROCEED, ITERATE, ESCALATE, or REPLAN"
+        }
+      },
+      {
+        "id": "tiebreaker-complete",
+        "kind": "agent",
+        "route_metadata": {
+          "behavioral_step": "complete",
+          "route_semantics": "tiebreaker resolved, return to normal finalize/execute/review flow"
+        }
+      },
+      {
+        "id": "tiebreaker-iterate",
+        "kind": "agent",
+        "route_metadata": {
+          "behavioral_step": "iterate",
+          "route_semantics": "re-enter critique loop after tiebreaker ITERATE"
+        }
+      },
+      {
+        "id": "tiebreaker-escalate",
+        "kind": "agent",
+        "route_metadata": {
+          "behavioral_step": "escalate",
+          "route_semantics": "escalate tiebreaker to override authority"
+        }
+      },
+      {
+        "id": "tiebreaker-replan",
+        "kind": "agent",
+        "route_metadata": {
+          "behavioral_step": "replan",
+          "route_semantics": "replan from tiebreaker decision through critique gate loop"
         }
       }
     ],
@@ -87,12 +152,22 @@
     "schema_version": "arnold.workflow.manifest.v1",
     "capabilities": [
       {
-        "capability_id": "agent:judge",
+        "capability_id": "agent:researcher",
         "route": "default",
         "required": true
       },
       {
-        "capability_id": "reducer:tournament",
+        "capability_id": "agent:challenger",
+        "route": "default",
+        "required": true
+      },
+      {
+        "capability_id": "agent:synthesizer",
+        "route": "default",
+        "required": true
+      },
+      {
+        "capability_id": "agent:decider",
         "route": "default",
         "required": true
       },
@@ -103,17 +178,16 @@
       }
     ],
     "policy": {
-      "fanout": {
-        "mode": "static",
-        "width": 2,
-        "reducer_ref": "reducer:tournament"
+      "loop": {
+        "max_iterations": 4,
+        "until_ref": "tiebreaker_resolved"
       },
       "retry": {
         "max_attempts": 1,
         "backoff": "none"
       },
       "budget": {
-        "max_attempts": 3,
+        "max_attempts": 4,
         "max_seconds": 14400
       },
       "idempotency": {
@@ -122,50 +196,64 @@
       },
       "suspension_routes": [
         {
-          "route_id": "tiebreaker-route-1",
-          "capability_id": "agent:judge",
-          "reentry_id": "tiebreaker:round-1",
+          "route_id": "tiebreaker-iterate-reentry",
+          "capability_id": "agent:decider",
+          "reentry_id": "tiebreaker:iterate",
           "payload_schema_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
           "resume_schema_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
         },
         {
-          "route_id": "tiebreaker-route-2",
-          "capability_id": "reducer:tournament",
-          "reentry_id": "tiebreaker:winner",
+          "route_id": "tiebreaker-replan-reentry",
+          "capability_id": "agent:decider",
+          "reentry_id": "tiebreaker:replan",
           "payload_schema_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
           "resume_schema_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
         }
       ],
       "control_transitions": [
         {
-          "transition_id": "tiebreaker-resolve-tie",
+          "transition_id": "tiebreaker-decision-proceed",
           "transition_type": "override",
-          "trigger_ref": "tiebreaker:tie",
-          "target_ref": "tiebreaker-winner",
+          "trigger_ref": "tiebreaker:decision",
+          "target_ref": "tiebreaker-complete",
           "policy_ref": "policy:tiebreaker:resolve",
           "payload_schema_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
           "idempotency": {
-            "key_template": "tiebreaker-resolve-tie:{run_id}",
+            "key_template": "tiebreaker-decision-proceed:{run_id}",
+            "required": true
+          }
+        },
+        {
+          "transition_id": "tiebreaker-decision-escalate",
+          "transition_type": "supervisor-promotion",
+          "trigger_ref": "tiebreaker:decision",
+          "target_ref": "tiebreaker-escalate",
+          "policy_ref": "policy:tiebreaker:resolve",
+          "payload_schema_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "idempotency": {
+            "key_template": "tiebreaker-decision-escalate:{run_id}",
             "required": true
           }
         }
       ],
       "topology_overlays": [
         {
-          "overlay_id": "tiebreaker-round-overlay",
-          "overlay_type": "explicit-tiebreaker-round",
-          "source_ref": "tiebreaker-judge",
+          "overlay_id": "tiebreaker-phase-chain-overlay",
+          "overlay_type": "tiebreaker-phase-chain",
+          "source_ref": "tiebreaker-researcher",
           "target_refs": [
-            "tiebreaker-round-1"
+            "tiebreaker-challenger",
+            "tiebreaker-synthesis",
+            "tiebreaker-decision"
           ],
-          "condition_ref": "tiebreaker:tie",
-          "payload_schema_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          "condition_ref": "tiebreaker:chain",
+          "payload_schema_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
         }
       ]
     },
     "reentry_ids": [
-      "tiebreaker:round-1",
-      "tiebreaker:winner"
+      "tiebreaker:iterate",
+      "tiebreaker:replan"
     ]
   },
   "normalization": {
@@ -181,9 +269,10 @@
     ]
   },
   "routes": [
-    "branch-a",
-    "branch-b",
-    "tiebreaker"
+    "researcher",
+    "challenger",
+    "synthesis",
+    "decision"
   ],
   "schema_version": "workflow-manifest-runtime.golden.v1"
 }

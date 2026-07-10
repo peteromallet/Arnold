@@ -133,7 +133,7 @@ def audit_projection_input(
         _repair_layer_finding("immediate_repair", brief, incident, snapshot, effective_now, cfg),
         _repair_layer_finding("meta_repair", brief, incident, snapshot, effective_now, cfg),
         _install_sync_finding(brief, incident),
-        _github_sync_finding(problem, snapshot, effective_now),
+        _github_sync_finding(problem, incident, snapshot, effective_now),
         _live_process_finding(brief, incident, snapshot, effective_now),
         _stale_claim_finding(brief),
         _missing_evidence_finding(brief, incident, snapshot),
@@ -894,6 +894,7 @@ def _install_sync_finding(
 
 def _github_sync_finding(
     problem: dict[str, Any],
+    incident: dict[str, Any],
     snapshot: dict[str, Any],
     now: str | None,
 ) -> dict[str, Any]:
@@ -911,7 +912,7 @@ def _github_sync_finding(
         and int(problem.get("occurrence_count") or 0) >= 2
     ) or bool(problem.get("recurred_after_fix"))
     github_sync = snapshot.get("github_sync") if isinstance(snapshot.get("github_sync"), dict) else {}
-    last_attempt = github_sync.get("last_attempt_at")
+    last_attempt = _github_sync_last_attempt(incident, github_sync)
     if publish_due and not last_attempt:
         return _finding(
             "github_sync_publish_due",
@@ -929,6 +930,33 @@ def _github_sync_finding(
         message="GitHub sync is not currently the blocking layer.",
         recommendation="github_sync.publish" if publish_due else None,
     )
+
+
+def _github_sync_last_attempt(incident: dict[str, Any], github_sync: dict[str, Any]) -> str | None:
+    last_attempt = _normalized_text(github_sync.get("last_attempt_at"))
+    if last_attempt:
+        return last_attempt
+
+    if _normalized_text(incident.get("latest_actor")) == "github_sync":
+        incident_last_timestamp = _normalized_text(incident.get("last_timestamp"))
+        if incident_last_timestamp:
+            return incident_last_timestamp
+
+    events = incident.get("events")
+    if not isinstance(events, list):
+        return None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        actor = _normalized_text(event.get("actor"))
+        kind = _normalized_text(event.get("kind"))
+        if actor != "github_sync" and not kind.startswith("incident.github_sync."):
+            continue
+        for key in ("timestamp", "recorded_at", "created_at", "timestamp_utc"):
+            value = _normalized_text(event.get(key))
+            if value:
+                return value
+    return None
 
 
 def _live_process_finding(

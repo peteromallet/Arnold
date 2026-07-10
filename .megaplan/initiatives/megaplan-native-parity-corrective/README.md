@@ -20,13 +20,27 @@ Run profile decision:
 
 Sprint compression:
 
-- The launch chain now uses 7 busy two-week milestones.
+- The launch chain now uses 7 busy two-week milestones plus a narrow S2.5
+  bridge because S1 and S2 are already complete and should not be reverted by
+  default.
 - The original 10 milestone briefs remain in `briefs/m*.md` as source
   appendices.
-- The active launch briefs are `briefs/s1-*.md` through `briefs/s7-*.md` and
-  each names which original milestone scope it absorbs.
+- The active launch briefs are `briefs/s1-*.md`, `briefs/s2-5-*.md`, and
+  `briefs/s2-*.md` through `briefs/s7-*.md`; each sprint brief names which
+  original milestone scope it absorbs or bridges.
 - No end-state scope is intentionally dropped. Any future narrowing still
   requires the North Star rule: checker protection plus behavior proof.
+
+Boundary alignment:
+
+- S1 remains the completed source-authority/checker/outcomes foundation.
+- S2 remains the completed front-half native loop.
+- S2.5 audits S1/S2 and adds the minimal boundary/evidence vocabulary needed by
+  native parity.
+- S3-S7 must close phase migrations with both source-visible topology proof and
+  durable boundary evidence.
+- The broader `workflow-boundary-contracts` initiative is the follow-up
+  generalization, not a competing phase migration.
 
 Use the chain, not a single plan:
 

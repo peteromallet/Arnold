@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from arnold_pipelines.megaplan._core import read_json
+from arnold_pipelines.megaplan._core import list_batch_artifacts, read_json
 
 
 def extract_sections(batch_payloads: list[dict[str, Any]]) -> dict[str, str]:
@@ -221,16 +221,11 @@ def assemble_doc(
         return output_path
 
     batch_payloads: list[dict[str, Any]] = []
-    batch_index = 1
-    while True:
-        batch_path = plan_dir / f"execution_batch_{batch_index}.json"
-        if not batch_path.exists():
-            break
+    for batch_path in list_batch_artifacts(plan_dir):
         try:
             batch_payloads.append(read_json(batch_path))
         except (OSError, ValueError):
             pass
-        batch_index += 1
 
     sections = extract_sections(batch_payloads)
     ordered_ids = _section_plan_order(finalize_data, batch_payloads)

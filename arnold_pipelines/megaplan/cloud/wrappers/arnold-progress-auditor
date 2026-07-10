@@ -478,6 +478,19 @@ def _publication_attempt_ts(incident, problem):
     timestamps = []
     if isinstance(incident, dict) and incident.get("latest_actor") == "github_sync":
         timestamps.append(incident.get("last_timestamp"))
+    events = incident.get("events") if isinstance(incident, dict) else []
+    for event in events if isinstance(events, list) else []:
+        if not isinstance(event, dict):
+            continue
+        actor = str(event.get("actor") or "").strip()
+        kind = str(event.get("kind") or "").strip()
+        if actor != "github_sync" and not kind.startswith("incident.github_sync."):
+            continue
+        for key in ("timestamp", "recorded_at", "created_at", "timestamp_utc"):
+            value = event.get(key)
+            if value:
+                timestamps.append(value)
+                break
     evidence_refs = incident.get("evidence_refs") if isinstance(incident, dict) else []
     for ref in evidence_refs if isinstance(evidence_refs, list) else []:
         if not isinstance(ref, dict):
@@ -1703,7 +1716,7 @@ _STAGE_METRIC_PHASE_PREFIXES = (
 )
 
 def _normalize_stage_metric_phase(phase):
-    token = str(phase or "").strip().lower()
+    token = (phase or "").strip().lower()
     if not token:
         return ""
     token = token.replace(".", "_").replace("-", "_").replace(" ", "_")
@@ -1812,7 +1825,7 @@ def _resolve_event_phase(events):
     return "", "", None
 
 
-def _build_stage_metrics(entries):
+def _build_stage_metrics(entries, stall_summary="none"):
     stage_metrics = _stage_metrics_template()
     events_cache = {}  # events_path_str -> list of events
 
@@ -2274,6 +2287,66 @@ def _build_stage_metrics(entries):
                         next_expected_event=recommendation or expected_handoff,
                     ),
                 )
+
+    # ── watchdog stall evidence ──────────────────────────────────────────
+    if stall_summary and stall_summary != "none":
+        stall_messages = [msg.strip() for msg in stall_summary.split(" ; ") if msg.strip()]
+        if stall_messages:
+            # Map each stall message to any plan entry it mentions
+            entry_plan_names = {
+                e.get("plan", ""): e
+                for e in (entries if isinstance(entries, list) else [])
+                if isinstance(e, dict) and e.get("plan")
+            }
+            matched_stalls = []
+            unmatched_stalls = []
+            for msg in stall_messages:
+                matched = False
+                for plan_name, plan_entry in entry_plan_names.items():
+                    if plan_name in msg:
+                        matched_stalls.append((msg, plan_entry))
+                        matched = True
+                        break
+                if not matched:
+                    unmatched_stalls.append(msg)
+
+            # Count matched stalls in the chain stage (stalls are chain-level signals)
+            chain_bucket = stage_metrics.setdefault("chain", _stage_metric_bucket())
+            for msg, plan_entry in matched_stalls:
+                _append_stage_metric(
+                    chain_bucket,
+                    "stalls",
+                    1,
+                    _stage_metric_ref(
+                        "watchdog_stall",
+                        msg[:200],
+                        source="watchdog-report.json",
+                        plan=plan_entry.get("plan") or "",
+                        workspace=plan_entry.get("workspace") or "",
+                        session_id=plan_entry.get("session") or "",
+                    ),
+                )
+
+            # Unmatched stalls still go to chain stage
+            for msg in unmatched_stalls:
+                _append_stage_metric(
+                    chain_bucket,
+                    "stalls",
+                    1,
+                    _stage_metric_ref(
+                        "watchdog_stall_unmatched",
+                        msg[:200],
+                        source="watchdog-report.json",
+                    ),
+                )
+
+    # ── populate unknowns from unknown phase evidence ───────────────────
+    unknown_count = stage_metrics.get("unknown_phase_count", 0)
+    if unknown_count > 0:
+        for stage_name in STAGE_METRIC_STAGES:
+            bucket = stage_metrics.get(stage_name, {})
+            if isinstance(bucket, dict) and "unknowns" in bucket:
+                bucket["unknowns"] = max(bucket.get("unknowns", 0), unknown_count)
 
     return stage_metrics
 
@@ -3234,7 +3307,7 @@ for entry in plans:
     ev["reasons"] = reasons
     findings.append(ev)
 
-stage_metrics = _build_stage_metrics(stage_metric_entries)
+stage_metrics = _build_stage_metrics(stage_metric_entries, stall_summary)
 
 root_cause_patterns = {}
 # (a) Repeated failure signatures across plans.
@@ -4026,6 +4099,78 @@ for f in findings:
                 "summary": hypothesis[:200],
             }
         )
+# ── stage_metrics, coverage, data_quality, dispatch_summary ──────────
+stage_metrics_data = data.get("stage_metrics") or {}
+STAGE_NAMES = [
+    "prep", "plan", "critique", "gate", "revise", "finalize",
+    "execute", "review", "feedback", "chain", "repair",
+    "meta_repair", "human_pr_ci", "deployment_runtime",
+]
+STAGE_COUNTERS = [
+    "stalls", "retries", "repair_attempts", "meta_repair_attempts",
+    "human_waits", "ci_waits", "handoff_gaps", "no_op_loops",
+    "dead_workers", "duration_seconds", "unknowns", "missing_evidence",
+]
+
+# coverage block ── deterministic summary of which stages have data
+coverage = {
+    "total_stages": len(STAGE_NAMES),
+    "stages_with_data": [],
+    "stages_without_data": [],
+    "stages_not_checked": [],
+}
+for stage in STAGE_NAMES:
+    bucket = stage_metrics_data.get(stage)
+    if not isinstance(bucket, dict) or not bucket:
+        coverage["stages_not_checked"].append(stage)
+        continue
+    has_data = any(
+        bucket.get(counter, 0) > 0
+        for counter in STAGE_COUNTERS
+    )
+    if has_data:
+        coverage["stages_with_data"].append(stage)
+    else:
+        coverage["stages_without_data"].append(stage)
+
+# data_quality block ── explicit missing/unknown/not_checked states
+data_quality = {
+    "unknown_phases": stage_metrics_data.get("unknown_phase_count", 0),
+    "unknown_phase_evidence": stage_metrics_data.get("unknown_phase_evidence") or [],
+    "stages_with_missing_evidence": [],
+    "missing_inputs": [],
+    "data_sources": {
+        "stage_metrics_available": bool(stage_metrics_data),
+        "findings_available": bool(findings),
+        "green_checks_available": bool(green_checks),
+    },
+}
+for stage in STAGE_NAMES:
+    bucket = stage_metrics_data.get(stage)
+    if isinstance(bucket, dict) and bucket.get("missing_evidence", 0) > 0:
+        data_quality["stages_with_missing_evidence"].append(stage)
+    if not isinstance(stage_metrics_data.get(stage), dict):
+        data_quality["missing_inputs"].append(
+            {"stage": stage, "status": "not_checked", "reason": "stage bucket not present in stage_metrics"}
+        )
+
+# dispatch_summary block ── explicitly confirms report-only non-agentic mode
+dispatch_summary = {
+    "mode": "report_only",
+    "autofix_enabled": False,
+    "repair_dispatched": False,
+    "model_dispatched": False,
+    "deepseek_dispatched": False,
+    "meta_repair_dispatched": False,
+    "codex_dispatched": False,
+    "git_commit_performed": False,
+    "file_edit_performed": False,
+    "rationale": (
+        "Autofix disabled; report-only mode confirmed. No repair, model, "
+        "meta-repair, git commit, or file-edit dispatch occurred."
+    ),
+}
+
 payload = {
     "schema_version": 1,
     "timestamp_utc": now_iso,
@@ -4037,6 +4182,10 @@ payload = {
     "findings": findings,
     "green_checks": green_checks,
     "related_prior_incidents": deduped_prior,
+    "stage_metrics": stage_metrics_data,
+    "coverage": coverage,
+    "data_quality": data_quality,
+    "dispatch_summary": dispatch_summary,
     "root_cause_patterns": data.get("root_cause_patterns") or {
         "repeated_failure_signatures": [],
         "chain_log_repetitions": [],
@@ -4061,6 +4210,56 @@ if not findings and not green_checks:
     lines.append("_No plans detected in the audit window._")
 elif not findings:
     lines.append("_No suspicious plans detected in the audit window._")
+# ── Stage metrics ────────────────────────────────────────────────────
+lines.append("## Stage metrics")
+lines.append("")
+nonzero_stages = []
+for stage in STAGE_NAMES:
+    bucket = stage_metrics_data.get(stage)
+    if not isinstance(bucket, dict):
+        continue
+    has_nonzero = any(bucket.get(c, 0) > 0 for c in STAGE_COUNTERS)
+    if not has_nonzero:
+        continue
+    nonzero_stages.append(stage)
+    counter_parts = []
+    for c in STAGE_COUNTERS:
+        val = bucket.get(c, 0)
+        if val > 0:
+            counter_parts.append(f"{c}={val}")
+    counter_str = ", ".join(counter_parts) if counter_parts else "none"
+    duration = bucket.get("duration_seconds", 0)
+    unknowns = bucket.get("unknowns", 0)
+    missing = bucket.get("missing_evidence", 0)
+    evidence_bits = []
+    for c in STAGE_COUNTERS:
+        ev_list = bucket.get(f"{c}_evidence", [])
+        for ref in ev_list[:1]:
+            ref_type = ref.get("type", "")
+            ref_value = str(ref.get("value", ""))[:50]
+            if ref_value:
+                evidence_bits.append(f"{ref_type}:{ref_value}")
+    ev_str = " · ".join(evidence_bits[:5]) if evidence_bits else ""
+    extra = []
+    if unknowns > 0:
+        extra.append(f"unknowns={unknowns}")
+    if missing > 0:
+        extra.append(f"missing_evidence={missing}")
+    extra_str = " · ".join(extra) if extra else ""
+    line = f"- **{stage}**: {counter_str}"
+    if duration > 0:
+        line += f" · duration={duration}s"
+    if extra_str:
+        line += f" · {extra_str}"
+    if ev_str:
+        line += f" · [{ev_str}]"
+    lines.append(line)
+unknown_phases = stage_metrics_data.get("unknown_phase_count", 0)
+if unknown_phases > 0:
+    lines.append(f"- **unknown phases**: {unknown_phases} phase(s) could not be mapped to a stage")
+if not nonzero_stages and unknown_phases == 0:
+    lines.append("_No stage metric data available._")
+lines.append("")
 for f in findings:
     lines.append(f"## {f.get('plan')} — `{f.get('session')}`")
     lines.append(f"- workspace: `{f.get('workspace')}`")

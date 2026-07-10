@@ -190,6 +190,11 @@ def test_rebuild_projections_reports_malformed_schema_and_dangling_refs(
     assert all(
         finding["recommendation"] == "system.integrity_repair" for finding in findings
     )
+    brief = build_brief("inc-123", root=tmp_path)
+    assert brief["integrity"]["recommendation"] == "system.integrity_repair"
+    assert "next_step" not in brief["integrity"]
+    assert "valid_next" not in brief["integrity"]
+    assert "workflow_cursor" not in brief["integrity"]
 
 
 # ---------------------------------------------------------------------------

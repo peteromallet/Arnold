@@ -25,6 +25,26 @@ row status authority must come from machine-checked semantic evidence generated
 from the canonical source and supporting artifacts, not from manually asserted
 tables.
 
+## Status after final conformance rollout (2026-07-08)
+
+The corrective work described here is now closed by the generated evidence
+bundle in `docs/arnold/megaplan-native-representation-evidence.yaml`, the
+regenerated ledger in
+`docs/arnold/megaplan-native-representation-conformance.yaml`, and the
+generated closeout report in
+`docs/arnold/megaplan-native-representation-conformance-report.md`. Those
+artifacts keep current implemented-row authority in `workflow.pypeline`, named
+native support carriers, boundary receipts, scenario hashes, installed-package
+fingerprints, and explicit quarantine/audit records rather than in prior report
+prose.
+
+The rollout evidence also preserves explicit narrowing records instead of
+erasing them: retained-handler purity findings, compatibility-quarantine
+findings, and dead-delete mutation findings remain in the bundle as audit
+surfaces. The rest of this document remains the rationale and execution plan
+for the corrective work, while the generated evidence artifacts are the current
+closure proof.
+
 ## End State
 
 The canonical source is:
@@ -72,7 +92,7 @@ not purity: if `handle_review()` delegates to a runtime module that owns review
 routing, the runtime module is the semantic owner and must be extracted or
 audited under the same rule.
 
-## Current State
+## Historical pre-closeout state
 
 The current `workflow.pypeline` is native-shaped but not semantically complete.
 It imports and calls component constants such as:

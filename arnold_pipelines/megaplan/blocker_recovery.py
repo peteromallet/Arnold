@@ -684,6 +684,15 @@ def _phase_coverage_deviations(plan_dir: Path | None) -> tuple[Deviation, ...]:
     return (Deviation(kind="phase_coverage", task_id=None, message=reason),)
 
 
+def _is_pending_authority_coverage_deviation(deviation: Deviation | dict[str, Any] | str) -> bool:
+    coerced = _coerce_deviation(deviation)
+    if coerced is None:
+        return False
+    return coerced.message.startswith(
+        "finalize.json has pending tasks without authoritative execution updates:"
+    )
+
+
 def evaluate_blocker_recovery(
     finalize_data: dict[str, Any],
     state: dict[str, Any],
@@ -698,9 +707,16 @@ def evaluate_blocker_recovery(
         blocked_tasks,
         plan_dir=plan_dir,
     )
+    all_deviations = tuple(deviations) + _phase_coverage_deviations(plan_dir)
+    if prereq.requires_rerun:
+        all_deviations = tuple(
+            deviation
+            for deviation in all_deviations
+            if not _is_pending_authority_coverage_deviation(deviation)
+        )
     quality = evaluate_quality_blockers(
         state,
-        tuple(deviations) + _phase_coverage_deviations(plan_dir),
+        all_deviations,
     )
     return BlockerRecoveryEvaluation(prereq.blockers + quality.blockers)
 

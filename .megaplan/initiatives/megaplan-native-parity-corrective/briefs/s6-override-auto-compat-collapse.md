@@ -22,6 +22,9 @@ manifest, and compatibility paths that formerly owned report-level semantics.
   route: set model/profile/vendor/robustness, add note, non-routing state
   annotations.
 - Declare authority requirements at routing control gates.
+- Emit authority records for routing overrides, suspensions, resumes,
+  recoveries, waivers, and force-proceed/abort decisions, with checked evidence
+  refs and stale-input rejection.
 - Remove or fence `LEGACY_ALIASES` into handler-private routing functions.
 - Remove report-owned route bindings, topology contracts, fanout/reducer
   contracts, handler refs, and override dispatch metadata from `components.py`,
@@ -31,6 +34,8 @@ manifest, and compatibility paths that formerly owned report-level semantics.
   `auto.py`, and CLI dispatch, or quarantine as explicit legacy paths.
 - Ensure auto-drive may emit operational events only; it must consume canonical
   workflow events and must not derive product routes from state.
+- Ensure semantic-health/status/repair consumers can observe override authority
+  records without becoming route authorities.
 - Prove compatibility shells and projected native programs consume canonical
   source-derived semantics or cannot satisfy traceability rows.
 
@@ -47,9 +52,14 @@ manifest, and compatibility paths that formerly owned report-level semantics.
 - No implemented row cites components, handler refs, route bindings, manifest
   backend routing, auto next-step derivation, CLI handlers, or projected-native
   shells as proof.
+- Override/auto compatibility tests fail when an authority-increasing
+  transition lacks a durable authority record or when an authority record points
+  at stale/mismatched evidence.
 
 ## Do Not Close If
 
 - Auto-drive still derives the next product step from state.
 - A compatibility bridge can satisfy semantic evidence without going through
   canonical source.
+- Repair/status/semantic-health code can force a route that is not present in
+  `.pypeline` or declared native policy.

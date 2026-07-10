@@ -600,7 +600,10 @@ class LandedDiffProvider:
     kind = "landed_diff"
 
     def collect(self, ctx: CompletionContext) -> EvidenceRef:
-        from arnold_pipelines.megaplan._core import is_prose_mode
+        from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
+    is_prose_mode,
+)
         from arnold_pipelines.megaplan.orchestration.execution_evidence import (
             validate_execution_evidence,
         )
@@ -759,7 +762,7 @@ class WorkerDidWorkProvider:
     kind = "worker_did_work"
 
     def collect(self, ctx: CompletionContext) -> EvidenceRef:
-        batches = sorted(ctx.plan_dir.glob("execution_batch_*.json"))
+        batches = sorted(list_batch_artifacts(ctx.plan_dir))
         artifacts = tuple(
             ref
             for ref in (

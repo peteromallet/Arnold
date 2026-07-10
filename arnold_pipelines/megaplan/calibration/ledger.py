@@ -1029,11 +1029,11 @@ def capability_class_prior(
     Args:
         model_identity: The model whose class tier is being queried.
         model_class_table: Mapping from model identity/name to class label.
-        class_tier_priors: Mapping from class label to tier int (1-5).
-        default_tier: Fallback tier for unknown models/classes (default: 4).
+        class_tier_priors: Mapping from class label to tier int (1-10).
+        default_tier: Fallback tier for unknown models/classes (default: 5).
 
     Returns:
-        An integer tier (1-5).
+        An integer tier (1-10).
     """
     if isinstance(model_identity, str):
         identity = model_identity
@@ -1212,18 +1212,18 @@ def aggregate_weighted_tier(
 def normalize_projected_complexity(
     complexity: Any,
     *,
-    default: int = 4,
+    default: int = 5,
 ) -> int:
-    """Normalize a projected task complexity to the existing 1..5 contract.
+    """Normalize a projected task complexity to the 1..10 contract.
 
     Mirrors finalize's current normalization behaviour: malformed, boolean,
-    missing, or out-of-range values fall back to tier 4.
+    missing, or out-of-range values fall back to a mid/high tier (5).
     """
     if (
         not isinstance(complexity, int)
         or isinstance(complexity, bool)
         or complexity < 1
-        or complexity > 5
+        or complexity > 10
     ):
         return default
     return complexity
@@ -1234,9 +1234,9 @@ def project_claimed_complexity(
     *,
     now: Optional[float] = None,
     half_life_seconds: float = 30.0 * 86400,
-    default: int = 4,
+    default: int = 5,
 ) -> int:
-    """Project a task complexity from claims while preserving 1..5 semantics."""
+    """Project a task complexity from claims while preserving 1..10 semantics."""
     if not claims:
         return default
     projected = aggregate_weighted_tier(
@@ -1271,7 +1271,7 @@ def project_tier_models(
 
     Eligible claims are clean/shared claims with a valid ``route_phase`` (or a
     task-signature prefix that names a known phase), ``predicted_tier`` in
-    1..5, and a non-empty ``routed_tier_spec``. For every phase/tier slot the
+    1..10, and a non-empty ``routed_tier_spec``. For every phase/tier slot the
     selected spec is the candidate with the highest freshness-decayed total
     weight, then the most recent claim, then the lexicographically smallest
     spec. Missing phase/tier slots are filled from the fallback TOML-derived
@@ -1632,7 +1632,7 @@ def _available_tiers(
     """Return the set of tiers available for exploration.
 
     When ``tier_models`` is provided, the available tiers are those with at
-    least one spec across any phase.  Otherwise the full 1..5 range is used,
+    least one spec across any phase.  Otherwise the full 1..10 range is used,
     with ``default_tier`` always reachable as a fallback.
     """
     if tier_models is None:

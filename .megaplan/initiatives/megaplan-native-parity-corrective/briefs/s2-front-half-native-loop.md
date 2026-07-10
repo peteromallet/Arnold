@@ -12,6 +12,12 @@ plausible.
 - Absorbs `m4-front-half-source-extraction.md`.
 - Uses the typed boundary and builder slice from S1.
 
+## Post-Completion Alignment Note
+
+S2 is already complete. Do not restart or revert it by default. Boundary
+evidence for the completed front-half surface is audited and retrofitted in
+S2.5, then enforced as an invariant for S3-S7.
+
 ## Scope
 
 In scope:
@@ -57,8 +63,25 @@ Out of scope:
 - Component carriers for implemented front-half rows are deleted or fenced so
   they cannot route corrected behavior.
 
+## Retrofitted By S2.5
+
+S2 delivered the source topology. S2.5 audits and retrofits the durable boundary
+evidence for that topology:
+
+- boundary contracts and receipts for prep/plan/critique/gate/revise artifact
+  promotion, phase results, state/history effects, gate authority decisions,
+  debt effects, and revise-loop re-entry;
+- durable effects declared for each moved front-half boundary, with receipts
+  proving canonical artifacts, state/history updates, phase results, and
+  authority records are coherent;
+- semantic-health fixtures that fail when front-half source topology exists but
+  matching artifact/state/history/receipt/authority evidence is missing or
+  stale.
+
 ## Do Not Close If
 
 - Gate/revise exit conditions remain hidden in handlers or auto-drive.
 - The visible source shows a bare call where the report requires branch, loop,
   fanout, or gate structure.
+- Boundary receipts or semantic findings can decide the next front-half route
+  without source/policy-visible support.

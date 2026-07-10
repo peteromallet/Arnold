@@ -11,6 +11,8 @@ from arnold_pipelines.megaplan.blocker_recovery import (
     find_synthetic_before_execute_gate,
 )
 from arnold_pipelines.megaplan.execute.batch import (
+    _aggregate_terminal_deviations,
+    _is_transient_execute_advisory,
     _prerequisite_blocked_task_ids,
     _reset_stale_authority_done_tasks,
     _normalize_execute_capture_payload,
@@ -34,7 +36,7 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
 )
-from arnold_pipelines.megaplan.orchestration.phase_result import Deviation
+from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
 from arnold_pipelines.megaplan.orchestration.plan_contracts import (
     normalize_contract_payload,
     pre_existing_task_ids_from_contract,
@@ -177,6 +179,28 @@ def test_phase_coverage_authority_failure_surfaces_as_recovery_blocker(
     assert evaluation.blockers[0].blocker_kind == "quality"
 
 
+def test_prerequisite_rerun_suppresses_pending_authority_coverage_blocker() -> None:
+    evaluation = evaluate_blocker_recovery(
+        {},
+        {"meta": {}, "config": {}},
+        blocked_tasks=[BlockedTask(task_id="T5", reason="blocked_by_prereq")],
+        deviations=[
+            Deviation(
+                kind="phase_coverage",
+                task_id=None,
+                message=(
+                    "finalize.json has pending tasks without authoritative "
+                    "execution updates: T6, T7"
+                ),
+            )
+        ],
+    )
+
+    assert evaluation.can_continue is True
+    assert evaluation.requires_rerun is True
+    assert [blocker.blocker_id for blocker in evaluation.blockers] == ["prereq:unknown:T5"]
+
+
 def test_harness_artifact_paths_are_removed_from_execute_claims() -> None:
     payload = _normalize_execute_capture_payload(
         {
@@ -198,6 +222,40 @@ def test_harness_artifact_paths_are_removed_from_execute_claims() -> None:
     assert _collect_execute_claimed_paths(
         {"files_changed": ["src/app.py", ".megaplan/plans/run/state.json"]}
     ) == {"src/app.py"}
+
+
+def test_terminal_execute_aggregate_drops_stale_batch_advisories() -> None:
+    aggregate_payload = {
+        "deviations": [
+            "Advisory audit finding: Tasks left pending after execute (executor never started them): T7",
+            "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/app.py",
+            "1/1 tasks have no executor update",
+            "1/1 sense checks have no executor acknowledgment",
+            "substantive command failure that should survive",
+        ]
+    }
+    execution_audit = {
+        "skipped": False,
+        "findings": [
+            "Sense check SC7 is missing an executor acknowledgment.",
+        ],
+    }
+
+    deviations = _aggregate_terminal_deviations(
+        aggregate_payload,
+        timeout_recovery=None,
+        execution_audit=execution_audit,
+        blocked_task_ids=set(),
+    )
+
+    assert deviations == [
+        "substantive command failure that should survive",
+        "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    ]
+    assert _is_transient_execute_advisory(
+        "Advisory audit finding: Tasks left pending after execute (executor never started them): T7"
+    )
+    assert _is_transient_execute_advisory("1/1 sense checks have no executor acknowledgment")
 
 
 def test_prerequisite_blocked_task_ids_excludes_harness_generated_blocks() -> None:
@@ -371,10 +429,33 @@ def test_authority_divergence_payload_ignores_explained_noops() -> None:
     assert _authority_divergence_payload(task, decision) is None
 
 
-def test_execute_completion_authority_uses_execution_window_and_explained_skips(
+def test_execute_completion_authority_blocks_pending_finalize_tasks_without_execution_updates(
     tmp_path: Path,
 ) -> None:
     plan_dir, _tasks, _state = _make_execute_authority_plan(tmp_path)
+
+    ok, missing = _execute_completion_authority(plan_dir)
+
+    assert ok is False
+    assert missing == ["v3_api_tests:not_executed:pending"]
+
+
+def test_execute_completion_authority_accepts_pending_finalize_task_with_fresh_execution_update(
+    tmp_path: Path,
+) -> None:
+    plan_dir, _tasks, _state = _make_execute_authority_plan(tmp_path)
+    payload = json.loads((plan_dir / "execution_batch_1.json").read_text(encoding="utf-8"))
+    payload["task_updates"].append(
+        {
+            "task_id": "v3_api_tests",
+            "status": "done",
+            "commands_run": [_PYTEST_API_CMD],
+        }
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(payload) + "\n",
+        encoding="utf-8",
+    )
 
     ok, missing = _execute_completion_authority(plan_dir)
 
