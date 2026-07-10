@@ -1349,6 +1349,23 @@ def is_terminal_plan(plan_state: dict[str, object]) -> tuple[bool, str]:
         return True, f"plan_state={current_state}"
     return False, current_state
 
+def plan_has_active_or_orphaned_worker(plan_state: dict[str, object]) -> bool:
+    """Treat any recorded active step as non-terminal until it is reconciled.
+
+    A dead PID is not evidence of completion: it is the incident shape the
+    repair loop exists to recover.  The state writer must clear active_step
+    before this checker can close custody.
+    """
+    active_step = plan_state.get("active_step")
+    if not isinstance(active_step, dict):
+        return False
+    return bool(
+        active_step.get("active")
+        or active_step.get("phase")
+        or active_step.get("step")
+        or active_step.get("worker_pid") not in (None, "")
+    )
+
 def chain_completion_reason(chain_state: dict[str, object]) -> str:
     last_state = str(chain_state.get("last_state") or "").strip().lower()
     milestones = chain_state.get("milestones")
@@ -1362,8 +1379,14 @@ def chain_completion_reason(chain_state: dict[str, object]) -> str:
         current_idx_int = int(current_idx)
     except (TypeError, ValueError):
         current_idx_int = None
-    if milestone_count and current_idx_int is not None and current_idx_int >= milestone_count:
-        return f"current_milestone_index={current_idx_int} past_last_milestone={milestone_count - 1}"
+    # Completion is a custody contract, not an index heuristic.  In
+    # particular a stale/recovered state can carry an index past the end while
+    # completed[] is empty.  Require a known total, every milestone recorded,
+    # and a terminal chain state.
+    if milestone_count <= 0:
+        return ""
+    if last_state not in {"done", "complete", "completed"}:
+        return ""
     milestone_labels = [
         str(item.get("label") or item.get("id") or "").strip()
         for item in milestones
@@ -1375,12 +1398,10 @@ def chain_completion_reason(chain_state: dict[str, object]) -> str:
         if isinstance(item, dict)
     }
     milestone_labels = [label for label in milestone_labels if label]
-    if milestone_labels and all(label in completed_labels for label in milestone_labels):
+    if milestone_labels and len(milestone_labels) == milestone_count and all(label in completed_labels for label in milestone_labels):
         return f"all_milestones_completed={len(milestone_labels)}/{milestone_count}"
     if milestone_count and completed_count >= milestone_count:
         return f"completed_entries={completed_count}/{milestone_count}"
-    if last_state in {"done", "complete"}:
-        return ""
     return ""
 
 def manifest_completion_reason(root: pathlib.Path, spec_path: pathlib.Path | None) -> tuple[str, pathlib.Path | None]:
@@ -1504,10 +1525,18 @@ preferred_plan_name = plan_name or str(chain_state.get("current_plan_name") or "
 plan_path = resolve_plan_state(workspace, preferred_plan_name)
 plan_state = load_json(plan_path)
 plan_complete, plan_reason = is_terminal_plan(plan_state)
+plan_has_active_step = plan_has_active_or_orphaned_worker(plan_state)
 chain_reason = chain_completion_reason(chain_state) if run_kind == "chain" else ""
 manifest_reason, manifest_path = manifest_completion_reason(workspace, remote_spec) if run_kind == "chain" else ("", None)
 chain_last_state = str(chain_state.get("last_state") or "").strip().lower()
 stale_marker_reason = stale_marker_completion_reason()
+
+# A chain can only close when its current plan is terminal *and* it has no
+# active/dead worker record.  `finalized + active_step` is explicitly a
+# retryable contradiction, never an L1 success.
+if run_kind == "chain" and (not plan_complete or plan_has_active_step):
+    chain_reason = ""
+    manifest_reason = ""
 
 if run_kind == "chain" and chain_reason:
     print(
@@ -1535,46 +1564,6 @@ elif run_kind == "chain" and manifest_reason:
             ]
         )
     )
-elif (
-    run_kind == "chain"
-    and plan_complete
-    and chain_path is not None
-    and chain_path.exists()
-    and chain_last_state in {"done", "complete"}
-    and not chain_health_blocks_terminal_shortcut()
-):
-    print(
-        "\t".join(
-            [
-                "1",
-                "chain",
-                f"terminal plan+chain state={chain_last_state}",
-                str(chain_path or ""),
-                str(plan_path or ""),
-                str(plan_state.get("current_state") or plan_state.get("state") or ""),
-            ]
-        )
-    )
-elif (
-    run_kind == "chain"
-    and plan_complete
-    and chain_path is not None
-    and chain_path.exists()
-    and chain_last_state not in {"done", "complete"}
-    and not chain_health_blocks_terminal_shortcut()
-):
-    print(
-        "\t".join(
-            [
-                "1",
-                "chain",
-                "terminal plan state supersedes stale chain state",
-                str(chain_path or ""),
-                str(plan_path or ""),
-                str(plan_state.get("current_state") or plan_state.get("state") or ""),
-            ]
-        )
-    )
 elif stale_marker_reason:
     print(
         "\t".join(
@@ -1588,7 +1577,7 @@ elif stale_marker_reason:
             ]
         )
     )
-elif run_kind == "plan" and plan_complete:
+elif run_kind == "plan" and plan_complete and not plan_has_active_step:
     print(
         "\t".join(
             [

@@ -30,6 +30,7 @@ from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     ALL_OUTCOMES,
+    COMPLETE,
     DISCORD_ESCALATED,
     LIVE_WITH_FRESH_ACTIVITY,
     NEEDS_HUMAN,
@@ -88,6 +89,40 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
 _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES | frozenset(
     {LIVE_WITH_FRESH_ACTIVITY}
 )
+
+
+def authoritative_terminal_snapshot_reason(snapshot: Mapping[str, Any] | None) -> str:
+    """Explain why a post-retrigger snapshot cannot close repair custody.
+
+    The repair-data outcome is a claim made by L1.  L2 must independently
+    preserve enough current state to prove that the claim is safe.  This is
+    deliberately strict: a ``finalized`` plan, a past-end milestone index, or
+    a dead worker PID are all contradiction evidence, not completion.
+    """
+    if not isinstance(snapshot, Mapping):
+        return "authoritative post-retrigger snapshot missing"
+    if not str(snapshot.get("captured_at") or "").strip():
+        return "authoritative post-retrigger snapshot has no capture timestamp"
+    try:
+        total = int(snapshot.get("milestone_total"))
+        completed = int(snapshot.get("completed_count"))
+    except (TypeError, ValueError):
+        return "authoritative post-retrigger snapshot has unknown milestone total"
+    if total <= 0:
+        return "authoritative post-retrigger snapshot has unknown milestone total"
+    if completed < total:
+        return f"authoritative post-retrigger snapshot is incomplete ({completed}/{total})"
+    if bool(snapshot.get("active_step_present")):
+        return "authoritative post-retrigger snapshot still has active_step"
+    if snapshot.get("worker_pid_alive") is False:
+        return "authoritative post-retrigger snapshot records a dead worker"
+    chain_state = str(snapshot.get("chain_last_state") or "").strip().lower()
+    plan_state = str(snapshot.get("plan_current_state") or "").strip().lower()
+    if chain_state not in {"done", "complete", "completed"}:
+        return f"authoritative post-retrigger snapshot has nonterminal chain state {chain_state or 'missing'}"
+    if plan_state not in {"done", "complete"}:
+        return f"authoritative post-retrigger snapshot has nonterminal plan state {plan_state or 'missing'}"
+    return ""
 
 
 def trigger_priority(trigger: MetaRepairTrigger) -> int:
@@ -1534,10 +1569,17 @@ def verify_retrigger_success(
             post_snapshot=verification.get("post_snapshot"),
         )
 
+    snapshot_reason = authoritative_terminal_snapshot_reason(
+        verification.get("post_snapshot")
+    )
+    # L2 can observe liveness/progress, but it may close custody only after it
+    # has written and validated an authoritative terminal snapshot.  A bare
+    # repair-data `complete` is therefore deliberately non-authoritative.
     accepted = (
         retriggered
         and (retrigger_result is None or retrigger_result.returncode == 0)
-        and normalized_outcome in _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES
+        and normalized_outcome == COMPLETE
+        and not snapshot_reason
     )
 
     rejection_reason = ""
@@ -1548,12 +1590,14 @@ def verify_retrigger_success(
             "ordinary repair retrigger command failed "
             f"(returncode={retrigger_result.returncode})"
         )
+    elif snapshot_reason:
+        rejection_reason = snapshot_reason
     elif normalized_outcome == PARTIAL_LIVENESS:
         rejection_reason = "partial_liveness is not a terminal success"
     elif normalized_outcome == REPAIRING:
         rejection_reason = "repairing is not a verified terminal success"
-    elif normalized_outcome not in _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES:
-        rejection_reason = f"outcome {normalized_outcome!r} is outside SUCCESS_OUTCOMES"
+    elif normalized_outcome != COMPLETE:
+        rejection_reason = f"outcome {normalized_outcome!r} cannot close repair custody"
 
     verification_record = build_verification_record(
         normalized_outcome,

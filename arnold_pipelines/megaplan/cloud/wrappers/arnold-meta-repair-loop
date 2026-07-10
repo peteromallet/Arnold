@@ -605,7 +605,10 @@ try:
 except Exception:
     pass
 
-verification_raw = os.environ.get("META_REPAIR_VERIFICATION_JSON", "{}")
+verification_raw = os.environ.get(
+    "META_REPAIR_VERIFICATION_JSON",
+    os.environ.get("POST_RETRIGGER_VERIFICATION_JSON", "{}"),
+)
 verification_info = {}
 try:
     verification_info = json.loads(verification_raw)
@@ -632,7 +635,7 @@ record = MetaRepairRecord(
     subagent_results={"codex_response": redact_text(resp_text[:4000])},
     changes=[],
     tests=[],
-    retrigger_command="redacted",
+    retrigger_command=redact_text(str(post_retrigger_verification.get("retrigger_command") or "")),
     post_retrigger_verification=post_retrigger_verification,
     outcome=effective_outcome,
 )
@@ -650,7 +653,8 @@ if [[ "$VERDICT" == FIXED* ]]; then
   else
     log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
 
-    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" <<'PY'
+    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" <<'PY'
+import datetime as dt
 import json, os, subprocess, sys
 from pathlib import Path
 
@@ -669,6 +673,7 @@ repair_loop_bin = sys.argv[2]
 workspace_root = Path(sys.argv[3])
 install_sync_event_id = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
 repair_data_path = Path(sys.argv[5])
+marker_dir = Path(sys.argv[6]) if len(sys.argv) > 6 else repair_data_path.parent.parent
 
 VERIFIER_REJECTION_RETURNCODE = 73
 
@@ -676,12 +681,8 @@ VERIFIER_REJECTION_RETURNCODE = 73
 def load_authoritative_post_retrigger_verification(
     session_id: str,
     repair_data_path: Path,
-) -> dict[str, str]:
-    """Read the canonical session repair-data outcome after retrigger.
-
-    Fail closed if the artifact is missing, invalid, or does not contain a
-    usable outcome for the expected session.
-    """
+) -> dict[str, object]:
+    """Read outcome plus a fresh, ground-truth post-retrigger snapshot."""
 
     payload = validate_repair_data(repair_data_path)
     payload_session = str(payload.get("session") or "").strip()
@@ -693,7 +694,66 @@ def load_authoritative_post_retrigger_verification(
     outcome = str(payload.get("outcome") or "").strip().lower()
     if not outcome:
         raise ValueError("authoritative repair-data outcome missing")
-    return {"outcome": outcome}
+    marker = {}
+    marker_path = marker_dir / f"{session_id}.json"
+    if marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"session marker unreadable: {exc}") from exc
+    workspace = Path(str(marker.get("workspace") or ""))
+    if not workspace.exists():
+        raise ValueError("session workspace unavailable for authoritative snapshot")
+    chain_candidates = sorted(
+        (workspace / ".megaplan" / "plans" / ".chains").glob("*.json"),
+        key=lambda item: item.stat().st_mtime,
+    )
+    if not chain_candidates:
+        raise ValueError("chain state unavailable for authoritative snapshot")
+    try:
+        chain = json.loads(chain_candidates[-1].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"chain state unreadable: {exc}") from exc
+    plan_name = str(chain.get("current_plan_name") or "").strip()
+    plan_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+    if not plan_name or not plan_path.exists():
+        plan_candidates = sorted(
+            (workspace / ".megaplan" / "plans").glob("*/state.json"),
+            key=lambda item: item.stat().st_mtime,
+        )
+        if not plan_candidates:
+            raise ValueError("current plan state unavailable for authoritative snapshot")
+        plan_path = plan_candidates[-1]
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"current plan state unreadable: {exc}") from exc
+    milestones = chain.get("milestones") if isinstance(chain.get("milestones"), list) else []
+    completed = chain.get("completed") if isinstance(chain.get("completed"), list) else []
+    active_step = plan.get("active_step") if isinstance(plan.get("active_step"), dict) else {}
+    worker_pid = active_step.get("worker_pid")
+    worker_pid_alive = None
+    if worker_pid not in (None, ""):
+        try:
+            os.kill(int(worker_pid), 0)
+        except (OSError, ValueError):
+            worker_pid_alive = False
+        else:
+            worker_pid_alive = True
+    snapshot = {
+        "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "workspace": str(workspace),
+        "chain_path": str(chain_candidates[-1]),
+        "plan_path": str(plan_path),
+        "milestone_total": len(milestones),
+        "completed_count": len(completed),
+        "chain_last_state": str(chain.get("last_state") or "").strip().lower(),
+        "plan_current_state": str(plan.get("current_state") or plan.get("state") or "").strip().lower(),
+        "active_step_present": bool(active_step),
+        "worker_pid": worker_pid,
+        "worker_pid_alive": worker_pid_alive,
+    }
+    return {"outcome": outcome, "post_snapshot": snapshot}
 
 incident_id = f"inc-{session}"
 
@@ -712,8 +772,19 @@ retrigger_event = append_repair_retriggered(
 print(f"RETRIGGER_EVENT_ID={retrigger_event.get('event_id', '')}")
 
 # Retrigger ordinary repair
+retrigger_command = [repair_loop_bin, session]
+try:
+    marker = json.loads((marker_dir / f"{session}.json").read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    marker = {}
+workspace = str(marker.get("workspace") or "").strip()
+remote_spec = str(marker.get("remote_spec") or "").strip()
+if workspace:
+    retrigger_command.append(workspace)
+    if remote_spec:
+        retrigger_command.append(remote_spec)
 completed = subprocess.run(
-    [repair_loop_bin, session],
+    retrigger_command,
     cwd=str(workspace_root),
     capture_output=True, text=True, check=False,
     timeout=3600,
@@ -732,7 +803,7 @@ except Exception as exc:
     lookup_error = f"{type(exc).__name__}: {exc}"
 
 retrigger_result = RetriggerExecutionResult(
-    command=(repair_loop_bin, session),
+    command=tuple(retrigger_command),
     returncode=int(completed.returncode),
     stdout=str(completed.stdout or ""),
     stderr=str(completed.stderr or ""),

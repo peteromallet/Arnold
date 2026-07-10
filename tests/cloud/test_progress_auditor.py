@@ -2514,6 +2514,48 @@ class TestLiveSignalFiltering:
         assert any("repair_data_ghost_running" in reason for reason in findings["findings"][0]["reasons"])
         assert findings["findings"][0]["repair_data_summary"]["current_attempt_id"] == ""
 
+    def test_gather_flags_complete_repair_with_incomplete_chain(self, tmp_path: Path) -> None:
+        """The exact false-success artifact must be visible to the L3 prompt."""
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "demo-plan", "current_state": "finalized", "active_step": {"phase": "execute", "worker_pid": 999999}}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "finalized",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}, {"label": "m2"}],
+                    "completed": [{"label": "m1", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps({"session": "demo-session", "outcome": "complete"}), encoding="utf-8"
+        )
+
+        findings = _run_gather_program(
+            [{"workspace": str(workspace), "plan": "demo-plan", "session": "demo-session", "kind": "chain", "sources": ["marker"]}],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert len(findings["findings"]) == 1
+        reasons = findings["findings"][0]["reasons"]
+        assert any("repair_complete_incomplete_chain" in reason for reason in reasons)
+        assert any("plan_active_step_ghost_worker" in reason for reason in reasons)
+
     def test_meta_repair_summary_ignores_stale_recurring_retry_after_complete_chain(
         self, tmp_path: Path
     ) -> None:

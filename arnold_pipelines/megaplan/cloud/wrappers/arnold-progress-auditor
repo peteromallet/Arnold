@@ -2675,6 +2675,31 @@ def _repair_data_ghost_running_reason(ev):
         )
     return ""
 
+def _repair_complete_incomplete_chain_reason(ev):
+    """Surface the L1 false-success shape as a deterministic L3 finding."""
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    if not isinstance(repair, dict) or not repair.get("exists"):
+        return ""
+    outcome = str(repair.get("outcome") or "").strip().lower()
+    if outcome not in {"complete", "completed", "progressed"}:
+        return ""
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    if not isinstance(chain_current, dict) or not chain_current:
+        return ""
+    total = chain_current.get("total_milestones")
+    completed = chain_current.get("completed_count")
+    try:
+        total_int = int(total)
+        completed_int = int(completed or 0)
+    except (TypeError, ValueError):
+        return ""
+    if total_int <= 0 or completed_int >= total_int:
+        return ""
+    return (
+        "repair_complete_incomplete_chain: repair-data outcome="
+        f"{outcome} but chain remains incomplete ({completed_int}/{total_int})"
+    )
+
 def _green_with_recent_repair_churn_reason(ev):
     repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
     if not isinstance(repair, dict) or not repair.get("exists"):
@@ -2734,6 +2759,20 @@ def _active_step_ghost_worker_reason(ev):
     return (
         "plan_active_step_ghost_worker: "
         f"phase={liveness.get('phase') or 'unknown'} worker_pid={pid} is not live"
+    )
+
+def _workflow_cursor_mismatch_reason(ev):
+    failure = ev.get("plan_latest_failure") if isinstance(ev, dict) else {}
+    if not isinstance(failure, dict):
+        return ""
+    haystack = " ".join(
+        str(failure.get(key) or "") for key in ("kind", "message", "state")
+    ).lower()
+    if "workflow_cursor_mismatch" not in haystack and "workflow cursor mismatch" not in haystack:
+        return ""
+    return (
+        "workflow_cursor_mismatch: plan control projection disagrees with the "
+        "recorded workflow cursor; retryable state-machine contradiction, not completion"
     )
 
 def _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_audit):
@@ -3271,7 +3310,9 @@ for entry in plans:
     for deterministic_reason in (
         _watchdog_chain_health_disagreement_reason(ev),
         _repair_data_ghost_running_reason(ev),
+        _repair_complete_incomplete_chain_reason(ev),
         _active_step_ghost_worker_reason(ev),
+        _workflow_cursor_mismatch_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
     ):
         if deterministic_reason:
