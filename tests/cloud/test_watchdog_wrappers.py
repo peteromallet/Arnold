@@ -7933,6 +7933,57 @@ def test_repair_loop_source_initiative_helper_restores_missing_workspace_spec(tm
     assert payload["reason"] == "source_initiative_restored"
 
 
+def test_source_workspace_repair_never_repoints_vibe_target_to_arnold_engine(tmp_path: Path) -> None:
+    """A target project remote is authoritative over the repair engine remote."""
+    source = tmp_path / "arnold-engine"
+    workspace = tmp_path / "vibecomfy-target"
+    marker_dir = tmp_path / "markers"
+    run_dir = tmp_path / "run"
+    marker_dir.mkdir()
+    run_dir.mkdir()
+    for repo, origin in (
+        (source, "https://github.com/peteromallet/Arnold.git"),
+        (workspace, "https://github.com/peteromallet/vibecomfy.git"),
+    ):
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", origin], check=True)
+    marker = marker_dir / "vibe-session.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "session": "vibe-session",
+                "workspace": str(workspace),
+                "relaunch_command": "REPO=https://github.com/peteromallet/vibecomfy.git megaplan chain-start",
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("repair_source_workspace_if_possible"),
+            "require_repair_lock_held() { :; }",
+            "ensure_repair_budget_available() { :; }",
+            "log() { :; }",
+            f"RUN_DIR={shlex.quote(str(run_dir))}",
+            f"WORKSPACE={shlex.quote(str(workspace))}",
+            f"ARNOLD_SRC={shlex.quote(str(source))}",
+            f"MARKER_PATH={shlex.quote(str(marker))}",
+            "SYNC_BRANCH=editible-install",
+            f"LOG={shlex.quote(str(tmp_path / 'repair.log'))}",
+            "repair_source_workspace_if_possible || true",
+            f"git -C {shlex.quote(str(workspace))} remote get-url origin",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "https://github.com/peteromallet/vibecomfy.git"
+    repair = json.loads((run_dir / "source-workspace-repair.json").read_text(encoding="utf-8"))
+    assert repair["repaired"] is False
+    assert repair["reason"] == "source_repo_identity_mismatch"
+
+
 def test_entry_target_missing_reason_ignores_source_backed_missing_spec(tmp_path: Path) -> None:
     source_root = tmp_path / "arnold-src"
     workspace = tmp_path / "workspace"
@@ -14136,7 +14187,7 @@ def _extract_meta_retrigger_embedded_python() -> str:
     text = _meta_repair_wrapper()
     marker = (
         'python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" '
-        '"$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" <<'
+        '"$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" <<'
     )
     start = text.index(marker)
     start = text.index("\n", start) + 1
