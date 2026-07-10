@@ -21,6 +21,13 @@ _MISSING_REMOTE_REF_MARKERS = (
     "remote ref does not exist",
 )
 
+_MISSING_PR_MARKERS = (
+    "could not resolve to a pullrequest",
+    "could not resolve to a pull request",
+    "pull request not found",
+    "no pull requests found",
+)
+
 _NON_FAST_FORWARD_PUSH_MARKERS = (
     "non-fast-forward",
     "[rejected]",
@@ -500,6 +507,10 @@ def _run_command(
                 "returncode": proc.returncode,
                 "stdout": proc.stdout,
                 "stderr": proc.stderr,
+                # Consumers classifying a command failure must not have to
+                # reconstruct the preferred diagnostic stream themselves.
+                # This is especially important for gh GraphQL errors.
+                "output": detail,
             },
         )
     return proc
@@ -2014,6 +2025,21 @@ def _is_transient_gh_error(exc: CliError) -> bool:
     return any(pattern in combined for pattern in _compat().GH_TRANSIENT_ERROR_PATTERNS)
 
 
+def _is_missing_pr_error(exc: CliError) -> bool:
+    """Whether ``gh pr view`` proved the referenced PR no longer exists."""
+    combined = " ".join(
+        str(part or "")
+        for part in (
+            exc.message,
+            exc.extra.get("output", ""),
+            exc.extra.get("stdout", ""),
+            exc.extra.get("stderr", ""),
+            exc.extra.get("error", ""),
+        )
+    ).lower()
+    return any(marker in combined for marker in _MISSING_PR_MARKERS)
+
+
 def _pr_state(root: Path, pr_number: int, *, writer) -> str:
     for attempt in range(1, _compat().GH_PR_STATE_ATTEMPTS + 1):
         try:
@@ -2026,6 +2052,11 @@ def _pr_state(root: Path, pr_number: int, *, writer) -> str:
             )
             break
         except CliError as exc:
+            if _is_missing_pr_error(exc):
+                writer(
+                    f"[chain] PR #{pr_number} is absent according to gh; treating stale PR cursor as closed\n"
+                )
+                return "closed"
             if attempt >= _compat().GH_PR_STATE_ATTEMPTS or not _compat()._is_transient_gh_error(exc):
                 raise
             writer(
