@@ -1,0 +1,57 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1
+  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m1-containment-and-truthful-control.md
+  branch: megaplan/megaplan-maintenance/m1-containment
+  profile: all-codex
+  robustness: full
+  depth: medium
+  with_prep: true
+  prep_direction: Trace the real repair and progress-auditor wrapper adapters, queue
+    roots, feature gates, action receipts, incident namespaces, and every runtime
+    model-selection seam. Prove automatic repair and six-hour checks resolve gpt-5.6-sol
+    rather than trusting configuration comments.
+- label: m2
+  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-evidence-and-authority.md
+  branch: megaplan/megaplan-maintenance/m2-authority
+  profile: all-codex
+  robustness: full
+  depth: medium
+  with_prep: true
+  prep_direction: Map every state reader and writer, journal/projection boundary,
+    lock, version token, and existing schema before designing the coherent envelope
+    and transition authority.
+- label: m3
+  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m3-independent-verification-and-reopen.md
+  branch: megaplan/megaplan-maintenance/m3-verification
+  profile: all-codex
+  robustness: full
+  depth: medium
+  with_prep: true
+  prep_direction: Trace attempt, install, retrigger, liveness, closure, recurrence,
+    and scheduled-check paths. Preserve human gates and design independent delayed
+    verification using supported scheduling surfaces.
+- label: m4
+  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-feedback-product.md
+  branch: megaplan/megaplan-maintenance/m4-six-hour-product
+  profile: all-codex
+  robustness: full
+  depth: medium
+  with_prep: true
+  prep_direction: Trace production report generation from immutable typed inputs through
+    exact-window aggregation and receipts. Keep L3 read-only and verify its model-backed
+    check resolves gpt-5.6-sol.
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 40
+  poll_sleep: 8.0

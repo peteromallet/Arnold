@@ -23,16 +23,72 @@ def _signature(**overrides: str) -> dict[str, str]:
     return base
 
 
-def test_queue_dir_is_marker_dir_adjacent(tmp_path: Path) -> None:
+def _queue_root(tmp_path: Path) -> Path:
+    return tmp_path / ".megaplan" / repair_requests.QUEUE_DIR_NAME
+
+
+def test_validate_queue_root_accepts_only_canonical_central_root(tmp_path: Path) -> None:
+    queue_root = _queue_root(tmp_path)
+
+    assert repair_requests.validate_queue_root(queue_root) == queue_root
+
+
+def test_validate_queue_root_rejects_plan_marker_and_ambiguous_roots(tmp_path: Path) -> None:
+    rejected = [
+        tmp_path / ".megaplan" / "plans" / "demo-plan",
+        tmp_path / ".megaplan" / "plans" / "demo-plan" / ".megaplan" / "repair-queue",
+        tmp_path / ".megaplan" / "chain-markers",
+        tmp_path / ".megaplan" / "markers",
+        tmp_path / "repair-queue",
+    ]
+
+    for root in rejected:
+        try:
+            repair_requests.validate_queue_root(root)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"accepted non-central repair queue root: {root}")
+
+
+def test_validate_queue_root_rejects_ambiguous_relative_root() -> None:
+    try:
+        repair_requests.validate_queue_root(Path(".megaplan/repair-queue"))
+    except ValueError as exc:
+        assert "absolute" in str(exc)
+    else:
+        raise AssertionError("accepted relative repair queue root")
+
+
+def test_public_read_api_does_not_infer_queue_from_marker_parent(tmp_path: Path) -> None:
     marker_dir = tmp_path / ".megaplan" / "chain-markers"
 
-    assert repair_requests.repair_queue_dir(marker_dir) == tmp_path / ".megaplan" / "repair-queue"
+    try:
+        repair_requests.iter_repair_requests(marker_dir)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("marker directory was accepted as a repair queue root")
+
+
+def test_enqueue_requires_explicit_queue_root_even_with_marker_provenance(tmp_path: Path) -> None:
+    try:
+        repair_requests.enqueue_repair_request(
+            marker_dir=tmp_path / ".megaplan" / "chain-markers",
+            session="demo",
+            source="test",
+            problem_signature=_signature(),
+        )
+    except TypeError as exc:
+        assert "queue_root" in str(exc)
+    else:
+        raise AssertionError("enqueue inferred queue custody from marker provenance")
 
 
 def test_concurrent_active_repair_request_claim_has_one_winner_and_typed_losers(
     tmp_path: Path,
 ) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     blocker_id = "blocker:v1:shared"
     request_id = "req-active"
     contenders = 8
@@ -76,7 +132,7 @@ def test_concurrent_active_repair_request_claim_has_one_winner_and_typed_losers(
 def test_active_repair_claim_for_different_request_reports_busy_owner(
     tmp_path: Path,
 ) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     first = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id="blocker:v1:shared",
@@ -107,7 +163,7 @@ def test_active_repair_claim_for_different_request_reports_busy_owner(
 
 
 def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     first = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id="blocker:v1:stale",
@@ -144,7 +200,7 @@ def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> No
 def test_active_repair_claim_reports_live_pid_session_mismatch_without_reclaiming(
     tmp_path: Path,
 ) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     first = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id="blocker:v1:process-mismatch",
@@ -175,7 +231,7 @@ def test_active_repair_claim_reports_live_pid_session_mismatch_without_reclaimin
     assert stale.owner["actor"] == "trigger-a"
 
 def test_active_repair_claim_defaults_to_pid_liveness_probe(tmp_path: Path) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     first = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id="blocker:v1:dead-owner",
@@ -202,11 +258,12 @@ def test_active_repair_claim_defaults_to_pid_liveness_probe(tmp_path: Path) -> N
 
 
 def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
-    marker_dir.mkdir()
+    queue_dir = _queue_root(tmp_path)
+    marker_dir = tmp_path / ".megaplan" / "chain-markers"
     raw_hint = "Authorization: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz123456"
 
     first = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
         marker_dir=marker_dir,
         session="demo",
         source="_record_lifecycle_failure",
@@ -215,6 +272,7 @@ def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path
         created_at="2026-07-01T00:00:00Z",
     )
     second = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
         marker_dir=marker_dir,
         session="demo",
         source="_record_lifecycle_failure",
@@ -227,18 +285,21 @@ def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path
     assert second["status"] == "coalesced"
     path = Path(first["path"])
     original_text = path.read_text(encoding="utf-8")
-    assert json.loads(original_text)["created_at"] == "2026-07-01T00:00:00Z"
+    payload = json.loads(original_text)
+    assert payload["created_at"] == "2026-07-01T00:00:00Z"
+    assert payload["marker_dir"] == str(marker_dir)
+    assert payload["queue_dir"] == str(queue_dir)
     assert "sk-proj-abcdefghijklmnopqrstuvwxyz123456" not in original_text
     assert "Authorization: Bearer" not in original_text
-    assert "root_cause_hint_hash" in json.loads(original_text)
+    assert "root_cause_hint_hash" in payload
     assert path.read_text(encoding="utf-8") == original_text
 
 
 def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
 
     first = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
         problem_signature=_signature(),
@@ -246,7 +307,7 @@ def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: 
         created_at="2026-07-01T01:00:00Z",
     )
     duplicate = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
         problem_signature=_signature(),
@@ -254,7 +315,7 @@ def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: 
         created_at="2026-07-01T01:05:00Z",
     )
     distinct = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
         problem_signature=_signature(blocked_task_id="T2"),
@@ -267,7 +328,7 @@ def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: 
     assert duplicate["decision"]["related_request_id"] == first["request"]["request_id"]
     assert distinct["status"] == "queued"
 
-    requests = repair_requests.iter_repair_requests(marker_dir)
+    requests = repair_requests.iter_repair_requests(queue_dir)
     assert [item["request_id"] for item in requests] == [
         first["request"]["request_id"],
         distinct["request"]["request_id"],
@@ -286,10 +347,10 @@ def test_distinct_redacted_root_cause_hints_have_distinct_hashes() -> None:
 
 
 def test_stale_and_superseded_are_decisions_not_request_rewrites(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
 
     stale = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
         problem_signature=_signature(),
@@ -297,7 +358,7 @@ def test_stale_and_superseded_are_decisions_not_request_rewrites(tmp_path: Path)
         stale_reason="marker no longer matches current plan",
     )
     superseded = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
         problem_signature=_signature(blocked_task_id="T2"),
@@ -307,23 +368,22 @@ def test_stale_and_superseded_are_decisions_not_request_rewrites(tmp_path: Path)
 
     assert stale["status"] == "stale"
     assert superseded["status"] == "superseded"
-    request_files = sorted(repair_requests.requests_dir(repair_requests.repair_queue_dir(marker_dir)).glob("*.json"))
+    request_files = sorted(repair_requests.requests_dir(queue_dir).glob("*.json"))
     assert len(request_files) == 2
     assert {json.loads(path.read_text(encoding="utf-8"))["kind"] for path in request_files} == {"repair_request"}
-    decision_files = sorted(repair_requests.decisions_dir(repair_requests.repair_queue_dir(marker_dir)).glob("*.json"))
+    decision_files = sorted(repair_requests.decisions_dir(queue_dir).glob("*.json"))
     decisions = {json.loads(path.read_text(encoding="utf-8"))["decision"] for path in decision_files}
     assert decisions == {"stale", "superseded"}
 
 
 def test_malformed_files_are_reported_and_valid_requests_remain_ordered(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
-    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    queue_dir = _queue_root(tmp_path)
     request_dir = repair_requests.requests_dir(queue_dir)
     request_dir.mkdir(parents=True)
     (request_dir / "broken.json").write_text("{not json", encoding="utf-8")
 
     later = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
         problem_signature=_signature(blocked_task_id="T2"),
@@ -331,7 +391,7 @@ def test_malformed_files_are_reported_and_valid_requests_remain_ordered(tmp_path
         created_at="2026-07-01T02:00:00Z",
     )
     earlier = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="HumanGateStep.run",
         problem_signature=_signature(blocked_task_id="T1"),
@@ -339,13 +399,13 @@ def test_malformed_files_are_reported_and_valid_requests_remain_ordered(tmp_path
         created_at="2026-07-01T01:00:00Z",
     )
 
-    valid = repair_requests.iter_repair_requests(marker_dir)
+    valid = repair_requests.iter_repair_requests(queue_dir)
     assert [item["request_id"] for item in valid] == [
         earlier["request"]["request_id"],
         later["request"]["request_id"],
     ]
 
-    all_records = repair_requests.iter_repair_requests(marker_dir, include_malformed=True)
+    all_records = repair_requests.iter_repair_requests(queue_dir, include_malformed=True)
     assert all_records[-1]["kind"] == "malformed_repair_request"
     assert all_records[-1]["path"].endswith("broken.json")
 
@@ -440,7 +500,7 @@ def test_request_id_for_differs_with_different_sessions() -> None:
 
 
 def test_write_decision_creates_immutable_decision_record(tmp_path: Path) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     decision = repair_requests.write_decision(
         queue_dir,
         request_id="req-abc123",
@@ -462,7 +522,7 @@ def test_write_decision_creates_immutable_decision_record(tmp_path: Path) -> Non
 
 
 def test_write_decision_idempotency_via_claim(tmp_path: Path) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     first = repair_requests.write_decision(
         queue_dir,
         request_id="req-xyz",
@@ -485,7 +545,7 @@ def test_write_decision_idempotency_via_claim(tmp_path: Path) -> None:
 
 
 def test_record_malformed_file_creates_malformed_decision(tmp_path: Path) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     result = repair_requests.record_malformed_file(
         queue_dir,
         path="/some/broken/file.json",
@@ -501,14 +561,14 @@ def test_record_malformed_file_creates_malformed_decision(tmp_path: Path) -> Non
 
 
 def test_find_pending_by_signature_returns_none_when_queue_is_empty(tmp_path: Path) -> None:
-    queue_dir = tmp_path / "repair-queue"
+    queue_dir = _queue_root(tmp_path)
     assert repair_requests.find_pending_by_signature(queue_dir, _signature()) is None
 
 
 def test_find_pending_by_signature_finds_queued_request(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     enqueued = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="T1"),
@@ -517,7 +577,7 @@ def test_find_pending_by_signature_finds_queued_request(tmp_path: Path) -> None:
     assert enqueued["status"] == "queued"
 
     found = repair_requests.find_pending_by_signature(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_dir,
         _signature(blocked_task_id="T1"),
     )
     assert found is not None
@@ -525,9 +585,9 @@ def test_find_pending_by_signature_finds_queued_request(tmp_path: Path) -> None:
 
 
 def test_find_pending_by_signature_excludes_stale_requests(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="stale-task"),
@@ -535,16 +595,16 @@ def test_find_pending_by_signature_excludes_stale_requests(tmp_path: Path) -> No
         stale_reason="no longer relevant",
     )
     found = repair_requests.find_pending_by_signature(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_dir,
         _signature(blocked_task_id="stale-task"),
     )
     assert found is None
 
 
 def test_find_pending_by_signature_excludes_superseded_requests(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="super-task"),
@@ -552,23 +612,23 @@ def test_find_pending_by_signature_excludes_superseded_requests(tmp_path: Path) 
         superseded_by="newer-session",
     )
     found = repair_requests.find_pending_by_signature(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_dir,
         _signature(blocked_task_id="super-task"),
     )
     assert found is None
 
 
 def test_find_pending_by_signature_returns_none_for_different_signature(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="T1"),
         root_cause_hint="only T1 queued",
     )
     found = repair_requests.find_pending_by_signature(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_dir,
         _signature(blocked_task_id="T99"),
     )
     assert found is None
@@ -581,12 +641,12 @@ def test_find_pending_by_signature_returns_none_for_different_signature(tmp_path
 
 def test_timestamp_drift_does_not_create_multiple_requests_for_same_signature(tmp_path: Path) -> None:
     """Same problem signature submitted at different times coalesces to a single request."""
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     results = []
     for i, ts in enumerate(["2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z", "2026-07-01T10:10:00Z"]):
         results.append(
             repair_requests.enqueue_repair_request(
-                marker_dir=marker_dir,
+                queue_root=queue_dir,
                 session="demo",
                 source="test",
                 problem_signature=_signature(blocked_task_id="drift-T1"),
@@ -596,7 +656,7 @@ def test_timestamp_drift_does_not_create_multiple_requests_for_same_signature(tm
         )
     assert results[0]["status"] == "queued"
     assert all(r["status"] == "coalesced" for r in results[1:])
-    requests = repair_requests.iter_repair_requests(marker_dir)
+    requests = repair_requests.iter_repair_requests(queue_dir)
     assert len(requests) == 1
     # The stored request keeps the original timestamp
     assert requests[0]["created_at"] == "2026-07-01T10:00:00Z"
@@ -608,9 +668,9 @@ def test_timestamp_drift_does_not_create_multiple_requests_for_same_signature(tm
 
 
 def test_iter_repair_requests_returns_deterministic_order_by_created_at(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     third = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="T3"),
@@ -618,7 +678,7 @@ def test_iter_repair_requests_returns_deterministic_order_by_created_at(tmp_path
         created_at="2026-07-01T12:00:00Z",
     )
     first = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="T1"),
@@ -626,14 +686,14 @@ def test_iter_repair_requests_returns_deterministic_order_by_created_at(tmp_path
         created_at="2026-07-01T10:00:00Z",
     )
     second = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="T2"),
         root_cause_hint="second",
         created_at="2026-07-01T11:00:00Z",
     )
-    requests = repair_requests.iter_repair_requests(marker_dir)
+    requests = repair_requests.iter_repair_requests(queue_dir)
     ids = [r["request_id"] for r in requests]
     assert ids == [
         first["request"]["request_id"],
@@ -648,39 +708,36 @@ def test_iter_repair_requests_returns_deterministic_order_by_created_at(tmp_path
 
 
 def test_malformed_non_dict_json_is_reported(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
-    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    queue_dir = _queue_root(tmp_path)
     req_dir = repair_requests.requests_dir(queue_dir)
     req_dir.mkdir(parents=True)
     (req_dir / "array.json").write_text('[1, 2, 3]', encoding="utf-8")
 
-    valid = repair_requests.iter_repair_requests(marker_dir)
+    valid = repair_requests.iter_repair_requests(queue_dir)
     assert len(valid) == 0
-    all_records = repair_requests.iter_repair_requests(marker_dir, include_malformed=True)
+    all_records = repair_requests.iter_repair_requests(queue_dir, include_malformed=True)
     assert len(all_records) == 1
     assert all_records[0]["kind"] == "malformed_repair_request"
     assert "array.json" in all_records[0]["path"]
 
 
 def test_malformed_missing_required_fields_is_reported(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
-    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    queue_dir = _queue_root(tmp_path)
     req_dir = repair_requests.requests_dir(queue_dir)
     req_dir.mkdir(parents=True)
     (req_dir / "incomplete.json").write_text(
         json.dumps({"kind": "repair_request", "schema_version": 1}), encoding="utf-8"
     )
 
-    valid = repair_requests.iter_repair_requests(marker_dir)
+    valid = repair_requests.iter_repair_requests(queue_dir)
     assert len(valid) == 0
-    all_records = repair_requests.iter_repair_requests(marker_dir, include_malformed=True)
+    all_records = repair_requests.iter_repair_requests(queue_dir, include_malformed=True)
     assert len(all_records) == 1
     assert all_records[0]["kind"] == "malformed_repair_request"
 
 
 def test_malformed_wrong_kind_is_reported(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
-    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    queue_dir = _queue_root(tmp_path)
     req_dir = repair_requests.requests_dir(queue_dir)
     req_dir.mkdir(parents=True)
     (req_dir / "wrong_kind.json").write_text(
@@ -693,9 +750,9 @@ def test_malformed_wrong_kind_is_reported(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    valid = repair_requests.iter_repair_requests(marker_dir)
+    valid = repair_requests.iter_repair_requests(queue_dir)
     assert len(valid) == 0
-    all_records = repair_requests.iter_repair_requests(marker_dir, include_malformed=True)
+    all_records = repair_requests.iter_repair_requests(queue_dir, include_malformed=True)
     assert len(all_records) == 1
     assert all_records[0]["kind"] == "malformed_repair_request"
 
@@ -707,9 +764,9 @@ def test_malformed_wrong_kind_is_reported(tmp_path: Path) -> None:
 
 def test_enqueue_request_file_is_immutable_after_first_write(tmp_path: Path) -> None:
     """Once written, the request file content never changes — coalescing doesn't touch it."""
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     first = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="immutable"),
@@ -723,7 +780,7 @@ def test_enqueue_request_file_is_immutable_after_first_write(tmp_path: Path) -> 
 
     # Coalesce
     second = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="immutable"),
@@ -739,9 +796,9 @@ def test_enqueue_request_file_is_immutable_after_first_write(tmp_path: Path) -> 
 
 def test_stale_request_file_persists_unchanged(tmp_path: Path) -> None:
     """Stale requests still write the request file but mark it as stale via decision."""
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     result = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="stale-persist"),
@@ -760,9 +817,9 @@ def test_stale_request_file_persists_unchanged(tmp_path: Path) -> None:
 
 def test_superseded_request_file_persists_unchanged(tmp_path: Path) -> None:
     """Superseded requests still write the request file but mark it via decision."""
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     result = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="super-persist"),
@@ -784,9 +841,9 @@ def test_superseded_request_file_persists_unchanged(tmp_path: Path) -> None:
 
 
 def test_request_marker_never_contains_root_cause_hint_raw_text(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     result = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(),
@@ -807,9 +864,9 @@ def test_redacted_hint_hash_is_consistent() -> None:
 
 
 def test_target_is_stored_as_stable_sorted_mapping(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     result = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(),
@@ -827,9 +884,9 @@ def test_target_is_stored_as_stable_sorted_mapping(tmp_path: Path) -> None:
 
 def test_iter_repair_requests_includes_all_requests_regardless_of_decisions(tmp_path: Path) -> None:
     """iter_repair_requests returns request files regardless of decision state."""
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="stale-iter"),
@@ -837,13 +894,13 @@ def test_iter_repair_requests_includes_all_requests_regardless_of_decisions(tmp_
         stale_reason="expired",
     )
     repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(blocked_task_id="queued-iter"),
         root_cause_hint="queued",
     )
-    requests = repair_requests.iter_repair_requests(marker_dir)
+    requests = repair_requests.iter_repair_requests(queue_dir)
     # Both request files exist and are returned
     assert len(requests) == 2
     kinds = {r["kind"] for r in requests}
@@ -851,9 +908,9 @@ def test_iter_repair_requests_includes_all_requests_regardless_of_decisions(tmp_
 
 
 def test_enqueue_with_workspace_and_run_kind_stored(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
+    queue_dir = _queue_root(tmp_path)
     result = repair_requests.enqueue_repair_request(
-        marker_dir=marker_dir,
+        queue_root=queue_dir,
         session="demo",
         source="test",
         problem_signature=_signature(),

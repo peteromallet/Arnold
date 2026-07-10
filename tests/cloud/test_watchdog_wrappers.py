@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.cloud import repair_lock, repair_requests
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
@@ -47,6 +48,36 @@ def _extract_repair_function(name: str) -> str:
     start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + 3
     return text[start:end]
+
+
+@pytest.mark.parametrize(
+    ("pin_name", "pin_value"),
+    (
+        ("CODEX_MODEL", "gpt-5.5"),
+        ("CLOUD_WATCHDOG_CODEX_MODEL", "gpt-5.4"),
+        ("CLOUD_WATCHDOG_DEV_FIX_MODEL", "zhipu:glm-5.2"),
+        ("CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM", "1"),
+    ),
+)
+def test_repair_loop_rejects_each_conflicting_model_pin(pin_name: str, pin_value: str) -> None:
+    function = _extract_repair_function("reject_conflicting_automatic_repair_model_pins")
+    script = "\n".join(
+        [
+            "set -uo pipefail",
+            'AUTOMATIC_REPAIR_MODEL="gpt-5.6-sol"',
+            "log() { printf '%s\\n' \"$*\"; }",
+            "unset CODEX_MODEL CLOUD_WATCHDOG_CODEX_MODEL CLOUD_WATCHDOG_DEV_FIX_MODEL CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM",
+            f"export {pin_name}={shlex.quote(pin_value)}",
+            function,
+            "reject_conflicting_automatic_repair_model_pins",
+        ]
+    )
+
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+
+    assert result.returncode != 0
+    assert "automatic repair model pin conflict" in result.stdout
+    assert pin_name in result.stdout
 
 
 def _extract_wrapper_function(name: str) -> str:
@@ -4234,13 +4265,85 @@ def test_supervise_exhaustion_queues_repair_request() -> None:
     text = _wrapper("arnold-supervise")
 
     assert "queue_repair_request()" in text
-    assert 'source="arnold_supervise_exit"' in text
-    assert '"failure_kind": "supervised_run_exhausted"' in text
+    assert "enqueue_supervisor_repair_request" in text
+    helper = (
+        REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "supervise.py"
+    ).read_text(encoding="utf-8")
+    assert 'source="arnold_supervise_exit"' in helper
+    assert '"failure_kind": "supervised_run_exhausted"' in helper
     assert "non-quota retries exhausted" in text
     assert "exit_with_repair_request" in text
     assert "SUPERVISE_SESSION" in text
     assert "SUPERVISE_WORKSPACE" in text
     assert "SUPERVISE_REMOTE_SPEC" in text
+
+
+@pytest.mark.parametrize(
+    ("master_enabled", "path_enabled"),
+    ((False, False), (False, True), (True, False), (True, True)),
+)
+def test_supervise_real_wrapper_master_path_mutation_matrix(
+    tmp_path: Path,
+    master_enabled: bool,
+    path_enabled: bool,
+) -> None:
+    effects = tmp_path / "effects"
+    command = tmp_path / "mutation-spy"
+    command.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        'mkdir -p "$1"\n'
+        "for effect in subprocess state source commit push; do\n"
+        '  printf mutated > "$1/$effect"\n'
+        "done\n",
+        encoding="utf-8",
+    )
+    command.chmod(command.stat().st_mode | stat.S_IXUSR)
+    env = dict(os.environ)
+    env.update(
+        {
+            "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
+            "ARNOLD_AUTONOMY": "1" if master_enabled else "0",
+            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1" if path_enabled else "0",
+            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(WRAPPER_DIR / "arnold-supervise"),
+            "matrix",
+            str(command),
+            str(effects),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    authorized = master_enabled and path_enabled
+    assert effects.exists() is authorized
+    if authorized:
+        assert {path.name for path in effects.iterdir()} == {
+            "subprocess", "state", "source", "commit", "push"
+        }
+    else:
+        assert "observed: L1 supervisor mutation blocked" in result.stdout
+        assert "dispatched" not in result.stdout
+
+
+def test_cloud_supervisor_guards_every_remote_l1_state_mutation() -> None:
+    text = (REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "supervise.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert text.count("feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1)") == 4
+    assert 'event="supervisor_blocked"' in text
+    assert 'acted=False' in text
+    assert "observed {action}; L1 mutation requires ARNOLD_AUTONOMY" in text
 
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
@@ -6464,6 +6567,114 @@ def test_repair_loop_collect_failure_context_includes_resolver_output(tmp_path: 
     assert payload["resolver_output"]["authoritative_source"] in {"marker", "plan_state", "chain_state"}
 
 
+@pytest.mark.parametrize(
+    ("variant", "expected_unknown_type"),
+    [
+        ("missing", "missing"),
+        ("partial", "partial"),
+        ("stale", "stale"),
+        ("contradictory", "contradictory"),
+    ],
+)
+def test_repair_loop_production_current_target_adapter_preserves_typed_unknowns(
+    tmp_path: Path,
+    variant: str,
+    expected_unknown_type: str,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    session = variant
+
+    if variant == "partial":
+        (marker_dir / f"{session}.json").write_text('{"workspace":', encoding="utf-8")
+    elif variant == "stale":
+        plan_name = "stale-plan"
+        plan_dir = workspace / ".megaplan" / "plans" / plan_name
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": plan_name,
+                    "current_state": "executing",
+                    "active_step": {"phase": "execute", "worker_pid": 999999},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (marker_dir / f"{session}.json").write_text(
+            json.dumps(
+                {
+                    "session": session,
+                    "workspace": str(workspace),
+                    "run_kind": "plan",
+                    "plan_name": plan_name,
+                }
+            ),
+            encoding="utf-8",
+        )
+    elif variant == "contradictory":
+        spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+        spec_path.parent.mkdir(parents=True)
+        spec_path.write_text("milestones: []\n", encoding="utf-8")
+        state_path = chain_spec._state_path_for(spec_path)
+        state_path.parent.mkdir(parents=True)
+        state_path.write_text(
+            json.dumps({"current_plan_name": "chain-plan", "last_state": "executing"}),
+            encoding="utf-8",
+        )
+        plan_dir = workspace / ".megaplan" / "plans" / "chain-plan"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "different-plan", "current_state": "executing"}),
+            encoding="utf-8",
+        )
+        (marker_dir / f"{session}.json").write_text(
+            json.dumps(
+                {
+                    "session": session,
+                    "workspace": str(workspace),
+                    "remote_spec": str(spec_path),
+                    "run_kind": "chain",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    script = "\n".join(
+        [
+            _extract_repair_function("resolve_current_target_evidence"),
+            f"SESSION={shlex.quote(session)}",
+            f"MARKER_DIR={shlex.quote(str(marker_dir))}",
+            f"DATA_DIR={shlex.quote(str(data_dir))}",
+            f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
+            f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            "resolve_current_target_evidence",
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["evidence_state"]["status"] == "unknown"
+    assert payload["evidence_state"]["unknown_type"] == expected_unknown_type
+    assert payload["evidence_state"]["green"] is False
+    assert payload["evidence_state"]["mutation_eligible"] is False
+    assert payload["evidence_state"]["authorizes_mutation"] is False
+    wrapper = _repair_wrapper()
+    assert "from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target" in wrapper
+    assert 'CURRENT_TARGET_MUTATION_ELIGIBLE=0' in wrapper
+
+
 def test_watchdog_needs_human_webhook_posts_once_when_configured(tmp_path: Path) -> None:
     dm_helper = tmp_path / "arnold-discord-dm"
     dm_helper.write_text(
@@ -6939,11 +7150,24 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert '"plan_runtime_state"' in text
     assert '"last_gate"' in text
     assert "for iteration in 1 2 3; do" in text
-    assert 'DEV_REQUESTED_MODEL="glm-5.2"' in text
-    assert 'DEV_REQUESTED_MODEL="codex:gpt-5.4"' in text
-    assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
-    assert 'CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0' in text
-    assert 'GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"' in text
+    assert 'AUTOMATIC_REPAIR_MODEL="gpt-5.6-sol"' in text
+    assert 'DEV_REQUESTED_MODEL="$AUTOMATIC_REPAIR_MODEL"' in text
+    assert 'DEV_DISPATCH_MODEL="$AUTOMATIC_REPAIR_MODEL"' in text
+    assert '-c model="$AUTOMATIC_REPAIR_MODEL"' in text
+    assert 'DEV_REQUESTED_MODEL="glm-5.2"' not in text
+    assert 'DEV_REQUESTED_MODEL="codex:gpt-5.4"' not in text
+    assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' not in text
+    assert "reject_conflicting_automatic_repair_model_pins()" in text
+    assert "CODEX_MODEL CLOUD_WATCHDOG_CODEX_MODEL CLOUD_WATCHDOG_DEV_FIX_MODEL" in text
+    assert 'CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM=${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM}' in text
+    assert "initialize_automatic_repair_receipt()" in text
+    assert "record_automatic_repair_started()" in text
+    assert "finalize_automatic_repair_receipt()" in text
+    assert text.index('dispatch_id="$(initialize_automatic_repair_receipt "$iteration")"') < text.index(
+        'codex exec \\' + "\n      --sandbox danger-full-access",
+        text.index("run_dev_fix_turn()"),
+    )
+    assert text.index('record_automatic_repair_started "$dispatch_id"') < text.index('wait "$child_pid"')
     assert 'repair_data_set_outcome "live_with_fresh_activity"' in text
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
     assert 'repair_data_set_outcome "discord_escalated"' in text
@@ -11954,6 +12178,9 @@ def test_meta_repair_wrapper_has_feature_flag_gating() -> None:
     assert 'meta-repair disabled' in text
     assert 'META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"' in text
     assert '0|false|False|FALSE|no|No|NO|off|Off|OFF' in text
+    assert "l2_mutation_authorized() {" in text
+    assert "mutation_authorized(MUTATION_PATH_L2)" in text
+    assert "L2 Codex dispatch blocked" in text
 
 
 def test_meta_repair_wrapper_has_recursion_guard() -> None:

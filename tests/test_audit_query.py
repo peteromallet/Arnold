@@ -148,6 +148,50 @@ def test_audit_report_renders_markdown_from_plan_receipts(tmp_path: Path) -> Non
     assert "Gate recommendation: `ITERATE`" in result.stdout
 
 
+def test_audit_report_prefers_dispatch_receipt_runtime_model(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    plan_dir = root / ".megaplan" / "plans" / "dispatch-model-report"
+    receipt_dir = plan_dir / "dispatch_receipts"
+    receipt_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "dispatch-model-report",
+                "current_state": "done",
+                "config": {"project_dir": str(root)},
+                "meta": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (receipt_dir / "repair-001.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "dispatch_id": "repair-001",
+                "action": "automatic_repair",
+                "configured_model": "stale-configured-model",
+                "resolved_runtime_model": "gpt-5.6-sol",
+                "subprocess_started": True,
+                "outcome": "succeeded",
+                "mutation_facts": {"state": False, "source": True, "commit": False, "push": False},
+                "updated_at_utc": "2026-07-10T12:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_megaplan(["audit", "report", "--plan", "dispatch-model-report"], cwd=root)
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "| automatic_repair | `repair-001` | gpt-5.6-sol | stale-configured-model | true | succeeded |"
+        in result.stdout
+    )
+
+
 def test_audit_report_can_write_markdown_and_json_payload(tmp_path: Path) -> None:
     root = tmp_path / "root"
     plan_dir = root / ".megaplan" / "plans" / "audit-report-files"

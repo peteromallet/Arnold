@@ -105,6 +105,11 @@ path.write_text(redact_text(path.read_text(encoding="utf-8")), encoding="utf-8")
 PY
 }
 
+l2_mutation_authorized() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -c \
+    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L2, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L2) else 1)'
+}
+
 # ---- early gate: feature flag -----------------------------------------------
 case "$META_REPAIR_ENABLED_VAR" in
   0|false|False|FALSE|no|No|NO|off|Off|OFF)
@@ -429,7 +434,14 @@ log "commit_allowed=$COMMIT_ALLOWED push_allowed=$PUSH_ALLOWED"
 RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.txt"
 ERR_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.err"
 
-if command -v codex >/dev/null 2>&1; then
+if ! l2_mutation_authorized; then
+  log "observed: L2 Codex dispatch blocked (requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED)"
+  printf '%s\n' \
+    "NO_FIX" \
+    "Meta-repair trigger observed; mutation blocked by the master-plus-path authorization gate." \
+    > "$RESP_PATH"
+  : > "$ERR_PATH"
+elif command -v codex >/dev/null 2>&1; then
   log "dispatching Codex meta-repair session=$SESSION deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
   (
     if [[ -f /workspace/.cloud-hot-env ]]; then
@@ -654,6 +666,7 @@ if [[ "$VERDICT" == FIXED* ]]; then
 import json, os, subprocess, sys
 from pathlib import Path
 
+from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_repair_retriggered,
     append_verified_recovered,
@@ -696,6 +709,11 @@ def load_authoritative_post_retrigger_verification(
     return {"outcome": outcome}
 
 incident_id = f"inc-{session}"
+
+if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L2):
+    raise SystemExit(
+        "L2 retrigger blocked: ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED are required"
+    )
 
 # Emit repair_retriggered
 parent_ids = []
@@ -766,6 +784,7 @@ if accepted:
             f"outcome={verification.get('outcome', '')} "
             f"returncode={retrigger_result.returncode}"
         ),
+        recovery_verification=verification,
         evidence=[
             {
                 "kind": "retrigger_result",
