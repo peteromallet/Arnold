@@ -225,13 +225,14 @@ def _raise_generic_openrouter_blocked(reason: str) -> None:
             "To use OpenRouter, prefix the model with ``openrouter:``. "
             "To use a native provider, use the appropriate prefix "
             "(``deepseek:``, ``fireworks:``, ``google:``, ``kimi:``, "
-            "``zhipu:``, ``minimax:``, ``mimo:``) or the ``hermes:`` agent."
+            "``zhipu:``, ``minimax:``, ``mimo:``, ``xai:``) or the ``hermes:`` agent."
         ),
         valid_next=[
             "rerun with --hermes openrouter:<model>",
             "rerun with --hermes deepseek:<model>",
             "rerun with --hermes kimi:<model>",
             "rerun with --hermes mimo:<model>",
+            "rerun with --hermes xai:grok-4.5",
             "rerun with --agent claude / --agent codex / --agent shannon",
         ],
     )
@@ -291,6 +292,10 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
         resolved_model = resolved_model[len("mimo:"):]
         agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS["mimo"]) or _DEFAULT_BASE_URLS["mimo"]
         agent_kwargs["api_key"] = acquire_key("mimo")
+    elif resolved_model.startswith("xai:"):
+        resolved_model = resolved_model[len("xai:"):]
+        agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS.get("xai", "")) or _DEFAULT_BASE_URLS.get("xai", "https://api.x.ai/v1")
+        agent_kwargs["api_key"] = acquire_key("xai")
     elif resolved_model.startswith("minimax:"):
         resolved_model = resolved_model[len("minimax:"):]
         minimax_key = acquire_key("minimax")

@@ -368,6 +368,28 @@ def test_audit_incident_flags_missing_meta_repair_evidence_and_stale_watchdog() 
     assert result["audit_complete"]["outcome"] == "escalated"
 
 
+def test_audit_incident_detects_github_sync_publication_from_incident_events() -> None:
+    result = audit_incident(
+        brief=_brief(next_expected_event="watchdog.dispatch"),
+        incident=_incident(
+            next_expected_event="watchdog.dispatch",
+            events=[
+                {
+                    "actor": "github_sync",
+                    "kind": "incident.github_sync.issue_published",
+                    "timestamp": "2026-07-09T03:47:07+00:00",
+                }
+            ],
+        ),
+        problem=_problem(status="open", occurrence_count=4),
+        live_process_snapshot=_snapshot(github_sync={}),
+    )
+
+    github_sync_finding = next(finding for finding in result["findings"] if finding["layer"] == "github_sync")
+    assert github_sync_finding["code"] == "github_sync_observed"
+    assert github_sync_finding["status"] == "ok"
+
+
 def test_resolver_drift_detection() -> None:
     result = audit_projection_input(
         _projection_input(

@@ -1,1 +1,1 @@
-../../data/observe_skill.md
+/workspace/arnold/arnold_pipelines/megaplan/data/observe_skill.md

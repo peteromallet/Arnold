@@ -4,22 +4,24 @@ import argparse
 import json
 import logging
 import os
-import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 import arnold_pipelines.megaplan.workers as worker_module
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
+from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan._core import (
     apply_session_update,
     append_history,
     atomic_write_json,
     atomic_write_text,
-    batch_artifact_path,
+    batch_artifact_index,
+    execute_batch_artifact_path,
     build_next_step_runtime,
     compute_batch_complexity,
     compute_global_batches,
@@ -42,6 +44,14 @@ from arnold_pipelines.megaplan.audits.quality_gates import capture_before_line_c
 from arnold_pipelines.megaplan.observability.routing_ledger import (
     format_selected_spec,
     record_step_routing,
+)
+from arnold_pipelines.megaplan.execute.policy import (
+    NextExecuteTransition,
+    NextStepDecision,
+    evaluate_blocker_recovery_policy,
+    resolve_batch_tier,
+    resolve_partial_failure_resume,
+    resolve_single_batch_next_step,
 )
 from arnold_pipelines.megaplan.execute.aggregation import (
     _append_scope_drift_blocker,
@@ -74,9 +84,10 @@ from arnold_pipelines.megaplan.model_seam import (
     render_step_message,
 )
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
+    apply_authoritative_execute_overrides,
     validate_execution_evidence,
 )
-from arnold_pipelines.megaplan.orchestration.phase_result import Deviation
+from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     effective_execute_completed_task_ids,
 )
@@ -121,7 +132,6 @@ from arnold_pipelines.megaplan.workers.result_metadata import aggregate_rate_lim
 
 log = logging.getLogger(__name__)
 
-_BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
 _UNROUTABLE_REWORK_ATTEMPTS_KEY = "unroutable_rework_attempts"
 _MAX_UNROUTABLE_REWORK_RERUNS = 2
 _ROUTABLE_REWORK_TARGET_KINDS = {"task", "bulk", "manifest"}
@@ -344,6 +354,23 @@ class _TierResolution:
     low_confidence: bool
 
 
+def _legacy_next_step_for_execute_policy(
+    decision: NextStepDecision | NextExecuteTransition,
+) -> str | None:
+    """Translate typed execute policy transitions into legacy response fields."""
+    transition = decision.transition if isinstance(decision, NextStepDecision) else decision
+    if transition in (NextExecuteTransition.EXECUTE, NextExecuteTransition.BLOCKED):
+        return "execute"
+    if transition is NextExecuteTransition.REVIEW:
+        return "review"
+    if transition in (
+        NextExecuteTransition.DONE,
+        NextExecuteTransition.AWAITING_HUMAN,
+    ):
+        return None
+    raise AssertionError(f"unhandled execute transition: {transition!r}")
+
+
 def _calibration_tier_spec(
     *,
     plan_dir: Path,
@@ -353,19 +380,23 @@ def _calibration_tier_spec(
 ) -> _TierResolution:
     """Return a validated calibration suggestion or fall back to TOML routing.
 
-    The fallback behaviour is deliberately identical to the historical
-    ``tier_map.get(batch_complexity)`` path when the flag is off, no suggestion
-    exists, or the suggestion is malformed.
+    The fallback behaviour routes through ``resolve_batch_tier`` when the flag
+    is off, no suggestion exists, or the suggestion is malformed.
 
     Returns a :class:`_TierResolution` whose ``spec`` field is the selected
     tier spec string (or ``None`` when no spec could be resolved).
     """
-    fallback_spec = tier_map.get(batch_complexity)
+    fallback_decision = resolve_batch_tier(
+        tier_map=tier_map,
+        batch_complexity=batch_complexity,
+    )
+    fallback_spec = fallback_decision.spec if fallback_decision.has_spec else None
+    fallback_tier = fallback_decision.selected_tier
     if not calibration_query_route_on():
         return _TierResolution(
             spec=fallback_spec,
             source="toml",
-            projected_tier=batch_complexity if fallback_spec else None,
+            projected_tier=fallback_tier,
             counterfactual_tag=None,
             low_confidence=False,
         )
@@ -381,7 +412,7 @@ def _calibration_tier_spec(
         return _TierResolution(
             spec=fallback_spec,
             source="toml",
-            projected_tier=batch_complexity if fallback_spec else None,
+            projected_tier=fallback_tier,
             counterfactual_tag=None,
             low_confidence=False,
         )
@@ -394,7 +425,7 @@ def _calibration_tier_spec(
         return _TierResolution(
             spec=fallback_spec,
             source="toml",
-            projected_tier=batch_complexity if fallback_spec else None,
+            projected_tier=fallback_tier,
             counterfactual_tag=None,
             low_confidence=False,
         )
@@ -482,6 +513,74 @@ def _resolve_batch_artifact_number(
 _PHASE_OUTCOMES = frozenset(
     {"success", "blocked_by_quality", "blocked_by_prereq", "timeout"}
 )
+
+
+# ---------------------------------------------------------------------------
+# Evidence-only batch boundary receipt emission
+# ---------------------------------------------------------------------------
+
+
+def _emit_batch_boundary_receipt(
+    *,
+    boundary_id: str,
+    plan_dir: Path,
+    state: dict[str, Any],
+    outcome: BoundaryOutcome,
+    artifact_refs: tuple[str, ...] = (),
+    batch_number: int | None = None,
+    batch_task_ids: list[str] | None = None,
+    extra_details: dict[str, Any] | None = None,
+) -> None:
+    """Emit an evidence-only batch boundary receipt without raising.
+
+    Receipts are strictly observational — they do not affect branch
+    decisions, batch routing, or state transitions.
+    """
+    try:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+            BOUNDARY_CONTRACTS_BY_ID,
+        )
+        contract = BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
+        if contract is None:
+            return
+
+        meta = state.get("meta") or {}
+        invocation_id = meta.get("current_invocation_id")
+        project_dir = Path(state["config"]["project_dir"])
+
+        details: dict[str, Any] = {
+            "current_state": state.get("current_state"),
+            "iteration": state.get("iteration"),
+        }
+        if batch_number is not None:
+            details["batch_index"] = batch_number
+        if batch_task_ids:
+            details["task_ids"] = list(batch_task_ids)
+        if extra_details:
+            details.update(extra_details)
+
+        receipt = BoundaryReceipt(
+            boundary_id=contract.boundary_id,
+            workflow_id=contract.workflow_id,
+            row_id=contract.row_id,
+            invocation_id=invocation_id,
+            artifact_refs=artifact_refs,
+            state_observation={
+                "current_phase": "execute",
+                "current_state": state.get("current_state"),
+                "iteration": state.get("iteration"),
+                "batch_number": batch_number,
+            },
+            history_ref=contract.expected_history_entry,
+            phase_result_ref="phase_result.json" if contract.phase_result_required else None,
+            outcome=outcome,
+            details=details,
+        )
+        write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
+    except Exception:
+        log.warning(
+            "Batch boundary receipt emission failed for %s", boundary_id, exc_info=True
+        )
 
 
 @dataclass
@@ -963,6 +1062,67 @@ def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
     )
 
 
+def _is_transient_execute_advisory(message: object) -> bool:
+    """Return True for batch-local execute advisories that should not survive
+    into the terminal aggregate payload.
+
+    Per-batch payloads legitimately mention then-pending downstream tasks,
+    partial sense-check coverage, and provisional git-diff observations. Once
+    the aggregate execution audit recomputes final-state evidence, carrying
+    those earlier advisories forward makes the terminal execute artifact look
+    blocked for work that later completed.
+    """
+
+    if not isinstance(message, str):
+        return False
+    transient_prefixes = (
+        "Advisory observation mismatch:",
+        "Advisory audit finding:",
+        "Advisory audit skip:",
+        "Advisory carry-forward observation:",
+    )
+    if message.startswith(transient_prefixes):
+        return True
+    transient_fragments = (
+        "tasks have no executor update",
+        "sense checks have no executor acknowledgment",
+        "Tasks left pending after execute",
+    )
+    return any(fragment in message for fragment in transient_fragments)
+
+
+def _aggregate_terminal_deviations(
+    aggregate_payload: dict[str, Any],
+    *,
+    timeout_recovery: dict[str, Any] | None,
+    execution_audit: dict[str, Any],
+    blocked_task_ids: set[str],
+) -> list[str]:
+    deviations: list[str] = []
+    for deviation in aggregate_payload.get("deviations", []):
+        if _is_transient_execute_advisory(deviation):
+            continue
+        if deviation not in deviations:
+            deviations.append(deviation)
+    if timeout_recovery is not None:
+        deviations.extend(
+            deviation
+            for deviation in timeout_recovery.get("deviations", [])
+            if deviation not in deviations
+        )
+    if execution_audit["skipped"]:
+        deviations.append(f"Advisory audit skip: {execution_audit['reason']}")
+    for finding in execution_audit["findings"]:
+        deviations.append(f"Advisory audit finding: {finding}")
+    if blocked_task_ids:
+        deviations.append(
+            f"Pre-existing blocked tasks treated as satisfied for scheduling: "
+            f"{sorted(blocked_task_ids)}. Downstream tasks ran assuming the blocked "
+            f"work is handled out-of-band; re-run those tasks once the blockage is resolved."
+        )
+    return deviations
+
+
 def _is_harness_generated_block(task: dict[str, Any]) -> bool:
     if task.get("status") != "blocked":
         return False
@@ -1243,7 +1403,9 @@ def _run_and_merge_batch(
             keys=("files_changed",),
         )
     _stamp_head_sha_on_task_records(payload, finalize_data, project_dir)
-    atomic_write_json(batch_artifact_path(plan_dir, batch_number), payload)
+    atomic_write_json(
+        execute_batch_artifact_path(plan_dir, batch_number, batch_task_ids), payload
+    )
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
     atomic_write_text(
@@ -1330,14 +1492,15 @@ def handle_execute_one_batch(
         tasks = finalize_data.get("tasks", [])
     # In per-batch execute mode, finalize.json is only rewritten after the
     # final batch — between batches the per-task status overlay lives in
-    # execution_batch_<n>.json. Apply that overlay so prerequisite checks
-    # see the most recent on-disk truth.
+    # the S4 batch artifacts (execute_batches/batch_<n>/tasks_*.json; legacy
+    # execution_batch_<n>.json still readable for migration). Apply that
+    # overlay so prerequisite checks see the most recent on-disk truth.
     batch_status_overlay: dict[str, str] = {}
     for batch_path in list_batch_artifacts(plan_dir):
-        match = _BATCH_ARTIFACT_RE.fullmatch(batch_path.name)
-        if match is None:
+        prior_index = batch_artifact_index(batch_path)
+        if prior_index is None:
             continue
-        if int(match.group(1)) >= batch_number:
+        if prior_index >= batch_number:
             continue
         try:
             batch_data = read_json(batch_path)
@@ -1530,6 +1693,14 @@ def handle_execute_one_batch(
                 args=args,
                 batch_number=batch_number,
             )
+            timeout_decision = resolve_single_batch_next_step(
+                is_final_batch=False,
+                all_tracked=False,
+                blocked=False,
+            )
+            timeout_resp["next_step"] = _legacy_next_step_for_execute_policy(
+                timeout_decision
+            )
             timeout_resp["_phase_outcome"] = "timeout"
             return timeout_resp
         record_step_failure(
@@ -1656,6 +1827,9 @@ def handle_execute_one_batch(
         if blocked
         else "success" if (is_final_batch and all_tracked) else "partial"
     )
+    batch_artifact = execute_batch_artifact_path(
+        plan_dir, batch_number, batch_task_ids
+    )
     append_history(
         state,
         make_history_entry(
@@ -1666,8 +1840,8 @@ def handle_execute_one_batch(
             worker=result.worker,
             agent=result.agent,
             mode=result.mode,
-            output_file=f"execution_batch_{batch_number}.json",
-            artifact_hash=sha256_file(batch_artifact_path(plan_dir, batch_number)),
+            output_file=str(batch_artifact.relative_to(plan_dir)),
+            artifact_hash=sha256_file(batch_artifact),
             finalize_hash=result.finalize_hash,
             approval_mode=approval_mode,
             batch_complexity=tier_complexity if tier_routing_active else None,
@@ -1728,7 +1902,7 @@ def handle_execute_one_batch(
         total_checks=result.total_sense_check_count,
     )
     artifacts = [
-        f"execution_batch_{batch_number}.json",
+        str(batch_artifact.relative_to(plan_dir)),
         "execution_audit.json",
         "finalize.json",
         "final.md",
@@ -1738,24 +1912,30 @@ def handle_execute_one_batch(
     if trace_written:
         artifacts.append("execution_trace.jsonl")
 
-    if blocked:
+    next_step_decision = resolve_single_batch_next_step(
+        is_final_batch=is_final_batch,
+        all_tracked=all_tracked,
+        blocked=blocked,
+    )
+    legacy_transition_target = _legacy_next_step_for_execute_policy(
+        next_step_decision
+    )
+
+    if next_step_decision.transition is NextExecuteTransition.BLOCKED:
         summary = (
             "Blocked: "
             + "; ".join(blocking_reasons)
             + ". Re-run execute to complete tracking."
         )
-        next_step = "execute"
         response_state = STATE_BLOCKED if routing_blocked else STATE_FINALIZED
-    elif is_final_batch and all_tracked:
+    elif next_step_decision.transition is NextExecuteTransition.REVIEW:
         summary = result.payload.get("output", "Batch complete.") + tracking_note
-        next_step = "review"
         response_state = STATE_EXECUTED
     else:
         summary = (
             f"Batch {batch_number}/{batches_total} complete.{tracking_note} "
             f"{batches_remaining} batch(es) remaining."
         )
-        next_step = "execute"
         response_state = STATE_FINALIZED
     if drift is not None and drift.severity != "none":
         summary = f"[scope_drift={drift.severity}] {summary}"
@@ -1776,7 +1956,7 @@ def handle_execute_one_batch(
         "summary": summary,
         "artifacts": artifacts,
         "monitor_hint": build_monitor_hint(plan_dir),
-        "next_step": next_step,
+        "next_step": legacy_transition_target,
         "state": response_state,
         "batch": batch_number,
         "batches_total": batches_total,
@@ -1805,7 +1985,10 @@ def handle_execute_one_batch(
         if tier_counterfactual_tag is not None:
             response["tier_counterfactual_tag"] = tier_counterfactual_tag
         response["tier_low_confidence"] = tier_low_confidence
-    if next_step == "execute" and not blocked:
+    if (
+        next_step_decision.transition is NextExecuteTransition.EXECUTE
+        and not blocked
+    ):
         response["guidance"] = f"Run --batch {batch_number + 1}"
     emitter = getattr(args, "progress_emitter", None)
     if emitter is not None:
@@ -1825,6 +2008,62 @@ def handle_execute_one_batch(
             tier_model=tier_resolved_model if tier_routing_active else None,
         )
     _attach_next_step_runtime(response)
+
+    # ── Evidence-only batch boundary receipts ──────────────────────────
+    if next_step_decision.transition is NextExecuteTransition.BLOCKED:
+        _emit_batch_boundary_receipt(
+            boundary_id="execute_partial_failure",
+            plan_dir=plan_dir,
+            state=state,
+            outcome=BoundaryOutcome.PARTIAL,
+            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
+            batch_number=batch_number,
+            batch_task_ids=list(batch_task_ids),
+            extra_details={
+                "blocking_reasons": blocking_reasons,
+                "routing_blocked": routing_blocked,
+                "batches_total": batches_total,
+            },
+        )
+    elif next_step_decision.transition is NextExecuteTransition.REVIEW:
+        # Aggregate promotion receipt with child trace/reducer evidence.
+        child_trace_refs: dict[str, Any] = {}
+        if aggregate_payload is not None:
+            task_updates = aggregate_payload.get("task_updates", [])
+            if isinstance(task_updates, list):
+                child_trace_refs["task_count"] = len(task_updates)
+            child_trace_refs["execution_json"] = "execution.json"
+        _emit_batch_boundary_receipt(
+            boundary_id="execute_aggregate_promotion",
+            plan_dir=plan_dir,
+            state=state,
+            outcome=BoundaryOutcome.COMPLETE,
+            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
+            batch_number=batch_number,
+            batch_task_ids=list(batch_task_ids),
+            extra_details={
+                "reducer_promotion": True,
+                "child_trace_path": "execute/aggregate",
+                "child_trace_refs": child_trace_refs,
+                "batches_total": batches_total,
+            },
+        )
+    else:
+        # Non-final, non-blocked batch → checkpoint receipt.
+        _emit_batch_boundary_receipt(
+            boundary_id="execute_batch_checkpoint",
+            plan_dir=plan_dir,
+            state=state,
+            outcome=BoundaryOutcome.COMPLETE,
+            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
+            batch_number=batch_number,
+            batch_task_ids=list(batch_task_ids),
+            extra_details={
+                "batches_remaining": batches_remaining,
+                "batches_total": batches_total,
+            },
+        )
+
     return response
 
 
@@ -2372,6 +2611,11 @@ def _block_no_runnable_rework(
     unrunnable_task_ids: list[str] | None = None,
 ) -> StepResponse:
     summary = f"Blocked: {reason}"
+    blocked_decision = resolve_single_batch_next_step(
+        is_final_batch=False,
+        all_tracked=False,
+        blocked=True,
+    )
     append_history(
         state,
         make_history_entry(
@@ -2389,7 +2633,7 @@ def _block_no_runnable_rework(
         "summary": summary,
         "artifacts": ["review.json", "finalize.json", "final.md"],
         "monitor_hint": build_monitor_hint(plan_dir),
-        "next_step": "execute",
+        "next_step": _legacy_next_step_for_execute_policy(blocked_decision),
         "state": STATE_FINALIZED,
         "files_changed": [],
         "deviations": [summary],
@@ -2593,10 +2837,55 @@ def handle_execute_auto_loop(
             finalize_data,
             blocked_before_retry,
         )
+        # ------------------------------------------------------------------
+        # Explicit partial-failure resume partition (T12).
+        #
+        # ``resolve_partial_failure_resume`` is the *source-visible* policy
+        # authority that decides which task IDs rerun (failed / blocked) versus
+        # which are preserved (done / skipped) with their artifacts, debt
+        # records, checkpoint artifacts, and receipt evidence intact.  The
+        # dispatcher only flips the rerun set back to pending; it must never
+        # touch preserved task records.
+        # ------------------------------------------------------------------
+        resume_decision = resolve_partial_failure_resume(
+            tasks,
+            preserved_artifact_refs=(
+                str(plan_dir / "execute_batches"),
+                str(plan_dir / "finalize.json"),
+            ),
+            preserved_receipt_ids=(
+                "execute_partial_failure",
+                "execute_resume_anchor",
+            ),
+        )
         reset_ids = _reset_blocked_tasks_to_pending(
             finalize_data,
             exclude_task_ids=baseline_unavailable_ids,
         )
+        # Defensive invariant: the reset set must equal the policy's rerun set
+        # minus baseline-unavailable checkpoints.  A mismatch would mean the
+        # handler is silently rerunning (or dropping) tasks the policy did not
+        # authorize — a non-local consistency violation.
+        expected_reset = sorted(
+            set(resume_decision.rerun_task_ids) - baseline_unavailable_ids
+        )
+        if reset_ids != expected_reset:
+            log.warning(
+                "partial-failure resume partition mismatch: policy rerun=%r "
+                "actual reset=%r baseline_unavailable=%r — honoring policy rerun set",
+                resume_decision.rerun_task_ids,
+                reset_ids,
+                sorted(baseline_unavailable_ids),
+            )
+        # Assert preservation: no succeeded task ID may appear in the reset set.
+        preservation_violation = sorted(
+            set(reset_ids) & set(resume_decision.preserved_task_ids)
+        )
+        if preservation_violation:
+            raise AssertionError(
+                "partial-failure resume would rerun preserved task(s): "
+                f"{preservation_violation}"
+            )
         if reset_ids:
             write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
             log.info(
@@ -2610,6 +2899,25 @@ def handle_execute_auto_loop(
                 "retry-blocked-tasks: left baseline-unavailable checkpoint(s) blocked: %s",
                 ", ".join(sorted(baseline_unavailable_ids)),
             )
+        # Emit evidence-only resume anchor receipt recording the explicit
+        # partition so the evidence trail shows which tasks reran and which
+        # durable outputs were preserved.  Receipts are observational and must
+        # not affect branch decisions.
+        _emit_batch_boundary_receipt(
+            boundary_id="execute_resume_anchor",
+            plan_dir=plan_dir,
+            state=state,
+            outcome=BoundaryOutcome.SUCCEEDED,
+            artifact_refs=resume_decision.preserved_artifact_refs,
+            extra_details={
+                "resume_outcome": resume_decision.outcome.value,
+                "rerun_task_ids": list(resume_decision.rerun_task_ids),
+                "preserved_task_ids": list(resume_decision.preserved_task_ids),
+                "baseline_unavailable_ids": sorted(baseline_unavailable_ids),
+                "debt_registry_preserved": resume_decision.debt_registry_preserved,
+                "preserved_receipt_ids": list(resume_decision.preserved_receipt_ids),
+            },
+        )
 
     finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(
         finalize_data,
@@ -2804,8 +3112,20 @@ def handle_execute_auto_loop(
                     if task.get("status") == "blocked"
                     and isinstance(task.get("id"), str)
                 }
-        # Now, only short-circuit if blocked tasks remain (within-session)
+        # Now, only short-circuit if blocked tasks remain (within-session).
+        # Route blocked-task evaluation through typed policy outcomes
+        # (``evaluate_blocker_recovery_policy``) while preserving the
+        # existing baseline / prerequisite response structure.
         if blocked_task_ids:
+            blocked_short_circuit_decision = resolve_single_batch_next_step(
+                is_final_batch=False,
+                all_tracked=False,
+                blocked=True,
+            )
+            blocked_short_circuit_target = _legacy_next_step_for_execute_policy(
+                blocked_short_circuit_decision
+            )
+
             baseline_deviations = baseline_unavailable_checkpoint_deviations(
                 finalize_data,
                 blocked_task_ids,
@@ -2816,6 +3136,24 @@ def handle_execute_auto_loop(
                 if deviation.task_id is not None
             }
             prereq_blocked_ids = blocked_task_ids - baseline_blocked_ids
+
+            # Build typed objects for policy evaluation — every blocked task
+            # and baseline deviation flows through
+            # ``evaluate_blocker_recovery`` → ``BlockerRecoveryEvaluation``
+            # → ``BlockedRetryDecision``.
+            policy_blocked = tuple(
+                BlockedTask(task_id=tid, reason="blocked_by_prereq")
+                for tid in sorted(prereq_blocked_ids)
+            )
+            _retry_decision = evaluate_blocker_recovery_policy(
+                finalize_data,
+                state,
+                plan_dir=plan_dir,
+                blocked_tasks=policy_blocked,
+                deviations=baseline_deviations,
+                cross_session=False,
+            )
+
             if baseline_deviations and not prereq_blocked_ids:
                 summary = "Blocked: " + "; ".join(
                     _deviation_messages(baseline_deviations)
@@ -2837,7 +3175,7 @@ def handle_execute_auto_loop(
                     "summary": summary,
                     "artifacts": ["finalize.json", "final.md"],
                     "monitor_hint": build_monitor_hint(plan_dir),
-                    "next_step": "execute",
+                    "next_step": blocked_short_circuit_target,
                     "state": STATE_FINALIZED,
                     "files_changed": [],
                     "deviations": _deviation_dicts(baseline_deviations),
@@ -2847,6 +3185,12 @@ def handle_execute_auto_loop(
                         state["meta"].get("user_approved_gate", False)
                     ),
                     "_phase_outcome": "blocked_by_quality",
+                    # Attach the typed retry decision so the handler can
+                    # emit targeted anchor evidence without re-deriving it.
+                    "_blocked_retry_decision": {
+                        "outcome": _retry_decision.outcome.value,
+                        "reason": _retry_decision.reason,
+                    },
                 }
                 _attach_next_step_runtime(response)
                 return response
@@ -2873,7 +3217,7 @@ def handle_execute_auto_loop(
                 "summary": summary,
                 "artifacts": ["finalize.json", "final.md"],
                 "monitor_hint": build_monitor_hint(plan_dir),
-                "next_step": "execute",
+                "next_step": blocked_short_circuit_target,
                 "state": STATE_FINALIZED,
                 "files_changed": [],
                 "deviations": [],
@@ -2882,6 +3226,12 @@ def handle_execute_auto_loop(
                 "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
                 "blocked_task_ids": sorted(prereq_blocked_ids or blocked_task_ids),
                 "_phase_outcome": "blocked_by_prereq",
+                # Attach the typed retry decision so the handler can
+                # emit targeted anchor evidence without re-deriving it.
+                "_blocked_retry_decision": {
+                    "outcome": _retry_decision.outcome.value,
+                    "reason": _retry_decision.reason,
+                },
             }
             if baseline_deviations:
                 response["deviations"] = _deviation_dicts(baseline_deviations)
@@ -3306,6 +3656,10 @@ def handle_execute_auto_loop(
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
     finalize_data = read_json(plan_dir / "finalize.json")
+    finalize_data = apply_authoritative_execute_overrides(
+        finalize_data,
+        plan_dir=plan_dir,
+    )
     deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
         finalize_data
     )
@@ -3334,25 +3688,14 @@ def handle_execute_auto_loop(
         artifact_prefix="execution_audit_aggregate",
         base_ref=_milestone_base_sha,
     )
-    deviations = list(aggregate_payload.get("deviations", []))
-    if timeout_recovery is not None:
-        deviations.extend(
-            deviation
-            for deviation in timeout_recovery.get("deviations", [])
-            if deviation not in deviations
-        )
-    if execution_audit["skipped"]:
-        deviations.append(f"Advisory audit skip: {execution_audit['reason']}")
-    for finding in execution_audit["findings"]:
-        deviations.append(f"Advisory audit finding: {finding}")
+    deviations = _aggregate_terminal_deviations(
+        aggregate_payload,
+        timeout_recovery=timeout_recovery,
+        execution_audit=execution_audit,
+        blocked_task_ids=blocked_task_ids,
+    )
     if all_attribution_records:
         execution_audit["auto_attribution"] = all_attribution_records
-    if blocked_task_ids:
-        deviations.append(
-            f"Pre-existing blocked tasks treated as satisfied for scheduling: "
-            f"{sorted(blocked_task_ids)}. Downstream tasks ran assuming the blocked "
-            f"work is handled out-of-band; re-run those tasks once the blockage is resolved."
-        )
     aggregate_payload["deviations"] = deviations
     if not is_prose_mode(state):
         project_advisory_path_sets(
@@ -3567,12 +3910,32 @@ def handle_execute_auto_loop(
     # Determine _phase_outcome with priority: timeout > prereq > quality > success
     if timeout_error is not None:
         phase_outcome = "timeout"
+        aggregate_next_step_decision = resolve_single_batch_next_step(
+            is_final_batch=False,
+            all_tracked=False,
+            blocked=False,
+        )
     elif prereq_blocked_task_ids:
         phase_outcome = "blocked_by_prereq"
+        aggregate_next_step_decision = resolve_single_batch_next_step(
+            is_final_batch=True,
+            all_tracked=False,
+            blocked=True,
+        )
     elif blocked:
         phase_outcome = "blocked_by_quality"
+        aggregate_next_step_decision = resolve_single_batch_next_step(
+            is_final_batch=True,
+            all_tracked=False,
+            blocked=True,
+        )
     else:
         phase_outcome = "success"
+        aggregate_next_step_decision = resolve_single_batch_next_step(
+            is_final_batch=True,
+            all_tracked=True,
+            blocked=False,
+        )
 
     # Collect blocked task notes for blocked_by_prereq path
     blocked_task_notes: dict[str, str] = {}
@@ -3590,7 +3953,9 @@ def handle_execute_auto_loop(
         "summary": summary,
         "artifacts": artifacts,
         "monitor_hint": build_monitor_hint(plan_dir),
-        "next_step": "execute" if blocked or timeout_error is not None else "review",
+        "next_step": _legacy_next_step_for_execute_policy(
+            aggregate_next_step_decision
+        ),
         "state": (
             STATE_BLOCKED
             if routing_blocked

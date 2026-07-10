@@ -36,6 +36,10 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
+from arnold_pipelines.megaplan.workflows.events import (
+    resolve_workflow_source_phase,
+    workflow_cursor,
+)
 from arnold.runtime.outcome import RunOutcome
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
@@ -348,7 +352,45 @@ def _projected_valid_next(state: dict[str, Any]) -> list[str]:
     projected = _projected_target_ids(state, recovery=use_recovery)
     if projected or use_recovery:
         return projected
-    return infer_next_steps(state)
+    return []
+
+
+def _legacy_status_next_hints(state: dict[str, Any]) -> list[str]:
+    projected = _projected_valid_next(state)
+    if projected:
+        return projected
+    return [
+        step
+        for step in infer_next_steps(state)
+        if resolve_workflow_source_phase(step) is not None
+    ]
+
+
+def _observed_workflow_phase(
+    state: dict[str, Any],
+    *,
+    active_step: dict[str, Any] | None,
+    last_step: dict[str, Any] | None,
+) -> str | None:
+    if isinstance(active_step, dict):
+        active_phase = active_phase_name(active_step)
+        if isinstance(active_phase, str) and active_phase:
+            return active_phase
+    resume_cursor = state.get("resume_cursor")
+    if isinstance(resume_cursor, dict):
+        cursor_phase = resume_cursor.get("phase")
+        if isinstance(cursor_phase, str) and cursor_phase:
+            return cursor_phase
+    latest_failure = state.get("latest_failure")
+    if isinstance(latest_failure, dict):
+        failure_phase = latest_failure.get("phase")
+        if isinstance(failure_phase, str) and failure_phase:
+            return failure_phase
+    if isinstance(last_step, dict):
+        last_phase = last_step.get("step")
+        if isinstance(last_phase, str) and last_phase:
+            return last_phase
+    return None
 
 
 def _external_error_resume_command(state: dict[str, Any]) -> str | None:
@@ -887,29 +929,18 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
 
 def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse:
     projection_state = _recovery_projection_state(state, plan_dir=plan_dir)
-    next_steps = _projected_valid_next(projection_state) or infer_next_steps(projection_state)
-    if state.get("current_state") == STATE_BLOCKED:
-        last_gate = state.get("last_gate") or {}
-        preflight = last_gate.get("preflight_results") if isinstance(last_gate, dict) else None
-        failed = (
-            {name for name, passed in preflight.items() if not passed}
-            if isinstance(preflight, dict)
-            else set()
-        )
-        if (
-            isinstance(last_gate, dict)
-            and last_gate.get("recommendation") == "PROCEED"
-            and not last_gate.get("passed", False)
-            and failed
-            and failed <= {"claude_available", "codex_available"}
-        ):
-            next_steps = ["override force-proceed", "gate"]
+    next_steps = _legacy_status_next_hints(projection_state)
     notes = state.get("meta", {}).get("notes", [])
     lock_path = plan_dir / ".plan.lock"
     lock_file_present = lock_path.exists()
     lock_held = plan_lock_is_held(plan_dir)
     active_step = _build_active_step(state.get("active_step"), plan_dir=plan_dir)
     last_step = _build_last_step(state)
+    observed_phase = _observed_workflow_phase(
+        state,
+        active_step=active_step,
+        last_step=last_step,
+    )
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
     anchors = anchor_summary(state, plan_dir)
@@ -951,6 +982,12 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
         "summary": summary,
         "next_step": next_steps[0] if next_steps else None,
         "valid_next": next_steps,
+        "status_route_authority": "workflow_source_only",
+        "legacy_route_hints": {
+            "authority": "display_only_non_authoritative",
+            "next_step": next_steps[0] if next_steps else None,
+            "valid_next": list(next_steps),
+        },
         "artifacts": sorted(
             path.name
             for path in plan_dir.iterdir()
@@ -1009,6 +1046,11 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
                 # pre-execute quality diagnostics.
                 response["next_step"] = None
                 response["valid_next"] = []
+                response["legacy_route_hints"] = {
+                    "authority": "display_only_non_authoritative",
+                    "next_step": None,
+                    "valid_next": [],
+                }
                 plan_name = state.get("name")
                 if isinstance(plan_name, str) and plan_name:
                     response["suggested_recovery_commands"] = _unique_strings(
@@ -1039,6 +1081,9 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     )
     if runtime is not None:
         response["next_step_runtime"] = runtime
+    observed_cursor = workflow_cursor(observed_phase)
+    if observed_cursor is not None:
+        response["workflow_cursor"] = observed_cursor.to_dict()
     progress = (
         _build_progress_payload(plan_dir, state)
         if (plan_dir / "finalize.json").exists()

@@ -54,55 +54,87 @@ The following snippet is extracted verbatim from the pack's `steps.py`.
 
 ```python
 class IssueDifficulty(IntEnum):
-    """1-5 difficulty scale, matching the partnered-5 execute tier model fan-out."""
+    """1-10 scale for task/issue "weight" — composite of difficulty + scale (+ blast radius/consequence).
 
-    TRIVIAL = 1
-    SIMPLE = 2
-    MODERATE = 3
-    HARD = 4
-    SEVERE = 5
+    Rethought from the ground up (with Codex input). Uses weight-oriented names so "Hard/Heavy" doesn't come too early.
+    """
+
+    MICRO = 1
+    LIGHT = 2
+    ROUTINE = 3
+    STANDARD = 4
+    MEANINGFUL = 5
+    HEAVY = 6
+    DEMANDING = 7
+    MAJOR = 8
+    CRITICAL = 9
+    EXCEPTIONAL = 10
 
 def _assess_difficulty(incident: Incident, category: HealthCategory) -> IssueDifficulty:
-    """Score issue intricacy 1-5 so the repair can fan out to the right model."""
+    """Score the "weight" of the issue (difficulty + scale + risk).
+
+    Considers both conceptual difficulty (reasoning, subtlety) and scale (how many findings,
+    how old/persistent, blast radius). Hard only starts at 6.
+    """
     findings = incident.signals.doctor_findings
     finding_checks = {f.check for f in findings}
     harness_checks = finding_checks & {"stale_lock", "orphan_subprocess", "multiple_checkouts"}
 
-    # 1: trivial harness cleanup (single mechanical issue).
+    # 1: MICRO - tiny scale, trivial difficulty.
     if category == HealthCategory.HARNESS_ISSUE and len(harness_checks) == 1:
-        return IssueDifficulty.TRIVIAL
+        return IssueDifficulty.MICRO
 
-    # 2: multiple harness cleanups, or a blocked plan with a clear recovery path.
+    # 2: LIGHT - small, well-understood.
     if category == HealthCategory.HARNESS_ISSUE:
-        return IssueDifficulty.SIMPLE
+        return IssueDifficulty.LIGHT
     if category == HealthCategory.PLAN_ISSUE:
         block = incident.signals.block_details
         if block.get("recoverable_via") and len(finding_checks) <= 1:
-            return IssueDifficulty.SIMPLE
+            return IssueDifficulty.LIGHT
 
-    # 3: complex blocked plan, false stall, or a recently dead plan.
+    # 3: ROUTINE - normal, clear path, contained.
     if category == HealthCategory.PLAN_ISSUE:
-        return IssueDifficulty.MODERATE
+        return IssueDifficulty.ROUTINE
     if category == HealthCategory.FALSE_STALL:
-        return IssueDifficulty.MODERATE
+        return IssueDifficulty.ROUTINE
     if category == HealthCategory.DEAD_OR_DISAPPEARED:
         age = incident.signals.last_event_age_seconds
         if age is None or age <= 3600:
-            return IssueDifficulty.MODERATE
-        if age <= 86400:
-            return IssueDifficulty.HARD
-        return IssueDifficulty.SEVERE
+            return IssueDifficulty.ROUTINE
 
-    # 4: environment/repo-level issues.
+    # 4: STANDARD - bounded, some judgment, small module.
     if category == HealthCategory.ENVIRONMENT_ISSUE:
-        return IssueDifficulty.HARD
+        return IssueDifficulty.STANDARD
+    if age is not None and age <= 86400 and len(finding_checks) <= 2:
+        return IssueDifficulty.STANDARD
 
-    # 5: unknown/degraded signals need the strongest model.
-    return IssueDifficulty.SEVERE
+    # 5: MEANINGFUL - moderately sized with real complexity.
+    if len(finding_checks) <= 4:
+        return IssueDifficulty.MEANINGFUL
+
+    # 6: HEAVY - large or difficult, crosses boundaries.
+    if len(finding_checks) <= 6:
+        return IssueDifficulty.HEAVY
+
+    # 7: DEMANDING - high complexity, broad surface, delicate constraints.
+    age = incident.signals.last_event_age_seconds or 0
+    if age > 86400 or len(finding_checks) > 6:
+        return IssueDifficulty.DEMANDING
+
+    # 8: MAJOR - major subsystem, many dependencies, substantial validation.
+    if len(finding_checks) > 8 or category == HealthCategory.UNKNOWN:
+        return IssueDifficulty.MAJOR
+
+    # 9: CRITICAL - high risk to core paths, data, reliability, many consumers.
+    if age > 172800 or len(finding_checks) > 10:
+        return IssueDifficulty.CRITICAL
+
+    # 10: EXCEPTIONAL - system-defining, max scale + uncertainty + consequence.
+    return IssueDifficulty.EXCEPTIONAL
 
 def _select_model_for_difficulty(difficulty: IssueDifficulty) -> str:
-    """Map difficulty 1-5 to a repair model, mirroring partnered-5 execute tier_models."""
-    return _EXECUTE_TIER_MODELS.get(int(difficulty), _EXECUTE_TIER_MODELS[5])
+    """Map 1-10 weight (difficulty + scale) to a repair model (mirrors execute tier ladder)."""
+    return _EXECUTE_TIER_MODELS.get(int(difficulty), _EXECUTE_TIER_MODELS[10])
 
 def _artifact_path(ctx: StepContext, stage_name: str, filename: str) -> Path:
     out_dir = Path(ctx.artifact_root) / stage_name

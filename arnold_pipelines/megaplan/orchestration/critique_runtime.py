@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan import handlers as _pkg
+from arnold_pipelines.megaplan.outcomes import CritiqueOutcome, ReviseOutcome
 from arnold_pipelines.megaplan.audits.robustness import validate_critique_checks
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
 from arnold_pipelines.megaplan.forms.directors_notes import update_directors_notes_at_aggregate
@@ -940,7 +941,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             artifacts=[critique_filename, "faults.json"],
             output_file=critique_filename,
             artifact_hash=sha256_file(plan_dir / critique_filename),
-            response_fields=response_fields,
+            response_fields={
+                **response_fields,
+                "critique_outcome": CritiqueOutcome.COMPLETED,
+            },
             history_fields={"flags_count": len(worker.payload.get("flags", []))},
         )
 
@@ -1565,6 +1569,7 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
                 "flags_addressed": payload["flags_addressed"],
                 "flags_remaining": remaining,
                 "plan_delta_percent": delta,
+                "revise_outcome": ReviseOutcome.COMPLETED,
             },
             history_fields={"flags_addressed": payload["flags_addressed"]},
         )

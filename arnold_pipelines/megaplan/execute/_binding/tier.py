@@ -1,6 +1,6 @@
 """Tier binding: complexity scale, rubric reference, and batch-tier selection.
 
-This module is the **only** call site that owns the 1..5 complexity scale.
+This module is the **only** call site that owns the 1..10 complexity scale.
 All other modules treat tier ordinals as opaque integers.
 """
 
@@ -11,18 +11,23 @@ from typing import Any
 from arnold_pipelines.megaplan._core.io import compute_batch_complexity
 
 # ---------------------------------------------------------------------------
-# Complexity scale (1..5) and rubric reference
+# Complexity scale (1..10) and rubric reference
 # ---------------------------------------------------------------------------
 
-COMPLEXITY_SCALE = frozenset(range(1, 6))  # 1..5
+COMPLEXITY_SCALE = frozenset(range(1, 11))  # 1..10
 
 COMPLEXITY_RUBRIC_REFERENCE = (
-    "Adjudicate complexity against the rubric: "
-    "1=trivial (single-line change), "
-    "2=simple (localized edit in one file), "
-    "3=moderate (multi-file with contract concerns), "
-    "4=complex (state-machine or cross-cutting change), "
-    "5=extreme (architectural or infrastructure change). "
+    "Adjudicate task weight (1-10 scale: composite of difficulty + scale + blast radius): "
+    "1=MICRO (tiny scale, trivial difficulty), "
+    "2=LIGHT (small scale, simple difficulty), "
+    "3=ROUTINE (contained, standard), "
+    "4=STANDARD (bounded with some judgment), "
+    "5=MEANINGFUL (moderate size + real complexity), "
+    "6=HEAVY (significant scale + real difficulty), "
+    "7=DEMANDING (high in both dimensions), "
+    "8=MAJOR (broad subsystem-level), "
+    "9=CRITICAL (high-risk to core paths or many consumers), "
+    "10=EXCEPTIONAL (maximum scale + uncertainty + consequence). "
     "Do not omit or guess — every score must be argued from concrete files/risk."
 )
 
@@ -39,7 +44,7 @@ def validate_task_complexity(
     """Validate that *task* has a well-formed complexity and justification.
 
     Returns an error message string if the task fails validation,
-    or ``None`` if the task passes (i.e. has a valid 1..5 integer
+    or ``None`` if the task passes (i.e. has a valid 1..10 integer
     ``complexity`` and a non-empty ``complexity_justification``).
 
     The caller is responsible for deciding how to act on the error
@@ -48,7 +53,7 @@ def validate_task_complexity(
     complexity = task.get("complexity")
     if not isinstance(complexity, int) or isinstance(complexity, bool) or complexity not in COMPLEXITY_SCALE:
         return (
-            f"Finalize task {tid} must include an integer `complexity` score in 1..5 "
+            f"Finalize task {tid} must include an integer `complexity` score in 1..10 "
             f"(got {complexity!r}). Adjudicate it against the rubric — do not omit or guess."
         )
     justification = task.get("complexity_justification")

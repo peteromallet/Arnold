@@ -164,7 +164,7 @@ class TestEnvelopeFlagParity:
         """Injected verification task with missing complexity → max still works.
 
         The fail-safe in ``compute_batch_complexity`` / ``select_batch_tier``
-        returns the highest tier (5) for tasks missing complexity.
+        returns the highest tier (10) for tasks missing complexity.
         Both paths must agree.
         """
         payload = _build_finalize_payload(
@@ -177,7 +177,7 @@ class TestEnvelopeFlagParity:
                 },
                 {
                     "id": "T2",
-                    # missing complexity → treated as highest tier (5)
+                    # missing complexity → treated as highest tier (10)
                     "complexity_justification": "Verification task.",
                     "depends_on": ["T1"],
                 },
@@ -238,7 +238,7 @@ class TestEnvelopeFlagParity:
     # -- empty batch → fail-safe returns 5 for both paths ------------------
 
     def test_empty_batch_same_fallback(self, args):
-        """Empty batch → both paths return highest tier (5)."""
+        """Empty batch → both paths return highest tier (10)."""
         payload = _build_finalize_payload([])
         batch_ids: list[str] = []
 
@@ -265,7 +265,7 @@ class TestEnvelopeFlagParity:
             [
                 {
                     "id": "T1",
-                    "complexity": 5,
+                    "complexity": 10,
                     "complexity_justification": "Extreme.",
                     "depends_on": [],
                 }

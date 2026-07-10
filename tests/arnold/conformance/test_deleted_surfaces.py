@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from scripts.generate_native_representation_evidence import generate_evidence_bundle
 from arnold.conformance.deleted_surfaces import (
     DELETED_IMPORT_MODULES,
     DELETED_SOURCE_PATHS,
@@ -12,6 +13,8 @@ from arnold.conformance.deleted_surfaces import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+CONFORMANCE_PATH = REPO_ROOT / "docs/arnold/megaplan-native-representation-conformance.yaml"
+TRACEABILITY_PATH = REPO_ROOT / "docs/arnold/megaplan-native-representation-traceability.yaml"
 
 
 def _module_to_source_path(module_name: str) -> Path:
@@ -95,3 +98,61 @@ def test_product_source_does_not_import_deleted_arnold_pipelines_megaplan() -> N
         f"{violations}"
     )
 
+
+def test_generated_evidence_bundle_records_dead_delete_mutation_scan() -> None:
+    bundle = generate_evidence_bundle(
+        conformance_path=CONFORMANCE_PATH,
+        traceability_path=TRACEABILITY_PATH,
+        repo_root=REPO_ROOT,
+    )
+    record = bundle["dead_delete_mutation_checks"][0]
+    present_deleted_paths = [
+        str((REPO_ROOT / path.rstrip("/")).relative_to(REPO_ROOT))
+        for path in DELETED_SOURCE_PATHS
+        if (REPO_ROOT / path.rstrip("/")).exists()
+    ]
+    present_deleted_modules: list[str] = []
+    for module_name in DELETED_IMPORT_MODULES:
+        package_path = _module_to_package_path(module_name)
+        module_path = _module_to_source_path(module_name)
+        if package_path.is_dir() or module_path.exists():
+            present_deleted_modules.append(module_name)
+    product_roots = (REPO_ROOT / "arnold_pipelines",)
+    violations: dict[str, tuple[str, ...]] = {}
+    for root in product_roots:
+        for source in sorted(root.rglob("*.py")):
+            try:
+                tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+            except SyntaxError:
+                continue
+
+            hits: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "arnold.pipelines.megaplan" or alias.name.startswith(
+                            "arnold.pipelines.megaplan."
+                        ):
+                            hits.add(alias.name)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    if node.module == "arnold.pipelines.megaplan" or node.module.startswith(
+                        "arnold.pipelines.megaplan."
+                    ):
+                        hits.add(node.module)
+
+            if hits:
+                violations[str(source.relative_to(REPO_ROOT))] = tuple(sorted(hits))
+
+    assert record["check_id"] == "dead_delete_mutation"
+    assert record["row_ids"] == ["source-path-reconciliation"]
+    assert record["proof_artifact_path"] == "tests/arnold/conformance/test_deleted_surfaces.py"
+    assert record["deleted_source_path_count"] == len(DELETED_SOURCE_PATHS)
+    assert record["deleted_import_module_count"] == len(DELETED_IMPORT_MODULES)
+    assert record["present_deleted_paths"] == present_deleted_paths
+    assert record["present_deleted_modules"] == present_deleted_modules
+    assert record["product_import_violations"] == {
+        path: list(imports) for path, imports in sorted(violations.items())
+    }
+    assert record["passed"] is (
+        not present_deleted_paths and not present_deleted_modules and not violations
+    )

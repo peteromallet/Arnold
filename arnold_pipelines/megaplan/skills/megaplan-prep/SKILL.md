@@ -1,1 +1,1 @@
-../../data/prep_skill.md
+/workspace/arnold/arnold_pipelines/megaplan/data/prep_skill.md

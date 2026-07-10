@@ -1316,6 +1316,8 @@ def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> boo
     current_state = str(plan_state.get("current_state") or "").strip().lower()
     if kind == "phase_failed" and phase in {"", "execute"}:
         return True
+    if kind in {"execution_blocked", "blocked_recovery_not_resolved"}:
+        return True
     if current_state == "failed" and kind == "no_next_step":
         return True
     return current_state in {"blocked", "manual_review", "finalized", "failed"} and kind in {
