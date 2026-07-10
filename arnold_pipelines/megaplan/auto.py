@@ -9,6 +9,7 @@ driver records the lifecycle failure and stops instead of inventing a route.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import logging
@@ -22,6 +23,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,6 +72,7 @@ from arnold_pipelines.megaplan.workflows.events import (
     workflow_dispatch_phase_names,
     workflow_phase_aliases,
 )
+from arnold.security.redaction import redact_text as redact_security_text
 from arnold_pipelines.megaplan.planning.state import (
     AUTOMATION_TERMINAL_STATES,
     STATE_ABORTED,
@@ -681,6 +684,54 @@ def _run_planning_phase(
     )
 
 
+class _PhaseDiagnosticText(str):
+    """A phase stderr string carrying redacted in-process exception evidence."""
+
+    diagnostic: dict[str, Any] | None
+
+    def __new__(cls, value: str, diagnostic: dict[str, Any] | None = None) -> "_PhaseDiagnosticText":
+        instance = super().__new__(cls, value)
+        instance.diagnostic = diagnostic
+        return instance
+
+
+def _native_exception_diagnostic(error: Exception) -> dict[str, Any]:
+    """Capture bounded, redacted exception evidence at the native phase boundary.
+
+    This deliberately records a UTF-8 representation of the diagnostic, not
+    purported provider bytes.  Native in-process exceptions do not expose the
+    original stream bytes, and authoritative artifacts remain strictly decoded.
+    """
+    frames = traceback.extract_tb(error.__traceback__)
+    callsite: dict[str, Any] | None = None
+    if frames:
+        frame = frames[-1]
+        callsite = {
+            "file": frame.filename,
+            "line": frame.lineno,
+            "function": frame.name,
+        }
+    rendered = redact_security_text("".join(traceback.format_exception(error)))
+    # The bounded, redacted text is the only material encoded below; never
+    # persist raw provider/request bytes from an exception object here.
+    rendered = rendered[-16_384:]
+    encoded = base64.b64encode(rendered.encode("utf-8", errors="backslashreplace")).decode("ascii")
+    return {
+        "source": "native_phase_exception",
+        "exception_type": type(error).__name__,
+        "exception_message": redact_security_text(str(error)),
+        "exception_traceback": rendered,
+        "exception_callsite": callsite,
+        "diagnostic_bytes_b64": encoded,
+        "diagnostic_bytes_encoding": "utf-8+base64",
+    }
+
+
+def _phase_diagnostic_metadata(stderr: str) -> dict[str, Any]:
+    diagnostic = getattr(stderr, "diagnostic", None)
+    return dict(diagnostic) if isinstance(diagnostic, dict) else {}
+
+
 def _run_native_planning_phase(
     args: list[str],
     *,
@@ -725,7 +776,11 @@ def _run_native_planning_phase(
             }
         )
     except Exception as error:  # noqa: BLE001 - convert to tuple-shaped phase failure.
-        return 1, "", f"{type(error).__name__}: {error}"
+        diagnostic = _native_exception_diagnostic(error)
+        return 1, "", _PhaseDiagnosticText(
+            f"{diagnostic['exception_type']}: {diagnostic['exception_message']}",
+            diagnostic,
+        )
 
     if not isinstance(payload, dict):
         return 1, "", f"native phase {phase!r} returned {type(payload).__name__}"
@@ -5071,6 +5126,8 @@ def drive(
                 prior_failure=prior_phase_failure,
             )
             filtered_stderr = _filtered_failure_stderr(err)
+            diagnostic_metadata = _phase_diagnostic_metadata(err)
+            redacted_stderr = redact_security_text(err.strip())[-16_384:]
             log(f"phase '{next_step}' exited with {exit_kind}: {failure_detail}")
             # plan_locked is transient contention from a concurrent auto/phase,
             # not a phase failure. Writing STATE_FAILED here turns a recoverable
@@ -5104,9 +5161,14 @@ def drive(
                     metadata={
                         "exit_code": code,
                         "stderr": filtered_stderr,
-                        "stderr_raw": err.strip() if filtered_stderr != err.strip() else "",
+                        # Preserve redacted diagnostic stderr even when there
+                        # were no warning lines to filter.  The old conditional
+                        # erased the only evidence for in-process decoder
+                        # failures such as UnicodeDecodeError.
+                        "stderr_raw": redacted_stderr,
                         "stdout": out.strip()[-400:],
                         "iteration": iteration,
+                        **diagnostic_metadata,
                     },
                 )
         elif result is None and code != 0:

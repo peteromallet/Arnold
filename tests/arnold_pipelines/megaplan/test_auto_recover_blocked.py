@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -630,6 +631,49 @@ def test_drive_internal_error_ignores_warning_only_stderr_when_stdout_has_failur
     assert phase_failure["message"] == structural_failure
     assert phase_failure["metadata"]["stderr"] == ""
     assert "M_WARN_ROUTING_DEGRADED" in phase_failure["metadata"]["stderr_raw"]
+
+
+def test_drive_phase_failure_preserves_native_exception_forensics(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "prepped"}),
+        encoding="utf-8",
+    )
+    try:
+        raise UnicodeDecodeError("utf-8", b"agent output: \\xa3", 14, 15, "invalid start byte")
+    except UnicodeDecodeError as error:
+        diagnostic = auto._native_exception_diagnostic(error)
+
+    def fake_status(plan: str, **kwargs):
+        return {"state": "prepped", "next_step": "plan", "valid_next": ["plan"], "progress": {}}
+
+    def fake_run_planning_phase(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(phase="plan", invocation_id="test", exit_kind=ExitKind.internal_error.value),
+        )
+        return 1, "", auto._PhaseDiagnosticText("UnicodeDecodeError: invalid start byte", diagnostic)
+
+    captured_failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: captured_failures.append(kwargs))
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    phase_failure = next(item for item in captured_failures if item.get("kind") == "phase_failed")
+    metadata = phase_failure["metadata"]
+    assert metadata["stderr_raw"] == "UnicodeDecodeError: invalid start byte"
+    assert metadata["exception_type"] == "UnicodeDecodeError"
+    assert metadata["exception_traceback"]
+    assert metadata["exception_callsite"]["function"] == "test_drive_phase_failure_preserves_native_exception_forensics"
+    assert base64.b64decode(metadata["diagnostic_bytes_b64"]).decode("utf-8") == metadata["exception_traceback"]
 
 
 def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_blocked_loop(
