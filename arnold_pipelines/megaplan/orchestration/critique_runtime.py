@@ -248,7 +248,17 @@ def _apply_adaptive_critique_routing(
     for _check in active_checks:
         _cid = _check.get("id", "?")
         _cx = _check.get("complexity")
-        if not isinstance(_cx, int) or _cx < 1 or _cx > 5:
+        # Critique selection and execute-tier routing share the 1..10
+        # complexity scale.  Keep this structural check strict (including
+        # rejecting bool, which is an int subclass) while permitting the high
+        # tiers that the evaluator and profile tier tables can legitimately
+        # select.
+        if (
+            not isinstance(_cx, int)
+            or isinstance(_cx, bool)
+            or _cx < 1
+            or _cx > 10
+        ):
             raise CliError(
                 "critique_complexity_invariant",
                 f"Check '{_cid}' has missing or invalid "
