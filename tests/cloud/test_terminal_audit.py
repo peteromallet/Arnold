@@ -20,3 +20,16 @@ def test_wrapper_terminal_mode_precedes_classification_and_model_dispatch() -> N
     section=text[text.index('if [[ "$TERMINAL_AUDIT_MODE" == 1 ]]'):text.index('# ---- classify failure')]
     assert 'terminal_audit' in section
     assert 'codex' not in section.lower()
+def test_terminal_audit_uses_canonical_remote_spec_when_runtime_omits_milestones(tmp_path):
+    m,d,l,calls=fix(tmp_path)
+    marker=json.loads((m/'s.json').read_text())
+    workspace=Path(marker['workspace'])
+    spec=workspace/'chain.yaml'; spec.write_text('milestones:\n  - label: sprint-1\n  - label: sprint-2\n')
+    marker['remote_spec']=str(spec); (m/'s.json').write_text(json.dumps(marker))
+    chain=next((workspace/'.megaplan/plans/.chains').glob('*.json'))
+    payload=json.loads(chain.read_text()); payload.pop('milestones'); chain.write_text(json.dumps(payload))
+    record=run_terminal_audit(session='s',repair_loop_bin=l,marker_dir=m,repair_data_dir=d)
+    assert record['accepted'] is True
+    assert record['post_snapshot']['milestone_total'] == 2
+    assert record['post_snapshot']['milestone_total_source'] == 'remote_spec'
+    assert calls.read_text() == 'x\n'
