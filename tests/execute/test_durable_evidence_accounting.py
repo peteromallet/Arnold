@@ -200,3 +200,28 @@ def test_terminal_authority_evidence_requires_outputs_not_terminal_label() -> No
     assert not has_durable_terminal_task_evidence(
         {"status": "pending", "files_changed": ["speculative.py"]}
     )
+
+
+from arnold_pipelines.megaplan import chain as chain_module
+
+
+def test_admission_rearms_only_revalidated_execute_authority_divergence(tmp_path: Path, monkeypatch) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(json.dumps({"current_state": "blocked", "latest_failure": {"kind": "authority_divergence", "phase": "execute", "message": "execute terminal success lacks corroborated task completion"}}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(chain_module, "_latest_execution_batch_all_tasks_done", lambda _plan_dir: (True, "finalize.json"))
+    assert chain_module._rearm_stale_execute_authority_divergence(plan_dir, writer=lambda _text: None)
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "finalized"
+    assert "latest_failure" not in state
+    assert state["meta"]["authority_divergence_recoveries"][0]["authority_reason"] == "finalize.json"
+
+
+def test_admission_keeps_live_execute_authority_divergence_blocked(tmp_path: Path, monkeypatch) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(json.dumps({"current_state": "blocked", "latest_failure": {"kind": "authority_divergence", "phase": "execute", "message": "execute terminal success lacks corroborated task completion"}}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(chain_module, "_latest_execution_batch_all_tasks_done", lambda _plan_dir: (False, "non-authoritative"))
+    assert not chain_module._rearm_stale_execute_authority_divergence(plan_dir, writer=lambda _text: None)
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "blocked"

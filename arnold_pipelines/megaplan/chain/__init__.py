@@ -3705,6 +3705,70 @@ def _recover_stale_prerequisite_block(
     return True
 
 
+def _rearm_stale_execute_authority_divergence(
+    plan_dir: Path,
+    *,
+    writer,
+) -> bool:
+    """Rearm a stale execute-authority block only after current corroboration.
+
+    This is admission recovery for a repaired evidence reader, not a bypass:
+    a live completion guard must now corroborate the whole finalized task
+    universe before the old authority-divergence marker is cleared.
+    """
+    state_path = plan_dir / "state.json"
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("current_state") != STATE_BLOCKED or payload.get("active_step"):
+        return False
+    failure = payload.get("latest_failure")
+    if not isinstance(failure, dict):
+        return False
+    if failure.get("kind") != "authority_divergence" or failure.get("phase") not in {None, "execute"}:
+        return False
+    message = failure.get("message")
+    if not isinstance(message, str) or "execute terminal success lacks corroborated task completion" not in message:
+        return False
+    authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    if not authoritative:
+        return False
+
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    audit = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "chain admission revalidated stale execute terminal authority divergence",
+        "authority_reason": reason,
+    }
+
+    def _patch_rearmed_authority_block(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("authority_divergence_recoveries", [])
+            if isinstance(entries, list):
+                entries.append(audit)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_FINALIZED},
+        mutation=_patch_rearmed_authority_block,
+    )
+    writer(
+        "[chain] current execute authority now corroborates terminal finalize "
+        "evidence; cleared stale authority-divergence block\n"
+    )
+    return True
+
+
 def _rearm_fresh_session_execute_block(
     plan_dir: Path,
     *,
@@ -5532,6 +5596,7 @@ def run_chain(
                     plan_dir = None
                 if plan_dir is not None:
                     _rearm_stale_incomplete_execute_cursor_mismatch(plan_dir, writer=writer)
+                    _rearm_stale_execute_authority_divergence(plan_dir, writer=writer)
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
