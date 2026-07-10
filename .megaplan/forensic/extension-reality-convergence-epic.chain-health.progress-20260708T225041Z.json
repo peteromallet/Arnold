@@ -1,0 +1,21 @@
+{
+  "chain_complete": false,
+  "completed_count": 0,
+  "current_milestone_index": 3,
+  "current_plan_name": "m4-evidence-and-drift-gates-20260708-0120",
+  "events_mtime": 1783482789.590877,
+  "events_size": 151542,
+  "last_state": "failed",
+  "milestone_count": 4,
+  "no_advance_ticks": 0,
+  "plan_has_active_step": false,
+  "plan_has_in_flight_llm": false,
+  "plan_has_live_activity": false,
+  "plan_signal_liveness": "stalled",
+  "plan_signal_reason": "last event 1435s ago",
+  "pr_number": 183,
+  "pr_state": "open",
+  "session": "extension-reality-convergence-epic",
+  "stuck_ticks": 0,
+  "updated_at": "2026-07-08T04:17:04.062442+00:00"
+}

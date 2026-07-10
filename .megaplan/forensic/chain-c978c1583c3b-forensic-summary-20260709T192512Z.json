@@ -1,0 +1,11 @@
+{
+  "captured_at": "2026-07-09T19:25:12Z",
+  "chain_file": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/.chains/chain-c978c1583c3b.json",
+  "chain_file_sha256": "4182a244bf08f7a850338af00273d5ee2fbba9358dbef08e8b183feb9def1a59",
+  "chain_file_size": 2750,
+  "chain_file_mtime": "2026-07-08T23:20:51.714840767+00:00",
+  "backup_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/forensic/chain-c978c1583c3b-20260709T192345Z.json",
+  "backup_sha256": "4182a244bf08f7a850338af00273d5ee2fbba9358dbef08e8b183feb9def1a59",
+  "backup_verified_identical": true,
+  "note": "Forensic evidence preserved before any mutation per SD3"
+}

@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-10T07:33:20.787057+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-extension-reality-convergence-epic"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 5,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-7f97e614455b",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:b6ef0d6b0a5b739bdd476f42fc2031f3bcf2dad574c452601c341134a193fd92",
+    "last_seq": 39,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-7f97e614455b: stale_active_step: plan=m3-export-readiness-20260710-0146; state=initialized; phase=prep; worker_pid=175600 not live"
+}

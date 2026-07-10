@@ -1,0 +1,81 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 4,
+  "current_plan_name": null,
+  "current_milestone_base_sha": null,
+  "target_base_ref": "148a7b7d97fbc52115393936602ab7f78fdef2ac",
+  "last_state": "done",
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [
+    {
+      "label": "m4-evidence-and-drift-gates",
+      "plan": "m4-evidence-and-drift-gates-20260708-0120",
+      "status": "done",
+      "pr_number": 183,
+      "pr_state": "merged",
+      "full_suite_backstop": {
+        "mode": "shadow",
+        "status": "error",
+        "blocks": false,
+        "reason": "full_suite_backstop_mode=shadow: recorded only",
+        "passed": 0,
+        "failed": 0,
+        "failing_tests": [],
+        "newly_failing": [],
+        "deleted_tests": [],
+        "baseline_failing_count": 0,
+        "current_failing_count": 0,
+        "delta_computed": false,
+        "command": "/root/.pyenv/versions/3.11.11/bin/python -m pytest scripts/quality/check-readiness.mjs scripts/quality/check-trust-model-truth.test.mjs src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts docs/video-editor/extension-platform-supported-deferred.md --tb=no -q --no-header -rA",
+        "duration_s": 0.31515638600103557,
+        "ran": true,
+        "artifact": "full_suite_backstop.json"
+      }
+    }
+  ],
+  "branch_head": "d362f9a2aacd61e32224adfb41bdf441f75ce2d0",
+  "pr_head": "2bbd4f1b8a426c82ea3ee039642733a33a6336c5",
+  "last_pushed_commit": "d362f9a2aacd61e32224adfb41bdf441f75ce2d0",
+  "dirty_flag": false,
+  "sync_state": "stale",
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "target_root": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "work_dir": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "engine_root": "/workspace/arnold",
+      "target_head": "d362f9a2aacd61e32224adfb41bdf441f75ce2d0",
+      "target_base": "2fd3f80912ca8eb160526bcfe202762d3189ae6c",
+      "target_base_ref": "local/extension-foundation-completion",
+      "target_fallback_reason": null
+    },
+    "chain_spec_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/initiatives/extension-reality-convergence-epic/chain.yaml",
+    "chain_spec_sha256": "5d9301dce5b540055083844f792a52ab5c10f88a5d9609d1bacda1fe214a6410",
+    "ground_truth_reconciliation": {
+      "reconciled_at": "2026-07-08T09:45:31Z",
+      "plan": null,
+      "current_state": null,
+      "latest_failure": null,
+      "last_gate": null,
+      "active_step": null,
+      "pr_number": null,
+      "pr_state": null
+    }
+  }
+}

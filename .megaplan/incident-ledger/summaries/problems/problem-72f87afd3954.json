@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-10T07:33:20.786780+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-extension-reality-convergence-epic"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 3,
+  "owner_actor": "immediate_repair",
+  "problem_id": "problem-72f87afd3954",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:b6ef0d6b0a5b739bdd476f42fc2031f3bcf2dad574c452601c341134a193fd92",
+    "last_seq": 38,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-72f87afd3954: repair-data outcome=partial_liveness kind=chain workspace=/workspace/extension-reality-convergence-epic/reigh-app"
+}

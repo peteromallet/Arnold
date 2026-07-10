@@ -1,0 +1,164 @@
+{
+  "alive_sessions": 1,
+  "archive_report_path": "/workspace/watchdog-reports/20260708T224911Z.json",
+  "codex_repair_enabled": true,
+  "issue_count": 4,
+  "issues": [
+    {
+      "action": "sync",
+      "message": "fetch/pull failed",
+      "remote_spec": "editible-install",
+      "session": "editable-install",
+      "status": "sync_failed",
+      "workspace": "/workspace/arnold"
+    },
+    {
+      "action": "repair",
+      "message": "stale_active_step: plan=make-extension-reality-chain-20260708-1450; state=finalized; phase=execute; worker_pid=1914351 not live",
+      "remote_spec": "/workspace/extension-reality-chain-restart-continuation/arnold/.megaplan/initiatives/extension-reality-chain-restart-continuation/chain.yaml",
+      "session": "extension-reality-chain-restart-continuation",
+      "status": "repair_dispatched",
+      "workspace": "/workspace/extension-reality-chain-restart-continuation/arnold"
+    },
+    {
+      "action": "observe",
+      "message": "i1 dev=zhipu:glm-5.2 sha=none mechanical=failed:stopped kimi=n/a why=n/a | i2 dev= sha=none mechanical=n/a kimi=n/a why=n/a | i3 dev=gpt-5.5 sha=none mechanical=failed:stopped kimi=failed:stopped why=latest_failure was never set, and the chain/worker state survived the parent outage. Re-driving the parent relaunch would duplicate a coordinator whose child is already healthy, so the safe action is to leave the existing child chain running.; repair_data=/workspace/.megaplan/cloud-sessions/repair-data/megaplan-chain-native-python-pipelines-completion-parent-22937539.repair-data.json; discord=delivered",
+      "remote_spec": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/assets/epic-chain.yaml",
+      "session": "megaplan-chain-native-python-pipelines-completion-parent-22937539",
+      "status": "needs_human",
+      "workspace": "/workspace/native-python-pipelines-completion-parent-22937539/arnold"
+    },
+    {
+      "action": "repair",
+      "message": "chain_inconsistent_done: chain state advertises last_state=done but only 7/8 milestones are complete; treating as incomplete/stuck instead of terminal; artifact=/workspace/.megaplan/cloud-sessions/repair-data/megaplan-native-parity-corrective.chain-health.json",
+      "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+      "session": "megaplan-native-parity-corrective",
+      "status": "repair_dispatched",
+      "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+    }
+  ],
+  "items": [
+    {
+      "action": "sync",
+      "message": "fetch/pull failed",
+      "remote_spec": "editible-install",
+      "session": "editable-install",
+      "status": "sync_failed",
+      "workspace": "/workspace/arnold"
+    },
+    {
+      "action": "observe",
+      "message": "chain complete",
+      "remote_spec": "/workspace/agent-edit-canonical-deltas/vibecomfy/.megaplan/initiatives/agent-edit-canonical-deltas/chain.yaml",
+      "session": "agent-edit-canonical-deltas",
+      "status": "complete",
+      "workspace": "/workspace/agent-edit-canonical-deltas/vibecomfy"
+    },
+    {
+      "action": "observe",
+      "message": "chain complete",
+      "remote_spec": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/initiatives/canonical-run-state-control-plane/chain.yaml",
+      "session": "canonical-run-state-control-plane",
+      "status": "complete",
+      "workspace": "/workspace/canonical-run-state-control-plane/arnold"
+    },
+    {
+      "action": "observe",
+      "message": "chain complete",
+      "remote_spec": "/workspace/extension-foundation-completion/reigh-app/.megaplan/initiatives/extension-foundation-completion/chain.yaml",
+      "session": "extension-foundation-completion",
+      "status": "complete",
+      "workspace": "/workspace/extension-foundation-completion/reigh-app"
+    },
+    {
+      "action": "repair",
+      "message": "stale_active_step: plan=make-extension-reality-chain-20260708-1450; state=finalized; phase=execute; worker_pid=1914351 not live",
+      "remote_spec": "/workspace/extension-reality-chain-restart-continuation/arnold/.megaplan/initiatives/extension-reality-chain-restart-continuation/chain.yaml",
+      "session": "extension-reality-chain-restart-continuation",
+      "status": "repair_dispatched",
+      "workspace": "/workspace/extension-reality-chain-restart-continuation/arnold"
+    },
+    {
+      "action": "observe",
+      "message": "session already alive",
+      "remote_spec": "/workspace/extension-reality-clean-lane-recovery/arnold/.megaplan/initiatives/extension-reality-clean-lane-recovery/chain.yaml",
+      "session": "extension-reality-clean-lane-recovery",
+      "status": "alive",
+      "workspace": "/workspace/extension-reality-clean-lane-recovery/arnold"
+    },
+    {
+      "action": "observe",
+      "message": "chain complete",
+      "remote_spec": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/initiatives/extension-reality-convergence-epic/chain.yaml",
+      "session": "extension-reality-convergence-epic",
+      "status": "complete",
+      "workspace": "/workspace/extension-reality-convergence-epic/reigh-app"
+    },
+    {
+      "action": "observe",
+      "message": "i1 dev=zhipu:glm-5.2 sha=none mechanical=failed:stopped kimi=n/a why=n/a | i2 dev= sha=none mechanical=n/a kimi=n/a why=n/a | i3 dev=gpt-5.5 sha=none mechanical=failed:stopped kimi=failed:stopped why=latest_failure was never set, and the chain/worker state survived the parent outage. Re-driving the parent relaunch would duplicate a coordinator whose child is already healthy, so the safe action is to leave the existing child chain running.; repair_data=/workspace/.megaplan/cloud-sessions/repair-data/megaplan-chain-native-python-pipelines-completion-parent-22937539.repair-data.json; discord=delivered",
+      "remote_spec": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/assets/epic-chain.yaml",
+      "session": "megaplan-chain-native-python-pipelines-completion-parent-22937539",
+      "status": "needs_human",
+      "workspace": "/workspace/native-python-pipelines-completion-parent-22937539/arnold"
+    },
+    {
+      "action": "observe",
+      "message": "chain complete",
+      "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+      "session": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+      "status": "complete",
+      "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+    },
+    {
+      "action": "repair",
+      "message": "chain_inconsistent_done: chain state advertises last_state=done but only 7/8 milestones are complete; treating as incomplete/stuck instead of terminal; artifact=/workspace/.megaplan/cloud-sessions/repair-data/megaplan-native-parity-corrective.chain-health.json",
+      "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+      "session": "megaplan-native-parity-corrective",
+      "status": "repair_dispatched",
+      "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+    },
+    {
+      "action": "observe",
+      "message": "completion manifest marks chain complete",
+      "remote_spec": "/workspace/native-composition-followup/Arnold/.megaplan/initiatives/native-composition-followup.chain/chain.yaml",
+      "session": "native-composition-followup",
+      "status": "complete",
+      "workspace": "/workspace/native-composition-followup/Arnold"
+    },
+    {
+      "action": "observe",
+      "message": "chain complete",
+      "remote_spec": "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/initiatives/progress-auditor-stage-metrics/chain.yaml",
+      "session": "progress-auditor-stage-metrics",
+      "status": "complete",
+      "workspace": "/workspace/progress-auditor-stage-metrics/Arnold"
+    },
+    {
+      "action": "observe",
+      "message": "chain complete",
+      "remote_spec": "/workspace/python-shaped-workflow-authoring/.megaplan/briefs/python-shaped-workflow-authoring/chain.yaml",
+      "session": "python-shaped-workflow-authoring",
+      "status": "complete",
+      "workspace": "/workspace/python-shaped-workflow-authoring"
+    },
+    {
+      "action": "observe",
+      "message": "chain complete",
+      "remote_spec": "/workspace/superfixer-alive-but-failed-recovery/Arnold/.megaplan/initiatives/superfixer-alive-but-failed-recovery/chain.yaml",
+      "session": "superfixer-alive-but-failed-recovery",
+      "status": "complete",
+      "workspace": "/workspace/superfixer-alive-but-failed-recovery/Arnold"
+    }
+  ],
+  "latest_report_path": "/workspace/watchdog-report.json",
+  "marker_dir": "/workspace/.megaplan/cloud-sessions",
+  "markers_seen": 13,
+  "needs_human_sessions": 1,
+  "push_repairs_enabled": true,
+  "reaped_repairs": 0,
+  "restarted_sessions": 0,
+  "sessions_seen": 14,
+  "timestamp_utc": "2026-07-08T22:49:11.111541+00:00",
+  "webhook_notifications_sent": 0
+}

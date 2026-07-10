@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-10T07:33:20.787302+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-extension-reality-convergence-epic"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 2,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-bd43205325d0",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:b6ef0d6b0a5b739bdd476f42fc2031f3bcf2dad574c452601c341134a193fd92",
+    "last_seq": 20,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-bd43205325d0: session stopped and needs repair attention"
+}

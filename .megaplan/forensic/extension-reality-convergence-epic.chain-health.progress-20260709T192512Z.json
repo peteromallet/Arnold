@@ -1,0 +1,19 @@
+{
+  "chain_complete": true,
+  "completed_count": 4,
+  "current_milestone_index": 4,
+  "current_plan_name": null,
+  "last_state": "done",
+  "milestone_count": 4,
+  "no_advance_ticks": 0,
+  "plan_has_active_step": false,
+  "plan_has_in_flight_llm": false,
+  "plan_has_live_activity": false,
+  "plan_signal_liveness": "",
+  "plan_signal_reason": "",
+  "pr_number": 183,
+  "pr_state": "merged",
+  "session": "extension-reality-convergence-epic",
+  "stuck_ticks": 0,
+  "updated_at": "2026-07-08T23:19:12Z"
+}

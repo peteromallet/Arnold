@@ -1,0 +1,84 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 4,
+  "current_plan_name": null,
+  "current_milestone_base_sha": null,
+  "target_base_ref": "dfe60989d794e6c4f91a35955216759fd2804ed6",
+  "last_state": "done",
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [
+    {
+      "label": "m1-trust-model-truth",
+      "plan": "m1-trust-model-truth-outcome-20260707-1958",
+      "status": "done",
+      "pr_number": 93,
+      "pr_state": "merged"
+    },
+    {
+      "label": "m2-composition-shader-ref-authority",
+      "plan": "m2-composition-shader-ref-20260707-2109",
+      "status": "done",
+      "pr_number": 94,
+      "pr_state": "merged"
+    },
+    {
+      "label": "m3-export-readiness-convergence",
+      "plan": "m3-export-readiness-20260707-2233",
+      "status": "done",
+      "pr_number": null,
+      "pr_state": null
+    },
+    {
+      "label": "m4-evidence-and-drift-gates",
+      "plan": "m4-evidence-and-drift-gates-20260708-0120",
+      "status": "done",
+      "pr_number": 183,
+      "pr_state": "merged"
+    }
+  ],
+  "branch_head": null,
+  "pr_head": null,
+  "last_pushed_commit": null,
+  "dirty_flag": false,
+  "sync_state": "stale",
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "target_root": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "work_dir": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "engine_root": "/workspace/extension-reality-clean-lane-recovery/arnold/.megaplan/worker_tmp/clean-lane",
+      "target_head": "dfe60989d794e6c4f91a35955216759fd2804ed6",
+      "target_base": "2fd3f80912ca8eb160526bcfe202762d3189ae6c",
+      "target_base_ref": "local/extension-foundation-completion",
+      "target_fallback_reason": null
+    },
+    "chain_spec_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/initiatives/extension-reality-convergence-epic/chain.yaml",
+    "chain_spec_sha256": "5d9301dce5b540055083844f792a52ab5c10f88a5d9609d1bacda1fe214a6410",
+    "ground_truth_reconciliation": {
+      "reconciled_at": "2026-07-10T00:31:50Z",
+      "plan": null,
+      "current_state": null,
+      "latest_failure": null,
+      "last_gate": null,
+      "active_step": null,
+      "pr_number": null,
+      "pr_state": null
+    }
+  }
+}

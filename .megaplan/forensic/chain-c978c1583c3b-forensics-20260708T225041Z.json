@@ -1,0 +1,113 @@
+{
+  "captured_at": "2026-07-08T22:51:37Z",
+  "source_chain_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/.chains/chain-c978c1583c3b.json",
+  "source_chain_sha256": "f3d83af457ea19c92b8b2e7a8ffbbee94a91701965ede312614e2f0d8c8ea75d",
+  "source_chain_stat": {
+    "size": 3302,
+    "mtime": "2026-07-08T09:45:32Z",
+    "ctime": "2026-07-08T09:45:32Z"
+  },
+  "backup_chain_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/forensic/chain-c978c1583c3b-20260708T225041Z.json",
+  "backup_chain_sha256": "f3d83af457ea19c92b8b2e7a8ffbbee94a91701965ede312614e2f0d8c8ea75d",
+  "key_fields": {
+    "target_base_ref": "148a7b7d97fbc52115393936602ab7f78fdef2ac",
+    "current_milestone_index": 4,
+    "last_state": "done",
+    "completed": [
+      {
+        "label": "m4-evidence-and-drift-gates",
+        "plan": "m4-evidence-and-drift-gates-20260708-0120",
+        "status": "done",
+        "pr_number": 183,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "error",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 0,
+          "failed": 0,
+          "failing_tests": [],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 0,
+          "current_failing_count": 0,
+          "delta_computed": false,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python -m pytest scripts/quality/check-readiness.mjs scripts/quality/check-trust-model-truth.test.mjs src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts docs/video-editor/extension-platform-supported-deferred.md --tb=no -q --no-header -rA",
+          "duration_s": 0.31515638600103557,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "sync_state": "stale",
+    "engine_root": "/workspace/arnold",
+    "target_base_ref_execution_environment": "local/extension-foundation-completion",
+    "timestamps": {
+      "ground_truth_reconciled_at": "2026-07-08T09:45:31Z",
+      "file_mtime": "2026-07-08T09:45:32Z",
+      "file_ctime": "2026-07-08T09:45:32Z"
+    },
+    "chain_spec_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/initiatives/extension-reality-convergence-epic/chain.yaml",
+    "chain_spec_sha256": "5d9301dce5b540055083844f792a52ab5c10f88a5d9609d1bacda1fe214a6410",
+    "ground_truth_reconciliation": {
+      "reconciled_at": "2026-07-08T09:45:31Z",
+      "plan": null,
+      "current_state": null,
+      "latest_failure": null,
+      "last_gate": null,
+      "active_step": null,
+      "pr_number": null,
+      "pr_state": null
+    }
+  },
+  "status_capture": {
+    "chain_health_source_path": "/workspace/.megaplan/cloud-sessions/extension-reality-convergence-epic.chain-health.progress.json",
+    "chain_health_backup_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/forensic/extension-reality-convergence-epic.chain-health.progress-20260708T225041Z.json",
+    "chain_health": {
+      "chain_complete": false,
+      "completed_count": 0,
+      "current_milestone_index": 3,
+      "current_plan_name": "m4-evidence-and-drift-gates-20260708-0120",
+      "events_mtime": 1783482789.590877,
+      "events_size": 151542,
+      "last_state": "failed",
+      "milestone_count": 4,
+      "no_advance_ticks": 0,
+      "plan_has_active_step": false,
+      "plan_has_in_flight_llm": false,
+      "plan_has_live_activity": false,
+      "plan_signal_liveness": "stalled",
+      "plan_signal_reason": "last event 1435s ago",
+      "pr_number": 183,
+      "pr_state": "open",
+      "session": "extension-reality-convergence-epic",
+      "stuck_ticks": 0,
+      "updated_at": "2026-07-08T04:17:04.062442+00:00"
+    },
+    "watchdog_report_source_path": "/workspace/watchdog-report.json",
+    "watchdog_report_backup_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/forensic/watchdog-report-20260708T225041Z.json",
+    "watchdog_items_for_session": [
+      {
+        "action": "observe",
+        "message": "chain complete",
+        "remote_spec": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/initiatives/extension-reality-convergence-epic/chain.yaml",
+        "session": "extension-reality-convergence-epic",
+        "status": "complete",
+        "workspace": "/workspace/extension-reality-convergence-epic/reigh-app"
+      }
+    ],
+    "false_complete_shape": {
+      "chain_state_last_state": "done",
+      "chain_completed_count": 1,
+      "chain_health_last_state": "failed",
+      "chain_health_completed_count": 0,
+      "watchdog_statuses": [
+        "complete"
+      ],
+      "watchdog_messages": [
+        "chain complete"
+      ]
+    }
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 2,
+  "current_plan_name": "m3-export-readiness-20260710-0146",
+  "current_milestone_base_sha": null,
+  "target_base_ref": "dfe60989d794e6c4f91a35955216759fd2804ed6",
+  "last_state": "authority_divergence",
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [
+    {
+      "label": "m1-trust-model-truth",
+      "plan": "m1-trust-model-truth-outcome-20260707-1958",
+      "status": "done",
+      "pr_number": 93,
+      "pr_state": "merged"
+    },
+    {
+      "label": "m2-composition-shader-ref-authority",
+      "plan": "m2-composition-shader-ref-20260707-2109",
+      "status": "done",
+      "pr_number": 94,
+      "pr_state": "merged"
+    },
+    {
+      "label": "m4-evidence-and-drift-gates",
+      "plan": "m4-evidence-and-drift-gates-20260708-0120",
+      "status": "done",
+      "pr_number": 183,
+      "pr_state": "merged"
+    }
+  ],
+  "branch_head": null,
+  "pr_head": null,
+  "last_pushed_commit": null,
+  "dirty_flag": false,
+  "sync_state": "stale",
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {
+    "m3-export-readiness-convergence": 1
+  },
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "target_root": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "work_dir": "/workspace/extension-reality-convergence-epic/reigh-app",
+      "engine_root": "/workspace/extension-reality-clean-lane-recovery/arnold/.megaplan/worker_tmp/clean-lane",
+      "target_head": "d362f9a2aacd61e32224adfb41bdf441f75ce2d0",
+      "target_base": "2fd3f80912ca8eb160526bcfe202762d3189ae6c",
+      "target_base_ref": "local/extension-foundation-completion",
+      "target_fallback_reason": null
+    },
+    "chain_spec_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/initiatives/extension-reality-convergence-epic/chain.yaml",
+    "chain_spec_sha256": "5d9301dce5b540055083844f792a52ab5c10f88a5d9609d1bacda1fe214a6410",
+    "ground_truth_reconciliation": {
+      "reconciled_at": "2026-07-10T01:45:20Z",
+      "plan": null,
+      "current_state": null,
+      "latest_failure": null,
+      "last_gate": null,
+      "active_step": null,
+      "pr_number": null,
+      "pr_state": null
+    },
+    "manual_authority_reconciliation": {
+      "reconciled_at": "2026-07-10T00:55:12Z",
+      "reason": "Chain falsely terminal (last_state=done) on a non-authoritative m3 completion record (pr_number=null, implementation milestone claiming done without a merged PR). The fixed engine reconciliation (PR #191 guard, squash f6d4845dc) cannot catch null-PR completion records: _reconcile_chain_from_ground_truth skips the PR-state authority check when pr_number is None (arnold_pipelines/megaplan/chain/__init__.py L4030), so the false 'done' persisted in every mode. Manual authority reconciliation applied per SD3 fallback (no owning command mutates this custody state).",
+      "engine_verified": "origin/editible-install 667ac70b; guard f6d4845dc ancestor; offline recon proof leaves last_state=done (T4/T7)",
+      "evidence": {
+        "target_base_ref": "dfe60989d794e6c4f91a35955216759fd2804ed6 (already corrected per T7; M1 60d2f43be, M2 148a7b7d9, M4 99528056e all ancestors)",
+        "rejected_non_authoritative": "m3-export-readiness-convergence (pr_number=null, pr_state=null)",
+        "authoritative_retained": [
+          "m1-trust-model-truth (#93 merged)",
+          "m2-composition-shader-ref-authority (#94 merged)",
+          "m4-evidence-and-drift-gates (#183 merged)"
+        ],
+        "forensic_backups": [
+          "chain-c978c1583c3b-backup-20260710T000457Z.json (T6)",
+          "chain-c978c1583c3b-preedit-20260710T003526Z.json (T8 pre-edit)"
+        ],
+        "pre_edit_sha256": "209eee791148eb492e5141a77dfb702eb008e25864d2c21767423fd7e9190a87"
+      },
+      "applied_changes": {
+        "removed_completed": "m3-export-readiness-convergence",
+        "current_milestone_index": "4 -> 2",
+        "last_state": "done -> authority_divergence",
+        "retry_counts": "{} -> {\"m3-export-readiness-convergence\": 1}",
+        "target_base_ref": "unchanged (already correct per T7 ancestry proof)"
+      },
+      "stabilization_evidence": {
+        "engine_limitation": "arnold_pipelines/megaplan/chain/__init__.py L4030: the PR-state authority check runs only `if push_enabled and milestone.branch and pr_number is not None`. m3's pr_number is null, so the fixed engine reconciliation (PR #191 guard, f6d4845dc) cannot reject the non-authoritative m3 record in any mode. Manual authority reconciliation applied per SD3 fallback.",
+        "live_marker": "retry_counts[m3]=1 is the engine's documented live-marker mechanism (spec.py _normalize_advanced_completed_cursor L162-165/L190): a non-zero retry counter for the current milestone prevents the stale-marker rewrite that would collapse authority_divergence -> done.",
+        "verification": "Bug repro (empty retry_counts) confirmed authority_divergence collapses to done under load_chain_state; fix (retry_counts[m3]=1) confirmed authority_divergence survives load_chain_state, cursor stays 2, m3 rejected, file stable (no reversion/re-save). status snapshot: chain_complete=False, custody_mismatch=False."
+      }
+    }
+  }
+}

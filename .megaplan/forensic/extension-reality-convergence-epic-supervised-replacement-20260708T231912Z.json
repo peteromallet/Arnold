@@ -1,0 +1,39 @@
+{
+  "recorded_at": "2026-07-08T23:19:12Z",
+  "session": "extension-reality-convergence-epic",
+  "decision": "supervised_replacement",
+  "north_star_path": "/workspace/extension-reality-clean-lane-recovery/arnold/.megaplan/initiatives/extension-reality-chain-restart-continuation/NORTHSTAR.md",
+  "direct_resume_probe": {
+    "engine_root": "/workspace/extension-reality-clean-lane-recovery/arnold/.megaplan/worker_tmp/clean-lane",
+    "result_status": "done",
+    "result_reason": "",
+    "result_event": "all milestones complete"
+  },
+  "blockers": [
+    {
+      "kind": "custody_terminal_state",
+      "detail": "A direct non-CLI run_chain() probe returned immediately with status=done and completed_count=4, so the reconciled original epic cannot satisfy the active-session requirement by resuming in place."
+    },
+    {
+      "kind": "custody_metadata_rewrite",
+      "detail": "The same direct probe rewrote metadata.execution_environment.target_head from accepted target head dfe60989d794e6c4f91a35955216759fd2804ed6 to workspace HEAD d362f9a2aacd61e32224adfb41bdf441f75ce2d0, so repeated direct relaunches would degrade custody provenance unless repaired first."
+    }
+  ],
+  "restoration": {
+    "chain_state_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/.chains/chain-c978c1583c3b.json",
+    "restored_target_head": "dfe60989d794e6c4f91a35955216759fd2804ed6",
+    "restored_ground_truth_current_state": "done"
+  },
+  "marker_update": {
+    "path": "/workspace/.megaplan/cloud-sessions/extension-reality-convergence-epic.json",
+    "remote_spec": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/initiatives/extension-reality-convergence-epic/chain.yaml",
+    "engine_root": "/workspace/extension-reality-clean-lane-recovery/arnold/.megaplan/worker_tmp/clean-lane",
+    "relaunch_command_mode": "direct_python_run_chain_no_cli"
+  },
+  "replacement_supervisor": {
+    "session": "extension-reality-convergence-epic-supervised-replacement",
+    "log_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/forensic/extension-reality-convergence-epic-supervised-replacement-20260708T231912Z.log",
+    "scope": "Observe original marker/spec/custody from the clean fixed engine without launching a nested megaplan harness.",
+    "handoff": "Keep the original epic in clean complete custody while the supervised replacement logs status from the clean-lane engine."
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "reconciled_at": "2026-07-08T23:02:26Z",
+  "source_chain_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/.chains/chain-c978c1583c3b.json",
+  "forensic_backup_path": "/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/forensic/chain-c978c1583c3b-20260708T225041Z.json",
+  "accepted_engine_root": "/workspace/extension-reality-clean-lane-recovery/arnold/.megaplan/worker_tmp/clean-lane",
+  "accepted_target_branch": "origin/local/extension-foundation-completion",
+  "accepted_target_head": {
+    "sha": "dfe60989d794e6c4f91a35955216759fd2804ed6",
+    "subject": "Recover M3 export readiness on top of M4",
+    "parent": "99528056ef69e78bc4f2e5a7cc5e0a1bb67990c7"
+  },
+  "accepted_milestones": [
+    {
+      "label": "m1-trust-model-truth",
+      "plan": "m1-trust-model-truth-outcome-20260707-1958",
+      "accepted_commit": "60d2f43be2384640da243da988bcc2b815e370f7",
+      "commit_subject": "m1-trust-model-truth: megaplan milestone (#93)",
+      "pr_number": 93,
+      "accepted_by": "verified ancestor of origin/local/extension-foundation-completion"
+    },
+    {
+      "label": "m2-composition-shader-ref-authority",
+      "plan": "m2-composition-shader-ref-20260707-2109",
+      "accepted_commit": "148a7b7d97fbc52115393936602ab7f78fdef2ac",
+      "commit_subject": "m2-composition-shader-ref-authority: megaplan milestone (#94)",
+      "pr_number": 94,
+      "accepted_by": "verified ancestor of origin/local/extension-foundation-completion"
+    },
+    {
+      "label": "m4-evidence-and-drift-gates",
+      "plan": "m4-evidence-and-drift-gates-20260708-0120",
+      "accepted_commit": "99528056ef69e78bc4f2e5a7cc5e0a1bb67990c7",
+      "commit_subject": "m4-evidence-and-drift-gates: megaplan milestone (#183)",
+      "pr_number": 183,
+      "accepted_by": "verified ancestor of origin/local/extension-foundation-completion"
+    },
+    {
+      "label": "m3-export-readiness-convergence",
+      "plan": "m3-export-readiness-20260707-2233",
+      "accepted_commit": "dfe60989d794e6c4f91a35955216759fd2804ed6",
+      "commit_subject": "Recover M3 export readiness on top of M4",
+      "accepted_by": "verified target-head recovery commit on origin/local/extension-foundation-completion"
+    }
+  ],
+  "rejected_inputs": [
+    {
+      "source": "chain_state.completed",
+      "value": [
+        "m4-evidence-and-drift-gates"
+      ],
+      "reason": "single completed record cannot support current_milestone_index=4 or last_state=done"
+    },
+    {
+      "source": "chain_state.completed[0].full_suite_backstop",
+      "reason": "shadow-mode backstop recorded status=error and delta_computed=false, so it is not accepted completion evidence"
+    },
+    {
+      "source": "chain_state.target_base_ref",
+      "value": "148a7b7d97fbc52115393936602ab7f78fdef2ac",
+      "reason": "stale cursor/base snapshot; accepted target head is dfe60989d794e6c4f91a35955216759fd2804ed6"
+    },
+    {
+      "source": "chain_state.pr_head",
+      "value": "2bbd4f1b8a426c82ea3ee039642733a33a6336c5",
+      "reason": "stale milestone-branch PR head is not accepted product-target evidence"
+    },
+    {
+      "source": "watchdog-report.json",
+      "reason": "sidecar status complete/chain complete is derived output and contradicted chain-health false-complete capture"
+    },
+    {
+      "source": "extension-reality-convergence-epic.chain-health.progress.json",
+      "reason": "derived health snapshot reported failed/0 completed and is not authoritative milestone evidence"
+    }
+  ],
+  "reconciled_chain_state": {
+    "current_milestone_index": 4,
+    "last_state": "done",
+    "target_base_ref": "dfe60989d794e6c4f91a35955216759fd2804ed6",
+    "completed_labels": [
+      "m1-trust-model-truth",
+      "m2-composition-shader-ref-authority",
+      "m4-evidence-and-drift-gates",
+      "m3-export-readiness-convergence"
+    ],
+    "cleared_stale_heads": true
+  }
+}
