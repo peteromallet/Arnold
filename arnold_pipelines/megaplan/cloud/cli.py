@@ -150,6 +150,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     )
     chain_parser.add_argument("spec", help="Local chain spec path")
     chain_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Launch from inside the agentbox without SSH, preserving cloud tmux/marker/watchdog setup",
+    )
+    chain_parser.add_argument(
         "--idea-dir",
         default=None,
         help="Directory containing local idea files referenced by the chain spec",
@@ -247,6 +252,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Validate, canonicalize, upload, launch, and watchdog-verify a cloud epic",
     )
     launch_epic_parser.add_argument("spec_or_dir", help="Local chain.yaml or epic brief directory")
+    launch_epic_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Launch from inside the agentbox without SSH, preserving cloud tmux/marker/watchdog setup",
+    )
     launch_epic_parser.add_argument(
         "--slug",
         default=None,
@@ -629,6 +639,13 @@ def _status_should_use_chain(root: Path, args: argparse.Namespace, spec: CloudSp
 
 
 def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
+    if bool(getattr(args, "on_box", False)):
+        action = getattr(args, "cloud_action", None)
+        if action not in {"chain", "launch-epic"}:
+            raise CliError("invalid_args", "--on-box is supported only for cloud chain and launch-epic")
+        from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+        return OnBoxProvider(spec)
     # Gate session overrides on provider capability, not on a provider-name special case.
     base_provider = get_provider(spec.provider, spec)
     session_name = getattr(args, "session", None)
