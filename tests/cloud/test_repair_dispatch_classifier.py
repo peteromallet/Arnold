@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
 )
 from arnold_pipelines.megaplan.cloud.repair_lock import RepairLockResult
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 
 
 def _plan_state(**overrides: object) -> dict[str, object]:
@@ -115,6 +116,46 @@ def test_classifier_dispatches_exact_manual_review_repairable_shape(tmp_path: Pa
         retry_strategy="manual_review",
         failure_kind="blocked_recovery_not_resolved",
     )
+
+
+def test_classifier_dispatches_known_repairable_shape_when_canonical_state_unknown(
+    tmp_path: Path,
+) -> None:
+    projection = _projection(tmp_path)
+
+    decision = classify_repair_dispatch(
+        canonical_run_state=CanonicalRunState(
+            canonical_state=CanonicalState.UNKNOWN,
+            confidence="low",
+            repairable=False,
+            running=False,
+            next_action="inspect_evidence",
+            reason="resolver lacked a typed classifier",
+        ),
+        event_plan_dir=tmp_path,
+        plan_state=_plan_state(
+            latest_failure={
+                "kind": "execution_blocked",
+                "phase": "execute",
+                "metadata": {"blocked_task_id": "T1"},
+            }
+        ),
+        current_target=_current_target(),
+        custody_projection={
+            **projection,
+            "failure_kind": "execution_blocked",
+            "blocker_fingerprint": {
+                **dict(projection["blocker_fingerprint"]),
+                "failure_kind": "execution_blocked",
+            },
+        },
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == DISPATCH_INTENT_L1
+    assert decision.request_id == projection["active_request_ids"][0]
+    assert decision.failure_kind == "execution_blocked"
+    assert "canonical unknown but legacy evidence proves known repairable shape" in decision.rationale[0]
 
 
 def test_classifier_dispatches_failed_no_next_step_repair_state(tmp_path: Path) -> None:
@@ -460,3 +501,41 @@ def test_classifier_recognizes_terminal_repair_state() -> None:
     )
 
     assert decision.decision == DISPATCH_DECISION_TERMINAL
+
+
+def test_classifier_dispatches_workflow_cursor_mismatch_as_retryable(tmp_path: Path) -> None:
+    """A blocked control/cursor disagreement is mechanical, not human-only."""
+    projection = _projection(tmp_path)
+    projection["active_request_ids"] = ["req-cursor"]
+    decision = classify_repair_dispatch(
+        plan_state=_plan_state(
+            latest_failure={"kind": "workflow_cursor_mismatch", "phase": "execute"}
+        ),
+        current_target=_current_target(),
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == DISPATCH_INTENT_L1
+
+
+def test_classifier_reopens_complete_repair_when_chain_is_incomplete(tmp_path: Path) -> None:
+    projection = _projection(tmp_path)
+    projection["active_request_ids"] = ["req-incomplete"]
+    projection["terminal_outcomes"] = ["complete"]
+    target = _current_target(
+        chain_state={
+            "present": True,
+            "fingerprint": "sha256:chain-proof",
+            "milestone_total": 2,
+            "completed_count": 1,
+        }
+    )
+    decision = classify_repair_dispatch(
+        plan_state=_plan_state(current_state="finalized"),
+        current_target=target,
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == DISPATCH_INTENT_L1
