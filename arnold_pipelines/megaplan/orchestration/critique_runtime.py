@@ -114,6 +114,15 @@ def _recover_evaluator_payload_from_raw(
     return None
 
 
+def _prefer_nonempty_evaluator_payload(
+    worker_payload: dict[str, Any], promoted_payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Do not let an untouched empty evaluator scratch erase a worker verdict."""
+    if worker_payload.get("selections") and not promoted_payload.get("selections"):
+        return worker_payload
+    return promoted_payload
+
+
 # ── T11: Critique-scoped scratch promotion known keys ──────────────────────
 # The model produces only these keys in the scratch template; unknown
 # top-level keys injected by the model are stripped before promotion.
@@ -461,6 +470,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
 
                     _file_fill_instructed = eval_agent == "hermes"
 
+                    _worker_payload = dict(eval_worker.payload)
                     _, _promoted = promote_scratch(
                         plan_dir,
                         _scratch_filename,
@@ -469,7 +479,9 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                         seed_json=_seed_json,
                         file_fill_instructed=_file_fill_instructed,
                     )
-                    eval_worker.payload = _promoted
+                    eval_worker.payload = _prefer_nonempty_evaluator_payload(
+                        _worker_payload, _promoted
+                    )
                     # Recovery: the Codex structured-output path sometimes
                     # returns an empty payload even though the raw transcript
                     # contains a valid verdict.  Re-parse the saved raw output
