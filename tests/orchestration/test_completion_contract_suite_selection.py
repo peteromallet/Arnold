@@ -10,6 +10,7 @@ from arnold_pipelines.megaplan.orchestration.completion_contract import (
     CompletionSubject,
     EvidenceStatus,
     GreenSuiteProvider,
+    WorkerDidWorkProvider,
     compute_verdict,
 )
 from arnold_pipelines.megaplan.orchestration.suite_runner import _pytest_command
@@ -48,6 +49,31 @@ def test_green_suite_backfills_scoped_command_from_finalize_selection(tmp_path):
 
     assert config["test_command"] == "pytest tests/test_narrow.py"
     assert config["plan_dir"] == str(ctx.plan_dir)
+
+
+def test_worker_did_work_reads_execute_batch_artifacts_without_provider_crash(tmp_path):
+    ctx = _ctx(tmp_path, {"config": {"project_dir": str(tmp_path)}})
+    (ctx.plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "commands_run": ["pytest -q tests/test_narrow.py"],
+                        "files_changed": ["src/app.py"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence = WorkerDidWorkProvider().collect(ctx)
+
+    assert evidence.status is EvidenceStatus.satisfied
+    assert evidence.details["commands_run"] == 1
+    assert evidence.details["files_changed"] == 1
 
 
 def test_green_suite_prefers_recorded_baseline_command(tmp_path):
