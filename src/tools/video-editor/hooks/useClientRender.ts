@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type { ComponentType, Dispatch, SetStateAction } from 'react';
 import { toast } from '@/shared/components/ui/toast.tsx';
 import { TimelineRenderer } from '@/tools/video-editor/compositions/TimelineRenderer.tsx';
+import type { RenderBlocker } from '@/tools/video-editor/runtime/renderability.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
@@ -28,6 +29,7 @@ interface UseClientRenderOptions {
 export interface ClientRenderExecutionResult {
   status: 'done' | 'error';
   message: string;
+  blocker?: RenderBlocker;
 }
 
 interface CanRenderIssue {
@@ -80,6 +82,19 @@ const getFileExtension = (videoCodec: string | undefined) => {
 };
 
 const getMimeType = (extension: string) => extension === 'webm' ? 'video/webm' : 'video/mp4';
+
+const createWebCodecsUnsupportedBlocker = (message: string): RenderBlocker => ({
+  id: 'client-render.webcodecs.browser-export.route-unsupported',
+  severity: 'error',
+  route: 'browser-export',
+  reason: 'route-unsupported',
+  message,
+  detail: {
+    source: 'use-client-render',
+    phase: 'webcodecs-preflight',
+    api: 'VideoEncoder',
+  },
+});
 
 const getBlobFromResult = async (
   result: unknown,
@@ -206,10 +221,11 @@ export function useClientRender({
 
     if (typeof VideoEncoder === 'undefined') {
       const message = 'WebCodecs not supported in this browser';
+      const blocker = createWebCodecsUnsupportedBlocker(message);
       setRenderStatus('error');
       appendLogLine(setRenderLog, message);
       toast.error(message);
-      return { status: 'error', message } satisfies ClientRenderExecutionResult;
+      return { status: 'error', message, blocker } satisfies ClientRenderExecutionResult;
     }
 
     setRenderStatus('rendering');

@@ -126,19 +126,14 @@ which is a useful audit guard against accidental additions.
 | `DS-04` | `process-dependent` | Route depends on an external process or sidecar. | `renderability.ts:13-37` | `renderPlanner.ts:227-236`, `535-680` |
 | `DS-05` | `unknown` | Metadata is insufficient; planner stays conservative. | `renderability.ts:13-37` | `renderPlanner.ts:116-122`, `227-236` |
 
-### Render Blocker Reason Fixture Rows
+### Render Blocker Reason Fixture Authority
 
-| Row | Literal | Fixture intent | Authority | Planner cross-check |
-|---|---|---|---|---|
-| `BR-01` | `missing-contribution` | Contribution or output format is not registered. | `renderability.ts:39-63` | `renderPlanner.ts:967-982` |
-| `BR-02` | `route-unsupported` | Requested route is unavailable for the contribution/format. | `renderability.ts:39-63` | `renderPlanner.ts:704-723` |
-| `BR-03` | `preview-only` | Export route is blocked because the capability is preview-only. | `renderability.ts:39-63` | `renderPlanner.ts:227-236` |
-| `BR-04` | `live-unbaked` | Export route is blocked until live input is baked/materialized. | `renderability.ts:39-63` | `renderPlanner.ts:227-236`, `775-807` |
-| `BR-05` | `process-dependent` | Route depends on process readiness or materializer execution. | `renderability.ts:39-63` | `renderPlanner.ts:365-393`, `535-680` |
-| `BR-06` | `missing-material` | Required material/render-group input is absent. | `renderability.ts:39-63` | `renderPlanner.ts:765-766`, `809-840` |
-| `BR-07` | `materialization-failed` | Material exists conceptually but is stale/failed and must be remade. | `renderability.ts:39-63` | `renderPlanner.ts:766`, `815-817` |
-| `BR-08` | `inactive-extension` | Needed contribution exists but the owning extension is inactive. | `renderability.ts:39-63` | Reserved by SDK vocabulary; not synthesized in `renderPlanner.ts` yet. |
-| `BR-09` | `unknown` | Conservative catch-all blocker. | `renderability.ts:39-63` | `renderPlanner.ts:227-236`, `444-461` |
+The blocker reason vocabulary is intentionally not duplicated in this matrix.
+The canonical source is `RenderBlockerReason` plus `RENDER_BLOCKER_REASONS` in
+`src/sdk/video/rendering/renderability.ts`, and planner-produced readiness
+records are owned by `src/tools/video-editor/runtime/renderPlanner.ts`. Fixture
+prose and release examples should cite those sources or specific planner
+mapping code when they need an individual blocker code.
 
 ### Process Lifecycle Fixture Rows
 
@@ -232,9 +227,9 @@ codifies several invariants that the matrices must respect.
 |---|---|---|
 | Route plans are built by iterating `RENDER_ROUTES` directly. | `renderPlanner.ts:989-1009` | Every route matrix must stay limited to `preview`, `browser-export`, `worker-export`, `sidecar-export`. |
 | Determinism ordering is fixed as `deterministic < preview-only < live-unbaked < process-dependent < unknown`. | `renderPlanner.ts:116-122`, `845-848` | Route examples and release gates should treat `unknown` as the most conservative status. |
-| Determinism-to-blocker mapping reuses same-named literals for all non-deterministic states. | `renderPlanner.ts:227-236` | No extra blocker reason should be invented for `preview-only`, `live-unbaked`, `process-dependent`, or `unknown`. |
+| Determinism-to-blocker mapping reuses the corresponding canonical `RenderBlockerReason` for all non-deterministic states. | `renderPlanner.ts:227-236` | No extra blocker reason should be invented outside `RENDER_BLOCKER_REASONS`. |
 | Material planner state is exactly `missing`, `stale`, `resolved`, `unbaked`. | `renderPlanner.ts:33-40` | Future fixture prose can mention these planner states, but must not add a fifth planner-only literal. |
-| Material blocker mapping is exact: `missing -> missing-material`, `stale -> materialization-failed`, `unbaked -> determinism literal`, `resolved -> no blocker`. | `renderPlanner.ts:761-807`, `809-840` | Release examples should cite the correct blocker row instead of ad hoc material failure labels. |
+| Material blocker mapping is exact: `missing -> missing-material`, `stale -> materialization-failed`, `unbaked -> determinism-derived reason`, `resolved -> no blocker`. | `renderPlanner.ts:761-807`, `809-840` | Release examples should cite the canonical blocker code source instead of ad hoc material failure labels. |
 | Process route handling is exact: `ready` clears blockers, `degraded` downgrades to warning, all other lifecycle states block. | `renderPlanner.ts:593-633`, `658-680` | Process examples in later milestones should not invent separate route states beyond the eight lifecycle literals. |
 | Compile-only artifact creation instantiates one concrete boundary: `browser -> export-output` with `emit-diagnostic`. | `runtime/renderability.ts:308-349` | The boundary tables stay literal-complete while still citing one existing runtime example. |
 
@@ -243,13 +238,10 @@ codifies several invariants that the matrices must respect.
 1. Package-state literals are intentionally kept separate from the declaration
    and execution maturity axes. They are loader/runtime inventory states, not
    family maturity values.
-2. `inactive-extension` is retained in the blocker matrix because it is part of
-   the SDK vocabulary even though `renderPlanner.ts` does not currently
-   synthesize that literal itself.
-3. `sidecar`, several locator kinds, and most artifact-boundary combinations are
+2. `sidecar`, several locator kinds, and most artifact-boundary combinations are
    currently vocabulary-level contracts rather than actively exercised runtime
    branches. They still need M0 rows so later milestones can cite stable names
    without inventing literals.
-4. No literals outside the cited source unions/const arrays are introduced by
+3. No literals outside the cited source unions/const arrays are introduced by
    this matrix. Any future row addition requires a source-authority change
    first, then an M0-doc update.

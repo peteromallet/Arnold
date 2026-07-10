@@ -33,7 +33,7 @@ reconstructive source path. No claim depends solely on the absent v8 brief.
 | 7 | contributionKinds.ts | `src/sdk/video/families/contributionKinds.ts` | Authoritative `VideoContributionKind` union (21 members) |
 | 8 | processes.ts | `src/sdk/video/families/processes.ts` | Process family contracts: `ProcessSpec`, `ProcessLifecycleState` (8 states) |
 | 9 | artifacts.ts | `src/sdk/video/rendering/artifacts.ts` | `RenderMaterial`, `RenderArtifact`, `RenderArtifactManifest`, `BakeContract` |
-| 10 | renderability.ts | `src/sdk/video/rendering/renderability.ts` | `RenderRoute`, `DeterminismStatus` (5 values), `RenderBlockerReason` (9 values) |
+| 10 | renderability.ts | `src/sdk/video/rendering/renderability.ts` | `RenderRoute`, `DeterminismStatus`, `RenderBlockerReason`, and their locked const arrays |
 | 11 | capabilities.ts | `src/sdk/video/rendering/capabilities.ts` | Shader materializer requirement scope |
 | 12 | renderPlanner.ts | `src/tools/video-editor/runtime/renderPlanner.ts` | Canonical render/export readiness reducer: route plans, planner blockers, diagnostics, next actions, guard-scan adaptation |
 | 13 | phase4-readiness.md | `docs/extensions/phase4-readiness.md` | Phase 4 promotion checklist, render planner participation contract, trust posture |
@@ -275,10 +275,11 @@ From `src/sdk/video/rendering/renderability.ts` (lines 22–27):
 
 ### Render Blocker Reasons
 
-From `src/sdk/video/rendering/renderability.ts` (lines 40–49):
-
-`missing-contribution`, `route-unsupported`, `preview-only`, `live-unbaked`,
-`process-dependent`, `missing-material`, `materialization-failed`, `inactive-extension`, `unknown`.
+The canonical blocker vocabulary is the `RenderBlockerReason` union and
+`RENDER_BLOCKER_REASONS` const array in
+`src/sdk/video/rendering/renderability.ts`. Architecture docs should cite that
+source and the planner mappings in `src/tools/video-editor/runtime/renderPlanner.ts`
+rather than maintaining a copied literal list.
 
 ### Export Readiness Authority
 

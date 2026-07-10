@@ -1,0 +1,287 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M3: Export Readiness Convergence
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 8 of 8.
+        - Actionable task IDs for this batch: ['T9']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T9",
+    "depends_on": [
+      "T8"
+    ],
+    "status": "pending",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This is command execution and result triage using explicit selectors from the approved plan. It is not a run-until-pass task; the executor only needs to report new failures versus baseline and document unrelated broad-validation issues.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Update `src/tools/video-editor/hooks/useClientRender.ts` so the unsupported WebCodecs failure carries a `RenderBlocker`-shaped object or equivalent structured blocker provenance while keeping the change local to client execution and avoiding new readiness APIs.",
+    "complexity_justification": "This is a localized failure-shape change in one hook. It is tier 2 because the intended data shape is simple and the plan explicitly forbids wider planner/API integration unless existing types make it natural.",
+    "executor_notes": "Added an optional RenderBlocker to ClientRenderExecutionResult and returned a browser-export route-unsupported blocker from the local WebCodecs/VideoEncoder preflight failure path. The blocker includes source, phase, and API detail provenance and does not introduce new readiness APIs or planner calls. Verified with TypeScript no-emit and the full hook test file (63 passed).",
+    "files_changed": [
+      "src/tools/video-editor/hooks/useClientRender.ts"
+    ],
+    "commands_run": [
+      "npx tsc --noEmit --pretty false",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+    ]
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T4"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Create or extend direct hook coverage for the unsupported WebCodecs path, preferably in `src/tools/video-editor/hooks/useClientRender.test.ts`, asserting the structured blocker provenance without broadening client-render feature surface.",
+    "complexity_justification": "This is a focused test for one client-render failure path. The setup may require existing hook test utilities, but the behavior under test is narrow and directly observable.",
+    "executor_notes": "Created direct useClientRender hook coverage for missing VideoEncoder/WebCodecs support. The test asserts the structured browser-export route-unsupported blocker provenance including source, webcodecs-preflight phase, and VideoEncoder API detail, plus the error status/log/toast side effects. Verified the full new test file: 1 passed.",
+    "files_changed": [
+      "src/tools/video-editor/hooks/useClientRender.test.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/hooks/useClientRender.test.tsx"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Add focused coverage in `src/tools/video-editor/hooks/useRenderState.test.tsx` for router import failure provenance, failed-phase render logging, and the export guard adapter rename behavior where externally observable.",
+    "complexity_justification": "The tests need to drive hook behavior through existing render-state flows and mocks, not just assert renamed symbols. The risk is moderate because brittle async hook tests can pass without actually covering the intended failure paths.",
+    "executor_notes": "Added focused coverage for render-router failure provenance into planRender diagnostics, failed exporter log preservation/fallback behavior, and guard scan output feeding planner readiness before render blocking. Verified the full hook test file: 63 passed.",
+    "files_changed": [
+      "src/tools/video-editor/hooks/useRenderState.test.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "audit",
+    "complexity": 1,
+    "reviewer_verdict": "",
+    "description": "Confirm current M3 touchpoints before edits: inspect the cited hook, client render, planner, router/export guard/readiness tests, and docs; verify `getFastRenderRouteDecision()` is unused and export guard scan output feeds planner readiness rather than bypassing it.",
+    "complexity_justification": "This is a read-only confirmation across explicitly named files and symbol searches. The task does not require design judgment beyond reporting whether the approved plan's assumptions still match the checkout.",
+    "executor_notes": "Read-only audit of approved M3 touchpoints completed. Inspected useRenderState.ts, useClientRender.ts, renderPlanner.ts, renderRouter.ts, exportGuard.ts, the listed hook/planner/router/export-guard/readiness tests, and the three docs. Confirmed getFastRenderRouteDecision() is referenced only at its own definition. Confirmed runExportGuard() currently calls scanExportConfig(), passes that payload to buildExportReadinessPlan(), syncs planner diagnostics, and blocks render/export only when plannerResult.blockers is non-empty. Also confirmed planned gaps still exist: hardcoded render-router imp...",
+    "files_changed": [],
+    "commands_run": [
+      "rg -n \"\\bgetFastRenderRouteDecision\\b|\\brunExportGuard\\b\" src docs",
+      "rg -n \"buildExportReadinessPlan|exportGuard|guard|readiness|plannerInput|planner input|planRender|plannerResult|blockers\" src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/lib/renderRouter.ts src/tools/video-editor/runtime/exportGuard.ts",
+      "rg -n \"\\bgetFastRenderRouteDecision\\b\" . --glob '!node_modules/**' --glob '!dist/**' --glob '!build/**'",
+      "jq . .megaplan/plans/m3-export-readiness-20260710-0146/execution_batch_1.json >/dev/null"
+    ]
+  },
+  {
+    "id": "T6",
+    "depends_on": [
+      "T5"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 1,
+    "reviewer_verdict": "",
+    "description": "Clean stale planner source artifact in `src/tools/video-editor/runtime/renderPlanner.ts` by removing or updating the outdated M3 audit comment so it accurately reflects current planner inputs.",
+    "complexity_justification": "This is a comment-only source cleanup in one file. A weak implementation cannot change runtime behavior if it confines the edit to the stale audit text.",
+    "executor_notes": "Updated the M3 export-readiness audit comment in renderPlanner.ts so it describes current planner-owned inputs and guard/export scan adaptation instead of saying completed planner inputs are still missing. Verified the stale comment string is absent with rg.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/renderPlanner.ts"
+    ],
+    "commands_run": [
+      "rg -n 'Missing/normalized inputs still needed|contributionFamilies\\.ts|RenderBlockerReason \\(9 values\\)|BR-0[1-9]|missing-contribution,.*route-unsupported|`missing-contribution`, `route-unsupported`' src/tools/video-editor/runtime/renderPlanner.ts docs/extensions/composition-spine/v8-architecture-baseline.md docs/extensions/composition-spine/m0-fixture-matrices.md docs/extensions/phase4-readiness.md"
+    ]
+  },
+  {
+    "id": "T7",
+    "depends_on": [
+      "T5"
+    ],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Update docs only: revise `docs/extensions/composition-spine/v8-architecture-baseline.md` and `docs/extensions/composition-spine/m0-fixture-matrices.md` to reference canonical planner blocker codes rather than duplicating enum vocabulary, and update `docs/extensions/phase4-readiness.md` to remove the stale `contributionFamilies.ts` source reference and point to current canonical sources.",
+    "complexity_justification": "The work is documentation-only across three known files, but it requires matching current canonical source names and avoiding new sandboxing, marketplace, or untrusted-extension safety claims. The failure mode is stale or duplicated vocabulary rather than code breakage.",
+    "executor_notes": "Updated the three docs to cite RenderBlockerReason/RENDER_BLOCKER_REASONS, renderPlanner.ts, buildExportReadinessPlan(), and the current contribution-family sources instead of duplicating stale blocker enum vocabulary or naming contributionFamilies.ts as an active source. Verified stale strings are absent and phase4ReadinessDocs.test.ts passed: 11 tests passed.",
+    "files_changed": [
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/phase4-readiness.md"
+    ],
+    "commands_run": [
+      "rg -n 'Missing/normalized inputs still needed|contributionFamilies\\.ts|RenderBlockerReason \\(9 values\\)|BR-0[1-9]|missing-contribution,.*route-unsupported|`missing-contribution`, `route-unsupported`' src/tools/video-editor/runtime/renderPlanner.ts docs/extensions/composition-spine/v8-architecture-baseline.md docs/extensions/composition-spine/m0-fixture-matrices.md docs/extensions/phase4-readiness.md",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts"
+    ]
+  },
+  {
+    "id": "T8",
+    "depends_on": [
+      "T6",
+      "T7"
+    ],
+    "status": "done",
+    "kind": "audit",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Re-audit render/export error and log paths in `useRenderState.ts` and `useClientRender.ts`; classify each as planner/blocker-backed, justified pre-planner config guard, or genuine post-execution failure, and confirm no direct legacy timeline authority or second export-readiness authority was introduced.",
+    "complexity_justification": "This is a targeted read-only audit after edits of two hook files plus their changed messages. It requires contract judgment, but only over the specific error/log paths named by the plan.",
+    "executor_notes": "Re-audited render/export error and log paths in useRenderState.ts and useClientRender.ts. useRenderState render-readiness and route-block paths are planner/blocker-backed via buildExportReadinessPlan(), planRenderRouterFailure(), planRouteDecisionBlocker(), or planRender() route availability. Export format availability and guard blocking are planner-backed; no-config and missing compile-only handler paths are justified pre-planner/config/execution guards; compile-only execution exceptions are genuine post-execution failures. Exporter subscriber failed phases preserve progress.log or use the...",
+    "files_changed": [],
+    "commands_run": [
+      "rg -n \"error|Error|failed|Failed|log|setRenderLog|setError|toast|blocker|blockers|planRender|buildExportReadinessPlan|collectExportGuardInput|scanExportConfig|getFastRenderRouteDecision|timeline\" src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useClientRender.ts",
+      "sed -n '1,260p' src/tools/video-editor/hooks/useRenderState.ts",
+      "sed -n '1,260p' src/tools/video-editor/hooks/useClientRender.ts",
+      "sed -n '260,820p' src/tools/video-editor/hooks/useRenderState.ts",
+      "sed -n '240,360p' src/tools/video-editor/hooks/useClientRender.ts",
+      "rg -n \"getFastRenderRouteDecision|CLIENT_CLIP_TYPES|runExportGuard|buildExportReadinessPlan\\(|planRender\\(|scanExportConfig\\(|decideFastRenderRoute|PlannerBackedRenderRouteDecision|timeline\\.|resolvedConfig\\.clips|renderable|readiness\" src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useClientRender.ts src/tools/video-editor/lib/renderRouter.ts src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/exportGuard.ts",
+      "rg -n \"setRenderStatus\\('error'\\)|setExportStatus\\('error'\\)|setRenderLog\\(|setExportLogState\\(|toast\\.error|throw new Error|console\\.error|return \\{ status: 'error'\" src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useClientRender.ts",
+      "rg -n \"legacy|FastRender|getFastRenderRouteDecision|runExportGuard|export readiness|readiness|Planner-owned|scanExportConfig|buildExportReadinessPlan|planRenderRouterFailure|planRouteDecisionBlocker|routeDecisionBlockerForLog|createWebCodecsUnsupportedBlocker\" src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useClientRender.ts"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Update `src/tools/video-editor/hooks/useRenderState.ts`: remove dead `getFastRenderRouteDecision()` code and imports, rename `runExportGuard()` to a scanner/adapter name such as `collectExportGuardInput()`, route dynamic render-router import failures through planner-owned or structured blocker provenance, and ensure exporter subscriber `failed` phases call `setRenderLog()` with `progress.log` or a concise execution-failure fallback.",
+    "complexity_justification": "This touches multiple paths inside `useRenderState.ts` where route decisions, export guard input, and render logs interact. The logic is local to the hook, but the executor must preserve the planner-readiness authority contract while changing failure provenance.",
+    "executor_notes": "Removed unused getFastRenderRouteDecision()/CLIENT_CLIP_TYPES and renamed runExportGuard() to collectExportGuardInput(). Render-router dynamic import/route failures now go through planRender() as a browser-export route-unsupported blocker and sync planner diagnostics. Exporter failed phases now keep progress.log when provided or use \"Render failed during execution.\" Added hook tests for structured router failure diagnostics and failed exporter fallback logging. Verified with full hook test file: 61 passed.",
+    "files_changed": [
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx"
+    ],
+    "commands_run": [
+      "rg -n \"getFastRenderRouteDecision|runExportGuard|CLIENT_CLIP_TYPES\" src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Best-effort checkpoint was skipped because .megaplan/plans/m3-export-readiness-20260710-0146/execution_batch_7.json was not present as a writable file; the reference template file exists at execute_batch_7_output.json.",
+  "Advisory observation mismatch: git status/content hash delta found unclaimed files: .github/workflows/slot-first-quality.yml, docs/extensions/composition-spine/m1b-composition-graph.md, docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/phase4-readiness.md, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/live-webcam-canary.test.ts, src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/lib/renderRouter.test.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: docs/extensions/composition-spine/m0-fixture-matrices.md, src/tools/video-editor/hooks/useClientRender.test.tsx, src/tools/video-editor/hooks/useClientRender.ts",
+  "Advisory audit finding: Git status shows changed files not claimed by any task: .github/workflows/slot-first-quality.yml, docs/extensions/composition-spine/m1b-composition-graph.md, docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/live-webcam-canary.test.ts, src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx, src/tools/video-editor/lib/renderRouter.test.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts, src/tools/video-editor/runtime/renderPlanner.test.ts",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T9"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC9",
+    "task_id": "T9",
+    "verdict": "",
+    "question": "Did the scoped Vitest selectors, new client-render selector, stale-symbol scan, and broad validation command run with results documented and no untriaged new failure?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Export guard scans (currently runExportGuard) are demoted to planner-input adapters, not removed. They remain useful as structured diagnostics that feed planner readiness rather... - Aligned with the Epic North Star constraint: 'Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.' The plan renames the function to refle...
+- SD2: Scoped test selectors use seven existing Vitest test files as the deterministic baseline for finalize, with full_suite_fallback enabled for safety. - The prior iteration failed finalize because test_blast_radius had no machine-readable selectors. These seven paths cover all surfaces named by the plan (hooks, planner, router, export guard, readiness docs) and are co...
+- SD3: WebCodecs unsupported failure in useClientRender.ts gets structured RenderBlocker-shaped provenance without introducing new readiness APIs or planner integration beyond what exi... - The plan keeps the change local to client execution unless existing types make planner integration natural. This avoids scope creep into new readiness APIs while meeting the 'must' criterion for structured blocker pro...
+
+        ## Plan execution order rationale
+
+        1. Confirm insertion points before editing.
+2. Apply hook/source changes before tests that assert new behavior.
+3. Update docs/comments after source behavior is settled.
+4. Re-audit message paths after all edits.
+5. Keep the scoped test selector list synchronized with any newly added or removed test file.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the listed order. Keep the hook changes narrowly scoped to provenance and logging, then add focused tests that would have failed on the old behavior. Documentation edits should reference canonical planner/readiness sources rather than restating blocker enums. The final validation task is the authoritative test step; do not turn it into a run-until-pass loop or weaken gates to pass.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146/execute_batch_8_output.json
+        - Only produce `task_updates` for these tasks: [T9]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC9]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146/execution_batch_8.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - All terminal verification commands must run from the Project directory (`/workspace/extension-reality-convergence-epic/reigh-app`) or a descendant. Do not `cd` to `/workspace/arnold`, an editable-engine mirror, or any shared engine checkout for tests; those paths are outside the session worktree and the sandbox will refuse them.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T9",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC9",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

@@ -600,6 +600,150 @@ describe('useRenderState render routing', () => {
     expect(result.current.renderResultFilename).toBe('out.mp4');
   });
 
+  it('records a concise render log when an injected exporter fails without progress text', async () => {
+    const exporter = {
+      render: vi.fn(async () => ({
+        id: 'job-1',
+        subscribe(listener: (progress: { phase: string; progress?: number; resultUrl?: string | null; log?: string }) => void) {
+          listener({
+            phase: 'failed',
+            progress: 0.4,
+          });
+          return () => undefined;
+        },
+      })),
+    };
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'clip-native',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      {
+        fps: 30,
+        durationInFrames: 30,
+        compositionWidth: 1920,
+        compositionHeight: 1080,
+      },
+      exporter,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(exporter.render).toHaveBeenCalledTimes(1);
+    expect(result.current.renderStatus).toBe('error');
+    expect(result.current.renderLog).toBe('Render failed during execution.');
+  });
+
+  it('routes render-router load failures through planner diagnostics', async () => {
+    const collection = createDiagnosticCollection();
+    const runtimeValue = {
+      diagnosticCollection: collection,
+    } as unknown as VideoEditorRuntimeContextValue;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <DataProviderContext.Provider value={runtimeValue}>
+        {children}
+      </DataProviderContext.Provider>
+    );
+    renderRouterMocks.decideRenderRoute.mockImplementationOnce(() => {
+      throw new Error('dynamic import failed');
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'clip-native',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      null,
+    ), { wrapper });
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    const plannerDiagnostic = collection.getSnapshot().find(
+      (diagnostic) => diagnostic.detail?.source === 'render-planner',
+    );
+    expect(result.current.renderStatus).toBe('error');
+    expect(result.current.renderLog).toBe('Render routing unavailable: dynamic import failed');
+    expect(mocks.startClientRender).not.toHaveBeenCalled();
+    expect(plannerDiagnostic).toBeDefined();
+    expect(plannerDiagnostic).toMatchObject({
+      severity: 'error',
+      code: 'planner/browser-export/route-unsupported',
+      message: 'Render routing unavailable: dynamic import failed',
+    });
+    expect(plannerDiagnostic?.detail).toMatchObject({
+      phase: 'dynamic-import',
+      route: 'browser-export',
+      reason: 'route-unsupported',
+    });
+    expect(renderPlannerMocks.planRender).toHaveBeenCalledWith(expect.objectContaining({
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'planner.renderRouter.dynamicImportFailure',
+          route: 'browser-export',
+          reason: 'route-unsupported',
+          message: 'Render routing unavailable: dynamic import failed',
+          detail: expect.objectContaining({
+            source: 'render-router-import',
+            phase: 'dynamic-import',
+            errorName: 'Error',
+          }),
+        }),
+      ]),
+    }));
+  });
+
+  it('preserves injected exporter failed progress text in the render log', async () => {
+    const exporter = {
+      render: vi.fn(async () => ({
+        id: 'job-1',
+        subscribe(listener: (progress: { phase: string; progress?: number; resultUrl?: string | null; log?: string }) => void) {
+          listener({
+            phase: 'failed',
+            progress: 0.7,
+            log: 'Encoder exited with code 42.',
+          });
+          return () => undefined;
+        },
+      })),
+    };
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'clip-native',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      {
+        fps: 30,
+        durationInFrames: 30,
+        compositionWidth: 1920,
+        compositionHeight: 1080,
+      },
+      exporter,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(exporter.render).toHaveBeenCalledTimes(1);
+    expect(result.current.renderStatus).toBe('error');
+    expect(result.current.renderLog).toBe('Encoder exited with code 42.');
+  });
+
   it('blocks malformed remotion_module metadata without invoking the client renderer', async () => {
     const collection = createDiagnosticCollection();
     const runtimeValue = {
@@ -1356,6 +1500,74 @@ describe('useRenderState export guard', () => {
       });
 
       expect(result.current.renderStatus).toBe('error');
+      expect(mocks.startClientRender).not.toHaveBeenCalled();
+    });
+
+    it('feeds guard scan output to planner readiness before blocking render', async () => {
+      const plannerMessage = 'Planner readiness blocks the timeline after reading guard input.';
+      const extRuntime = makeExtensionRuntime({
+        extensions: [
+          {
+            manifest: {
+              id: 'test-ext' as any,
+              version: '1.0.0',
+              contributions: [],
+            },
+          } as any,
+        ],
+      });
+      const guardResult = {
+        ...cleanGuardResult(),
+        diagnostics: [
+          {
+            severity: 'warning' as const,
+            code: 'export/provider-warning',
+            message: 'Guard scan found provider context.',
+            detail: { clipId: 'c1', providerId: 'provider-a' },
+          },
+        ],
+        hasBlockingErrors: false,
+      };
+
+      guardMocks.scanExportConfig.mockReturnValue(guardResult);
+      renderPlannerMocks.buildExportReadinessPlan.mockReturnValueOnce(makePlannerResult([
+        {
+          id: 'planner.provider.browser-export.blocked',
+          severity: 'error',
+          route: 'browser-export',
+          reason: 'route-unsupported',
+          message: plannerMessage,
+          detail: {
+            source: 'render-planner',
+            providerId: 'provider-a',
+          },
+        },
+      ]));
+
+      const { result } = renderHook(() => useRenderState(
+        buildConfig({
+          id: 'c1',
+          clipType: 'media',
+          track: 'V1',
+          at: 0,
+          hold: 1,
+        }),
+        null,
+        null,
+        extRuntime,
+      ));
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
+      expect(renderPlannerMocks.buildExportReadinessPlan).toHaveBeenCalledWith(expect.objectContaining({
+        guard: guardResult,
+        extensionRuntime: extRuntime,
+      }));
+      expect(result.current.renderStatus).toBe('error');
+      expect(result.current.renderLog).toContain(plannerMessage);
       expect(mocks.startClientRender).not.toHaveBeenCalled();
     });
 

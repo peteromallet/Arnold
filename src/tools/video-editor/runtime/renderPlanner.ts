@@ -296,11 +296,10 @@ const EXPORT_DIAGNOSTIC_REASON_BY_CODE = Object.freeze({
 } satisfies Partial<Record<ExportDiagnostic['code'], RenderBlockerReason>>);
 
 // M3 export-readiness category audit:
-// Existing planner-owned paths: missing output formats, route-unsupported output
-// formats, process dependency states, shader/material blockers, and live-binding
-// blockers. Missing/normalized inputs still needed: disabled formats,
-// request-scoped compile handler absence, worker/provider availability, and
-// unknown contribution IDs.
+// Planner-owned paths now include output-format availability, route support,
+// process dependency states, shader/material blockers, live-binding blockers,
+// request-scoped compile handler absence, provider availability, and unknown
+// contribution IDs. Guard/export scans feed this reducer as structured input.
 
 const DETERMINISM_RANK: Record<DeterminismStatus, number> = {
   deterministic: 0,

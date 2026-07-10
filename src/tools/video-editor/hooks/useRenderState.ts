@@ -32,6 +32,7 @@ import {
 } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import { syncPlannerDiagnosticsToCollection } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
 import type {
+  CapabilityFinding,
   Diagnostic,
   ExportDiagnostic,
   RenderBlocker,
@@ -45,44 +46,6 @@ export type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
 export type ExportStatus = 'idle' | 'exporting' | 'done' | 'error';
 
 type RenderProgress = { current: number; total: number; percent: number; phase: string } | null;
-
-const CLIENT_CLIP_TYPES = new Set(['media', 'text', 'effect-layer', 'hold']);
-
-function getFastRenderRouteDecision(resolvedConfig: ResolvedTimelineConfig | null) {
-  const clips = resolvedConfig?.clips ?? [];
-
-  if (clips.length === 0) {
-    return { route: 'browser-remotion' as const, reason: 'no_clips' };
-  }
-
-  let hasGeneratedModuleClip = false;
-  let hasOtherClip = false;
-  for (const clip of clips) {
-    if (clip.generation?.sequence_lane === 'remotion_module') {
-      if (!clip.generation?.artifact_id) {
-        return { route: 'preview-only' as const, reason: 'remotion_module_missing_artifact' };
-      }
-      hasGeneratedModuleClip = true;
-      continue;
-    }
-
-    if (!clip.clipType || CLIENT_CLIP_TYPES.has(clip.clipType)) {
-      hasOtherClip = true;
-      continue;
-    }
-
-    return null;
-  }
-
-  if (hasGeneratedModuleClip) {
-    return {
-      route: 'worker-banodoco' as const,
-      reason: hasOtherClip ? 'mixed_generated_module_and_other' : 'generated_remotion_module',
-    };
-  }
-
-  return { route: 'browser-remotion' as const, reason: 'pure_native_clips' };
-}
 
 type RenderRouteDecisionForPlanning = {
   readonly route: 'browser-remotion' | 'worker-banodoco' | 'preview-only' | 'external';
@@ -180,6 +143,43 @@ function planRouteDecisionBlocker(
       source: 'render-route-decision',
       providerRoute: decision.route,
       legacyReason: decision.reason,
+    },
+  };
+
+  return planRender({
+    diagnostics: [finding],
+    extensionRuntime: options?.extensionRuntime,
+    outputFormats: outputFormatsForPlanning(options?.extensionRuntime),
+    processStatuses: options?.processStatuses,
+    processResultAttachRecords: options?.processResultAttachRecords,
+  });
+}
+
+function renderRouterFailureMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  return detail && detail !== 'undefined'
+    ? `Render routing unavailable: ${detail}`
+    : 'Render routing unavailable.';
+}
+
+function planRenderRouterFailure(
+  error: unknown,
+  options?: {
+    readonly extensionRuntime?: ExtensionRuntime;
+    readonly processStatuses?: VideoEditorRuntimeContextValue['processStatuses'];
+    readonly processResultAttachRecords?: VideoEditorRuntimeContextValue['processResultAttachRecords'];
+  },
+): RenderPlannerResult {
+  const finding: CapabilityFinding = {
+    id: 'planner.renderRouter.dynamicImportFailure',
+    severity: 'error',
+    route: 'browser-export',
+    reason: 'route-unsupported',
+    message: renderRouterFailureMessage(error),
+    detail: {
+      source: 'render-router-import',
+      phase: 'dynamic-import',
+      ...(error instanceof Error ? { errorName: error.name } : {}),
     },
   };
 
@@ -316,7 +316,7 @@ function formatPlannerReadinessBlockLog(plan: RenderPlannerResult): string {
   return lines.join('\n');
 }
 
-interface ExportGuardRunResult {
+interface ExportGuardInputCollectionResult {
   readonly passed: boolean;
   readonly plannerResult?: RenderPlannerResult;
 }
@@ -388,7 +388,7 @@ export function useRenderState(
     },
   });
 
-  const runExportGuard = useCallback((): ExportGuardRunResult => {
+  const collectExportGuardInput = useCallback((): ExportGuardInputCollectionResult => {
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'export-guard');
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'render-planner');
 
@@ -456,8 +456,8 @@ export function useRenderState(
   ]);
 
   const startRender = useCallback(async () => {
-    // ---- export guard: scan for unknown IDs before routing ------------------
-    const guardResult = runExportGuard();
+    // ---- export guard: collect planner input before routing -----------------
+    const guardResult = collectExportGuardInput();
     if (!guardResult.passed) {
       return; // blocked by planner-owned export readiness
     }
@@ -476,12 +476,16 @@ export function useRenderState(
         },
       );
     } catch (error) {
+      const plannerResult = planRenderRouterFailure(error, {
+        extensionRuntime,
+        processStatuses,
+        processResultAttachRecords,
+      });
+      syncPlannerDiagnosticsToCollection(diagnosticCollection, plannerResult.blockers);
       setRenderStatus('error');
       setRenderProgress(null);
       setRenderDirty(false);
-      setRenderLog(error instanceof Error
-        ? `Render routing unavailable: ${error.message}`
-        : 'Render routing unavailable.');
+      setRenderLog(plannerResult.blockers[0]?.message ?? renderRouterFailureMessage(error));
       return;
     }
 
@@ -567,7 +571,11 @@ export function useRenderState(
       });
 
       job.subscribe((progress) => {
-        setRenderLog(progress.log ?? '');
+        setRenderLog(progress.phase === 'failed'
+          ? progress.log && progress.log.trim().length > 0
+            ? progress.log
+            : 'Render failed during execution.'
+          : progress.log ?? '');
         setRenderProgress(progress.progress == null
           ? null
           : {
@@ -608,7 +616,7 @@ export function useRenderState(
     renderMetadata?.durationInFrames,
     resolvedConfig,
     startClientRender,
-    runExportGuard,
+    collectExportGuardInput,
     diagnosticCollection,
   ]);
 
@@ -663,7 +671,7 @@ export function useRenderState(
     // because the exported data would be invalid.  Route-specific capability
     // blockers (browser-export blocked, worker-export blocked) are surfaced
     // as warnings but do not prevent compile-only export.
-    const guardResult = runExportGuard();
+    const guardResult = collectExportGuardInput();
     if (!guardResult.passed) {
       setExportStatus('error');
       setExportLogState(
@@ -742,7 +750,7 @@ export function useRenderState(
     extensionRuntime,
     processResultAttachRecords,
     processStatuses,
-    runExportGuard,
+    collectExportGuardInput,
   ]);
 
   return {

@@ -10,10 +10,8 @@ documents.
 
 ## Current Code Anchors
 
-- The roadmap and ticket backlog still name
-  `src/tools/video-editor/runtime/contributionFamilies.ts` as the contribution
-  family matrix. That file is not present in this checkout. The current
-  source-of-truth files are:
+- Earlier roadmap and ticket material referred to a removed contribution-family
+  matrix file. The current source-of-truth files are:
   - `src/sdk/video/families/contributionKinds.ts` — canonical source for the
     `VideoContributionKind` union and `VIDEO_CONTRIBUTION_KINDS` array
     (re-exported publicly as `ContributionKind` and `KNOWN_CONTRIBUTION_KINDS`
@@ -63,9 +61,10 @@ Required contract:
 2. Each render-relevant contribution must declare one or more route-level
    `CapabilityRequirement` records or a descriptor that `planRender()` can
    convert into equivalent requirements.
-3. Unsupported, preview-only, live-unbaked, missing-material, stale-material,
-   process-dependent, missing-contribution, and route-unsupported states must
-   produce actionable planner `RenderBlocker` records rather than silent
+3. Unsupported route, determinism, material, process, contribution, and
+   route-scope states must produce actionable planner `RenderBlocker` records
+   using the canonical
+   `RenderBlockerReason`/`RENDER_BLOCKER_REASONS` vocabulary rather than silent
    fallback or guard-owned blocked text.
 4. Route decisions must remain planner-backed. For clip routing,
    `renderRouter.ts` already indexes contributed clip records by `clipTypeId`,
@@ -153,7 +152,7 @@ not edit `docs/extensions/reigh-extension-layer-roadmap-v2.md` or
 
 | Source item | Current status | Reconciliation needed before Phase 4 |
 | --- | --- | --- |
-| Roadmap Phase 1 acceptance cites `runtime/contributionFamilies.ts` | Stale path in this checkout; canonical sources: `src/sdk/video/families/contributionKinds.ts` (kind union), `src/sdk/video/families/familyDefinitions.ts` (family registry), `config/extensions/family-maturity.json` (maturity snapshot). Runtime descriptor normalization lives in `extensionSurface.ts`. | Update roadmap/ticket references after review, or restore a generated/owned contribution-family matrix file if that remains the intended gate. |
+| Roadmap Phase 1 contribution-family acceptance | Canonical sources: `src/sdk/video/families/contributionKinds.ts` (kind union), `src/sdk/video/families/familyDefinitions.ts` (family registry), `config/extensions/family-maturity.json` (maturity snapshot). Runtime descriptor normalization lives in `extensionSurface.ts`. | Update roadmap/ticket references after review to use the current canonical sources. |
 | Roadmap Phase 4 "Contribution Families And Render Hardening" | Correctly identifies asset parsers, effects, transitions, clip types, keyframes, agent tools, live data, render materials, sidecars/processes, and shaders as the next higher-power families. | Keep this sequencing, but require the checklist above and planner participation before any family moves to supported. |
 | EXT-030 AssetParserContribution | Planned. | Add explicit render/export/bake posture and diagnostics requirements to the ticket if asset parser output can affect timeline materialization. |
 | EXT-031 EffectContribution | Planned as trusted/signed packages. | Preserve trusted/signed wording, add manager trust warning coverage, and require planner blockers for preview-only effects. |
@@ -173,8 +172,8 @@ not edit `docs/extensions/reigh-extension-layer-roadmap-v2.md` or
 Phase 4 should not start as broad parallel family implementation. The next
 accepted action should be either:
 
-1. Fix the stale `contributionFamilies.ts` reference by updating to current
-   canonical sources (`src/sdk/video/families/contributionKinds.ts`,
+1. Update roadmap and ticket references to current canonical contribution-family
+   sources (`src/sdk/video/families/contributionKinds.ts`,
    `src/sdk/video/families/familyDefinitions.ts`, and
    `config/extensions/family-maturity.json`), then update roadmap/ticket docs
    after review; or
