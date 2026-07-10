@@ -23,6 +23,17 @@ from arnold_pipelines.megaplan.handlers.structured_output import (
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 
+def test_evaluator_promotion_does_not_erase_nonempty_worker_verdict() -> None:
+    from arnold_pipelines.megaplan.orchestration.critique_runtime import (
+        _prefer_nonempty_evaluator_payload,
+    )
+
+    worker = {"selections": [{"check_id": "correctness"}], "skipped": []}
+    promoted_empty = {"selections": [], "skipped": [{"check_id": "correctness"}]}
+
+    assert _prefer_nonempty_evaluator_payload(worker, promoted_empty) == worker
+
+
 class TestAdaptiveCritiqueRouting:
     def test_tier_chain_selects_first_spec_for_routing(
         self, monkeypatch: pytest.MonkeyPatch
