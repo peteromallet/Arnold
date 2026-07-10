@@ -3113,6 +3113,37 @@ def handle_execute_auto_loop(
                     if task.get("status") == "blocked"
                     and isinstance(task.get("id"), str)
                 }
+        # A declared unavailable baseline is not a task failure.  Convert an
+        # all-baseline blocked frontier into durable deferred evidence before
+        # evaluating the ordinary blocked-task short circuit.  Otherwise a
+        # baseline capture outage consumes quality retries forever even though
+        # the final review is the authoritative verifier for this condition.
+        _initial_baseline_deviations = baseline_unavailable_checkpoint_deviations(
+            finalize_data, blocked_task_ids
+        )
+        _initial_baseline_ids = {
+            deviation.task_id
+            for deviation in _initial_baseline_deviations
+            if deviation.task_id is not None
+        }
+        if _initial_baseline_ids and _initial_baseline_ids == blocked_task_ids:
+            deferred_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
+                finalize_data
+            )
+            if deferred_ids:
+                baseline_unavailable_acks.extend(deferred_acks)
+                write_plan_artifact_json(
+                    plan_dir, "finalize.json", finalize_data, contract_context=None
+                )
+                tasks = finalize_data.get("tasks", [])
+                blocked_task_ids = {
+                    task["id"]
+                    for task in tasks
+                    if isinstance(task, dict)
+                    and task.get("status") == "blocked"
+                    and isinstance(task.get("id"), str)
+                }
+
         # Now, only short-circuit if blocked tasks remain (within-session).
         # Route blocked-task evaluation through typed policy outcomes
         # (``evaluate_blocker_recovery_policy``) while preserving the
