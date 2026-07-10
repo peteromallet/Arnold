@@ -79,6 +79,22 @@ _TERMINAL_AUTHORITY_CLAIMS = frozenset({"done", "skipped", "waived", "not_applic
 _AUDIT_RESEARCH_NOTES_MIN_LEN = 100
 
 
+def has_durable_terminal_task_evidence(task: Mapping[str, Any]) -> bool:
+    """Whether terminal finalized output must survive stale batch overlays."""
+    status = _optional_str(task.get("status"))
+    if status == "done":
+        return any(
+            _string_values(task.get(field))
+            for field in ("files_changed", "commands_run", "evidence_files", "sections_written")
+        )
+    if status == "skipped":
+        notes = _optional_str(task.get("executor_notes"))
+        return bool(notes and not is_rubber_stamp(notes, strict=True))
+    return status in {"waived", "not_applicable"}
+
+
+
+
 @dataclass(frozen=True)
 class AuthorityDecision:
     """Authority adapter decision for one task.
