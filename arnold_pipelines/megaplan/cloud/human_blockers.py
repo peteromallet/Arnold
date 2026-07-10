@@ -856,7 +856,7 @@ def _is_mechanical_blocker(
     human_gate_keywords = (
         "awaiting human", "needs review", "blocked by follow-up",
         "needs approval", "human intervention", "manual review",
-        "true blocker", "escalation",
+        "true blocker", "escalate to human",
     )
     has_human_gate_indicator = any(kw in summary for kw in human_gate_keywords)
 
@@ -867,7 +867,9 @@ def _is_mechanical_blocker(
     mechanical_keywords = (
         "mechanical", "liveness", "timeout", "rate-limit",
         "rate limit", "crash", "tool failure", "launch failure",
-        "mechanical_launch", "kimi_launch",
+        "mechanical_launch", "kimi_launch", "stale active_step",
+        "stale active step", "dead worker", "worker exited",
+        "pid is not live", "pid not live",
     )
     has_mechanical_indicator = any(kw in summary for kw in mechanical_keywords)
 
