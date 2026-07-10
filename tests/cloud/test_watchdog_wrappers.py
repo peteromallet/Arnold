@@ -7039,6 +7039,74 @@ session_health_status demo-session {workspace} {spec_path} chain ""
     assert result.stdout.strip() == "alive"
 
 
+def test_repair_loop_resolver_rejects_stale_dead_active_step(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones:\n- label: m1\n", encoding="utf-8")
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = (
+        workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    )
+    chain_state_path.parent.mkdir(parents=True)
+    plan_name = "demo-plan"
+    chain_state_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan_name,
+                "current_milestone_index": 0,
+                "last_state": "initialized",
+            }
+        ),
+        encoding="utf-8",
+    )
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    plan_dir.joinpath("state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "initialized",
+                "active_step": {
+                    "phase": "prep",
+                    "worker_pid": 99_999_999,
+                    "started_at": "2026-07-10T01:36:30Z",
+                    "last_activity_at": "2026-07-10T01:41:28Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker_dir = tmp_path / "markers"
+    data_dir = marker_dir / "repair-data"
+    data_dir.mkdir(parents=True)
+    marker_dir.joinpath("demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_repair_function("resolver_active_step_is_alive"),
+            f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
+            f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            f"MARKER_DIR={shlex.quote(str(marker_dir))}",
+            f"DATA_DIR={shlex.quote(str(data_dir))}",
+            "resolver_active_step_is_alive demo-session",
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-lc", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 1, result.stderr
+
+
 def test_watchdog_health_treats_orphaned_chain_process_as_alive(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()
