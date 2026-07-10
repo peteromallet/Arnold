@@ -880,6 +880,42 @@ def _checkout_milestone_branch(
             if ancestor.returncode == 0:
                 writer(f"[chain] {branch} already contains {fork_point}\n")
             elif ancestor.returncode == 1:
+                if expected_base_ref:
+                    branch_has_expected = _compat().subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", expected_base_ref, "HEAD"],
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    fork_has_expected = _compat().subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", expected_base_ref, fork_point],
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    writer(
+                        "[chain] git merge-base --is-ancestor "
+                        f"{expected_base_ref} HEAD -> rc={branch_has_expected.returncode}\n"
+                    )
+                    writer(
+                        "[chain] git merge-base --is-ancestor "
+                        f"{expected_base_ref} {fork_point} -> rc={fork_has_expected.returncode}\n"
+                    )
+                    if (
+                        branch_has_expected.returncode == 0
+                        and fork_has_expected.returncode == 1
+                    ):
+                        writer(
+                            "[chain] skipping automatic rebase for existing milestone "
+                            f"branch {branch}: {fork_point} no longer contains the "
+                            f"recorded target base {expected_base_ref}; preserving "
+                            "the existing branch history for repair relaunch.\n"
+                        )
+                        return base_sha
                 rebase = _compat().subprocess.run(
                     ["git", "rebase", fork_point],
                     cwd=str(root),
