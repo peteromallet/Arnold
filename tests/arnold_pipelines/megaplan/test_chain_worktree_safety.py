@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -533,6 +534,66 @@ def test_checkout_existing_milestone_reconciles_with_refreshed_base(
     local_branch = _git(runner, "rev-parse", "HEAD").stdout.strip()
     assert remote_branch == local_branch
     assert any("git rebase origin/native-python-working-tree -> rc=0" in m for m in messages)
+
+
+def test_checkout_existing_milestone_skips_rebase_when_remote_base_rewrites_away_expected_base(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    runner = tmp_path / "runner"
+    messages: list[str] = []
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "chain.yaml").write_text("profile: partnered-5\n", encoding="utf-8")
+    _git(source, "add", "chain.yaml")
+    _git(source, "commit", "-m", "base")
+    _git(source, "branch", "-M", "main")
+    _git(source, "push", "-u", "origin", "main")
+    expected_base = _git(source, "rev-parse", "HEAD").stdout.strip()
+
+    _git(source, "checkout", "-b", "cloud/m1")
+    (source / "milestone.txt").write_text("m1\n", encoding="utf-8")
+    _git(source, "add", "milestone.txt")
+    _git(source, "commit", "-m", "milestone")
+    milestone_sha = _git(source, "rev-parse", "HEAD").stdout.strip()
+    _git(source, "push", "-u", "origin", "cloud/m1")
+
+    _git(source, "checkout", "--orphan", "rewrite-main")
+    for path in source.iterdir():
+        if path.name == ".git":
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    (source / "README.md").write_text("rewritten main\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "rewrite main unrelated")
+    _git(source, "branch", "-M", "rewrite-main", "main")
+    _git(source, "push", "--force", "origin", "main")
+
+    _git(tmp_path, "clone", "--branch", "main", str(origin), str(runner))
+    _git(runner, "config", "user.email", "test@example.com")
+    _git(runner, "config", "user.name", "Test User")
+
+    _checkout_milestone_branch(
+        runner,
+        "cloud/m1",
+        base_branch="main",
+        writer=messages.append,
+        from_origin=True,
+        expected_base_ref=expected_base,
+    )
+
+    assert _git(runner, "branch", "--show-current").stdout.strip() == "cloud/m1"
+    assert _git(runner, "rev-parse", "HEAD").stdout.strip() == milestone_sha
+    assert (runner / "milestone.txt").read_text(encoding="utf-8") == "m1\n"
+    assert any("skipping automatic rebase for existing milestone branch cloud/m1" in m for m in messages)
+    assert not any("git rebase origin/main" in m for m in messages)
 
 
 def test_run_chain_repushes_deleted_remote_base_branch_from_local_ref(
