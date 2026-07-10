@@ -153,7 +153,83 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
         evidence = entry.get("evidence") or {}
         if isinstance(evidence, Mapping) and evidence.get("marker"):
             out.append(f"      evidence: {evidence['marker']}")
+        _append_shadow_views(out, entry)
     return "\n".join(out)
+
+
+def _append_shadow_views(out: list[str], entry: Mapping[str, Any]) -> None:
+    """Render the additive authority diagnostics without changing legacy status.
+
+    The snapshot builder owns collection and classification.  This formatter only
+    makes the independent, read-only projections visible to an operator, keeping
+    their hashes and source-addressable contradictions close to the session that
+    produced them.
+    """
+
+    execution = entry.get("execution_authority")
+    if isinstance(execution, Mapping):
+        out.append(
+            "      execution_authority [shadow, read-only]: "
+            f"accepted_tasks={len(execution.get('accepted_task_ids') or ())} "
+            f"unresolved_claims={len(execution.get('unresolved_claim_ids') or ())} "
+            f"quarantined={len(execution.get('quarantine_ids') or ())} "
+            f"hash={execution.get('view_hash') or '?'}"
+        )
+        _append_shadow_diagnostics(out, execution)
+
+    runner = entry.get("runner")
+    if isinstance(runner, Mapping):
+        out.append(
+            "      runner [shadow, read-only]: "
+            f"status={runner.get('status') or 'unknown'} "
+            f"hash={runner.get('view_hash') or '?'}"
+        )
+        _append_shadow_diagnostics(out, runner)
+
+    publication = entry.get("publication")
+    if isinstance(publication, Mapping):
+        out.append(
+            "      publication [shadow, read-only]: "
+            f"status={publication.get('status') or 'unknown'} "
+            f"hash={publication.get('view_hash') or '?'}"
+        )
+        for observation in _sorted_mapping_items(publication.get("observations"), "field"):
+            field = observation.get("field") or "unknown"
+            state = observation.get("state") or "unknown"
+            value = observation.get("value")
+            rendered_value = f" value={value}" if value is not None else ""
+            out.append(
+                f"        observation: {field}={state}{rendered_value} "
+                f"[source: {observation.get('source') or '?'}]"
+            )
+        _append_shadow_diagnostics(out, publication)
+
+
+def _append_shadow_diagnostics(out: list[str], view: Mapping[str, Any]) -> None:
+    """Append deterministic source paths and reasons for one shadow view."""
+
+    for diagnostic in _sorted_mapping_items(view.get("diagnostics"), "code"):
+        code = diagnostic.get("code") or "unknown"
+        subject = diagnostic.get("subject_id") or diagnostic.get("field")
+        subject_text = f" subject={subject}" if subject else ""
+        out.append(
+            f"        diagnostic: {code}{subject_text} — "
+            f"{diagnostic.get('reason') or 'no reason provided'} "
+            f"[source: {diagnostic.get('source') or '?'}]"
+        )
+
+    source_paths = sorted(
+        str(path) for path in (view.get("source_paths") or ()) if isinstance(path, str) and path
+    )
+    if source_paths:
+        out.append("        source_paths: " + ", ".join(source_paths))
+
+
+def _sorted_mapping_items(value: Any, field: str) -> list[Mapping[str, Any]]:
+    """Return mapping records in a stable order even for externally supplied data."""
+
+    items = [item for item in (value or ()) if isinstance(item, Mapping)]
+    return sorted(items, key=lambda item: (str(item.get(field) or ""), str(item.get("source") or "")))
 
 
 def format_attention_only(snapshot: Mapping[str, Any] | None) -> str:

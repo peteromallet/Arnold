@@ -20,6 +20,7 @@ Design rules (see ``docs/ops/elegant-cloud-status-resident-plan.md``):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -29,6 +30,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from arnold_pipelines.megaplan.authority.views import (
+    PlanExecutionDiagnostic,
+    PlanExecutionView,
+    derive_plan_execution_view,
+    derive_publication_view,
+    derive_runner_view,
+)
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
@@ -36,6 +44,7 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
 from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
+from arnold_pipelines.run_authority import canonical_json, reduce_run_authority
 
 # --- canonical paths -------------------------------------------------------
 
@@ -912,7 +921,7 @@ def _build_session_entry(
         now=now,
     )
 
-    return {
+    entry = {
         "session": session,
         "display_name": session,
         "workspace": str(workspace) if workspace else "",
@@ -950,6 +959,144 @@ def _build_session_entry(
             "superseded_by": superseding_sibling,
         },
     }
+    entry.update(
+        _compose_shadow_views(
+            session=session,
+            marker=marker,
+            marker_path=marker_path,
+            chain_health=chain_health,
+            plan_state=plan_state_doc,
+            current_target=current_target_record,
+            liveness=liveness,
+            latest_activity=latest_activity,
+            now=now,
+        )
+    )
+    return entry
+
+
+def _compose_shadow_views(
+    *,
+    session: str,
+    marker: Mapping[str, Any],
+    marker_path: Path,
+    chain_health: Mapping[str, Any] | None,
+    plan_state: Mapping[str, Any] | None,
+    current_target: Mapping[str, Any],
+    liveness: Mapping[str, bool],
+    latest_activity: str | None,
+    now: datetime,
+) -> dict[str, Any]:
+    """Compose sibling diagnostic views from values already collected above.
+
+    These projections are deliberately appended after legacy classification has
+    completed.  They perform no reads and are not inputs to ``status``,
+    ``operator_next``, or any repair decision.
+    """
+
+    plan_record = current_target.get("plan_state")
+    plan_record = plan_record if isinstance(plan_record, Mapping) else {}
+    chain_record = current_target.get("chain_state")
+    chain_record = chain_record if isinstance(chain_record, Mapping) else {}
+    run_revision = str(plan_record.get("fingerprint") or chain_record.get("fingerprint") or "unobserved")
+    authority = reduce_run_authority((), run_id=session or "unknown-session", run_revision=run_revision)
+    execution = derive_plan_execution_view(
+        authority,
+        plan_state if isinstance(plan_state, Mapping) else (),
+        evidence_decisions={},
+        plan_source=str(plan_record.get("path") or "observation://plan-state-unavailable"),
+    )
+    execution = _add_collector_diagnostics(execution, current_target, plan_record)
+
+    marker_source = str(marker_path)
+    runner_observations: list[dict[str, Any]] = [{
+        "observation_type": "process",
+        "source": marker_source,
+        "state": "live" if liveness.get("tmux") or liveness.get("process") else "stopped",
+        "identity": session or None,
+        "expected_identity": session or None,
+    }]
+    activity_dt = _parse_iso(latest_activity)
+    if activity_dt is not None:
+        age = max(0, int((now - activity_dt).total_seconds()))
+        runner_observations.append({
+            "observation_type": "heartbeat",
+            "source": str(plan_record.get("path") or chain_record.get("path") or marker_source),
+            "state": "live" if age <= STALE_ACTIVITY_S else "unknown",
+            "identity": session or None,
+            "expected_identity": session or None,
+            "heartbeat_age_seconds": age,
+            "stale": age > STALE_ACTIVITY_S,
+        })
+    runner = derive_runner_view(
+        runner_observations,
+        expected_identity=session or None,
+        stale_after_seconds=STALE_ACTIVITY_S,
+    )
+
+    marker_publication: dict[str, Any] = {"source": marker_source}
+    health_source = str(marker_path.with_name(f"{session}.chain-health.progress.json"))
+    health_publication: dict[str, Any] = {"source": health_source}
+    for field in ("branch", "dirty_workspace", "pushed_sha", "auth", "no_push"):
+        if isinstance(chain_health, Mapping) and field in chain_health:
+            health_publication[field] = chain_health[field]
+        if field in marker:
+            marker_publication[field] = marker[field]
+    if isinstance(chain_health, Mapping) and chain_health.get("pr_number") is not None:
+        health_publication["pull_request"] = str(chain_health["pr_number"])
+    publication = derive_publication_view((marker_publication, health_publication))
+
+    return {
+        "execution_authority": execution.to_dict(),
+        "runner": runner.to_dict(),
+        "publication": publication.to_dict(),
+    }
+
+
+def _add_collector_diagnostics(
+    view: PlanExecutionView,
+    current_target: Mapping[str, Any],
+    plan_record: Mapping[str, Any],
+) -> PlanExecutionView:
+    """Retain source-addressable legacy contradictions without promoting them."""
+
+    diagnostics = list(view.diagnostics)
+    plan_state = str(plan_record.get("current_state") or "").strip()
+    plan_source = str(plan_record.get("path") or "observation://plan-state-unavailable")
+    if plan_state:
+        diagnostics.append(PlanExecutionDiagnostic(
+            "legacy_plan_state_observation",
+            str(plan_record.get("name") or "plan"),
+            f"legacy plan state {plan_state!r} is diagnostic only and grants no task authority",
+            plan_source,
+        ))
+    stale_evidence = current_target.get("stale_evidence")
+    if isinstance(stale_evidence, list):
+        for index, item in enumerate(stale_evidence):
+            if not isinstance(item, Mapping):
+                continue
+            code = str(item.get("kind") or "stale_collector_evidence")
+            source = str(item.get("path") or "observation://current-target")
+            diagnostics.append(PlanExecutionDiagnostic(
+                code,
+                str(item.get("plan_name") or item.get("session") or f"collector-{index}"),
+                f"current-target collector reported {code.replace('_', ' ')}",
+                source,
+            ))
+    values = {
+        "schema_version": view.schema_version,
+        "run_id": view.run_id,
+        "run_revision": view.run_revision,
+        "authority_view_hash": view.authority_view_hash,
+        "tasks": view.tasks,
+        "accepted_task_ids": view.accepted_task_ids,
+        "unresolved_claim_ids": view.unresolved_claim_ids,
+        "quarantine_ids": view.quarantine_ids,
+        "diagnostics": tuple(sorted(set(diagnostics))),
+    }
+    unsigned = PlanExecutionView(**values, view_hash="pending")
+    digest = hashlib.sha256(canonical_json(unsigned._payload()).encode("utf-8")).hexdigest()
+    return PlanExecutionView(**values, view_hash=digest)
 
 
 def _classify_session(
