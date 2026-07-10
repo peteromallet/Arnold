@@ -930,7 +930,7 @@ def _checkout_milestone_branch(
                             f"recorded target base {expected_base_ref}; preserving "
                             "the existing branch history for repair relaunch.\n"
                         )
-                        return base_sha
+                        return expected_base_ref
                     if (
                         branch_has_expected.returncode == 1
                         and fork_has_expected.returncode == 0
@@ -943,7 +943,7 @@ def _checkout_milestone_branch(
                             "cannot be rebased onto the current base. Preserving the "
                             "existing branch for repair relaunch.\n"
                         )
-                        return base_sha
+                        return expected_base_ref
                 rebase = _compat().subprocess.run(
                     ["git", "rebase", fork_point],
                     cwd=str(root),
