@@ -3844,6 +3844,68 @@ def _rearm_fresh_session_execute_block(
     return True
 
 
+def _rearm_stale_terminal_execute_cursor_mismatch(
+    plan_dir: Path,
+    *,
+    writer,
+) -> bool:
+    """Clear only a stale execute->review cursor wrapper after live authority."""
+    state_path = plan_dir / "state.json"
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("current_state") != STATE_BLOCKED or payload.get("active_step"):
+        return False
+    failure = payload.get("latest_failure")
+    if not isinstance(failure, dict):
+        return False
+    if failure.get("kind") != "workflow_cursor_mismatch" or failure.get("phase") != "execute":
+        return False
+    message = failure.get("message")
+    if not isinstance(message, str) or (
+        "workflow cursor from last_step expects one of [review]" not in message
+        or "control projection offered [execute]" not in message
+    ):
+        return False
+    authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    if not authoritative:
+        return False
+
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    audit = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "chain admission cleared stale execute-to-review cursor mismatch",
+        "authority_reason": reason,
+    }
+
+    def _patch_rearmed_cursor(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("terminal_cursor_recoveries", [])
+            if isinstance(entries, list):
+                entries.append(audit)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_EXECUTED},
+        mutation=_patch_rearmed_cursor,
+    )
+    writer(
+        "[chain] terminal execute authority now passes; cleared stale "
+        "execute-to-review cursor mismatch\n"
+    )
+    return True
+
+
 def _rearm_stale_incomplete_execute_cursor_mismatch(
     plan_dir: Path,
     *,
@@ -5595,6 +5657,7 @@ def run_chain(
                 except CliError:
                     plan_dir = None
                 if plan_dir is not None:
+                    _rearm_stale_terminal_execute_cursor_mismatch(plan_dir, writer=writer)
                     _rearm_stale_incomplete_execute_cursor_mismatch(plan_dir, writer=writer)
                     _rearm_stale_execute_authority_divergence(plan_dir, writer=writer)
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)

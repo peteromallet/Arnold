@@ -226,3 +226,22 @@ def test_admission_keeps_live_execute_authority_divergence_blocked(tmp_path: Pat
     assert not chain_module._rearm_stale_execute_authority_divergence(plan_dir, writer=lambda _text: None)
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state["current_state"] == "blocked"
+
+
+def test_admission_rearms_exact_terminal_review_cursor_mismatch(tmp_path: Path, monkeypatch) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(json.dumps({"current_state": "blocked", "latest_failure": {"kind": "workflow_cursor_mismatch", "phase": "execute", "message": "workflow cursor from last_step expects one of [review] but control projection offered [execute]"}}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(chain_module, "_latest_execution_batch_all_tasks_done", lambda _plan_dir: (True, "finalize.json"))
+    assert chain_module._rearm_stale_terminal_execute_cursor_mismatch(plan_dir, writer=lambda _text: None)
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "executed"
+    assert "latest_failure" not in state
+
+
+def test_admission_keeps_nonexact_terminal_cursor_mismatch_blocked(tmp_path: Path, monkeypatch) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(json.dumps({"current_state": "blocked", "latest_failure": {"kind": "workflow_cursor_mismatch", "phase": "execute", "message": "different cursor mismatch"}}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(chain_module, "_latest_execution_batch_all_tasks_done", lambda _plan_dir: (True, "finalize.json"))
+    assert not chain_module._rearm_stale_terminal_execute_cursor_mismatch(plan_dir, writer=lambda _text: None)
