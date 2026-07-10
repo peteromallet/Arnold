@@ -127,3 +127,53 @@ def test_old_batch_cannot_replace_terminal_finalize_commands(tmp_path: Path) -> 
         "python -m py_compile runtime.py",
         "pytest tests/test_runtime.py -q",
     ]
+
+
+from arnold_pipelines.megaplan.execute.aggregation import (
+    reconcile_finalized_review_scope_claims,
+)
+
+
+def test_review_scope_reconciliation_requires_terminal_task_and_committed_evidence(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "review-project"
+    base_sha = _init_repo(project_dir)
+    (project_dir / "tests").mkdir()
+    (project_dir / "tests" / "poller.py").write_text("POLL = 1\n", encoding="utf-8")
+    (project_dir / "runtime.py").write_text("RUNTIME = 1\n", encoding="utf-8")
+    _commit(project_dir, "reviewed work")
+
+    plan_dir = project_dir / ".megaplan" / "plans" / "review-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "task_verdicts": [
+                    {"task_id": "T1", "evidence_files": ["tests/poller.py"]},
+                    {"task_id": "T2", "evidence_files": ["runtime.py"]},
+                    {"task_id": "T3", "evidence_files": ["not-in-diff.py"]},
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": [], "commands_run": ["pytest"]},
+            {"id": "T2", "status": "pending", "files_changed": [], "commands_run": []},
+            {"id": "T3", "status": "done", "files_changed": [], "commands_run": ["pytest"]},
+        ]
+    }
+    reconciled = reconcile_finalized_review_scope_claims(
+        finalize_data,
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state={"meta": {"chain_policy": {"milestone_base_sha": base_sha}}},
+    )
+
+    assert reconciled == {"T1": ["tests/poller.py"]}
+    assert finalize_data["tasks"][0]["files_changed"] == ["tests/poller.py"]
+    assert finalize_data["tasks"][1]["files_changed"] == []
+    assert finalize_data["tasks"][2]["files_changed"] == []

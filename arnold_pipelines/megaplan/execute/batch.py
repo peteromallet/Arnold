@@ -58,6 +58,7 @@ from arnold_pipelines.megaplan.execute.aggregation import (
     _build_aggregate_execution_payload,
     _compute_scope_drift_for_execute_surface,
     phase_quality_deviations_for_current_attempt,
+    reconcile_finalized_review_scope_claims,
 )
 from arnold_pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
@@ -1811,6 +1812,13 @@ def handle_execute_one_batch(
             aggregate_payload.setdefault("sense_check_acknowledgments", []).extend(
                 deferred_acks
             )
+        reconcile_finalized_review_scope_claims(
+            finalize_data,
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state,
+        )
+        atomic_write_json(plan_dir / "finalize.json", finalize_data)
         # _run_and_merge_batch already wrote execution_audit.json; this handler
         # only writes the aggregate execution.json after the batch returns.
         write_plan_artifact_json(plan_dir, "execution.json", aggregate_payload, contract_context=None)
@@ -3715,6 +3723,12 @@ def handle_execute_auto_loop(
     finalize_data = apply_authoritative_execute_overrides(
         finalize_data,
         plan_dir=plan_dir,
+    )
+    reconcile_finalized_review_scope_claims(
+        finalize_data,
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state,
     )
     deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
         finalize_data
