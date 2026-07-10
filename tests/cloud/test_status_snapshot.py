@@ -1145,6 +1145,57 @@ def test_newer_terminal_chain_state_with_missing_completed_records_is_attention(
     assert "chain custody mismatch" in entry["operator_next"]
 
 
+def test_fresher_incomplete_chain_health_beats_stale_watchdog_complete(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n"
+        "  - label: m3\n"
+        "    idea: m3.md\n"
+        "  - label: m4\n"
+        "    idea: m4.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=False,
+        completed_count=3,
+        milestone_count=4,
+        current_plan_name="m4-demo-plan",
+        last_state="authority_divergence",
+        updated_at=NOW - timedelta(minutes=5),
+    )
+    watchdog_path = fx.root / "watchdog-report.json"
+    watchdog_path.write_text(
+        json.dumps(
+            {
+                "timestamp_utc": (NOW - timedelta(minutes=10)).isoformat(),
+                "sessions_seen": 1,
+                "items": [
+                    {"session": "epic-run", "status": "complete", "action": "observe", "message": "chain complete"}
+                ],
+                "issues": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(watchdog_report_path=watchdog_path)
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "running"
+    assert entry["chain_complete"] is False
+    assert entry["completed_count"] == 3
+    assert entry["milestone_count"] == 4
+    assert entry["progress"]["percent"] == 75
+
+
 def test_session_entry_progress_none_without_milestones(fx):
     fx.add_session("plan-only", plan_name="planX")
     # chain-health with no milestone_count → nothing to score → progress is None.

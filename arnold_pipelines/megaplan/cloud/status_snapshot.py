@@ -827,6 +827,20 @@ def _chain_state_complete(
     return completed_len >= milestone_count
 
 
+def _chain_health_explicitly_incomplete(chain_health: Mapping[str, Any] | None) -> bool:
+    if not isinstance(chain_health, Mapping) or not chain_health:
+        return False
+    last_state = str(chain_health.get("last_state") or "").strip().lower()
+    if last_state and last_state not in {"done", "complete", "completed"}:
+        return True
+    try:
+        completed_count = int(chain_health.get("completed_count"))
+        milestone_count = int(chain_health.get("milestone_count"))
+    except (TypeError, ValueError):
+        return False
+    return milestone_count > 0 and completed_count < milestone_count
+
+
 # --- per-session classification -------------------------------------------
 
 
@@ -856,6 +870,7 @@ def _build_session_entry(
     repair_progress = _load_json(marker_dir / f"{session}.repair-progress.json")
     needs_human = _load_json(repair_data_dir / f"{session}.needs-human.json")
     watchdog_item = watchdog_by_session.get(session, {})
+    watchdog_generated_at = _parse_iso(watchdog_item.get("_report_generated_at"))
 
     chain_complete = bool(chain_health.get("chain_complete")) if chain_health else False
     completed_count = chain_health.get("completed_count") if chain_health else None
@@ -919,6 +934,7 @@ def _build_session_entry(
         needs_human=needs_human,
         repair_progress=repair_progress,
         watchdog_item=watchdog_item,
+        watchdog_generated_at=watchdog_generated_at,
         liveness=liveness,
         superseding_sibling=superseding_sibling,
         latest_activity_dt=_parse_iso(latest_activity),
@@ -1416,6 +1432,7 @@ def _classify_session(
     needs_human: Mapping[str, Any],
     repair_progress: Mapping[str, Any],
     watchdog_item: Mapping[str, Any],
+    watchdog_generated_at: datetime | None,
     liveness: Mapping[str, bool],
     superseding_sibling: str | None,
     latest_activity_dt: datetime | None,
@@ -1503,7 +1520,14 @@ def _classify_session(
     # reports done chains as stalled attention, disagreeing with the watchdog.
     wd_status = str(watchdog_item.get("status") or "").lower()
     if wd_status in {"complete", "completed"}:
-        return "complete", "watchdog reports chain complete"
+        chain_health_updated_at = _parse_iso(chain_health.get("updated_at")) if isinstance(chain_health, Mapping) else None
+        if not (
+            watchdog_generated_at is not None
+            and chain_health_updated_at is not None
+            and chain_health_updated_at > watchdog_generated_at
+            and _chain_health_explicitly_incomplete(chain_health)
+        ):
+            return "complete", "watchdog reports chain complete"
 
     # Terminal success is the strongest signal and beats stale plan failures.
     if chain_complete:
@@ -1572,10 +1596,12 @@ def _load_watchdog_report(
                 continue
             name = item.get("session")
             if isinstance(name, str) and name:
+                stamped = dict(item)
+                stamped["_report_generated_at"] = report.get("timestamp_utc")
                 # Keep the most informative item per session.
                 existing = by_session.get(name)
-                if existing is None or _item_signal_rank(item) > _item_signal_rank(existing):
-                    by_session[name] = item
+                if existing is None or _item_signal_rank(stamped) > _item_signal_rank(existing):
+                    by_session[name] = stamped
     return report, by_session, []
 
 
