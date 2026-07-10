@@ -1,0 +1,84 @@
+anchors:
+  north_star: NORTHSTAR.md
+base_branch: main
+merge_policy: auto
+milestones:
+- label: m1-lifecycle-contract-and-ledger
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m1-lifecycle-contract-and-ledger.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Inventory every resident ingress, provenance, launch, acknowledgement,
+    completion-delivery, manifest, cursor, and recovery writer/reader before fixing
+    the canonical ledger and transition contract. Preserve unrelated dirty work and
+    active chains.
+  notes: Difficulty 5/5. Establishes the versioned authority, immutable identities,
+    transition table, and compatibility projections that every later sprint must use.
+- label: m2-transactional-inbound-and-burst-provenance
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m2-transactional-inbound-and-burst-provenance.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Trace Discord ingestion through persistence, authorization, coalescing,
+    profile invocation, acknowledgements, voice/transcription, escalations, history,
+    and restart behavior; identify every mutable-cursor provenance fallback.
+  notes: Difficulty 5/5. Makes accepted turns replayable and burst grouping provenance-preserving
+    before delegation changes.
+- label: m3-idempotent-delegation-and-side-effect-fencing
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m3-idempotent-delegation-and-side-effect-fencing.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Map the complete resident delegated-agent launch/process/manifest/result
+    lifecycle, concurrent callers, request_id recovery, PID validation, and every
+    side-effect commit point before designing durable uniqueness and fences.
+  notes: Difficulty 5/5. Prevents duplicate logical execution and rejects stale-worker
+    effects across ambiguous launch/restart boundaries.
+- label: m4-durable-ack-and-terminal-outbox
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m4-durable-ack-and-terminal-outbox.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Trace all acknowledgement and terminal Discord sends, retry/error
+    handling, reply target lookup, provider receipts, delivery fields/cursors, completion
+    sweeps, and interleaving tests before implementing the outbox.
+  notes: Difficulty 5/5. Moves acknowledgements and terminal replies under durable,
+    retryable, provenance-bound custody.
+- label: m5-recovery-migration-and-compatibility
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m5-recovery-migration-and-compatibility.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Inventory startup ordering, readiness, scheduled sweeps, legacy
+    manifest/record schemas, current partial-state repair paths, config flags, and
+    operator/status surfaces; design a reversible additive cutover without touching
+    unrelated sessions.
+  notes: Difficulty 5/5. Unifies startup/continuous recovery and provides additive
+    dual-read/backfill/cutover/rollback compatibility.
+- label: m6-adversarial-evidence-rollout-and-observability
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m6-adversarial-evidence-rollout-and-observability.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Map every North Star invariant and audit finding to executable fault/restart/duplicate/burst
+    evidence plus operational metrics, alerts, staged rollout gates, and rollback;
+    identify any remaining unverifiable provider semantics explicitly.
+  notes: Difficulty 4/5. Produces adversarial closure evidence and a canary-ready,
+    observable rollout without destructive cleanup.
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 80
+  poll_sleep: 8.0
+  vendor: codex
+  prep_clarify: false
