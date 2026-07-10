@@ -3962,6 +3962,29 @@ def drive(
 
         legacy_next_step = status.get("next_step")
         legacy_valid_next = status.get("valid_next") or []
+        # A worker can finish every execute artifact but die before its
+        # finalized -> executed transition is persisted.  In that shape the
+        # state control projection still offers ``execute`` while the last
+        # completed workflow event correctly points at ``review``.  Reconcile
+        # the artifact *before* comparing those two projections: otherwise
+        # the comparison turns a recoverable state-write gap into a permanent
+        # workflow_cursor_mismatch and the evidence-gated adoption path below
+        # is never reached.
+        status_active_step = status.get("active_step")
+        status_active_phase = (
+            active_phase_name(status_active_step)
+            if isinstance(status_active_step, dict)
+            else None
+        )
+        if (
+            state == STATE_FINALIZED
+            and (legacy_next_step == "execute" or status_active_phase == "execute")
+            and _recover_completed_execute_artifacts_after_failure(plan_dir)
+        ):
+            message = "reconciled complete execution.json before workflow projection"
+            log("recovered completed execute artifacts before workflow projection; resuming from executed")
+            events.append({"msg": message, "phase": "execute", "plan": plan})
+            continue
         projection = _project_auto_dispatch(plan, plan_dir=plan_dir, status=status)
         next_step = projection.next_step
         valid_next = list(projection.valid_next)
@@ -4046,12 +4069,6 @@ def drive(
         if state == STATE_FAILED and _recover_execute_callback_failure_state(plan_dir):
             log("recovered execute state after phase-complete callback failure; resuming")
             continue
-        status_active_step = status.get("active_step")
-        status_active_phase = (
-            active_phase_name(status_active_step)
-            if isinstance(status_active_step, dict)
-            else None
-        )
         if (
             state == STATE_FINALIZED
             and (next_step == "execute" or status_active_phase == "execute")
