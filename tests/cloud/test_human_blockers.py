@@ -69,9 +69,10 @@ def _current_target_proof_resolver(
     authoritative_source: str = "plan_state",
     plan_state_present: bool = True,
     chain_state_present: bool = True,
+    **overrides: object,
 ) -> dict[str, object]:
     """Build a minimal resolver record that passes current-target proof checks."""
-    return {
+    payload: dict[str, object] = {
         "schema_version": 1,
         "session": session,
         "authoritative_source": authoritative_source,
@@ -104,6 +105,8 @@ def _current_target_proof_resolver(
         },
         "stale_evidence": [],
     }
+    payload.update(overrides)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +497,47 @@ def test_classify_mechanical_blocker_from_liveness_timeout(
     }
 
     preloaded_resolver = _current_target_proof_resolver(session, current_plan)
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload=preloaded_payload,
+        resolver_record=preloaded_resolver,
+    )
+
+    assert classification.verdict == BlockerVerdict.MECHANICAL_BLOCKER
+    assert classification.is_mechanical is True
+
+
+def test_classify_mechanical_blocker_ignores_auditor_escalation_label(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """Audit labels must not mask a stale-worker mechanical blocker as human-only."""
+    session = "audit-prefix-session"
+    current_plan = "m2-current-plan"
+
+    preloaded_payload = {
+        "summary": (
+            "[auditor_human_escalation] signatures: state_written/_ x3 | "
+            "i1 dev=gpt-5.4 sha=none mechanical=failed:stopped kimi=running "
+            "why=The block was a stale active_step pointing to a dead worker."
+        ),
+        "plan_name": current_plan,
+        "current_plan_name": current_plan,
+    }
+
+    preloaded_resolver = _current_target_proof_resolver(
+        session,
+        current_plan,
+        stale_evidence=[{"kind": "stale_active_step_dead_pid"}],
+        active_step_heartbeat={
+            "active": False,
+            "phase": "execute",
+            "worker_pid": "2715968",
+            "pid_live": False,
+        },
+    )
 
     classification = classify_needs_human_blocker(
         session,
