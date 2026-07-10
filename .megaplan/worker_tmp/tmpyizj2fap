@@ -1,0 +1,587 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Reality Convergence
+Source: `.megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5ed92f91a987b5fafb1e8011624176237e2b9fe3164b07cde7fa7d1f59b4baf9`
+
+```md
+# North Star: Extension Reality Convergence
+
+## End State
+
+The Reigh video-editor extension system is truthful and converged across trust, composition authority, and export readiness. Extensions are presented as trusted local code unless a later untrusted-runtime epic adds real isolation. Composition facts used by planner/export/preview flow through a canonical authority spine instead of scattered legacy timeline reads. Export readiness is decided by planner-owned blockers, with guard scans and provider route checks demoted to structured planner inputs.
+
+## Success In One Sentence
+
+From a clean checkout on top of the completed extension-foundation work, Reigh can prove that extension trust claims are honest, the first composition fact family has moved to graph authority, and every user-facing export block originates from canonical planner readiness.
+
+## Immutable Constraints
+
+- Do not implement fake or partial permission enforcement and call it sandboxing.
+- Do not claim marketplace, third-party, or untrusted extension safety.
+- Keep extension code trusted and unsandboxed unless a separate future epic introduces isolation and brokered APIs.
+- Do not delete legacy timeline storage fields before compatibility projection and regression tests exist.
+- Do not let migrated fact families remain authoritative through direct legacy timeline reads.
+- Do not add a second export readiness authority beside the planner.
+- Do not weaken quality gates, docs checks, or release checks to make the epic pass.
+- Preserve existing editor behavior for timelines and packages that do not use migrated composition features.
+- Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.
+
+## Required Proof
+
+- SDK, JSON schema, examples, docs, and manager UI agree on the trusted-code/access-disclosure model.
+- A regression gate fails if docs or UI imply sandboxing, runtime permission enforcement, marketplace safety, or third-party safety.
+- The first composition authority ratchet proves shader/ref readiness comes from graph-projected facts, not direct legacy shader fields.
+- A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled.
+- User-facing export/render blocked states are derived from planner blockers.
+- Generated-module artifact state, provider availability, output-format availability, contribution conflicts, shader/material blockers, and live-binding blockers are represented in planner readiness.
+- Quality checks pass from a clean checkout with the convergence gates enabled.
+
+## Explicitly Deferred
+
+- True permission enforcement through iframe, Worker, process, SES-like isolation, or a brokered host API.
+- Marketplace install, remote extension discovery, update/delete flows, code signing, and dependency resolution.
+- Full composition-spine completion beyond the fact families named by this epic.
+- Full process/sidecar runtime hardening unless required as an input to export-readiness diagnostics.
+```
+
+### Current Stage
+Stage: `critique_evaluator`
+Plan directory: `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146`
+Current milestone: `m3-export-readiness-convergence`
+
+### Phase Instruction
+Select critique checks that can catch North Star violations, scope substitution, or unsupported claims of alignment.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
+
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M3: Export Readiness Convergence
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Finished plan:
+        # Implementation Plan: M3 Export Readiness Convergence Cleanup
+
+## Overview
+Complete the already-implemented M3 export readiness convergence by closing the remaining blocker-provenance gaps, removing dead/stale artifacts, and reconciling docs that duplicate planner-owned blocker vocabulary. This is a bridge to the Epic North Star, not a contradiction: legacy scans remain useful, but user-facing export readiness must come from planner blockers or structured blocker objects. No new readiness architecture, sandboxing claim, or output-format capability is planned.
+
+## Main Phase
+
+### Step 1: Confirm Current Touchpoints
+**Scope:** Small
+**Complexity: 1**
+1. Inspect the cited source, tests, and docs only: `useRenderState.ts`, `useClientRender.ts`, `renderPlanner.ts`, nearby hook tests, and the three stale docs.
+2. Reconfirm `getFastRenderRouteDecision()` is unused and `runExportGuard()` only feeds planner readiness.
+
+### Step 2: Fix Render Hook Provenance Gaps
+**Scope:** Medium
+**Complexity: 3**
+1. Delete dead `getFastRenderRouteDecision()` code and unused types/imports.
+2. Rename `runExportGuard()` to a scanner/adapter name such as `collectExportGuardInput()` and update call sites.
+3. Replace the dynamic render-router import catch hardcoded message with planner-owned blocker provenance.
+4. Ensure exporter subscriber `failed` phases always call `setRenderLog()` with `progress.log` or a concise execution-failure fallback.
+5. Add focused `useRenderState.test.tsx` coverage for both gaps.
+
+### Step 3: Structure WebCodecs Unsupported Failure
+**Scope:** Medium
+**Complexity: 2**
+1. Update `useClientRender.ts` so WebCodecs unsupported failure carries a `RenderBlocker`-shaped object or equivalent structured blocker provenance.
+2. Keep this local to client execution unless existing types already make planner integration natural.
+3. Add/update `useClientRender.test.ts` coverage.
+
+### Step 4: Clean Stale Planner and Docs Artifacts
+**Scope:** Medium
+**Complexity: 2**
+1. Remove or update the stale M3 audit comment in `renderPlanner.ts`.
+2. Update `v8-architecture-baseline.md` and `m0-fixture-matrices.md` to reference canonical planner blocker codes instead of duplicating enum vocabulary.
+3. Update `phase4-readiness.md` to remove the stale `contributionFamilies.ts` source reference.
+
+### Step 5: Re-audit User-Facing Error Paths
+**Scope:** Small
+**Complexity: 2**
+1. Re-scan render/export error and log paths in `useRenderState.ts` and `useClientRender.ts`.
+2. Confirm each path is planner/blocker-backed, a justified pre-planner config guard, or a genuine post-execution failure.
+
+### Step 6: Validate
+**Scope:** Medium
+**Complexity: 2**
+1. Run focused tests for render state, client render, planner, router, export guard, and readiness docs.
+2. Run the repo’s normal validation command if discoverable.
+3. Document any unrelated environmental failure with the exact command/output.
+
+## Execution Order
+1. Confirm insertion points before editing.
+2. Apply hook/source changes before tests that assert new behavior.
+3. Update docs/comments after source behavior is settled.
+4. Re-audit message paths after all edits.
+
+## Validation Order
+1. Run focused hook tests first.
+2. Run planner/router/export-guard/doc contract tests next.
+3. Run broader project validation last.
+
+
+        Task graph (plan metadata):
+        {
+  "version": 1,
+  "timestamp": "2026-07-10T10:04:02Z",
+  "hash": "sha256:33e79a6eecad3ed1a772ba26d76ebd3043df7a4220015d12a9233c3da0f80cf3",
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "Dynamic render-router import failures in `useRenderState.ts` produce planner-owned blocker provenance rather than only `Render routing unavailable.`",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Exporter subscriber failed phases update `renderLog` with a meaningful failure message.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The WebCodecs unsupported path exposes a `RenderBlocker`-shaped object or equivalent structured blocker provenance.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`getFastRenderRouteDecision()` is removed and no repository references remain.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Export guard scan output remains consumed through planner readiness, and legacy `runExportGuard()` naming is demoted or renamed.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The stale `renderPlanner.ts` comment no longer claims completed planner inputs are still missing.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Docs no longer duplicate stale canonical blocker vocabulary or reference nonexistent `contributionFamilies.ts` as an active source.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Focused M3 tests pass for render planner, render router, export guard, render state, client render, and readiness docs.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The implementation avoids new readiness APIs, new output-format product capabilities, and any new sandboxing or untrusted-extension safety claims.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The repo\u2019s normal full validation passes, or any failure is documented as unrelated with evidence.",
+      "priority": "should",
+      "requires": [
+        "run_tests",
+        "read_build_output",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The engineering brief is accurate that M3 architecture is substantially implemented and remaining work is cleanup plus focused tests.",
+    "A `RenderBlocker`-shaped object is sufficient for WebCodecs unsupported because this is a browser executor capability check, not planner readiness.",
+    "The stale `contributionFamilies.ts` doc reference should be updated to existing canonical sources rather than restoring a generated matrix file.",
+    "Renaming `runExportGuard()` is a bridge to the North Star because it demotes legacy scan terminology while preserving scans as planner inputs.",
+    "No clarification is needed before implementation; the brief\u2019s open questions do not materially change the plan."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [],
+    "changed_surfaces": [
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useClientRender.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx",
+      "src/tools/video-editor/hooks/__tests__/useClientRender.test.ts",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/phase4-readiness.md"
+    ],
+    "always_run": [
+      "rg \"getFastRenderRouteDecision|runExportGuard|contributionFamilies\\.ts|Render routing unavailable|WebCodecs not supported\" src docs",
+      "targeted test invocation for listed tests"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/hooks/__tests__/useClientRender.test.ts, src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx, src/tools/video-editor/hooks/useClientRender.ts, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/renderPlanner.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/phase4-readiness.md. Candidate: The touched surface is limited to two hooks, one planner comment, focused tests, and docs. Scoped validation is appropriate, with full validation as the regression fallback because this area influences user-facing export readiness. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx, src/tools/video-editor/hooks/__tests__/useClientRender.test.ts, src/tools/video-editor/runtime/__tests__/renderPlanner.test.ts, src/tools/video-editor/lib/__tests__/renderRouter.test.ts, src/tools/video-editor/runtime/__tests__/exportGuard.test.ts, src/tools/video-editor/**/__tests__/phase4ReadinessDocs.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/hooks/__tests__/useRenderState.test.tsx",
+      "src/tools/video-editor/hooks/__tests__/useClientRender.test.ts",
+      "src/tools/video-editor/runtime/__tests__/renderPlanner.test.ts",
+      "src/tools/video-editor/lib/__tests__/renderRouter.test.ts",
+      "src/tools/video-editor/runtime/__tests__/exportGuard.test.ts",
+      "src/tools/video-editor/**/__tests__/phase4ReadinessDocs.test.ts"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Idea:
+# M3: Export Readiness Convergence
+
+## Outcome
+
+Make export readiness planner-owned. Guard scans, generated-module artifact checks, provider availability, compile-handler availability, contribution conflicts, shader/material blockers, live-binding blockers, and output-format availability should feed one readiness plan and one user-facing blocker vocabulary.
+
+## Execution Posture
+
+Do not delete useful scans just because they are legacy-shaped. Demote them into inputs. The user-facing decision must come from planner blockers.
+
+## Scope
+
+IN:
+- Add a `buildExportReadinessPlan()` or equivalent planner-owned readiness API.
+- Adapt existing export guard scans into planner input data rather than separate blocking authority.
+- Move generated-module missing artifact failures into planner requirements/blockers.
+- Represent provider availability and route/provider mismatch as planner readiness facts.
+- Route user-facing export/render blocked messages through selected-route planner blockers.
+- Keep lower-level route decision reasons available for debug/analytics only.
+- Update stale export diagnostics docs and test fixtures.
+
+OUT:
+- Full removal of export guard scanner code unless it becomes provably dead after adaptation.
+- Full worker/process/sidecar runtime redesign.
+- New output-format product capabilities beyond readiness convergence.
+
+## Constraints
+
+- Do not introduce a second readiness API that disagrees with `planRender()`.
+- Do not leave UI disabled states or blocking messages sourced from provider route strings when planner blockers exist.
+- Do not hide post-execution failures as preflight readiness unless the code explicitly classifies them that way.
+- Preserve current successful browser/worker export behavior.
+
+## Done Criteria
+
+- Every user-facing blocked render/export state can point to a `RenderBlocker` or planner-owned blocker object.
+- `runExportGuard()` is either renamed/demoted to a scanner/adapter or its output is consumed only through the planner readiness layer.
+- Generated-module missing artifact, worker unavailable, contributed clip conflict, unknown contribution IDs, shader/material blockers, live-binding blockers, disabled output format, missing output format, and missing compile handler have planner-owned tests.
+- `renderRouter` route decisions carry planner blocker context for preview-only or blocked outcomes.
+- Docs reflect the canonical blocker codes and remove stale parallel code lists.
+
+## Touchpoints
+
+- `src/tools/video-editor/rendering/renderPlanner.ts`
+- `src/tools/video-editor/rendering/renderability.ts`
+- `src/tools/video-editor/rendering/exportGuard.ts`
+- `src/tools/video-editor/hooks/useRenderState.ts`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `src/tools/video-editor/**/__tests__/**`
+- `docs/extensions/**`
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146/critique_evaluator_output.json
+        Read this file first by calling `read_file` with `path` exactly `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m3-export-readiness-20260710-0146/critique_evaluator_output.json` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        ## Prep that preceded this plan
+
+This plan was produced after a multi-step prep phase (triage -> research
+fan-out -> distill). Use the prep record below when deciding which lenses
+to fire: areas prep researched thoroughly may need less scrutiny, while
+areas prep flagged as gaps, contradictions, or timed-out research warrant
+extra attention from the critics.
+
+**Prep coverage:** area_count=3, fanout_count=3, completed_count=3, partial_count=0, timed_out_count=0, error_count=0
+
+**Contradictions surfaced in research:**
+- file src/tools/video-editor/hooks/useRenderState.test.tsx appears in multiple areas with differing evidence/status: Done Criteria → test coverage cross-reference=complete, blocker-message-path-audit=complete
+- file src/tools/video-editor/hooks/useRenderState.ts appears in multiple areas with differing evidence/status: Done Criteria → test coverage cross-reference=complete, blocker-message-path-audit=complete
+- file src/tools/video-editor/runtime/renderPlanner.test.ts appears in multiple areas with differing evidence/status: Done Criteria → test coverage cross-reference=complete, stale-artifact-cleanup=complete
+
+**Prep dossier:**
+
+# Prep Research Dossier
+
+## Triage
+
+The M3 export readiness convergence architecture is substantially already implemented: `buildExportReadinessPlan()` exists, export guard scans feed into planner input, generated-module/contributed-conflict/unknown-contribution/shader/live-binding/disabled-format/missing-format/compile-handler/worker-availability blockers all have planner-owned tests, and `renderRouter` carries planner blocker context. The remaining work is verification audit and cleanup: (1) confirm every user-facing blocked-message path traces to a planner blocker (the router import-failure catch block at useRenderState.ts:478-484 is a known gap), (2) remove stale M3 audit comments claiming inputs are "still needed" when tests already exist, and (3) produce a coverage cross-reference between the 10 Done Criteria items and their test fixtures, then update docs to remove any stale parallel code lists or incorrect touchpoint paths.
+
+## Research Areas
+
+1. blocker-message-path-audit: Identify every code path where render/export error state (renderStatus='error', exportStatus='error') is set with a user-visible message, and verify each message either IS a planner blocker or is a genuine post-execution failure. Known gap: the `catch` block around dynamic import of renderRouter (useRenderState.ts:478-484) sets a hardcoded string without a planner blocker. Produce an inventory table of paths, blocker provenance, and any remediation needed.
+2. stale-artifact-cleanup: The M3 audit comment at renderPlanner.ts:298-303 lists disabled formats, compile handler absence, worker availability, and unknown contribution IDs as 'still needed' inputs, but planner-owned tests for all four exist (renderPlanner.test.ts lines 669-748, 751-829). Verify each is indeed covered, then update or remove the comment. Also inventory any docs referencing the incorrect touchpoint path prefix `src/tools/video-editor/rendering/` (files live under `runtime/`) and stale parallel code lists that duplicate blocker vocabulary now canonicalized in the planner.
+3. done-criteria-coverage-matrix: Produce a structured matrix mapping each of the 10 explicit Done Criteria items (user-facing blocked states → RenderBlocker, runExportGuard demotion, generated-module missing artifact, worker unavailable, contributed clip conflict, unknown contribution IDs, shader/material blockers, live-binding blockers, disabled output format, missing output format, missing compile handler) to specific test cases in renderPlanner.test.ts, renderRouter.test.ts, exportGuard.test.ts, and useRenderState.test.tsx. Identify any criterion without direct test coverage and flag it for remediation.
+
+## Findings
+
+### blocker-message-path-audit (complete)
+
+Identify every code path where render/export error state (renderStatus='error', exportStatus='error') is set with a user-visible message, and verify each message either IS a planner blocker or is a genuine post-execution failure.
+
+- Total of 12 distinct code paths set renderStatus='error' or exportStatus='error' with a user-visible message. 6 are render paths, 6 are export paths.
+- CONFIRMED GAP (as cited in research brief): useRenderState.ts:478-485 — dynamic import of renderRouter in the `catch` block sets a hardcoded string (`'Render routing unavailable.'` or `'Render routing unavailable: ${error.message}'`) with NO planner blocker provenance. This is the only render error path that bypasses the planner entirely.
+- SECOND GAP — exporter subscriber failure (useRenderState.ts:590-594): when `progress.phase === 'failed'`, `setRenderStatus('error')` is called but NO `setRenderLog()` call accompanies it. The renderLog retains whatever was last set by `progress.log ?? ''` (line 570), which may be stale or empty. This means the UI may show an error state with a misleading or blank message.
+- THIRD GAP — useClientRender.ts:209-212 (WebCodecs unsupported): sets `setRenderStatus('error')` with hardcoded string `'WebCodecs not supported in this browser'`. This is a pre-execution check inside `useClientRender()`, called AFTER routing is decided. It lacks planner blocker provenance but is arguably a genuine browser-capability check (not a planner concern).
+- PLANNER-BACKED PATHS (render, 4 of 6): (a) `runExportGuard` planner blockers (line 438-442); (b) `preview-only` route decision (line 500-504); (c) `worker-banodoco`/`external` route decisions (line 532-540); (d) `useClientRender` post-execution catch (line 292-296) — this is a genuine post-execution failure.
+- PLANNER-BACKED PATHS (export, 4 of 6): (a) export-guard blocks compile-only (line 668-675) — planner blocker via `guardResult.plannerResult`; (b) output format blocked by planner (line 649-651) — uses `blocker.message` from `outputPlan.routePlans`; (c) compile-only registry missing format (line 715-717) — hardcoded, genuine post-execution; (d) compile-only export catch (line 736-738) — genuine post-execution failure.
+- HARDCODED-FALLBACK PATHS (export, 2 of 6): (e) no resolvedConfig (line 621-623) — hardcoded guard, not a planner concern; (f) output format not found / hardcoded fallback (line 652-655) — hardcoded strings when `blocker` is undefined.
+- DEAD CODE: `getFastRenderRouteDecision()` (line 51-85) is defined but never called anywhere — it was a pre-planner fast-path for routing. It uses hardcoded strings and does not integrate with the planner. Legacy artifact.
+- TEST COVERAGE GAP: The `catch` block around renderRouter dynamic import (the known gap) does not appear to have a dedicated test case in useRenderState.test.tsx. The test mock for `decideRenderRoute` never throws.
+- UI DISPLAY: TimelineEditorShellCore.tsx:1034-1044 renders `chrome.renderLog.split('\n')[0]` inside a red alert when `chrome.renderStatus === 'error' && chrome.renderLog`. The `renderLog` value is the single source of user-facing blocked messages — meaning the dynamic import catch and exporter subscriber gaps produce messages that appear identically to planner-blocker messages in the UI.
+
+### stale-artifact-cleanup (complete)
+
+Verify M3 audit comment items are covered by planner-owned tests, inventory docs with incorrect path prefix `src/tools/video-editor/rendering/`, and catalog stale parallel code lists duplicating blocker vocabulary canonicalized in the planner.
+
+- M3 AUDIT COMMENT (renderPlanner.ts:298-303) IS STALE: The comment lists 'disabled formats, request-scoped compile handler absence, worker/provider availability, and unknown contribution IDs' as 'missing/normalized inputs still needed.' All four are now tested via planner-owned paths: (a) worker-unavailable tested at renderPlanner.test.ts:686-710 via planRender() emitting blocker 'planner.request.worker-export.worker-banodoco.unavailable'; (b) disabled-format tested at :712-727 via planRender() emitting 'planner.outputFormat.ext.dataset.dataset.zip.browser-export.disabled'; (c) compile-handler-missing tested at :729-748 via planRender() emitting 'planner.outputFormat...compile-handler-missing'; (d) unknown contribution IDs (clip type, effect, transition) tested at :751-829 via buildExportReadinessPlan() emitting 'planner.guard.unknown-clip-type', 'planner.guard.unknown-effect', 'planner.guard.unknown-transition'. The comment should be updated or removed.
+- INCORRECT PATH PREFIX NOT FOUND IN DOCS: A repo-wide grep for 'src/tools/video-editor/rendering/' returned zero matches. All docs in the suggested_files list (and all other docs found) consistently use the correct 'src/tools/video-editor/runtime/' prefix. The incorrect prefix only appears in the M3 task spec's own touchpoints section, not in any repository documentation. No doc remediation is needed for this item.
+- STALE PARALLEL BLOCKER VOCABULARY LIST — v8-architecture-baseline.md:276-281: Inline comma-separated list of all 9 RenderBlockerReason values ('missing-contribution', 'route-unsupported', 'preview-only', 'live-unbaked', 'process-dependent', 'missing-material', 'materialization-failed', 'inactive-extension', 'unknown') copied from src/sdk/video/rendering/renderability.ts:40-49. This duplicates the canonical source. The doc does cite renderability.ts as the source, but the literal enumeration is a parallel copy.
+- STALE PARALLEL BLOCKER VOCABULARY LIST — m0-fixture-matrices.md:131-141: Full fixture table BR-01 through BR-09 enumerating all 9 RenderBlockerReason literals with fixture-intent descriptions and planner cross-check line numbers. This is a second parallel copy of the canonical blocker vocabulary.
+- STALE PARALLEL BLOCKER VOCABULARY LIST — m0-fixture-matrices.md:28: The Reconstructive Sources cross-reference table cites 'renderability.ts:1-63' as defining 'RENDER_BLOCKER_REASONS'. This is not a full enumeration but references the duplicate in the same file.
+- STALE PARALLEL BLOCKER VOCABULARY LIST — m0-decisions.md:48-56: References 'RenderBlockerReason (nine values)' and cites renderability.ts lines 40-49 without enumerating them, but the surrounding prose implies the 9-value vocabulary is canonical at the SDK level, not the planner level.
+- STALE CONTRIBUTION-FAMILIES REFERENCE — phase4-readiness.md:14-15, :156, :176-179: The doc correctly self-identifies that the roadmap references 'runtime/contributionFamilies.ts' which does not exist in this checkout, and lists canonical replacements. However, the Phase 4 Entry Decision (lines 176-179) acknowledges this stale reference still needs reconciliation (either update the roadmap to canonical sources or restore a generated matrix file). This is a known-but-unresolved stale reference.
+
+### Done Criteria → test coverage cross-reference (complete)
+
+Produce a structured matrix mapping each of the 10 explicit Done Criteria items to specific test cases in renderPlanner.test.ts, renderRouter.test.ts, exportGuard.test.ts, and useRenderState.test.tsx. Identify any criterion without direct test coverage and flag it for remediation.
+
+- Criterion 1 (user-facing blocked states → RenderBlocker): COVERED. useRenderState.test.tsx L1313 ('uses planner blockers as the canonical render readiness decision'), L1362 ('does not use raw guard diagnostic text when planner blockers exist'), L688 ('surfaces generated-module preview blocks from router planner context'), L739 ('uses planner blocker text for worker provider unavailability'), L793 ('uses planner blocker text for external provider unavailability'). renderPlanner.test.ts: all planRender tests emit RenderBlocker objects verified via expectPlannerBlocker. renderRouter.test.ts: all blocked decisions include planner.plannerResult.blockers.
+- Criterion 2 (runExportGuard demotion/scanner-adapter): PARTIALLY COMPLETE. runExportGuard() still exists as a named function in useRenderState.ts (L391) — not yet renamed. However its output IS consumed only through the planner readiness layer: useRenderState.test.tsx L1313, L1362 verify planner blockers are canonical; renderPlanner.test.ts L1120 verifies buildExportReadinessPlan ↔ planRender equivalence; exportGuard.test.ts L969 ('keeps scan output as planner-wrapper compatibility input') verifies scan→planner flow. scanExportConfig is the demoted scanner feeding buildExportReadinessPlan. Remediation: rename runExportGuard() or remove the legacy name.
+- Criterion 3a (generated-module missing artifact): COVERED. renderPlanner.test.ts L569 ('emits router-fed generated-module missing-artifact blockers with complete planner metadata'). renderRouter.test.ts L162 ('blocks remotion_module clips with missing, empty, or non-string artifact ids'). useRenderState.test.tsx L603 ('blocks malformed remotion_module metadata'), L688 ('surfaces generated-module preview blocks from router planner context').
+- Criterion 3b (worker unavailable): COVERED. renderPlanner.test.ts L669 (worker-unavailable subsection emits 'planner.request.worker-export.worker-banodoco.unavailable'), L1847 ('uses request-scoped route availability blockers'). renderRouter.test.ts L256, L280 (preview fallback when all routes blocked). useRenderState.test.tsx L739 ('uses planner blocker text for worker provider unavailability'), L645 ('surfaces worker-unavailable state').
+- Criterion 3c (contributed clip conflict): COVERED. renderPlanner.test.ts L619 ('emits router-fed contributed clip conflict blockers with route and legacy reason metadata'). renderRouter.test.ts L565 ('blocks mixed contributed + themed clips due to worker route conflict'), L609 ('blocks contributed clip mixed with generated remotion module due to worker route conflict').
+- Criterion 3d (unknown contribution IDs): COVERED. renderPlanner.test.ts L751 ('emits guard-fed unknown contribution and export diagnostic blockers'), L893 ('preserves guard-fed unknown IDs as planner-owned missing-contribution blockers'). exportGuard.test.ts L837-871 (unknown clip type diagnostics), L934-967 (unknown effect diagnostics). useRenderState.test.tsx L1054 ('blocks render when export guard finds blocking errors — truly unknown clip type').
+- Criterion 3e (shader/material blockers): COVERED. renderPlanner.test.ts L1414 ('blocks export for timeline shader metadata until a materializer produces RenderMaterial'), L1442 ('diagnoses duplicate clip and postprocess shaders'), L1550 ('projects snapshot shader refs through contribution index'), L1617 ('uses registered shader materializer process routes'), L1906 ('converts materialize-on-export live material refs into browser-export blockers'), L1932 ('materializes missing and stale material next actions'). useRenderState.test.tsx L919 ('does not let timeline shader preview metadata bypass export readiness').
+- Criterion 3f (live-binding blockers): COVERED. exportGuard.test.ts L580-827 (full describe block: active, missing, disposed, orphaned, malformed, partially baked, sidecar-only, malformed capture, capture-on-media; plus validated deterministic-capture non-blocking). renderPlanner.test.ts L751 (export/live-binding-unresolved in guard-fed blockers), L1008 (maps live-binding diagnostics to planner reasons), L1199 ('derives route blockers from a public TimelineSnapshot' with liveBinding snapshot).
+- Criterion 3g (disabled output format): COVERED. renderPlanner.test.ts L1768 ('blocks only explicitly requested disabled output formats'), L669 (disabled-format subsection in 'emits request-owned worker, disabled-format, and compile-only handler blockers').
+- Criterion 3h (missing output format): COVERED. renderPlanner.test.ts L1747 ('surfaces missing requested output formats as structured request blockers'), L831 (missingOutput subsection).
+- Criterion 3i (missing compile handler): COVERED. renderPlanner.test.ts L1806 ('blocks compile-only handler absence only for the requested format'), L669 (compile-only subsection).
+- Criterion 4 (renderRouter route decisions carry planner blocker context): COVERED. renderRouter.test.ts consistently verifies decision.planner.selectedPlannerRoute and decision.planner.plannerResult.blockers in all blocked/preview-only outcomes (L162-228, L256-267, L280-345, L492-539, L565-607, L609-656).
+- Criterion 5 (docs reflect canonical blocker codes): COVERED. phase4ReadinessDocs.test.ts L80-115 verifies readiness docs state 'guard scans as planner inputs', 'planner blockers as user-facing vocabulary', and prohibit 'guard-as-authority' wording.
+- All 10 explicit Done Criteria items with 11 sub-criteria total have direct test coverage across the four test files. No criterion is completely uncovered. One partial remediation noted: runExportGuard() is not yet renamed/demoted to a scanner-only name in useRenderState.ts, but its output flows through the planner readiness layer as required.
+
+## Adjudication
+
+### Gap Notes
+
+- (none)
+
+### Contradiction Notes
+
+- file src/tools/video-editor/hooks/useRenderState.test.tsx appears in multiple areas with differing evidence/status: Done Criteria → test coverage cross-reference=complete, blocker-message-path-audit=complete
+- file src/tools/video-editor/hooks/useRenderState.ts appears in multiple areas with differing evidence/status: Done Criteria → test coverage cross-reference=complete, blocker-message-path-audit=complete
+- file src/tools/video-editor/runtime/renderPlanner.test.ts appears in multiple areas with differing evidence/status: Done Criteria → test coverage cross-reference=complete, stale-artifact-cleanup=complete
+
+### Overlap Groups
+
+- file: src/tools/video-editor/hooks/useRenderState.test.tsx [Done Criteria → test coverage cross-reference, blocker-message-path-audit]
+- file: src/tools/video-editor/hooks/useRenderState.ts [Done Criteria → test coverage cross-reference, blocker-message-path-audit]
+- file: src/tools/video-editor/runtime/renderPlanner.test.ts [Done Criteria → test coverage cross-reference, stale-artifact-cleanup]
+
+### Bounded Cross-Reference
+
+- Performed: yes
+- Shared files: docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/phase4-readiness.md, src/tools/video-editor/hooks/useClientRender.ts, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/runtime/renderPlanner.ts
+- Missing files: (none)
+
+## Metrics
+
+- Areas triaged: 3
+- Fan-out units run: 3
+- Complete: 3
+- Partial: 0
+- Timed out: 0
+- Errors: 0
+- Missed units: (none)
+
+
+## Critique Lens Catalog (9 lenses)
+
+        ### Lens: `issue_hints` (tier: core, category: completeness)
+**Question:** Did the work fully address the issue hints, user notes, and approved plan requirements?
+**Guidance:** Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.
+
+### Lens: `correctness` (tier: core, category: correctness)
+**Question:** Are the proposed changes technically correct?
+**Guidance:** Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+### Lens: `scope` (tier: core, category: completeness)
+**Question:** Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+**Guidance:** Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+### Lens: `all_locations` (tier: core, category: completeness)
+**Question:** Does the change touch all locations AND supporting infrastructure?
+**Guidance:** Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+### Lens: `callers` (tier: core, category: correctness)
+**Question:** Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?
+**Guidance:** Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?
+
+### Lens: `conventions` (tier: extended, category: maintainability)
+**Question:** Does the approach match how the codebase solves similar problems?
+**Guidance:** Check not just naming/style but how similar PROBLEMS are solved in this codebase. If the codebase adds new methods for similar cases, the plan should too. Do not spend findings on trivial stylistic preferences.
+
+### Lens: `verification` (tier: extended, category: completeness)
+**Question:** Is there convincing verification for the change?
+**Guidance:** Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch — does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.
+
+### Lens: `criteria_quality` (tier: extended, category: completeness)
+**Question:** Are the success criteria well-prioritized and verifiable?
+**Guidance:** Check that each `must` criterion has a clear yes/no answer verifiable from code, tests, or git diff. Subjective goals, numeric guidelines, and aspirational targets should be `should`, not `must`. Criteria requiring manual testing or human judgment should be `info`. Flag any `must` criterion that is ambiguous, subjective, or unverifiable in the review pipeline.
+
+### Lens: `prerequisite_ordering` (tier: core, category: correctness)
+**Question:** Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+**Guidance:** Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
+
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
+
+        ## Assignment Contract
+
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all 9 lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most 2
+          `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of objects. For catalog lenses:
+          {check_id, complexity (int 1–5), complexity_justification, why?}
+          For `other` custom areas:
+          {check_id: "other", area, why, complexity (int 1–5), complexity_justification}
+        - `skipped`: list of {check_id, why} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications`: list of
+          {flag_id, lens, outcome, rationale} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
+
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.
