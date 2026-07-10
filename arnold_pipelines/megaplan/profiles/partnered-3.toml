@@ -20,10 +20,15 @@ tiebreaker_challenger = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fire
 
 [profiles.partnered-3.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:deepseek:deepseek-v4-pro"
+2 = "hermes:deepseek:deepseek-v4-flash"
 3 = "hermes:deepseek:deepseek-v4-pro"
-4 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
-5 = "codex:gpt-5.5"
+4 = "hermes:deepseek:deepseek-v4-pro"
+5 = "hermes:deepseek:deepseek-v4-pro"
+6 = "hermes:deepseek:deepseek-v4-pro"
+7 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
+8 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
+9 = "codex:gpt-5.5"
+10 = "codex:gpt-5.5"
 
 [profiles.partnered-3.tier_models.critique]
 1 = "hermes:deepseek:deepseek-v4-flash"
