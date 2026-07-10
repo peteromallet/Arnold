@@ -18,7 +18,14 @@ WATCHDOG_ARGS=("$@")
 WATCHDOG_STARTED_AT="$(date +%s)"
 LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"
 LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"
-if [[ "$LOCK_HELD" != "1" ]] && command -v flock >/dev/null 2>&1; then
+COOPERATIVE_ONCE=0
+if [[ "${1:-}" == "--audit-sweep" ]]; then
+  # The daemon intentionally owns LOCK_FILE for its whole lifetime.  A six-hour
+  # audit sweep therefore bypasses only that lifetime lock and serializes on the
+  # per-scan lock acquired by scan_once below.
+  COOPERATIVE_ONCE=1
+fi
+if [[ "$LOCK_HELD" != "1" && "$COOPERATIVE_ONCE" != "1" ]] && command -v flock >/dev/null 2>&1; then
   mkdir -p "$(dirname "$LOCK_FILE")"
   # Legacy lock shape kept visible for wrapper compatibility tests:
   # exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
@@ -57,6 +64,8 @@ REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"
+SCAN_LOCK_FILE="${CLOUD_WATCHDOG_SCAN_LOCK_FILE:-/workspace/.megaplan/watchdog-scan.lock}"
+SCAN_LOCK_WAIT_SECS="${CLOUD_WATCHDOG_SCAN_LOCK_WAIT_SECS:-600}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
@@ -98,6 +107,9 @@ fi
 REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
+if [[ "$COOPERATIVE_ONCE" == "1" ]]; then
+  ONCE="--once"
+fi
 PRIMARY_REPAIR_BASENAME="$(basename "$PRIMARY_REPAIR_BIN")"
 REPAIR_DISPATCH_RESULT=
 
@@ -163,6 +175,10 @@ maybe_reexec_updated_watchdog() {
 
   if [[ -n "$reexec_path" ]]; then
     log "watchdog wrapper updated on disk; re-execing $reexec_reason"
+    if [[ -n "${scan_lock_fd:-}" ]]; then
+      flock -u "$scan_lock_fd" 2>/dev/null || true
+      exec {scan_lock_fd}>&-
+    fi
     exec bash "$reexec_path" "${WATCHDOG_ARGS[@]}"
   fi
 }
@@ -620,10 +636,11 @@ if (
     current_state = "done"
 
 human_gate_states = {"awaiting_human", "awaiting_human_verify", "human_prerequisite"}
+ready_plan_states = {"planned", "finalized"}
 
 state_mismatch = (
     run_kind == "chain"
-    and current_state == "finalized"
+    and current_state in ready_plan_states
     and chain_last_state in {"awaiting_human", "awaiting_human_verify", "blocked"}
     and bool(resolved_plan_name)
     and not bool(failure_kind or failure_message)
@@ -6430,6 +6447,7 @@ resolver_needs_human_verdict() {
   fi
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$current_target_observation" <<'PY' 2>>"${LOG:-/dev/null}" || true
 import json
+import os
 import sys
 
 from arnold_pipelines.megaplan.cloud.feature_flags import resolver_enforcement_enabled
@@ -6447,7 +6465,10 @@ try:
 except Exception:
     evidence = {}
 
-if not resolver_enforcement_enabled():
+provider_retry_enabled = os.environ.get("CLOUD_WATCHDOG_PROVIDER_RETRY_ONCE", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+if not resolver_enforcement_enabled() and not provider_retry_enabled:
     sys.exit(0)
 
 try:
@@ -6457,6 +6478,11 @@ except Exception:
 
 state = result.canonical_state.name
 human_gate = result.human_gate.name if result.human_gate is not None else None
+if provider_retry_enabled and state == "HUMAN_ACTION_REQUIRED" and human_gate in {
+    "QUOTA", "CREDENTIAL_ACCOUNT",
+}:
+    print("provider_retry:{}".format(human_gate))
+    sys.exit(0)
 if state in MACHINE_ACTIONABLE_STATES and human_gate is None:
     print("suppress:{}".format(state))
 PY
@@ -6864,7 +6890,7 @@ PY
 
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
-  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
+  if [[ "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
 
@@ -7046,7 +7072,16 @@ PY
     report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
     return 0
   fi
-  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "$current_target_observation" "$health"; then
+  if [[ "${PLAN_STATUS_CURRENT_STATE:-}" == "paused" ]]; then
+    log "session paused by durable plan state; skipping repair/relaunch session=$session plan=${PLAN_STATUS_PLAN_NAME:-$plan_name}"
+    report_item "$report_items" "$session" "observe" "paused" "durable plan state is paused; no runner expected until explicit resume" "$workspace" "$remote_spec"
+    return 0
+  fi
+  if [[ "$resolver_human_verdict" == provider_retry:* ]]; then
+    log "audit recovery selected one provider retry session=$session gate=${resolver_human_verdict#provider_retry:}"
+    report_item "$report_items" "$session" "recovery" "provider_retry_selected" "audit-only retry selected for typed provider gate ${resolver_human_verdict#provider_retry:}" "$workspace" "$remote_spec"
+  fi
+  if [[ "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
   if [[ "$health" == "stopped" && "${PLAN_STATUS_ACTIVE_STEP_PRESENT:-0}" == "1" && "${PLAN_STATUS_ACTIVE_STEP_PID_ALIVE:-}" != "1" ]]; then
@@ -7085,7 +7120,7 @@ PY
     report_item "$report_items" "$session" "repair" "repair_unavailable" "$mismatch_summary" "$workspace" "$remote_spec"
     return 0
   fi
-  if [[ "${PLAN_STATUS_AWAITING_HUMAN:-0}" == "1" ]]; then
+  if [[ "$resolver_human_verdict" != provider_retry:* && "${PLAN_STATUS_AWAITING_HUMAN:-0}" == "1" ]]; then
     local human_summary repair_busy repair_summary
     human_summary="awaiting_human halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON:-plan is awaiting human action}"
     if [[ -n "${PLAN_STATUS_FAILURE_KIND:-}" ]]; then
@@ -7148,7 +7183,7 @@ PY
     notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
     return 0
   fi
-  if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
+  if [[ "$resolver_human_verdict" != provider_retry:* && "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
     local human_summary repair_busy repair_summary manual_review_origin manual_review_dispatch_env manual_review_report_reason
     manual_review_origin="${PLAN_STATUS_MANUAL_REVIEW_ORIGIN:-}"
     human_summary="manual_review halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; retry=${PLAN_STATUS_RETRY_STRATEGY:-unknown}; failure=${PLAN_STATUS_FAILURE_KIND:-unknown}"
@@ -7266,7 +7301,7 @@ PY
   # current-milestone PR has since MERGED, the chain can now reconcile+complete
   # on relaunch, so the marker is stale -- clear it and fall through to the
   # relaunch path instead of suppressing it with a stale needs_human.
-  if [[ -f "$(repair_needs_human_path "$session")" ]]; then
+  if [[ "$resolver_human_verdict" != provider_retry:* && -f "$(repair_needs_human_path "$session")" ]]; then
     if [[ "$run_kind" == "chain" ]] && [[ "$(chain_current_pr_merged "$workspace" "$remote_spec")" == "merged" ]]; then
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
       log "stale repair marker cleared; current milestone PR merged, falling through to relaunch session=$session"
@@ -7402,7 +7437,7 @@ PY
     done
   fi
 
-  local safe log_relative launch_script quoted_command
+  local safe log_relative launch_script quoted_command quoted_command_shell
   safe="$(safe_name "$session")"
   launch_script="$(mktemp)"
   quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
@@ -7411,6 +7446,7 @@ PY
     rm -f "$launch_script"
     return 1
   }
+  printf -v quoted_command_shell '%q' "$quoted_command"
   cat > "$launch_script" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -7419,7 +7455,7 @@ export ARNOLD_SUPERVISE_SESSION=$(printf '%q' "$session")
 export ARNOLD_SUPERVISE_WORKSPACE=$(printf '%q' "$workspace")
 export ARNOLD_SUPERVISE_REMOTE_SPEC=$(printf '%q' "$remote_spec")
 export ARNOLD_SUPERVISE_RUN_KIND=$(printf '%q' "$run_kind")
-exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
+exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $quoted_command_shell
 EOF
   chmod +x "$launch_script"
 
@@ -7439,7 +7475,7 @@ EOF
   report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
 }
 
-scan_once() {
+scan_once_unlocked() {
   log "scan start marker_dir=$MARKER_DIR"
   maybe_reexec_updated_watchdog
   # P2: heartbeat + an early snapshot write BEFORE the heavy/stall-prone work
@@ -7518,11 +7554,39 @@ PY
   rm -f "$report_items"
 }
 
+scan_once() {
+  local scan_lock_fd scan_rc
+  mkdir -p "$(dirname "$SCAN_LOCK_FILE")"
+  if command -v flock >/dev/null 2>&1; then
+    exec {scan_lock_fd}>"$SCAN_LOCK_FILE"
+    if [[ "$COOPERATIVE_ONCE" == "1" ]]; then
+      if ! flock -w "$SCAN_LOCK_WAIT_SECS" "$scan_lock_fd"; then
+        log "audit recovery scan lock timed out lock=$SCAN_LOCK_FILE wait_secs=$SCAN_LOCK_WAIT_SECS"
+        exec {scan_lock_fd}>&-
+        return 75
+      fi
+    elif ! flock -n "$scan_lock_fd"; then
+      log "scan skipped; another watchdog sweep owns lock=$SCAN_LOCK_FILE"
+      exec {scan_lock_fd}>&-
+      return 75
+    fi
+  fi
+
+  scan_once_unlocked
+  scan_rc=$?
+  if [[ -n "${scan_lock_fd:-}" ]]; then
+    flock -u "$scan_lock_fd" 2>/dev/null || true
+    exec {scan_lock_fd}>&-
+  fi
+  return "$scan_rc"
+}
+
 log "starting (interval=${INTERVAL}s marker_dir=$MARKER_DIR repair=$REPAIR_ENABLED push=$PUSH_REPAIRS report=$REPORT_PATH)"
 while true; do
   scan_once
+  scan_rc=$?
   if [[ "$ONCE" == "--once" ]]; then
-    exit 0
+    exit "$scan_rc"
   fi
   sleep "$INTERVAL"
 done
