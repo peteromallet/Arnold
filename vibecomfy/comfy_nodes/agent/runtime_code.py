@@ -6,13 +6,16 @@ import resource
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
 from typing import Any, Final, Mapping
 
 from vibecomfy.contracts.intent_nodes import (
+    INTENT_CODE_MAX_BYTES,
     EXECUTION_MODE_UNRESTRICTED,
     KIND_TO_CLASS_TYPE,
+    RUNTIME_CODE_CONTRACT_VERSION,
     RUNTIME_CODE_EXECUTION_MODE,
+    RUNTIME_CODE_MAX_SOURCE_BYTES_NEW,
+    RUNTIME_CODE_POLICY_VERSION,
     RUNTIME_CODE_SAFE_BUILTINS,
     RUNTIME_CODE_UNRESTRICTED_ACK_ERROR,
     _ALLOWED_IMPORTS_BY_MODE,
@@ -84,14 +87,68 @@ _UNRESTRICTED_ENV_BLOCK_SUFFIXES: Final[tuple[str, ...]] = (
 # respecting ComfyUI's classmethod-only discovery contract.
 
 
-@dataclass(frozen=True, slots=True)
 class RuntimeCodeExecutionError(RuntimeError):
-    code: str
-    message: str
-    detail: dict[str, Any] | None = None
+    def __init__(self, code: str, message: str, detail: dict[str, Any] | None = None) -> None:
+        super().__init__(code, message, detail)
+        self.code = code
+        self.message = message
+        self.detail = detail
 
     def __str__(self) -> str:
         return f"{self.code}: {self.message}"
+
+
+def _normalize_dynamic_runtime_contract(
+    props: Mapping[str, Any],
+    runtime: Mapping[str, Any],
+    io: Mapping[str, Any],
+    named_inputs: Mapping[str, Any],
+    source: str,
+) -> dict[str, Any]:
+    normalized_props = dict(props)
+    normalized_runtime = dict(runtime)
+    normalized_io = dict(io)
+    resolved_mode = resolve_execution_mode(runtime)
+    normalized_runtime.setdefault("runtime_backed", True)
+    normalized_runtime.setdefault("runtime_contract_version", RUNTIME_CODE_CONTRACT_VERSION)
+    normalized_runtime.setdefault("execution_mode", resolved_mode)
+    normalized_runtime.setdefault(
+        "timeout_ms",
+        _TIMEOUT_MS_DEFAULT_BY_MODE.get(resolved_mode, 1000),
+    )
+    normalized_runtime.setdefault(
+        "max_source_bytes",
+        RUNTIME_CODE_MAX_SOURCE_BYTES_NEW
+        if resolved_mode != RUNTIME_CODE_EXECUTION_MODE
+        else INTENT_CODE_MAX_BYTES,
+    )
+    normalized_runtime.setdefault(
+        "allowed_builtins",
+        sorted(RUNTIME_CODE_SAFE_BUILTINS) if resolved_mode == RUNTIME_CODE_EXECUTION_MODE else [],
+    )
+    normalized_runtime.setdefault("redaction_policy", [])
+    normalized_runtime.setdefault("policy_version", RUNTIME_CODE_POLICY_VERSION)
+    normalized_runtime.setdefault("passthrough_on_non_json", False)
+    if resolved_mode == EXECUTION_MODE_UNRESTRICTED and "unrestricted_ack" in runtime:
+        normalized_runtime["unrestricted_ack"] = runtime["unrestricted_ack"]
+    normalized_io.setdefault(
+        "inputs",
+        [[name, "JSON"] for name in named_inputs],
+    )
+    outputs = normalized_io.get("outputs")
+    if isinstance(outputs, list):
+        normalized_io["outputs"] = [
+            [entry[0], entry[1]]
+            for entry in outputs
+            if isinstance(entry, (list, tuple)) and len(entry) >= 2
+        ]
+    else:
+        normalized_io["outputs"] = []
+    normalized_props["runtime"] = normalized_runtime
+    normalized_props["io"] = normalized_io
+    if "intent" not in normalized_props:
+        normalized_props["intent"] = {"source": source}
+    return normalized_props
 
 
 def execute_runtime_code(
@@ -205,19 +262,28 @@ def execute_runtime_code_dynamic(
     source = intent.get("source")
     source = source if isinstance(source, str) else ""
 
+    validation_props = _normalize_dynamic_runtime_contract(props, runtime, io, named_inputs, source)
+
     # Validate the runtime-code contract before execution. Invalid contracts
     # are rejected before the worker is ever spawned so malformed or forbidden
     # code never reaches _run_worker (T7 trust-and-safety boundary).
     contract = validate_runtime_code_contract(
         class_type=KIND_TO_CLASS_TYPE["code"],
-        payload=props,
+        payload=validation_props,
         require_runtime=True,
     )
     if not contract.ok or contract.normalized is None:
+        issue_codes = [problem.code for problem in contract.problems]
+        if issue_codes and set(issue_codes) == {RUNTIME_CODE_UNRESTRICTED_ACK_ERROR}:
+            raise RuntimeCodeExecutionError(
+                RUNTIME_CODE_UNRESTRICTED_ACK_ERROR,
+                "Unrestricted execution mode requires runtime.unrestricted_ack=true.",
+                {"issues": issue_codes},
+            )
         raise RuntimeCodeExecutionError(
             "runtime_contract_invalid",
             "Runtime-backed code contract failed validation before execution.",
-            {"issues": [problem.code for problem in contract.problems]},
+            {"issues": issue_codes},
         )
 
     # The normalized contract is authoritative for the execution sandbox: the
