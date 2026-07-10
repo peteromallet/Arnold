@@ -1154,6 +1154,91 @@ def test_run_chain_clears_stale_closed_pr_state_on_restart(tmp_path: Path) -> No
     assert saved.last_state == "done"
 
 
+def test_run_chain_clears_missing_pr_context_while_resuming_blocked_plan(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan(
+        tmp_path,
+        current_state="finalized",
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="blocked",
+            pr_number=99,
+            pr_state="open",
+        ),
+    )
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._capture_sync_state",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._pr_state",
+            return_value="closed",
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+            return_value=123,
+        ) as ensure_pr,
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=chain_module.DriverOutcome(
+                status="done",
+                plan="plan-m1",
+                final_state="done",
+                iterations=1,
+                reason="ok",
+            ),
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._handle_outcome",
+            return_value="skip",
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._append_completed_with_guard",
+            return_value=(True, ""),
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+        )
+
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "done"
+    assert ensure_pr.call_count == 1
+    assert saved.current_milestone_index == 1
+    assert saved.pr_number is None
+    assert saved.pr_state is None
+    assert saved.last_state == "done"
+
+
 def test_latest_execution_batch_all_tasks_done_accepts_execution_window_authority(
     tmp_path: Path,
 ) -> None:

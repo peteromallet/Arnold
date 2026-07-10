@@ -30,6 +30,12 @@ _NON_FAST_FORWARD_PUSH_MARKERS = (
     "failed to push some refs",
 )
 
+_MISSING_PR_MARKERS = (
+    "could not resolve to a pullrequest",
+    "no pull requests found",
+    "pull request was not found",
+)
+
 _CHAIN_RUNTIME_JOURNAL_PATTERNS = (
     ".megaplan/epics/*/events.jsonl",
     ".megaplan/plans/*/events.ndjson",
@@ -2079,6 +2085,18 @@ def _is_transient_gh_error(exc: CliError) -> bool:
     return any(pattern in combined for pattern in _compat().GH_TRANSIENT_ERROR_PATTERNS)
 
 
+def _is_missing_pr_error(exc: CliError) -> bool:
+    combined = " ".join(
+        str(part or "")
+        for part in (
+            exc.message,
+            exc.extra.get("stdout", ""),
+            exc.extra.get("stderr", ""),
+        )
+    ).lower()
+    return any(pattern in combined for pattern in _MISSING_PR_MARKERS)
+
+
 def _pr_state(root: Path, pr_number: int, *, writer) -> str:
     for attempt in range(1, _compat().GH_PR_STATE_ATTEMPTS + 1):
         try:
@@ -2091,6 +2109,12 @@ def _pr_state(root: Path, pr_number: int, *, writer) -> str:
             )
             break
         except CliError as exc:
+            if _is_missing_pr_error(exc):
+                writer(
+                    "[chain] gh pr view reported missing PR; treating persisted PR "
+                    f"#{pr_number} as closed\n"
+                )
+                return "closed"
             if attempt >= _compat().GH_PR_STATE_ATTEMPTS or not _compat()._is_transient_gh_error(exc):
                 raise
             writer(
