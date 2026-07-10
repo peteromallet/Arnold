@@ -6,7 +6,7 @@ if [[ $# -lt 2 ]]; then
 fi
 SUFFIX="$1"; shift
 CMD=("$@")
-LOG=/workspace/supervise-${SUFFIX}.log
+LOG="${ARNOLD_SUPERVISE_LOG:-/workspace/supervise-${SUFFIX}.log}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 SUPERVISE_SESSION="${ARNOLD_SUPERVISE_SESSION:-}"
 SUPERVISE_WORKSPACE="${ARNOLD_SUPERVISE_WORKSPACE:-}"
@@ -21,42 +21,34 @@ quota_count=0; other_count=0
 last_err=""; streak=0
 log() { echo "[supervise $(date -Iseconds)] $*" | tee -a "$LOG"; }
 
+l1_mutation_authorized() {
+  PYTHONPATH="${PYTHONPATH:-}:/workspace/arnold" python3 -B -c \
+    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
+}
+
 queue_repair_request() {
   local reason="$1"
   if [[ -z "$SUPERVISE_SESSION" || -z "$SUPERVISE_WORKSPACE" || -z "$SUPERVISE_REMOTE_SPEC" ]]; then
     log "repair queue skipped: missing session/workspace/spec context"
     return 0
   fi
-  PYTHONPATH="/workspace/arnold:${PYTHONPATH:-}" python3 - "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
+  local queue_root="${ARNOLD_REPAIR_QUEUE_ROOT:-${SUPERVISE_WORKSPACE}/.megaplan/repair-queue}"
+  PYTHONPATH="/workspace/arnold:${PYTHONPATH:-}" python3 - "$queue_root" "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
 import json
 import sys
 
-from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+from arnold_pipelines.megaplan.cloud.supervise import enqueue_supervisor_repair_request
 
-marker_dir, session, workspace, remote_spec, run_kind, reason, log_path = sys.argv[1:]
-result = enqueue_repair_request(
+queue_root, marker_dir, session, workspace, remote_spec, run_kind, reason, log_path = sys.argv[1:]
+result = enqueue_supervisor_repair_request(
+    queue_root=queue_root,
     marker_dir=marker_dir,
     session=session,
-    source="arnold_supervise_exit",
     workspace=workspace,
     run_kind=run_kind,
-    target={
-        "workspace": workspace,
-        "remote_spec": remote_spec,
-        "supervise_log": log_path,
-    },
-    problem_signature={
-        "failure_kind": "supervised_run_exhausted",
-        "current_state": "process_exited",
-        "phase_or_step": "arnold-supervise",
-        "milestone_or_plan": remote_spec,
-        "gate_recommendation": "",
-        "blocked_task_id": "",
-    },
-    root_cause_hint={
-        "reason": reason,
-        "supervise_log": log_path,
-    },
+    remote_spec=remote_spec,
+    reason=reason,
+    log_path=log_path,
 )
 print(json.dumps({"status": result.get("status"), "path": result.get("path")}, sort_keys=True))
 PY
@@ -68,6 +60,14 @@ exit_with_repair_request() {
   log "repair queue result: $queue_result"
   exit 1
 }
+
+# The supervised command may mutate plan state, source, commits, or remotes.
+# Check the shared predicate at the child-process boundary; blocked supervisors
+# still emit an observation but do not start or describe work as dispatched.
+if ! l1_mutation_authorized; then
+  log "observed: L1 supervisor mutation blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
+  exit 0
+fi
 
 log "starting cmd: ${CMD[*]}"
 while true; do

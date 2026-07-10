@@ -30,6 +30,10 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     meta_repair_commit_on,
     meta_repair_enabled,
     meta_repair_on,
+    MUTATION_PATH_L1,
+    MUTATION_PATH_L2,
+    MUTATION_PATH_L3,
+    mutation_authorized,
     redaction_enabled,
     redaction_on,
     repair_request_queue_enabled,
@@ -301,6 +305,53 @@ class TestFlagIndependence:
         ):
             # Redaction defaults to ON even when all other flags are explicitly ON
             assert redaction_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# Master-plus-path mutation authorization
+# ---------------------------------------------------------------------------
+
+
+_MUTATION_PATHS = (
+    (MUTATION_PATH_L1, "ARNOLD_REPAIR_TRIGGER_ENABLED"),
+    (MUTATION_PATH_L2, "ARNOLD_META_REPAIR_ENABLED"),
+    (MUTATION_PATH_L3, "ARNOLD_AUDIT_AUTOFIX_ENABLED"),
+)
+_MUTATION_CLASSES = ("state", "source", "commit", "push", "subprocess")
+
+
+class TestMutationAuthorization:
+    """Every mutation class needs the master gate and its relevant path gate."""
+
+    @pytest.mark.parametrize("path,path_env", _MUTATION_PATHS)
+    @pytest.mark.parametrize("mutation_class", _MUTATION_CLASSES)
+    @pytest.mark.parametrize(
+        ("master_enabled", "path_enabled"),
+        ((False, False), (False, True), (True, False), (True, True)),
+    )
+    def test_master_and_path_matrix(
+        self,
+        path: str,
+        path_env: str,
+        mutation_class: str,
+        master_enabled: bool,
+        path_enabled: bool,
+    ) -> None:
+        """All L1/L2/L3 effects authorize only for the true/true row."""
+        with _set_env(
+            ARNOLD_AUTONOMY="1" if master_enabled else "0",
+            **{path_env: "1" if path_enabled else "0"},
+        ):
+            assert mutation_authorized(path) is (master_enabled and path_enabled), (
+                f"{path} {mutation_class} mutation must require master and path gates"
+            )
+            # Observation is intentionally not part of mutation authorization.
+            assert resolver_observe_enabled() is True
+            assert repair_request_queue_enabled() is True
+
+    def test_unknown_mutation_path_fails_closed(self) -> None:
+        with _set_env(ARNOLD_AUTONOMY="1"):
+            assert mutation_authorized("unknown") is False
 
 
 # ---------------------------------------------------------------------------

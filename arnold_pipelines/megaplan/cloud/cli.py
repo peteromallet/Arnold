@@ -5672,6 +5672,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
     repair_custody: dict[str, Any] = {"status": "unavailable", "reason": "local custody evidence unavailable"}
     local_workspace = Path(resolved_workspace)
     marker_dir = local_workspace / ".megaplan" / "cloud-sessions"
+    queue_root = local_workspace / ".megaplan" / "repair-queue"
     repair_data_dir = marker_dir / "repair-data"
     if local_workspace.exists():
         try:
@@ -5685,7 +5686,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
                 plan_state=plan_status,
                 current_target=current_target,
                 canonical_run_state=canonical_run_state,
-                marker_dir=marker_dir,
+                queue_root=queue_root,
                 repair_data_dir=repair_data_dir,
             )
             bucket = projection["custody_bucket"]

@@ -9,6 +9,9 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud import repair_contract
+from arnold_pipelines.megaplan.cloud.incident_bridge import IncidentStoreWriter
+from arnold_pipelines.megaplan.orchestration.progress import ProgressEmitter
+from arnold_pipelines.megaplan.store import FileStore
 from arnold_pipelines.megaplan.cloud.redact import REDACTION, redact_text
 from arnold_pipelines.megaplan.incident import IncidentLedger
 
@@ -46,6 +49,49 @@ def _read_ledger_events(root: Path) -> list[dict[str, object]]:
             continue
         records.append(json.loads(stripped))
     return records
+
+
+def _verified_recovery_evidence(*, blocker_id: str = "blocker-42") -> dict[str, object]:
+    return {
+        "repair_completed_at": "2026-07-09T07:53:00+00:00",
+        "original_blocker": {"blocker_id": blocker_id},
+        "observation": {
+            "kind": "plan_state",
+            "blocker_id": blocker_id,
+            "blocker_cleared": True,
+            "directly_observed": True,
+            "independent": True,
+            "observed_at": "2026-07-09T07:54:00+00:00",
+        },
+    }
+
+
+def test_incident_store_rejects_test_namespace_on_production_paths(tmp_path: Path) -> None:
+    production_root = tmp_path / "production"
+    production_ledger = production_root / ".megaplan" / "incident-ledger"
+    production_ledger.mkdir(parents=True)
+    alias_root = tmp_path / "production-alias"
+    alias_root.symlink_to(production_root, target_is_directory=True)
+
+    for root in (production_root, alias_root, production_ledger / "events.jsonl"):
+        with pytest.raises(ValueError, match="production ledger, projection, or journal"):
+            IncidentStoreWriter.isolated_test(
+                root,
+                production_root=production_root,
+                identity="test:repair_contract",
+            )
+
+    assert not (production_ledger / "events.jsonl").exists()
+
+
+@pytest.mark.parametrize("identity", ["test:repair_contract", "fixture:repair_contract"])
+def test_production_incident_writer_rejects_test_identities(
+    tmp_path: Path, identity: str
+) -> None:
+    with pytest.raises(ValueError, match="cannot accept a test or fixture identity"):
+        IncidentStoreWriter.production(tmp_path / "production", identity=identity)
+
+    assert not (tmp_path / "production" / ".megaplan" / "incident-ledger").exists()
 
 
 def test_repair_contract_round_trips_legacy_payload_without_shape_changes(tmp_path: Path) -> None:
@@ -743,7 +789,10 @@ def test_save_repair_data_emits_new_verified_recovered_when_success_identity_cha
             "repair_run_count": 24,
         },
         incident_id="incident-42",
-        verification={"recorded_at": "2026-07-09T07:53:48+00:00"},
+        verification={
+            **_verified_recovery_evidence(),
+            "recorded_at": "2026-07-09T07:53:48+00:00",
+        },
     )
     second_payload = repair_contract.merge_additive_fields(
         {
@@ -752,7 +801,10 @@ def test_save_repair_data_emits_new_verified_recovered_when_success_identity_cha
             "repair_run_count": 25,
         },
         incident_id="incident-42",
-        verification={"recorded_at": "2026-07-09T07:57:55+00:00"},
+        verification={
+            **_verified_recovery_evidence(),
+            "recorded_at": "2026-07-09T07:57:55+00:00",
+        },
     )
 
     repair_contract.save_repair_data(path, first_payload, root=tmp_path)
@@ -765,6 +817,115 @@ def test_save_repair_data_emits_new_verified_recovered_when_success_identity_cha
         "repair-data outcome=complete plan=m1-plan kind=chain workspace=/workspace/project",
         "repair-data outcome=complete plan=m1-plan kind=chain workspace=/workspace/project",
     ]
+
+
+def test_save_repair_data_does_not_verify_success_outcome_without_proof(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "demo-session.repair-data.json"
+    payload = repair_contract.merge_additive_fields(
+        {**_legacy_payload(), "outcome": "complete"},
+        incident_id="incident-42",
+        verification={
+            "outcome": "complete",
+            "original_blocker": {"blocker_id": "blocker-42"},
+            "observation": {"kind": "subprocess_success", "returncode": 0},
+            "repair_completed_at": "2026-07-09T07:53:00+00:00",
+        },
+    )
+
+    repair_contract.save_repair_data(path, payload, root=tmp_path)
+
+    events = _read_ledger_events(tmp_path)
+    assert [event["payload"]["type"] for event in events] == ["repair_attempt"]
+    projected = events[0]["payload"]["evidence"][-1]["data"]
+    assert projected["status"] == "provisional"
+    assert projected["authorizes_verified_recovered"] is False
+
+
+@pytest.mark.parametrize("unknown_type", ["missing", "stale", "partial", "contradictory"])
+def test_incident_projection_preserves_typed_unknown_recovery_evidence(
+    tmp_path: Path, unknown_type: str
+) -> None:
+    path = tmp_path / f"{unknown_type}.repair-data.json"
+    payload = repair_contract.merge_additive_fields(
+        {**_legacy_payload(), "outcome": "complete", "session": unknown_type},
+        incident_id=f"incident-{unknown_type}",
+        verification={
+            "repair_completed_at": "2026-07-09T07:53:00+00:00",
+            "original_blocker": {"blocker_id": "blocker-42"},
+            "observation": {"evidence_state": {"unknown_type": unknown_type}},
+        },
+    )
+
+    repair_contract.save_repair_data(path, payload, root=tmp_path)
+
+    event = _read_ledger_events(tmp_path)[0]["payload"]
+    assert event["type"] == "repair_attempt"
+    assert event["outcome"] == f"unknown_{unknown_type}"
+    projected = event["evidence"][-1]["data"]
+    assert projected["status"] == "unknown"
+    assert projected["unknown_type"] == unknown_type
+    assert projected["authorizes_verified_recovered"] is False
+
+
+def test_progress_projection_cannot_promote_liveness_or_dispatch_success(
+    tmp_path: Path,
+) -> None:
+    store = FileStore(tmp_path / "progress-store")
+    epic = store.create_epic(title="Recovery", goal="Truthful projection", body="")
+    emitter = ProgressEmitter(store, epic_id=epic.id, plan_id="plan-1")
+
+    emitter.emit(
+        "phase_end",
+        "Repair subprocess finished",
+        details={
+            "recovery_state": "verified_recovered",
+            "recovery_verified": True,
+            "recovery_verification": {
+                "original_blocker": {"blocker_id": "blocker-42"},
+                "observation": {
+                    "kind": "subprocess_success",
+                    "returncode": 0,
+                    "pid_alive": True,
+                },
+                "repair_completed_at": "2026-07-09T07:53:00+00:00",
+            },
+        },
+    )
+
+    details = store.list_progress_events(epic_id=epic.id)[0].details
+    assert details["recovery_state"] == "provisional"
+    assert details["recovery_verified"] is False
+    assert details["authorizes_verified_recovered"] is False
+
+
+def test_progress_projection_preserves_unknown_and_verified_recovery_evidence(
+    tmp_path: Path,
+) -> None:
+    store = FileStore(tmp_path / "progress-store")
+    epic = store.create_epic(title="Recovery", goal="Truthful projection", body="")
+    emitter = ProgressEmitter(store, epic_id=epic.id, plan_id="plan-1")
+    stale = {
+        "repair_completed_at": "2026-07-09T07:53:00+00:00",
+        "original_blocker": {"blocker_id": "blocker-42"},
+        "observation": {"evidence_state": {"unknown_type": "stale"}},
+    }
+
+    emitter.recovery_observed(stale, summary="Stale recovery observation")
+    emitter.recovery_observed(
+        _verified_recovery_evidence(), summary="Independent recovery observation"
+    )
+
+    events = store.list_progress_events(epic_id=epic.id)
+    assert [event.details["recovery_status"] for event in events] == [
+        "unknown",
+        "verified_recovered",
+    ]
+    assert events[0].details["unknown_type"] == "stale"
+    assert events[0].details["authorizes_verified_recovered"] is False
+    assert events[1].details["unknown_type"] == ""
+    assert events[1].details["authorizes_verified_recovered"] is True
 
 
 def test_save_repair_data_defaults_incident_root_to_payload_workspace(
@@ -1228,6 +1389,81 @@ def test_classify_accepts_pre_post_snapshots_forward_compat() -> None:
         is_complete=True, pre_snapshot=pre, post_snapshot=post
     )
     assert outcome == repair_contract.COMPLETE
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        {"kind": "pid", "pid_alive": True},
+        {"kind": "heartbeat", "heartbeat_active": True},
+        {"kind": "partial_liveness", "is_live": True},
+        {"kind": "subprocess_success", "returncode": 0},
+    ],
+)
+def test_recovery_liveness_and_process_signals_are_provisional(
+    observation: dict[str, object],
+) -> None:
+    result = repair_contract.classify_recovery_verification(
+        original_blocker={"blocker_id": "blocker-42"},
+        observation=observation,
+        repair_completed_at="2026-07-09T07:53:00+00:00",
+    )
+
+    assert result["status"] == repair_contract.RECOVERY_PROVISIONAL
+    assert result["recovery_verified"] is False
+    assert result["authorizes_verified_recovered"] is False
+
+
+@pytest.mark.parametrize("unknown_type", ["missing", "stale", "partial", "contradictory"])
+def test_recovery_preserves_typed_unknown_evidence(unknown_type: str) -> None:
+    result = repair_contract.classify_recovery_verification(
+        original_blocker={"blocker_id": "blocker-42"},
+        observation={
+            "evidence_state": {"status": "unknown", "unknown_type": unknown_type}
+        },
+        repair_completed_at="2026-07-09T07:53:00+00:00",
+    )
+
+    assert result["status"] == repair_contract.RECOVERY_UNKNOWN
+    assert result["unknown_type"] == unknown_type
+    assert result["authorizes_verified_recovered"] is False
+
+
+def test_recovery_requires_later_independent_blocker_specific_proof() -> None:
+    evidence = _verified_recovery_evidence()
+    result = repair_contract.classify_recovery_verification(
+        original_blocker=evidence["original_blocker"],
+        observation=evidence["observation"],
+        repair_completed_at=evidence["repair_completed_at"],
+    )
+
+    assert result["status"] == repair_contract.RECOVERY_VERIFIED
+    assert result["recovery_verified"] is True
+    assert result["authorizes_verified_recovered"] is True
+
+
+def test_recovery_rejects_stale_or_different_blocker_proof() -> None:
+    stale = repair_contract.classify_recovery_verification(
+        original_blocker={"blocker_id": "blocker-42"},
+        observation={
+            **_verified_recovery_evidence()["observation"],
+            "observed_at": "2026-07-09T07:52:00+00:00",
+        },
+        repair_completed_at="2026-07-09T07:53:00+00:00",
+    )
+    different = repair_contract.classify_recovery_verification(
+        original_blocker={"blocker_id": "blocker-42"},
+        observation={
+            **_verified_recovery_evidence()["observation"],
+            "blocker_id": "blocker-99",
+        },
+        repair_completed_at="2026-07-09T07:53:00+00:00",
+    )
+
+    assert stale["unknown_type"] == "stale"
+    assert different["unknown_type"] == "contradictory"
+    assert stale["authorizes_verified_recovered"] is False
+    assert different["authorizes_verified_recovered"] is False
 
 
 # ---------------------------------------------------------------------------

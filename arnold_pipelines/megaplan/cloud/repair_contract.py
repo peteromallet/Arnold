@@ -413,8 +413,7 @@ def project_repair_custody(
     plan_state: Mapping[str, Any] | None = None,
     current_target: Mapping[str, Any] | None = None,
     canonical_run_state: CanonicalRunState | None = None,
-    marker_dir: str | Path | None = None,
-    queue_dir: str | Path | None = None,
+    queue_root: str | Path | None = None,
     repair_data_dir: str | Path | None = None,
     sidecar_dir: str | Path | None = None,
 ) -> RepairCustodyProjection:
@@ -426,17 +425,21 @@ def project_repair_custody(
 
     plan_payload = _as_mapping(plan_state)
     target_payload = _as_mapping(current_target)
-    queue_root: Path | None = None
-    if queue_dir is not None:
-        queue_root = Path(queue_dir)
-    elif marker_dir is not None:
-        queue_root = repair_requests.repair_queue_dir(marker_dir)
+    validated_queue_root = (
+        repair_requests.validate_queue_root(queue_root)
+        if queue_root is not None
+        else None
+    )
 
     queue_requests = (
-        repair_requests.iter_repair_requests(queue_root, marker_dir=False) if queue_root is not None else []
+        repair_requests.iter_repair_requests(validated_queue_root)
+        if validated_queue_root is not None
+        else []
     )
     queue_decisions = (
-        repair_requests.iter_repair_decisions(queue_root, marker_dir=False) if queue_root is not None else []
+        repair_requests.iter_repair_decisions(validated_queue_root)
+        if validated_queue_root is not None
+        else []
     )
     decision_history = _decision_history_by_request(queue_decisions)
 
@@ -1450,6 +1453,13 @@ NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
 ENVIRONMENT_GONE = "environment_gone"  # wiped workspace/spec — ops concern, not repairable
 
+RECOVERY_VERIFIED = "verified_recovered"
+RECOVERY_PROVISIONAL = "provisional"
+RECOVERY_UNKNOWN = "unknown"
+RECOVERY_UNKNOWN_TYPES: frozenset[str] = frozenset(
+    {"missing", "stale", "partial", "contradictory"}
+)
+
 SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {COMPLETE, PROGRESSED, TRUE_HUMAN_BLOCKER}
 )
@@ -1563,11 +1573,151 @@ def classify_verification_outcome(
     return REPAIRING
 
 
+def _verification_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _blocker_identity(value: Mapping[str, Any] | None) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    for key in ("blocker_id", "blocker_fingerprint", "fingerprint"):
+        identity = str(value.get(key) or "").strip()
+        if identity:
+            return identity
+    return ""
+
+
+def classify_recovery_verification(
+    *,
+    original_blocker: Mapping[str, Any] | None,
+    observation: Mapping[str, Any] | None,
+    repair_completed_at: datetime | str | None,
+) -> dict[str, Any]:
+    """Classify whether a later observation proves the original blocker cleared.
+
+    Process existence, heartbeat/activity, and subprocess exit are deliberately
+    provisional.  Recovery requires a later, independent, direct observation
+    carrying the same blocker identity.  Invalid evidence fails closed while
+    preserving one of the current-target typed-unknown reasons.
+    """
+
+    def unknown(kind: str, reason: str) -> dict[str, Any]:
+        return {
+            "status": RECOVERY_UNKNOWN,
+            "unknown_type": kind,
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+            "reason": reason,
+        }
+
+    if not isinstance(observation, Mapping) or not observation:
+        return unknown("missing", "independent post-repair observation is absent")
+
+    evidence_state = observation.get("evidence_state")
+    if isinstance(evidence_state, Mapping):
+        unknown_type = str(evidence_state.get("unknown_type") or "").strip().lower()
+        if unknown_type in RECOVERY_UNKNOWN_TYPES:
+            return unknown(unknown_type, f"observation evidence is {unknown_type}")
+
+    if observation.get("contradictory") is True:
+        return unknown("contradictory", "observation contains contradictory evidence")
+
+    provisional_signals = {
+        "pid",
+        "process",
+        "heartbeat",
+        "liveness",
+        "partial_liveness",
+        "subprocess_success",
+    }
+    observation_kind = str(observation.get("kind") or "").strip().lower()
+    has_provisional_signal = observation_kind in provisional_signals or any(
+        observation.get(key) is True
+        for key in (
+            "pid_alive",
+            "process_alive",
+            "heartbeat_active",
+            "is_live",
+            "has_fresh_activity",
+            "subprocess_succeeded",
+        )
+    )
+    if observation.get("returncode") == 0:
+        has_provisional_signal = True
+
+    original_identity = _blocker_identity(original_blocker)
+    observed_identity = _blocker_identity(observation)
+    direct_fields_present = any(
+        key in observation
+        for key in (
+            "blocker_cleared",
+            "directly_observed",
+            "independent",
+            "blocker_id",
+            "blocker_fingerprint",
+            "fingerprint",
+        )
+    )
+    if has_provisional_signal and not direct_fields_present:
+        return {
+            "status": RECOVERY_PROVISIONAL,
+            "unknown_type": "",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+            "reason": "process, heartbeat, liveness, or subprocess success is provisional only",
+        }
+
+    if not original_identity or not observed_identity:
+        return unknown("partial", "blocker-specific identity is incomplete")
+    if original_identity != observed_identity:
+        return unknown("contradictory", "observation refers to a different blocker")
+    if observation.get("blocker_cleared") is not True:
+        if observation.get("blocker_cleared") is False:
+            return unknown("contradictory", "observation says the original blocker remains")
+        return unknown("partial", "observation does not directly say the blocker cleared")
+    if observation.get("directly_observed") is not True:
+        return unknown("partial", "blocker clearance was not directly observed")
+    if observation.get("independent") is not True:
+        return unknown("partial", "blocker clearance observation is not independent")
+
+    completed_at = _verification_timestamp(repair_completed_at)
+    observed_at = _verification_timestamp(observation.get("observed_at"))
+    if completed_at is None or observed_at is None:
+        return unknown("partial", "verification timestamps are incomplete")
+    if observed_at <= completed_at:
+        return unknown("stale", "verification observation is not later than repair completion")
+
+    return {
+        "status": RECOVERY_VERIFIED,
+        "unknown_type": "",
+        "recovery_verified": True,
+        "authorizes_verified_recovered": True,
+        "reason": "later independent observation directly proves the original blocker cleared",
+        "blocker_identity": original_identity,
+        "repair_completed_at": completed_at.isoformat(),
+        "observed_at": observed_at.isoformat(),
+    }
+
+
 def build_verification_record(
     outcome: str,
     *,
     pre_snapshot: Mapping[str, Any] | None = None,
     post_snapshot: Mapping[str, Any] | None = None,
+    original_blocker: Mapping[str, Any] | None = None,
+    observation: Mapping[str, Any] | None = None,
+    repair_completed_at: datetime | str | None = None,
     delta_summary: str = "",
     recorded_at: datetime | None = None,
 ) -> dict[str, Any]:
@@ -1582,13 +1732,32 @@ def build_verification_record(
     """
     if recorded_at is None:
         recorded_at = datetime.now(timezone.utc)
+    recovery_verification = classify_recovery_verification(
+        original_blocker=original_blocker,
+        observation=observation,
+        repair_completed_at=repair_completed_at,
+    )
     return {
         "outcome": outcome,
         "is_success": is_success_outcome(outcome),
         "is_terminal": is_terminal_outcome(outcome),
+        "recovery_verified": recovery_verification["recovery_verified"],
+        "authorizes_verified_recovered": recovery_verification[
+            "authorizes_verified_recovered"
+        ],
+        "recovery_verification": recovery_verification,
         "recorded_at": recorded_at.isoformat(),
         "pre_snapshot": dict(pre_snapshot) if pre_snapshot is not None else None,
         "post_snapshot": dict(post_snapshot) if post_snapshot is not None else None,
+        "original_blocker": (
+            dict(original_blocker) if original_blocker is not None else None
+        ),
+        "observation": dict(observation) if observation is not None else None,
+        "repair_completed_at": (
+            repair_completed_at.isoformat()
+            if isinstance(repair_completed_at, datetime)
+            else repair_completed_at
+        ),
         "delta_summary": delta_summary,
     }
 
@@ -2072,7 +2241,15 @@ def _event_signature(payload: Mapping[str, Any]) -> tuple[str, str, str]:
     outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
     marker = _repair_attempt_marker(payload)
     if is_success_outcome(outcome):
-        return ("verified_recovered", outcome, marker)
+        recovery = _payload_recovery_verification(payload)
+        if recovery.get("authorizes_verified_recovered") is True:
+            return ("verified_recovered", outcome, marker)
+        projected_outcome = (
+            RECOVERY_PROVISIONAL
+            if recovery.get("status") == RECOVERY_PROVISIONAL
+            else f"unknown_{recovery.get('unknown_type') or 'missing'}"
+        )
+        return ("repair_attempt", projected_outcome, marker)
     if outcome == REPAIRING:
         return ("repair_attempt", "attempted", marker)
     return ("repair_attempt", outcome, marker)
@@ -2139,7 +2316,7 @@ def _emit_incident_bridge_event(
     try:
         from arnold_pipelines.megaplan.cloud.incident_bridge import (
             append_immediate_repair_attempt,
-            append_verified_recovered,
+            append_recovery_observation,
         )
 
         if outcome == REPAIRING:
@@ -2153,9 +2330,12 @@ def _emit_incident_bridge_event(
                 root=root,
             )
         elif is_success_outcome(outcome):
-            append_verified_recovered(
+            append_recovery_observation(
                 incident_id=incident_id,
                 summary=summary,
+                recovery_verification=(
+                    dict(verification) if isinstance(verification, Mapping) else {}
+                ),
                 evidence=evidence,
                 session_id=session_id,
                 root=root,
@@ -2175,6 +2355,22 @@ def _emit_incident_bridge_event(
     except Exception:
         # Bridge event emission is best-effort; never let it fail the save.
         pass
+
+
+def _payload_recovery_verification(payload: Mapping[str, Any]) -> dict[str, Any]:
+    verification = payload.get("verification")
+    if not isinstance(verification, Mapping):
+        verification = {}
+    original_blocker = verification.get("original_blocker")
+    if not isinstance(original_blocker, Mapping):
+        original_blocker = payload.get("original_blocker")
+    observation = verification.get("observation")
+    repair_completed_at = verification.get("repair_completed_at")
+    return classify_recovery_verification(
+        original_blocker=original_blocker if isinstance(original_blocker, Mapping) else None,
+        observation=observation if isinstance(observation, Mapping) else None,
+        repair_completed_at=repair_completed_at,
+    )
 
 
 def _update_session_index_from_repair_data(
@@ -2840,6 +3036,10 @@ __all__ = [
     "REPAIR_EXHAUSTED",
     "REPAIR_TIMEOUT",
     "REPAIRING",
+    "RECOVERY_PROVISIONAL",
+    "RECOVERY_UNKNOWN",
+    "RECOVERY_UNKNOWN_TYPES",
+    "RECOVERY_VERIFIED",
     "SUCCESS_OUTCOMES",
     "TRUE_HUMAN_BLOCKER",
     "append_attempt_record",
@@ -2854,6 +3054,7 @@ __all__ = [
     "blocker_id_for_fingerprint",
     "build_verification_record",
     "classify_repair_dispatch",
+    "classify_recovery_verification",
     "classify_verification_outcome",
     "cleanup_repair_data_retention",
     "compute_deadline",

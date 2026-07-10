@@ -60,23 +60,42 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def repair_queue_dir(marker_dir: str | Path) -> Path:
-    """Return the marker-dir-adjacent repair queue directory."""
+def validate_queue_root(queue_root: str | Path) -> Path:
+    """Return the canonical central repair queue root or reject it.
 
-    markers = Path(marker_dir)
-    return markers.parent / QUEUE_DIR_NAME
+    Queue custody is intentionally structural and explicit: the only accepted
+    shape is an absolute ``<workspace>/.megaplan/repair-queue`` path.  A path
+    beneath ``.megaplan/plans`` is never central, even if a nested directory is
+    named ``.megaplan/repair-queue``.
+    """
+
+    raw_root = Path(queue_root)
+    if not raw_root.is_absolute():
+        raise ValueError("repair queue root must be an absolute path")
+    root = raw_root.resolve(strict=False)
+    parts = root.parts
+    if any(
+        part == ".megaplan" and index + 1 < len(parts) and parts[index + 1] == "plans"
+        for index, part in enumerate(parts)
+    ):
+        raise ValueError("repair queue root cannot be inside .megaplan/plans")
+    if root.name != QUEUE_DIR_NAME or root.parent.name != ".megaplan":
+        raise ValueError(
+            "repair queue root must be the central <workspace>/.megaplan/repair-queue directory"
+        )
+    return root
 
 
 def requests_dir(queue_dir: str | Path) -> Path:
-    return Path(queue_dir) / REQUESTS_DIR_NAME
+    return validate_queue_root(queue_dir) / REQUESTS_DIR_NAME
 
 
 def decisions_dir(queue_dir: str | Path) -> Path:
-    return Path(queue_dir) / DECISIONS_DIR_NAME
+    return validate_queue_root(queue_dir) / DECISIONS_DIR_NAME
 
 
 def active_claims_dir(queue_dir: str | Path) -> Path:
-    return Path(queue_dir) / ACTIVE_CLAIMS_DIR_NAME
+    return validate_queue_root(queue_dir) / ACTIVE_CLAIMS_DIR_NAME
 
 
 def active_repair_claim_lock_dir(queue_dir: str | Path, blocker_id: str) -> Path:
@@ -126,11 +145,12 @@ def request_id_for(
 
 def enqueue_repair_request(
     *,
-    marker_dir: str | Path,
+    queue_root: str | Path,
     session: str,
     problem_signature: Mapping[str, Any],
     root_cause_hint: Any = "",
     source: str,
+    marker_dir: str | Path | None = None,
     target: Mapping[str, Any] | None = None,
     workspace: str | Path | None = None,
     run_kind: str = "",
@@ -140,7 +160,7 @@ def enqueue_repair_request(
 ) -> dict[str, Any]:
     """Write a request marker once, recording any rejection/coalescing separately."""
 
-    queue_root = repair_queue_dir(marker_dir)
+    queue_root = validate_queue_root(queue_root)
     normalized_signature = normalize_problem_signature(problem_signature)
     hint_hash = redacted_hint_hash(root_cause_hint)
     request_id = request_id_for(
@@ -158,7 +178,7 @@ def enqueue_repair_request(
         "session": str(session or "").strip(),
         "workspace": str(workspace or ""),
         "run_kind": str(run_kind or "").strip(),
-        "marker_dir": str(Path(marker_dir)),
+        "marker_dir": str(Path(marker_dir)) if marker_dir is not None else "",
         "queue_dir": str(queue_root),
         "target": _stable_mapping(target or {}),
         "problem_signature": normalized_signature,
@@ -222,6 +242,7 @@ def enqueue_repair_request(
 
 def enqueue_human_gate_repair_request(
     *,
+    queue_root: str | Path,
     marker_dir: str | Path,
     session: str,
     workspace: str | Path,
@@ -239,6 +260,7 @@ def enqueue_human_gate_repair_request(
     if not repair_request_queue_enabled():
         return None
     return enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session=session,
         source="human_gate",
@@ -263,14 +285,13 @@ def enqueue_human_gate_repair_request(
 
 
 def iter_repair_requests(
-    marker_dir_or_queue_dir: str | Path,
+    queue_root: str | Path,
     *,
-    marker_dir: bool = True,
     include_malformed: bool = False,
 ) -> list[dict[str, Any]]:
     """Return request records in deterministic order, tolerating bad files."""
 
-    queue_root = repair_queue_dir(marker_dir_or_queue_dir) if marker_dir else Path(marker_dir_or_queue_dir)
+    queue_root = validate_queue_root(queue_root)
     records: list[dict[str, Any]] = []
     malformed: list[dict[str, Any]] = []
     for path in sorted(requests_dir(queue_root).glob("*.json"), key=lambda item: item.name):
@@ -296,14 +317,13 @@ def iter_repair_requests(
 
 
 def iter_repair_decisions(
-    marker_dir_or_queue_dir: str | Path,
+    queue_root: str | Path,
     *,
-    marker_dir: bool = True,
     include_malformed: bool = False,
 ) -> list[dict[str, Any]]:
     """Return immutable decision records in deterministic order."""
 
-    queue_root = repair_queue_dir(marker_dir_or_queue_dir) if marker_dir else Path(marker_dir_or_queue_dir)
+    queue_root = validate_queue_root(queue_root)
     records: list[dict[str, Any]] = []
     malformed: list[dict[str, Any]] = []
     for path in sorted(decisions_dir(queue_root).glob("*.json"), key=lambda item: item.name):
@@ -334,7 +354,7 @@ def find_pending_by_signature(
 ) -> dict[str, Any] | None:
     key = problem_signature_key(problem_signature)
     decided = _decided_request_ids(queue_dir)
-    for record in iter_repair_requests(queue_dir, marker_dir=False):
+    for record in iter_repair_requests(queue_dir):
         if record.get("request_id") in decided:
             continue
         if record.get("problem_signature_key") == key:
@@ -670,6 +690,7 @@ def _malformed_decision(path: Path, exc: Exception) -> dict[str, Any]:
 __all__ = [
     "ACTIVE_CLAIMS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
+    "QUEUE_DIR_NAME",
     "ActiveRepairClaimResult",
     "ActiveRepairClaimStatus",
     "DecisionKind",
@@ -686,7 +707,7 @@ __all__ = [
     "record_malformed_file",
     "redacted_hint_hash",
     "release_active_repair_request_claim",
-    "repair_queue_dir",
     "request_id_for",
+    "validate_queue_root",
     "write_decision",
 ]
