@@ -1,6 +1,7 @@
 """Deterministic L2 terminal audit with no model dispatch."""
 from __future__ import annotations
 import argparse, datetime as dt, json, os, subprocess
+import yaml
 from pathlib import Path
 from typing import Any, Sequence
 from arnold_pipelines.megaplan.cloud.meta_repair import RetriggerExecutionResult, authoritative_terminal_snapshot_reason, verify_retrigger_success
@@ -21,11 +22,25 @@ def capture_terminal_snapshot(s:str,md:Path)->dict[str,Any]:
         if not ps:raise ValueError("current plan state unavailable for authoritative snapshot")
         pp=ps[-1]
     p=_obj(pp,"plan state"); ms=c.get("milestones") if isinstance(c.get("milestones"),list) else []; done=c.get("completed") if isinstance(c.get("completed"),list) else []; a=p.get("active_step") if isinstance(p.get("active_step"),dict) else {}; pid=a.get("worker_pid"); alive=None
+    # Modern chain runtime state deliberately omits the spec's milestone list.
+    # The marker's canonical remote_spec is therefore the authority for total.
+    spec_path=Path(str(m.get("remote_spec") or "")); spec_total=0
+    if spec_path.is_file():
+        try:
+            spec=yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+            spec_ms=spec.get("milestones") if isinstance(spec,dict) else None
+            if isinstance(spec_ms,list): spec_total=len(spec_ms)
+        except (OSError,yaml.YAMLError): pass
+    chain_total=len(ms)
+    total=spec_total or chain_total
+    # A populated runtime list that disagrees with the canonical spec is a
+    # terminality contradiction, not an excuse to guess a total.
+    total_consistent=not (spec_total and chain_total and spec_total != chain_total)
     if pid not in (None,""):
         try:os.kill(int(pid),0)
         except (OSError,ValueError):alive=False
         else:alive=True
-    return {"captured_at":dt.datetime.now(dt.timezone.utc).isoformat(),"workspace":str(w),"chain_path":str(cp),"plan_path":str(pp),"milestone_total":len(ms),"completed_count":len(done),"chain_last_state":str(c.get("last_state") or "").strip().lower(),"plan_current_state":str(p.get("current_state") or p.get("state") or "").strip().lower(),"active_step_present":bool(a),"worker_pid":pid,"worker_pid_alive":alive,"remote_spec":str(m.get("remote_spec") or "").strip()}
+    return {"captured_at":dt.datetime.now(dt.timezone.utc).isoformat(),"workspace":str(w),"chain_path":str(cp),"plan_path":str(pp),"milestone_total":total if total_consistent else 0,"milestone_total_source":"remote_spec" if spec_total else "chain_state","milestone_total_consistent":total_consistent,"completed_count":len(done),"chain_last_state":str(c.get("last_state") or "").strip().lower(),"plan_current_state":str(p.get("current_state") or p.get("state") or "").strip().lower(),"active_step_present":bool(a),"worker_pid":pid,"worker_pid_alive":alive,"remote_spec":str(m.get("remote_spec") or "").strip()}
 def run_terminal_audit(*,session:str,repair_loop_bin:Path,marker_dir:Path,repair_data_dir:Path)->dict[str,Any]:
     started=dt.datetime.now(dt.timezone.utc).isoformat(); pre=post=None; cmd=[]; rc=None; rejection=""
     try:
