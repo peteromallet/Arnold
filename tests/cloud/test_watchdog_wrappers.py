@@ -2400,6 +2400,119 @@ def test_repair_loop_exits_for_terminal_plan_with_stale_chain_state(tmp_path: Pa
 
 
 
+def test_repair_source_workspace_accepts_authenticated_engine_remote(tmp_path: Path) -> None:
+    arnold_src = tmp_path / "arnold-src"
+    workspace = tmp_path / "workspace"
+    run_dir = tmp_path / "run"
+    marker_path = tmp_path / "marker.json"
+    log_path = tmp_path / "repair.log"
+    arnold_src.mkdir()
+    workspace.mkdir()
+    run_dir.mkdir()
+
+    subprocess.run(["git", "init", str(arnold_src)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(arnold_src),
+            "remote",
+            "add",
+            "origin",
+            "https://x-access-token:demo-token@github.com/acme/demo.git",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(["git", "init", str(workspace)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "remote", "add", "origin", "https://github.com/acme/demo.git"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    marker_path.write_text(json.dumps({"repo_url": "https://github.com/acme/demo.git"}), encoding="utf-8")
+
+    script = "\n".join(
+        [
+            _extract_repair_function("repair_source_workspace_if_possible"),
+            f"RUN_DIR={shlex.quote(str(run_dir))}",
+            f"ARNOLD_SRC={shlex.quote(str(arnold_src))}",
+            f"MARKER_PATH={shlex.quote(str(marker_path))}",
+            f"WORKSPACE={shlex.quote(str(workspace))}",
+            f"LOG={shlex.quote(str(log_path))}",
+            "SYNC_BRANCH=editible-install",
+            "require_repair_lock_held() { :; }",
+            "ensure_repair_budget_available() { :; }",
+            "log() { printf '%s\\n' \"$*\" >> \"$LOG\"; }",
+            "repair_source_workspace_if_possible >/dev/null 2>&1 || true",
+            "cat \"$RUN_DIR/source-workspace-repair.json\"",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["reason"] == "workspace_git_present"
+    assert "source_repo_identity_mismatch" not in log_path.read_text(encoding="utf-8")
+
+
+def test_repair_source_workspace_redacts_authenticated_mismatch_details(tmp_path: Path) -> None:
+    arnold_src = tmp_path / "arnold-src"
+    workspace = tmp_path / "workspace"
+    run_dir = tmp_path / "run"
+    marker_path = tmp_path / "marker.json"
+    log_path = tmp_path / "repair.log"
+    arnold_src.mkdir()
+    workspace.mkdir()
+    run_dir.mkdir()
+
+    subprocess.run(["git", "init", str(arnold_src)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(arnold_src),
+            "remote",
+            "add",
+            "origin",
+            "https://x-access-token:demo-token@github.com/acme/demo.git",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    marker_path.write_text(json.dumps({"repo_url": "https://github.com/acme/other.git"}), encoding="utf-8")
+
+    script = "\n".join(
+        [
+            _extract_repair_function("repair_source_workspace_if_possible"),
+            f"RUN_DIR={shlex.quote(str(run_dir))}",
+            f"ARNOLD_SRC={shlex.quote(str(arnold_src))}",
+            f"MARKER_PATH={shlex.quote(str(marker_path))}",
+            f"WORKSPACE={shlex.quote(str(workspace))}",
+            f"LOG={shlex.quote(str(log_path))}",
+            "SYNC_BRANCH=editible-install",
+            "require_repair_lock_held() { :; }",
+            "ensure_repair_budget_available() { :; }",
+            "log() { printf '%s\\n' \"$*\" >> \"$LOG\"; }",
+            "repair_source_workspace_if_possible >/dev/null 2>&1 || true",
+            "cat \"$RUN_DIR/source-workspace-repair.json\"",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["reason"] == "source_repo_identity_mismatch"
+    assert payload["details"] == {
+        "source_origin": "github.com/acme/demo",
+        "expected_origin": "github.com/acme/other",
+    }
+    assert "demo-token" not in result.stdout
+
+
 def test_repair_loop_terminal_plan_is_not_complete_when_chain_health_is_incomplete(
     tmp_path: Path,
 ) -> None:
