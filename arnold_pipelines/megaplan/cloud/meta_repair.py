@@ -1572,14 +1572,16 @@ def verify_retrigger_success(
     snapshot_reason = authoritative_terminal_snapshot_reason(
         verification.get("post_snapshot")
     )
-    # L2 can observe liveness/progress, but it may close custody only after it
-    # has written and validated an authoritative terminal snapshot.  A bare
-    # repair-data `complete` is therefore deliberately non-authoritative.
+    # L2 can hand a genuinely live target back to ordinary supervision.  Only
+    # a COMPLETE outcome *closes* custody, and only that terminal claim needs
+    # the all-milestones/no-worker authoritative snapshot.
     accepted = (
         retriggered
         and (retrigger_result is None or retrigger_result.returncode == 0)
-        and normalized_outcome == COMPLETE
-        and not snapshot_reason
+        and (
+            normalized_outcome == LIVE_WITH_FRESH_ACTIVITY
+            or (normalized_outcome == COMPLETE and not snapshot_reason)
+        )
     )
 
     rejection_reason = ""
@@ -1590,7 +1592,7 @@ def verify_retrigger_success(
             "ordinary repair retrigger command failed "
             f"(returncode={retrigger_result.returncode})"
         )
-    elif snapshot_reason:
+    elif normalized_outcome == COMPLETE and snapshot_reason:
         rejection_reason = snapshot_reason
     elif normalized_outcome == PARTIAL_LIVENESS:
         rejection_reason = "partial_liveness is not a terminal success"
