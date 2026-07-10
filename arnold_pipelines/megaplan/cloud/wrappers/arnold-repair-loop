@@ -5700,7 +5700,7 @@ PY
 repair_source_workspace_if_possible() {
   require_repair_lock_held
   ensure_repair_budget_available "source-workspace-repair"
-  local result_path="" tmp_root="" tmp_clone="" status=1 entry base source_origin="" workspace_origin=""
+  local result_path="" tmp_root="" tmp_clone="" status=1 entry base source_origin="" workspace_origin="" expected_origin=""
   result_path="$RUN_DIR/source-workspace-repair.json"
   if [[ ! -d "$ARNOLD_SRC/.git" ]]; then
     printf '%s\n' '{"repaired": false, "reason": "source_git_missing", "details": {}}' >"$result_path"
@@ -5708,24 +5708,96 @@ repair_source_workspace_if_possible() {
     return 1
   fi
   source_origin="$(git -C "$ARNOLD_SRC" remote get-url origin 2>/dev/null || true)"
+  # The repair engine's checkout is not the target project.  A workspace can
+  # be reconstructed from it only when the session marker explicitly proves
+  # that both remotes identify the same repository.  In particular, never
+  # turn a VibeComfy target into the Arnold engine repo.
+  expected_origin="$(python3 - "$MARKER_PATH" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    marker = {}
+
+candidates = [
+    marker.get("repo_url"), marker.get("repository_url"), marker.get("git_url"),
+    marker.get("origin"), marker.get("repo"),
+]
+cloud = marker.get("cloud")
+if isinstance(cloud, dict):
+    candidates.extend([cloud.get("repo_url"), cloud.get("repository_url")])
+command = str(marker.get("relaunch_command") or "")
+match = re.search(r"(?:^|\s)(?:REPO|REPO_URL)=['\"]?([^'\"\s]+)", command)
+if match:
+    candidates.append(match.group(1))
+for candidate in candidates:
+    value = str(candidate or "").strip()
+    if value:
+        print(value)
+        break
+PY
+)"
+  if [[ -z "$expected_origin" ]]; then
+    printf '%s\n' '{"repaired": false, "reason": "target_repo_identity_missing", "details": {}}' >"$result_path"
+    log "source workspace repair refused: marker has no target repo identity result=$result_path"
+    return 1
+  fi
+  if ! python3 - "$source_origin" "$expected_origin" <<'PY'
+import sys
+
+def identity(value):
+    value = value.strip().lower().rstrip("/")
+    if value.startswith("git@") and ":" in value:
+        host_path = value[4:]
+        value = host_path.replace(":", "/", 1)
+    value = value.removeprefix("https://").removeprefix("http://")
+    return value.removesuffix(".git")
+
+raise SystemExit(0 if identity(sys.argv[1]) and identity(sys.argv[1]) == identity(sys.argv[2]) else 1)
+PY
+  then
+    python3 - "$result_path" "$source_origin" "$expected_origin" <<'PY'
+import json, pathlib, sys
+path, source_origin, expected_origin = sys.argv[1:]
+pathlib.Path(path).write_text(json.dumps({"repaired": False, "reason": "source_repo_identity_mismatch", "details": {"source_origin": source_origin, "expected_origin": expected_origin}}, indent=2) + "\n", encoding="utf-8")
+PY
+    log "source workspace repair refused: engine repo differs from target repo result=$result_path"
+    return 1
+  fi
   if [[ -d "$WORKSPACE/.git" ]] || git -C "$WORKSPACE" rev-parse --show-toplevel >/dev/null 2>&1; then
     workspace_origin="$(git -C "$WORKSPACE" remote get-url origin 2>/dev/null || true)"
-    if [[ -n "$source_origin" && "$workspace_origin" != "$source_origin" ]]; then
-      git -C "$WORKSPACE" remote set-url origin "$source_origin" >>"$LOG" 2>&1
-      python3 - "$result_path" "$WORKSPACE" "$source_origin" <<'PY'
+    if ! python3 - "$workspace_origin" "$expected_origin" <<'PY'
+import sys
+
+def identity(value):
+    value = value.strip().lower().rstrip("/")
+    if value.startswith("git@") and ":" in value:
+        value = value[4:].replace(":", "/", 1)
+    value = value.removeprefix("https://").removeprefix("http://")
+    return value.removesuffix(".git")
+
+raise SystemExit(0 if identity(sys.argv[1]) and identity(sys.argv[1]) == identity(sys.argv[2]) else 1)
+PY
+    then
+      python3 - "$result_path" "$WORKSPACE" "$workspace_origin" "$expected_origin" <<'PY'
 import json
 import pathlib
 import sys
 
-result_path, workspace, source_origin = sys.argv[1:]
+result_path, workspace, workspace_origin, expected_origin = sys.argv[1:]
 pathlib.Path(result_path).write_text(
     json.dumps(
         {
-            "repaired": True,
-            "reason": "source_workspace_remote_repaired",
+            "repaired": False,
+            "reason": "workspace_repo_identity_mismatch",
             "details": {
                 "workspace": workspace,
-                "origin": source_origin,
+                "workspace_origin": workspace_origin,
+                "expected_origin": expected_origin,
             },
         },
         indent=2,
@@ -5734,8 +5806,8 @@ pathlib.Path(result_path).write_text(
     encoding="utf-8",
 )
 PY
-      log "source workspace repair succeeded result=$result_path"
-      return 0
+      log "source workspace repair refused: workspace repo differs from marker target result=$result_path"
+      return 1
     fi
     printf '%s\n' '{"repaired": false, "reason": "workspace_git_present", "details": {}}' >"$result_path"
     log "source workspace repair not applicable status=2 result=$result_path"
