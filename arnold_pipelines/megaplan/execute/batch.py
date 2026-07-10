@@ -1024,6 +1024,30 @@ def _count_execute_tracking(
     )
 
 
+def _durably_evidenced_finalized_task_ids(
+    tasks: Iterable[dict[str, Any]],
+) -> set[str]:
+    """Return terminal task IDs with output evidence for quality coverage.
+
+    This deliberately does not relax scheduler authority: it only keeps a
+    replayed or partial retry from erasing finalized task coverage.
+    """
+    completed: set[str] = set()
+    for task in tasks:
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        status = task.get("status")
+        if status == "done" and (task.get("files_changed") or task.get("commands_run")):
+            completed.add(task_id)
+            continue
+        if status == "skipped":
+            notes = task.get("executor_notes")
+            if isinstance(notes, str) and notes.strip():
+                completed.add(task_id)
+    return completed
+
+
 def build_blocking_reasons(
     *,
     tracked_tasks: int,
@@ -3756,6 +3780,9 @@ def handle_execute_auto_loop(
         plan_dir=plan_dir,
         root=root,
         state=state,
+    )
+    completed_task_ids |= _durably_evidenced_finalized_task_ids(
+        finalize_data.get("tasks", [])
     )
     tracked_tasks, total_tasks, acknowledged_checks, total_checks = (
         _count_execute_tracking(

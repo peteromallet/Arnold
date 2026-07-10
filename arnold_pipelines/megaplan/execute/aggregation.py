@@ -234,6 +234,36 @@ def _collect_per_batch_claimed_paths(
     return claimed
 
 
+def _collect_finalized_task_claimed_paths(
+    plan_dir: Path | None,
+    project_dir: Path,
+) -> set[str]:
+    """Return terminal finalized task file claims as durable scope evidence."""
+    if plan_dir is None:
+        return set()
+    try:
+        finalize_data = read_json(plan_dir / "finalize.json")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return set()
+    if not isinstance(finalize_data, dict):
+        return set()
+
+    claimed: set[str] = set()
+    terminal_statuses = {"done", "skipped", "waived", "not_applicable"}
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict) or task.get("status") not in terminal_statuses:
+            continue
+        raw_files = task.get("files_changed", [])
+        if isinstance(raw_files, dict):
+            raw_files = expand_projected_path_list(raw_files, plan_dir=plan_dir)
+        claimed |= {
+            _normalize_execute_claimed_path(path, project_dir)
+            for path in raw_files
+            if isinstance(path, str) and path.strip()
+        }
+    return claimed
+
+
 def _expand_untracked_directory_entries(
     project_dir: Path,
     observed_snapshot: dict[str, str],
@@ -320,6 +350,9 @@ def _compute_execute_scope_drift(
     # Union per-batch claims from disk so per-batch execute mode compares the
     # working-tree diff against every batch's claims, not just this call's.
     files_claimed |= _collect_per_batch_claimed_paths(plan_dir, project_dir)
+    # Retain claims reconciled by earlier batches when a retry only has a
+    # partial/reconstructed current payload.
+    files_claimed |= _collect_finalized_task_claimed_paths(plan_dir, project_dir)
     if state is not None:
         config = state.get("config") or {}
         if config.get("mode") == "doc":
