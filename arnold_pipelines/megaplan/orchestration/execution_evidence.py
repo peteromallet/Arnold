@@ -46,6 +46,17 @@ def _pre_existing_task_ids(plan_dir: Path | None) -> set[str]:
     }
 
 
+def _has_durable_terminal_task_evidence(task: dict[str, Any]) -> bool:
+    """Whether finalized task output must not be replaced by an old batch record."""
+    status = task.get("status")
+    if status == "done":
+        return bool(task.get("files_changed") or task.get("commands_run"))
+    if status == "skipped":
+        notes = task.get("executor_notes")
+        return isinstance(notes, str) and bool(notes.strip())
+    return False
+
+
 def _authoritative_execute_task_overrides(plan_dir: Path | None) -> dict[str, dict[str, Any]]:
     """Return newest persisted execute task records keyed by task ID."""
 
@@ -132,7 +143,7 @@ def apply_authoritative_execute_overrides(
             if isinstance(task_id, str) and task_id.strip():
                 explicit_task_ids.add(task_id.strip())
                 task = tasks_by_id.get(task_id.strip())
-                if task is not None:
+                if task is not None and not _has_durable_terminal_task_evidence(task):
                     task.update(item)
                     task.setdefault("id", task_id.strip())
         for item in payload.get("sense_check_acknowledgments", []):
@@ -435,7 +446,7 @@ def _validate_execution_evidence_code(
         merged = dict(task)
         if isinstance(task_id, str):
             authoritative = authoritative_overrides.get(task_id)
-            if isinstance(authoritative, dict):
+            if isinstance(authoritative, dict) and not _has_durable_terminal_task_evidence(task):
                 merged.update(authoritative)
                 merged.setdefault("id", task_id)
                 merged.setdefault("task_id", task_id)
