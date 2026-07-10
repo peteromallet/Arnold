@@ -1,0 +1,31 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1
+  idea: .megaplan/initiatives/runauthority-sprint-1/briefs/m1.md
+  branch: megaplan/runauthority-sprint-1/m1
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  depth: high
+  with_prep: true
+  prep_direction: 'Inspect the current Megaplan authority readers and incident-adjacent
+    execute replay/reconcile paths before task decomposition. Focus on the first two-week
+    slice: regression freeze, authority input inventory, kernel contracts, and read-only
+    shadow views. Do not broaden into a generic god-view or full enforcement migration.'
+  phase_model:
+  - execute=codex:gpt-5.5:high
+  - loop_execute=codex:gpt-5.5:high
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0
