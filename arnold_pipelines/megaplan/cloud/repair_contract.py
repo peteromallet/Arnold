@@ -766,6 +766,33 @@ def _classify_repair_dispatch_canonical(
     current_target: Mapping[str, Any],
 ) -> RepairDispatchDecision:
     state = canonical_run_state.canonical_state
+    # Derived/canonical completion must never hide current contradictory
+    # ground truth (the exact finalized+active and complete+incomplete cases).
+    if _has_terminality_contradiction(current_target):
+        if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_REPAIRING,
+                dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+                rationale=("terminality contradiction has active repair custody",),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
+        if request_id:
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_L1,
+                dispatch_intent=DISPATCH_INTENT_L1,
+                rationale=("terminality contradiction reopens repair custody",),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
     if state is CanonicalState.COMPLETED:
         return _make_dispatch_decision(
             decision=DISPATCH_DECISION_TERMINAL,
@@ -2760,6 +2787,18 @@ def _is_known_repairable_shape(
     failure_kind: str,
     current_target: Mapping[str, Any],
 ) -> bool:
+    if _has_terminality_contradiction(current_target):
+        return True
+    # The executor detected that the persisted cursor and control projection
+    # disagree.  This is a mechanical state-machine contradiction: it must be
+    # handed to L1 with current-target evidence, never converted into a human
+    # gate or terminal outcome.
+    if (
+        current_state == "blocked"
+        and failure_kind == "workflow_cursor_mismatch"
+        and _has_current_target_evidence(current_target)
+    ):
+        return True
     if current_state == "failed" and retry_strategy == "repair_state" and failure_kind == "no_next_step":
         return _has_current_target_evidence(current_target)
     resume_authority_failure = _as_mapping(current_target.get("resume_authority_failure"))
@@ -2782,6 +2821,28 @@ def _is_known_repairable_shape(
     }:
         return False
     return _has_current_target_evidence(current_target)
+
+
+def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
+    """Return true for states that must reopen custody despite a success label."""
+    target = _as_mapping(current_target)
+    active_step = _as_mapping(target.get("active_step_heartbeat"))
+    if bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")):
+        return _has_current_target_evidence(target)
+    stale_kinds = {
+        _as_text(_as_mapping(item).get("kind"))
+        for item in _as_list(target.get("stale_evidence"))
+        if isinstance(item, Mapping)
+    }
+    if "stale_active_step_dead_pid" in stale_kinds:
+        return _has_current_target_evidence(target)
+    chain = _as_mapping(target.get("chain_state"))
+    try:
+        total = int(chain.get("milestone_total"))
+        completed = int(chain.get("completed_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    return total > 0 and completed < total and _has_current_target_evidence(target)
 
 
 def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:

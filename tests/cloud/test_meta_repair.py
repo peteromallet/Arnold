@@ -2353,3 +2353,63 @@ def test_repair_evidence_superseded_terminal_blocker_does_not_crash(tmp_path):
     )
 
     assert isinstance(reason, str)
+
+
+def _terminal_post_snapshot(**overrides: object) -> dict[str, object]:
+    snapshot: dict[str, object] = {
+        "captured_at": "2026-07-10T01:00:00+00:00",
+        "milestone_total": 2,
+        "completed_count": 2,
+        "chain_last_state": "done",
+        "plan_current_state": "done",
+        "active_step_present": False,
+        "worker_pid_alive": None,
+    }
+    snapshot.update(overrides)
+    return snapshot
+
+
+def test_meta_retrigger_refuses_complete_without_authoritative_snapshot() -> None:
+    verification = verify_retrigger_success(
+        retriggered=True,
+        retrigger_result=RetriggerExecutionResult(command=("repair",), returncode=0),
+        post_retrigger_verification={"outcome": COMPLETE},
+    )
+
+    assert verification["accepted"] is False
+    assert "snapshot missing" in verification["rejection_reason"]
+
+
+@pytest.mark.parametrize(
+    "snapshot, expected",
+    [
+        (_terminal_post_snapshot(completed_count=1), "incomplete (1/2)"),
+        (_terminal_post_snapshot(active_step_present=True), "still has active_step"),
+        (_terminal_post_snapshot(worker_pid_alive=False), "dead worker"),
+        (_terminal_post_snapshot(plan_current_state="finalized"), "nonterminal plan state"),
+    ],
+)
+def test_meta_retrigger_refuses_contradictory_complete_snapshot(
+    snapshot: dict[str, object], expected: str
+) -> None:
+    verification = verify_retrigger_success(
+        retriggered=True,
+        retrigger_result=RetriggerExecutionResult(command=("repair",), returncode=0),
+        post_retrigger_verification={"outcome": COMPLETE, "post_snapshot": snapshot},
+    )
+
+    assert verification["accepted"] is False
+    assert expected in verification["rejection_reason"]
+
+
+def test_meta_retrigger_accepts_only_complete_with_authoritative_terminal_snapshot() -> None:
+    verification = verify_retrigger_success(
+        retriggered=True,
+        retrigger_result=RetriggerExecutionResult(command=("repair",), returncode=0),
+        post_retrigger_verification={
+            "outcome": COMPLETE,
+            "post_snapshot": _terminal_post_snapshot(),
+        },
+    )
+
+    assert verification["accepted"] is True

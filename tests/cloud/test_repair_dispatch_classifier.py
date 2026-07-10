@@ -501,3 +501,41 @@ def test_classifier_recognizes_terminal_repair_state() -> None:
     )
 
     assert decision.decision == DISPATCH_DECISION_TERMINAL
+
+
+def test_classifier_dispatches_workflow_cursor_mismatch_as_retryable(tmp_path: Path) -> None:
+    """A blocked control/cursor disagreement is mechanical, not human-only."""
+    projection = _projection(tmp_path)
+    projection["active_request_ids"] = ["req-cursor"]
+    decision = classify_repair_dispatch(
+        plan_state=_plan_state(
+            latest_failure={"kind": "workflow_cursor_mismatch", "phase": "execute"}
+        ),
+        current_target=_current_target(),
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == DISPATCH_INTENT_L1
+
+
+def test_classifier_reopens_complete_repair_when_chain_is_incomplete(tmp_path: Path) -> None:
+    projection = _projection(tmp_path)
+    projection["active_request_ids"] = ["req-incomplete"]
+    projection["terminal_outcomes"] = ["complete"]
+    target = _current_target(
+        chain_state={
+            "present": True,
+            "fingerprint": "sha256:chain-proof",
+            "milestone_total": 2,
+            "completed_count": 1,
+        }
+    )
+    decision = classify_repair_dispatch(
+        plan_state=_plan_state(current_state="finalized"),
+        current_target=target,
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == DISPATCH_INTENT_L1
