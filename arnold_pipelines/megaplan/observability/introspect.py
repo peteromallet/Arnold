@@ -21,6 +21,7 @@ from typing import Any, Optional, Tuple
 from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
 from arnold_pipelines.megaplan.observability.events import EventKind, read_events
+from arnold_pipelines.megaplan.observability.liveness import has_active_in_flight_llm
 from arnold.runtime.outcome import RunOutcome
 
 # Default phase timeout (overridable from state)
@@ -266,27 +267,14 @@ def _compute_liveness(
         if ts is not None:
             last_event_ts = ts
 
-    # Check for in-flight LLM call: unmatched llm_call_start
-    unmatched_starts: list[dict] = []
-    llm_ends: set[str] = set()
-    for ev in events:
-        if ev.get("kind") == EventKind.LLM_CALL_END:
-            rid = ev.get("payload", {}).get("request_id")
-            if rid:
-                llm_ends.add(str(rid))
-        elif ev.get("kind") == EventKind.LLM_CALL_START:
-            unmatched_starts.append(ev)
-
-    has_in_flight_llm = False
-    for ev in unmatched_starts:
-        rid = ev.get("payload", {}).get("request_id")
-        if rid and str(rid) in llm_ends:
-            continue
-        # Check if start was within the last hour (stale starts from old runs don't count)
-        start_ts = _parse_iso(ev.get("ts_utc", ""))
-        if start_ts is not None and (now_ts - start_ts) < 7200:  # within 2 hours
-            has_in_flight_llm = True
-            break
+    has_in_flight_llm = has_active_in_flight_llm(
+        events,
+        state,
+        now_ts,
+        parse_timestamp=_parse_iso,
+        start_kind=EventKind.LLM_CALL_START,
+        end_kind=EventKind.LLM_CALL_END,
+    )
 
     # Rule: timeout-imminent (always check first)
     if phase_age is not None and phase_age > 0.8 * phase_timeout:
