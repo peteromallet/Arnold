@@ -3012,7 +3012,7 @@ def test_merged_pr_completion_prefers_gh_merge_commit_over_stale_chain_pr_head(
     assert stale_pr_head[:12] not in reason
 
 
-def test_completion_guard_rejects_published_pr_target_not_in_chain_target(
+def test_completion_guard_allows_published_pr_target_descending_from_chain_target(
     tmp_path: Path, monkeypatch
 ) -> None:
     base = _init_repo(tmp_path)
@@ -3042,8 +3042,8 @@ def test_completion_guard_rejects_published_pr_target_not_in_chain_target(
         chain_state=ChainState(target_base_ref=local_branch),
     )
 
-    assert ok is False
-    assert "not contained in chain target" in reason
+    assert ok is True
+    assert "published PR target" in reason
 
 
 def test_reconcile_rolls_cursor_back_when_completed_record_not_authoritative(
