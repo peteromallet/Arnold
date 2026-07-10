@@ -63,6 +63,39 @@ class TestAdaptiveCritiqueRouting:
         assert checks[0]["_routing_tier"] == 7
         assert checks[0]["_routing_selected_spec"] == "codex:gpt-5.5"
 
+    def test_high_complexity_uses_highest_configured_legacy_critique_tier(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.execute import batch
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+
+        def fake_resolve_tier_spec(args: argparse.Namespace, spec: str, *, phase: str = "execute"):
+            assert phase == "critique"
+            agent, model = spec.split(":", 1)
+            return agent, "fresh", model
+
+        monkeypatch.setattr(batch, "_resolve_tier_spec", fake_resolve_tier_spec)
+        checks = [{"id": "correctness", "question": "Correct?", "complexity": 7}]
+
+        assert _apply_adaptive_critique_routing(
+            {"config": {}},
+            argparse.Namespace(
+                tier_models={
+                    "critique": {
+                        1: "hermes:deepseek:deepseek-v4-flash",
+                        2: "hermes:deepseek:deepseek-v4-flash",
+                        3: "hermes:deepseek:deepseek-v4-flash",
+                        4: "codex:gpt-5.4",
+                        5: "codex:gpt-5.5",
+                    }
+                }
+            ),
+            checks,
+        ) is None
+
+        assert checks[0]["_routing_tier"] == 7
+        assert checks[0]["_routing_selected_spec"] == "codex:gpt-5.5"
+
     @pytest.mark.parametrize("complexity", [0, 11, True, "7"])
     def test_malformed_or_out_of_range_complexity_remains_an_invariant_error(
         self, complexity: object

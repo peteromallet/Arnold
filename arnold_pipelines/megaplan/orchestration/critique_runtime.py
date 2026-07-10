@@ -227,14 +227,48 @@ def _apply_adaptive_critique_routing(
     _complexity_cache: dict[int, _TierAgentMode] = {}
     _pin_agent_mode: _TierAgentMode | None = None
 
+    def _tier_value_for(tier: int) -> object | None:
+        value = _critique_tiers.get(tier)
+        return _critique_tiers.get(str(tier)) if value is None else value
+
+    def _configured_tiers() -> tuple[int, ...]:
+        """Return structurally valid configured tiers in deterministic order."""
+        return tuple(
+            sorted(
+                {
+                    int(raw_tier)
+                    for raw_tier in _critique_tiers
+                    if not isinstance(raw_tier, bool)
+                    and str(raw_tier).isdigit()
+                    and 1 <= int(raw_tier) <= 10
+                    and _tier_value_for(int(raw_tier)) is not None
+                }
+            )
+        )
+
     def _tier_spec_for(complexity: int) -> str | None:
-        _raw = _critique_tiers.get(complexity)
+        _raw = _tier_value_for(complexity)
+        selected_tier = complexity
+        # Profiles that predate the 1..10 evaluator scale legitimately expose
+        # only 1..5 critique tiers.  A high valid selection maps to their
+        # strongest configured critic; do not use this as a general sparse-map
+        # fallback, because a missing tier inside the configured range remains
+        # a routing-contract error.
         if _raw is None:
-            _raw = _critique_tiers.get(str(complexity))
+            tiers = _configured_tiers()
+            if (
+                tiers
+                and tiers == tuple(range(1, tiers[-1] + 1))
+                and complexity > tiers[-1]
+            ):
+                selected_tier = tiers[-1]
+                _raw = _tier_value_for(selected_tier)
         if isinstance(_raw, str):
             return _raw or None
         if isinstance(_raw, list):
-            return select_fallback_spec(_raw, 0, path=f"tier_models.critique.{complexity}")
+            return select_fallback_spec(
+                _raw, 0, path=f"tier_models.critique.{selected_tier}"
+            )
         return None
 
     def _resolved_pin_agent_mode() -> _TierAgentMode:
