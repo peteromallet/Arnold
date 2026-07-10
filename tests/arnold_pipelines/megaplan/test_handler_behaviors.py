@@ -29,6 +29,44 @@ from arnold_pipelines.megaplan.workers import WorkerResult
 
 
 class TestAdaptiveCritiqueRouting:
+    def test_complexity_seven_routes_when_the_profile_declares_tier_seven(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.execute import batch
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+
+        def fake_resolve_tier_spec(args: argparse.Namespace, spec: str, *, phase: str = "execute"):
+            assert phase == "critique"
+            agent, model = spec.split(":", 1)
+            return agent, "fresh", model
+
+        monkeypatch.setattr(batch, "_resolve_tier_spec", fake_resolve_tier_spec)
+        checks = [{"id": "correctness", "question": "Correct?", "complexity": 7}]
+
+        assert _apply_adaptive_critique_routing(
+            {"config": {}},
+            argparse.Namespace(tier_models={"critique": {7: "codex:gpt-5.5"}}),
+            checks,
+        ) is None
+
+        assert checks[0]["_routing_tier"] == 7
+        assert checks[0]["_routing_selected_spec"] == "codex:gpt-5.5"
+
+    @pytest.mark.parametrize("complexity", [0, 11, True, "7"])
+    def test_malformed_or_out_of_range_complexity_remains_an_invariant_error(
+        self, complexity: object
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+        from arnold_pipelines.megaplan.types import CliError
+
+        with pytest.raises(CliError) as exc_info:
+            _apply_adaptive_critique_routing(
+                {"config": {}},
+                argparse.Namespace(tier_models={"critique": {7: "codex:gpt-5.5"}}),
+                [{"id": "correctness", "question": "Correct?", "complexity": complexity}],
+            )
+        assert exc_info.value.code == "critique_complexity_invariant"
+
     def test_tier_chain_selects_first_spec_for_routing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

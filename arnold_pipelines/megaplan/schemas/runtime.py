@@ -160,7 +160,7 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "check_id": {"type": "string", "enum": check_ids},
-            "complexity": {"type": "integer"},
+            "complexity": {"type": "integer", "minimum": 1, "maximum": 10},
             "complexity_justification": {"type": "string"},
             "area": {"type": "string"},
         },
@@ -174,7 +174,7 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
             "check_id": {"type": "string", "const": "other"},
             "area": {"type": "string"},
             "why": {"type": "string"},
-            "complexity": {"type": "integer"},
+            "complexity": {"type": "integer", "minimum": 1, "maximum": 10},
             "complexity_justification": {"type": "string"},
         },
         "required": [
@@ -657,7 +657,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "auto_attributed_files": {"type": ["boolean", "null"]},
                         "evidence_files": {"type": "array", "items": {"type": "string"}},
                         "reviewer_verdict": {"type": "string"},
-                        "complexity": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "complexity": {"type": "integer", "minimum": 1, "maximum": 10},
                         "complexity_justification": {"type": "string"},
                         "stance": deepcopy(STANCE_SCHEMA),
                         "stop_signal": deepcopy(STOP_SIGNAL_SCHEMA),
