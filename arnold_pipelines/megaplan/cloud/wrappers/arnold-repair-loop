@@ -1452,6 +1452,17 @@ def chain_health_blocks_terminal_shortcut() -> bool:
         return True
     return True
 
+def chain_state_blocks_terminal_shortcut() -> bool:
+    """Do not let plan terminality erase an incomplete chain cursor.
+
+    The chain-health sidecar is only a projection and may be absent on the
+    first repair attempt.  When the authoritative chain state exists, require
+    its full completion contract before declaring the repair target complete.
+    """
+    if run_kind != "chain" or not chain_state:
+        return False
+    return not bool(chain_completion_reason(chain_state))
+
 def stale_marker_completion_reason() -> str:
     try:
         from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
@@ -1531,10 +1542,10 @@ manifest_reason, manifest_path = manifest_completion_reason(workspace, remote_sp
 chain_last_state = str(chain_state.get("last_state") or "").strip().lower()
 stale_marker_reason = stale_marker_completion_reason()
 
-# A chain can only close when its current plan is terminal *and* it has no
-# active/dead worker record.  `finalized + active_step` is explicitly a
-# retryable contradiction, never an L1 success.
-if run_kind == "chain" and (not plan_complete or plan_has_active_step):
+# A chain can close on its own state when it is fully completed, even if the
+# current plan still carries a stale failure marker.  An active/dead worker
+# record is still a retryable contradiction and must prevent the shortcut.
+if run_kind == "chain" and chain_reason and plan_has_active_step:
     chain_reason = ""
     manifest_reason = ""
 
@@ -1564,6 +1575,63 @@ elif run_kind == "chain" and manifest_reason:
             ]
         )
     )
+elif run_kind == "chain" and plan_complete and not plan_has_active_step:
+    if (
+        not chain_health_blocks_terminal_shortcut()
+        and not chain_state_blocks_terminal_shortcut()
+    ):
+        if chain_path and chain_last_state not in {"done", "complete", "completed"}:
+            print(
+                "\t".join(
+                    [
+                        "1",
+                        "chain",
+                        "terminal plan state supersedes stale chain state",
+                        str(chain_path or ""),
+                        str(plan_path or ""),
+                        str(plan_state.get("current_state") or plan_state.get("state") or ""),
+                    ]
+                )
+            )
+        elif chain_path and chain_last_state in {"done", "complete", "completed"}:
+            print(
+                "\t".join(
+                    [
+                        "1",
+                        "chain",
+                        "terminal plan state supersedes stale chain state",
+                        str(chain_path or ""),
+                        str(plan_path or ""),
+                        str(plan_state.get("current_state") or plan_state.get("state") or ""),
+                    ]
+                )
+            )
+        else:
+            print(
+                "\t".join(
+                    [
+                        "0",
+                        "",
+                        "",
+                        str(chain_path or ""),
+                        str(plan_path or ""),
+                        str(plan_state.get("current_state") or plan_state.get("state") or ""),
+                    ]
+                )
+            )
+    else:
+        print(
+            "\t".join(
+                [
+                    "0",
+                    "",
+                    "",
+                    str(chain_path or ""),
+                    str(plan_path or ""),
+                    str(plan_state.get("current_state") or plan_state.get("state") or ""),
+                ]
+            )
+        )
 elif stale_marker_reason:
     print(
         "\t".join(
@@ -2417,10 +2485,11 @@ def _state_mismatch_analysis(
         or str(plan_latest_failure.get("message") or "").strip()
         or str(plan_latest_failure.get("state") or "").strip()
     )
+    ready_plan_states = {"planned", "finalized"}
     detected = (
         bool(plan_state_path)
         and bool(chain_state_path)
-        and plan_state == "finalized"
+        and plan_state in ready_plan_states
         and chain_last_state in {"awaiting_human", "blocked"}
         and not has_latest_failure
         and (not chain_plan or not plan_name or chain_plan == plan_name)
@@ -4646,6 +4715,10 @@ mechanical_launch_step() {
   cat > "$launch_script" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+# Unlink only after this child has opened the script.  Removing it in the
+# parent immediately after `tmux new-session -d` races tmux startup and can
+# turn a valid canonical relaunch into a false `failed:stopped` result.
+rm -f -- "\${BASH_SOURCE[0]}"
 cd $(printf '%q' "$workspace")
 exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
 EOF
@@ -4655,7 +4728,6 @@ EOF
     echo "failed:tmux_launch_failed"
     return 1
   fi
-  rm -f "$launch_script"
   health="$(verify_started_and_holding "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MECHANICAL_VERIFY_INITIAL_SECS" "$MECHANICAL_VERIFY_HOLD_SECS")" || {
     detail="$health"
     kill_tmux_session_if_present "$session"
