@@ -212,8 +212,9 @@ def test_admission_rearms_only_revalidated_execute_authority_divergence(tmp_path
     monkeypatch.setattr(chain_module, "_latest_execution_batch_all_tasks_done", lambda _plan_dir: (True, "finalize.json"))
     assert chain_module._rearm_stale_execute_authority_divergence(plan_dir, writer=lambda _text: None)
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["current_state"] == "finalized"
+    assert state["current_state"] == "executed"
     assert "latest_failure" not in state
+    assert "resume_cursor" not in state
     assert state["meta"]["authority_divergence_recoveries"][0]["authority_reason"] == "finalize.json"
 
 

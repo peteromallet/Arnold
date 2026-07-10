@@ -3759,7 +3759,7 @@ def _rearm_stale_execute_authority_divergence(
     write_plan_state(
         plan_dir,
         mode="patch-many",
-        patch={"current_state": STATE_FINALIZED},
+        patch={"current_state": STATE_EXECUTED},
         mutation=_patch_rearmed_authority_block,
     )
     writer(
