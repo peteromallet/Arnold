@@ -4020,6 +4020,7 @@ def _reconcile_chain_from_ground_truth(
     completed_by_label = _completed_records_by_label(state)
     reconciled_completed: list[dict[str, Any]] = []
     removed_completed: dict[str, dict[str, Any]] = {}
+    current_plan_from_removed_completion = False
 
     for milestone in spec.milestones:
         record = completed_by_label.get(milestone.label)
@@ -4027,7 +4028,14 @@ def _reconcile_chain_from_ground_truth(
             continue
         record = dict(record)
         pr_number = _record_pr_number(record)
-        if push_enabled and milestone.branch and pr_number is not None:
+        if push_enabled and milestone.branch:
+            if pr_number is None:
+                writer(
+                    f"[chain] completed record for {milestone.label} is not "
+                    "authoritative yet: branch milestone is missing PR context\n"
+                )
+                removed_completed[milestone.label] = dict(record)
+                continue
             live_pr_state = _pr_state(root, pr_number, writer=writer)
             if record.get("pr_state") != live_pr_state:
                 writer(
@@ -4082,6 +4090,7 @@ def _reconcile_chain_from_ground_truth(
             pr_state = removed.get("pr_state") if isinstance(removed, dict) else None
             state.pr_state = pr_state if isinstance(pr_state, str) else None
             state.last_state = "authority_divergence"
+            current_plan_from_removed_completion = state.current_plan_name is not None
         else:
             state.current_plan_name = None
             state.pr_number = None
@@ -4106,6 +4115,7 @@ def _reconcile_chain_from_ground_truth(
         if (
             isinstance(current_state, str)
             and state.last_state != current_state
+            and not current_plan_from_removed_completion
             and not preserve_pr_cursor
         ):
             writer(
