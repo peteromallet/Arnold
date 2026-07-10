@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 import logging
@@ -28,6 +29,7 @@ from arnold_pipelines.megaplan.orchestration.transition_policy import (
 )
 from arnold_pipelines.megaplan.execute.merge import _validate_and_merge_batch
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
+from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
 from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion, normalize_robustness
 from arnold_pipelines.megaplan.types import (
@@ -47,6 +49,7 @@ from arnold_pipelines.megaplan.planning.state import (
 from arnold.pipeline.step_io_contract import StepIOOperation
 from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
+from arnold_pipelines.megaplan.workflows import REVIEW_POLICY
 from arnold_pipelines.megaplan.workers import (
     WorkerResult,
     warn_if_work_dir_differs_from_project_dir,
@@ -987,9 +990,176 @@ def _force_proceed_blockers(
 
 @dataclass(frozen=True)
 class ReviewRouteDecision:
-    result: str
+    result: ReviewDecisionResult
     next_state: str
-    route_signal: str
+    route_signal: ReviewOutcome
+
+
+def _require_review_policy_mapping(value: Any, *, context: str) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    raise AssertionError(f"REVIEW_POLICY.{context} must be a mapping")
+
+
+def _review_route_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        REVIEW_POLICY.metadata.get("route_surface"),
+        context="metadata.route_surface",
+    )
+
+
+def _review_retry_and_cap_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("retry_and_cap"),
+        context="metadata.route_surface.retry_and_cap",
+    )
+
+
+def _review_cap_threshold_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("cap_thresholds"),
+        context="metadata.route_surface.cap_thresholds",
+    )
+
+
+def _review_rework_cycle_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("rework_cycle"),
+        context="metadata.route_surface.rework_cycle",
+    )
+
+
+def _review_force_proceed_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("force_proceed_authority"),
+        context="metadata.route_surface.force_proceed_authority",
+    )
+
+
+def _review_human_verification_surface() -> Mapping[str, Any]:
+    return _require_review_policy_mapping(
+        _review_route_surface().get("human_verification"),
+        context="metadata.route_surface.human_verification",
+    )
+
+
+def _review_outcome_from_surface(
+    surface: Mapping[str, Any],
+    *,
+    context: str,
+) -> ReviewOutcome:
+    raw_route_signal = surface.get("route_signal")
+    if not isinstance(raw_route_signal, str) or not raw_route_signal:
+        raise AssertionError(f"REVIEW_POLICY.{context}.route_signal must be a non-empty string")
+    return ReviewOutcome(raw_route_signal)
+
+
+def _review_state_from_surface(
+    surface: Mapping[str, Any],
+    *,
+    context: str,
+) -> str:
+    raw_state_ref = surface.get("state_ref")
+    if not isinstance(raw_state_ref, str) or not raw_state_ref:
+        raise AssertionError(f"REVIEW_POLICY.{context}.state_ref must be a non-empty string")
+    return raw_state_ref
+
+
+def _review_route_decision_from_surface(
+    *,
+    result: ReviewDecisionResult,
+    surface: Mapping[str, Any],
+    context: str,
+) -> ReviewRouteDecision:
+    return ReviewRouteDecision(
+        result=result,
+        next_state=_review_state_from_surface(surface, context=context),
+        route_signal=_review_outcome_from_surface(surface, context=context),
+    )
+
+
+def _review_infrastructure_retry_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.BLOCKED,
+        surface=_require_review_policy_mapping(
+            _review_retry_and_cap_surface().get("infrastructure_retry"),
+            context="metadata.route_surface.retry_and_cap.infrastructure_retry",
+        ),
+        context="metadata.route_surface.retry_and_cap.infrastructure_retry",
+    )
+
+
+def _review_cap_exhausted_blocked_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.BLOCKED,
+        surface=_require_review_policy_mapping(
+            _review_retry_and_cap_surface().get("cap_exhausted_with_blockers"),
+            context="metadata.route_surface.retry_and_cap.cap_exhausted_with_blockers",
+        ),
+        context="metadata.route_surface.retry_and_cap.cap_exhausted_with_blockers",
+    )
+
+
+def _review_force_proceeded_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.FORCE_PROCEEDED,
+        surface=_review_force_proceed_surface(),
+        context="metadata.route_surface.force_proceed_authority",
+    )
+
+
+def _review_rework_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.NEEDS_REWORK,
+        surface=_review_rework_cycle_surface(),
+        context="metadata.route_surface.rework_cycle",
+    )
+
+
+def _review_deferred_human_decision() -> ReviewRouteDecision:
+    return _review_route_decision_from_surface(
+        result=ReviewDecisionResult.SUCCESS,
+        surface=_review_human_verification_surface(),
+        context="metadata.route_surface.human_verification",
+    )
+
+
+def _review_pass_decision(
+    state: PlanState,
+    *,
+    force_done: bool = False,
+) -> ReviewRouteDecision:
+    with_feedback = state.get("config", {}).get("with_feedback", False)
+    return ReviewRouteDecision(
+        result=ReviewDecisionResult.SUCCESS,
+        next_state=STATE_DONE if force_done else (STATE_REVIEWED if with_feedback else STATE_DONE),
+        route_signal=ReviewOutcome.PASS,
+    )
+
+
+def _review_rework_cap_config_key(robustness: str) -> str:
+    rework_cycles = _require_review_policy_mapping(
+        _review_cap_threshold_surface().get("rework_cycles"),
+        context="metadata.route_surface.cap_thresholds.rework_cycles",
+    )
+    default_key = rework_cycles.get("default_config_key")
+    robust_key = rework_cycles.get("robust_config_key")
+    if not isinstance(default_key, str) or not default_key:
+        raise AssertionError(
+            "REVIEW_POLICY.metadata.route_surface.cap_thresholds.rework_cycles.default_config_key "
+            "must be a non-empty string"
+        )
+    if not isinstance(robust_key, str) or not robust_key:
+        raise AssertionError(
+            "REVIEW_POLICY.metadata.route_surface.cap_thresholds.rework_cycles.robust_config_key "
+            "must be a non-empty string"
+        )
+    robustness_levels = {
+        level
+        for level in rework_cycles.get("robustness_levels", ())
+        if isinstance(level, str) and level
+    }
+    return robust_key if robustness in robustness_levels else default_key
 
 
 def _resolve_review_outcome(
@@ -1016,7 +1186,7 @@ def _resolve_review_outcome(
         or bool(missing_evidence)
     )
     if blocked:
-        return ReviewRouteDecision("blocked", STATE_EXECUTED, "blocked")
+        return _review_infrastructure_retry_decision()
 
     rework_requested = review_verdict == "needs_rework"
     if rework_requested:
@@ -1024,16 +1194,13 @@ def _resolve_review_outcome(
             stop_data = _maker_requested_stop(plan_dir)
             if stop_data is not None:
                 _record_maker_stop(state, plan_dir, defense=stop_data.get("defense", ""))
-                return ReviewRouteDecision("success", STATE_DONE, "pass")
-        cap_key = (
-            "max_robust_review_rework_cycles"
-            if robustness in {"thorough", "extreme"}
-            else "max_review_rework_cycles"
-        )
+                return _review_pass_decision(state, force_done=True)
+        cap_key = _review_rework_cap_config_key(robustness)
         max_review_rework_cycles = get_effective("execution", cap_key)
         prior_rework_count = sum(
             1 for entry in state.get("history", [])
-            if entry.get("step") == "review" and entry.get("result") == "needs_rework"
+            if entry.get("step") == "review"
+            and entry.get("result") == ReviewDecisionResult.NEEDS_REWORK.value
         )
         if prior_rework_count >= max_review_rework_cycles:
             blockers = _force_proceed_blockers(criteria, rework_items)
@@ -1047,14 +1214,14 @@ def _resolve_review_outcome(
                     f"{blocker_list}{more}. Resolve them and resume review, or "
                     "`override recover-blocked`/`force-proceed` after operator review to ship anyway."
                 )
-                return ReviewRouteDecision("blocked", STATE_BLOCKED, "blocked")
+                return _review_cap_exhausted_blocked_decision()
             issues.append(
                 f"Max review rework cycles ({max_review_rework_cycles}) reached. "
                 "Force-proceeding to done despite unresolved review issues "
                 "(all remaining items are non-blocking/cosmetic)."
             )
-            return ReviewRouteDecision("force_proceeded", STATE_DONE, "force_proceeded")
-        return ReviewRouteDecision("needs_rework", STATE_FINALIZED, "rework")
+            return _review_force_proceeded_decision()
+        return _review_rework_decision()
 
     if criteria:
         has_deferred_must = any(
@@ -1068,16 +1235,18 @@ def _resolve_review_outcome(
             # because the user still needs to verify. Feedback scaffolding is deferred
             # until the plan actually reaches done (via the existing interactive
             # 'megaplan feedback edit' path after verification).
-            return ReviewRouteDecision("success", STATE_AWAITING_HUMAN_VERIFY, "deferred_human")
+            return _review_deferred_human_decision()
 
-    with_feedback = state.get("config", {}).get("with_feedback", False)
-    return ReviewRouteDecision("success", STATE_REVIEWED if with_feedback else STATE_DONE, "pass")
+    return _review_pass_decision(state)
 
 
 def _compat_next_step_for_review_route(decision: ReviewRouteDecision) -> str | None:
-    if decision.route_signal == "rework":
+    if decision.route_signal == ReviewOutcome.REWORK:
         return "execute"
-    if decision.route_signal == "blocked":
+    if (
+        decision.route_signal == ReviewOutcome.BLOCKED
+        and decision.next_state == STATE_EXECUTED
+    ):
         return "review"
     return None
 
@@ -1224,7 +1393,7 @@ def _persist_review_done_transition_decision(
     next_state: str,
     review_payload: dict[str, Any],
 ) -> Any | None:
-    if result != "success" or next_state != STATE_DONE:
+    if result != ReviewDecisionResult.SUCCESS or next_state != STATE_DONE:
         return None
 
     review_evidence_path = plan_dir / "review_evidence.json"
@@ -1418,11 +1587,11 @@ def _finalize_review_outcome(
             "transition_decision": TRANSITION_DECISION_REVIEW_DONE_FILENAME,
         }
         worker.payload["outcome"] = {
-            "result": "policy_denied",
+            "result": ReviewDecisionResult.POLICY_DENIED,
             "review_verdict": review_verdict,
             "state": STATE_EXECUTED,
             "next_step": "review",
-            "route_signal": "blocked",
+            "route_signal": ReviewOutcome.BLOCKED,
             "policy_denial": denial_metadata,
         }
         write_plan_artifact_json(
@@ -1440,7 +1609,7 @@ def _finalize_review_outcome(
             make_history_entry(
                 "review",
                 duration_ms=worker.duration_ms, cost_usd=worker.cost_usd,
-                result="policy_denied",
+                result=ReviewDecisionResult.POLICY_DENIED,
                 worker=worker, agent=agent, mode=mode,
                 output_file="review.json",
                 prompt_tokens=worker.prompt_tokens,
@@ -1461,7 +1630,7 @@ def _finalize_review_outcome(
             phase="review",
             output_file="review.json",
             artifact_hash=sha256_file(plan_dir / "review.json"),
-            verdict="policy_denied",
+            verdict=ReviewDecisionResult.POLICY_DENIED,
         )
         save_state_merge_meta(plan_dir, state)
         summary = "Review-to-done transition denied by policy. Re-run review after addressing the policy evidence."
@@ -1493,14 +1662,16 @@ def _finalize_review_outcome(
         attach_agent_fallback(response, args)
         return response
     atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
-    force_proceed_blocked = result == "blocked" and next_state == STATE_BLOCKED
+    force_proceed_blocked = (
+        result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED
+    )
     if force_proceed_blocked:
         state["resume_cursor"] = {
             "phase": "review",
             "retry_strategy": "manual_review",
         }
     state["current_state"] = next_state
-    if result != "blocked" and next_state != STATE_BLOCKED:
+    if result != ReviewDecisionResult.BLOCKED and next_state != STATE_BLOCKED:
         state["latest_failure"] = None
         state.pop("resume_cursor", None)
 
@@ -1532,7 +1703,7 @@ def _finalize_review_outcome(
         phase="review",
         output_file="review.json",
         artifact_hash=sha256_file(plan_dir / "review.json"),
-        verdict=result if result == "force_proceeded" else review_verdict,
+        verdict=result if result == ReviewDecisionResult.FORCE_PROCEEDED else review_verdict,
     )
     save_state_merge_meta(plan_dir, state)
 
@@ -1546,22 +1717,22 @@ def _finalize_review_outcome(
             "Review rework cap reached with unresolved blockers — escalated to "
             "recoverable blocked instead of force-proceeding to done.",
         )
-    elif result == "blocked":
+    elif result == ReviewDecisionResult.BLOCKED:
         summary = _build_review_blocked_message(
             verdict_count=verdict_count, total_tasks=total_tasks,
             check_count=check_count, total_checks=total_checks,
             missing_reviewer_evidence=missing_evidence,
             infrastructure_failure=infrastructure_failure,
         )
-    elif result == "needs_rework":
+    elif result == ReviewDecisionResult.NEEDS_REWORK:
         summary = "Review requested another execute pass. Re-run execute using the review findings as context."
-    elif result == "force_proceeded":
+    elif result == ReviewDecisionResult.FORCE_PROCEEDED:
         summary = "Review force-proceeded after the rework cap with only non-blocking review issues unresolved."
     else:
         summary = _format_review_success_summary(criteria if isinstance(criteria, list) else [])
 
     response: StepResponse = {
-        "success": result in {"success", "force_proceeded"},
+        "success": result in {ReviewDecisionResult.SUCCESS, ReviewDecisionResult.FORCE_PROCEEDED},
         "step": "review",
         "summary": summary,
         "artifacts": ["review.json", "finalize.json", "final.md"],
@@ -1583,7 +1754,7 @@ def _finalize_review_outcome(
             exit_kind="blocked_by_quality",
             deviations=(_PhaseDeviation.from_string(summary),),
         )
-    elif result == "force_proceeded":
+    elif result == ReviewDecisionResult.FORCE_PROCEEDED:
         force_deviations = [issue for issue in issues if "Force-proceeding" in issue]
         response["deviations"] = force_deviations
         response["warnings"] = force_deviations

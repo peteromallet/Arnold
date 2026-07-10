@@ -1,17 +1,10 @@
-"""Auto-driver that advances a plan through its phases without human intervention.
+"""Auto-driver that advances a plan through its workflow-backed phases.
 
-This is the mechanical loop that most orchestrators end up writing by hand:
-read `status`, run `next_step`, repeat until terminal. All real judgment is
-delegated to megaplan's existing phase logic — the driver only applies two
-documented defaults:
-
-1. Gate ESCALATE → force-proceed (caller opts out with ``--on-escalate abort``
-   or ``--on-escalate fail``).
-2. Same state for N consecutive iterations → bail (stall detection).
-
-The driver is intentionally dumb. If a run needs judgment the driver can't
-provide, it exits with a non-zero status and prints the state snapshot so the
-caller can intervene.
+This loop is intentionally operational, not semantic: it reads status,
+projects the next actionable target from the planning control surface, validates
+that target against the canonical lowered workflow cursor when one is observed,
+dispatches it, and repeats until terminal. If a run needs human judgment, the
+driver records the lifecycle failure and stops instead of inventing a route.
 """
 from __future__ import annotations
 
@@ -70,11 +63,17 @@ from arnold_pipelines.megaplan.store import PlanRepository
 from arnold_pipelines.megaplan.types import (
     CliError,
 )
+from arnold_pipelines.megaplan.control_interface import read_valid_targets
+from arnold_pipelines.megaplan.workflows.events import (
+    resolve_workflow_phase,
+    workflow_cursor,
+    workflow_dispatch_phase_names,
+    workflow_phase_aliases,
+)
 from arnold_pipelines.megaplan.planning.state import (
     AUTOMATION_TERMINAL_STATES,
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
-    STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
     STATE_CANCELLED,
     STATE_CRITIQUED,
@@ -189,34 +188,48 @@ DEFAULT_ESCALATE_AFTER_FAILS = 2
 DEFAULT_PHASE_HEARTBEAT_SECONDS = 60.0
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
-PHASE_NAMES = frozenset(
-    {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
-)
+PHASE_NAMES = workflow_dispatch_phase_names()
 REQUIRES_STATE_RE = re.compile(
     r"requires state ['\"](?P<required>[^'\"]+)['\"], got ['\"](?P<got>[^'\"]+)['\"]"
 )
 
-# Stable-ID → flat-name resolution for canonical dispatch surfaces.
-# When the auto-driver receives a stable component ID (e.g. "megaplan:prep"),
-# it resolves to the flat phase name the native program expects.  Flat names
-# pass through unchanged so existing callers are not broken.
 _STABLE_ID_TO_PHASE: dict[str, str] = {
-    "megaplan:prep": "prep",
-    "megaplan:plan": "plan",
-    "megaplan:critique": "critique",
-    "megaplan:gate": "gate",
-    "megaplan:revise": "revise",
-    "megaplan:tiebreaker_run": "tiebreaker_run",
-    "megaplan:tiebreaker_decide": "tiebreaker_decide",
-    "megaplan:finalize": "finalize",
-    "megaplan:execute": "execute",
-    "megaplan:review": "review",
+    alias: phase
+    for alias, phase in workflow_phase_aliases().items()
+    if alias.startswith("megaplan:")
 }
+
+_AUTO_CONTROL_TARGETS = frozenset(
+    {
+        "abort",
+        "adopt-execution",
+        "feedback",
+        "force-proceed",
+        "recover-blocked",
+        "resume-clarify",
+    }
+)
 
 
 def _resolve_phase_name(raw: str) -> str:
-    """Return the flat phase name for *raw*, resolving any stable-ID prefix."""
-    return _STABLE_ID_TO_PHASE.get(raw, raw)
+    """Return the dispatch phase for *raw* when workflow source defines one."""
+
+    return resolve_workflow_phase(raw) or raw
+
+
+def _normalize_auto_target_id(raw: str | None) -> str | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    parts = shlex.split(raw)
+    if len(parts) >= 2 and parts[0] == "override":
+        return parts[1]
+    return _resolve_phase_name(raw.strip())
+
+
+def _is_auto_supported_target(target_id: str | None) -> bool:
+    if not isinstance(target_id, str) or not target_id:
+        return False
+    return target_id in PHASE_NAMES or target_id in _AUTO_CONTROL_TARGETS
 
 
 @dataclass
@@ -1083,21 +1096,14 @@ def _status(
     return dict(response)
 
 
-def _has_valid_next(status: dict[str, Any], action: str) -> bool:
-    return action in (status.get("valid_next") or [])
-
-
 def _control_action_label(next_step: str) -> str:
-    parts = shlex.split(next_step)
-    if len(parts) >= 2 and parts[0] == "override":
-        return parts[1]
-    return next_step
+    return _normalize_auto_target_id(next_step) or next_step
 
 
 def _required_state_for_control_action(next_step: str) -> str | None:
     action = _control_action_label(next_step)
     if action == "resume-clarify":
-        return STATE_AWAITING_HUMAN_VERIFY
+        return STATE_AWAITING_HUMAN
     if action == "recover-blocked":
         return STATE_BLOCKED
     return None
@@ -1195,28 +1201,9 @@ def _control_invalid_transition_failure(
     }
 
 
-def _phase_command(
-    next_step: str,
-    substrate: "Substrate" = "subprocess_isolated",
-) -> list[str]:
-    """Translate a `next_step` from status into the CLI args that run it.
-
-    Most phases are one-to-one: next_step == command. Execute adds the
-    destructive + user-approved flags because auto-mode implies both.
-
-    Multi-token values like ``"override add-note"`` must be split into
-    ``["override", "add-note"]`` so argparse sees the sub-subcommand —
-    otherwise the whole string is passed as a single positional and
-    argparse rejects it with `invalid choice`.
-
-    The *substrate* parameter is a forward-looking shim (M3 Step 12):
-    ``"subprocess_isolated"`` (default) preserves the legacy CLI-args
-    contract; ``"in_process"`` is accepted but currently returns the
-    same args.  Callers in the unified-dispatch path should pass the
-    active substrate explicitly so the contract is unambiguous when the
-    in-process path gains its own translation.
-    """
-    if next_step == "execute":
+def _command_for_auto_target(next_step: str) -> list[str]:
+    target = _control_action_label(next_step)
+    if target == "execute":
         # --retry-blocked-tasks is safe to pass on every iteration. Within a
         # single auto session, tasks that report status=blocked terminate the
         # auto loop via STATE_AWAITING_HUMAN_VERIFY (see eb4ac447), so re-dispatch
@@ -1230,20 +1217,43 @@ def _phase_command(
             "--user-approved",
             "--retry-blocked-tasks",
         ]
-    if next_step == "feedback":
+    if target == "feedback":
         # The auto driver must dispatch the *workflow* operation, not the
         # default "edit" operation — otherwise the handler would open $EDITOR
         # and block on human input.  "feedback workflow" scaffolds the file
         # non-interactively and transitions reviewed → done.
         return ["feedback", "workflow"]
-    if next_step == "recover-blocked":
+    if target == "recover-blocked":
         return [
             "override",
             "recover-blocked",
             "--reason",
             "megaplan auto: recover blocked plan after blocker resolution",
         ]
-    return shlex.split(next_step)
+    if target == "resume-clarify":
+        return ["override", "resume-clarify"]
+    if target == "force-proceed":
+        return [
+            "override",
+            "force-proceed",
+            "--reason",
+            "megaplan auto: dispatch declared override target",
+        ]
+    if target == "abort":
+        return [
+            "override",
+            "abort",
+            "--reason",
+            "megaplan auto: dispatch declared override target",
+        ]
+    if target == "adopt-execution":
+        return [
+            "override",
+            "adopt-execution",
+            "--reason",
+            "megaplan auto: adopt complete execution artifact after worker failure",
+        ]
+    return [target]
 
 
 def _failure_resume_cursor_for_step(
@@ -2651,16 +2661,14 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         task_id = str(task.get("id") or task.get("task_id") or "")
         raw_status = task.get("status")
         if raw_status in {None, "", "pending", "todo", "in_progress"}:
-            if task_id in completed or task_id in batch_completed:
+            if task_id in batch_completed:
                 continue
             missing.append(
                 f"{task_id or '<missing-task-id>'}:"
                 f"not_executed:{raw_status or 'missing_status'}"
             )
             continue
-        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"}:
-            if task_id in completed or task_id in batch_completed:
-                continue
+        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
             if (
                 raw_status == "skipped"
                 and task.get("reviewer_verdict") == "deferred_baseline_unavailable"
@@ -2876,6 +2884,7 @@ def _clear_orphaned_active_step(
     quarantined = (
         _quarantine_phase_outputs(plan_dir, expected_step) if quarantine else []
     )
+
     def _patch_orphan_recovery(current: dict[str, Any]) -> bool:
         changed = current.pop("active_step", None) is not None
         if quarantined:
@@ -2905,6 +2914,248 @@ def _clear_orphaned_active_step(
             extra={"path": str(state_path), "expected_step": expected_step},
         ) from exc
     return True
+
+
+@dataclass(frozen=True)
+class _AutoDispatchProjection:
+    next_step: str | None
+    valid_next: tuple[str, ...]
+    issue: str | None = None
+    message: str = ""
+    observed_phase: str | None = None
+    observed_phase_source: str | None = None
+
+
+def _projection_state_snapshot(
+    plan: str,
+    plan_dir: Path | None,
+    status: Mapping[str, Any],
+) -> dict[str, Any]:
+    state = _read_state_data(plan_dir) or {}
+    if not isinstance(state.get("name"), str) or not state.get("name"):
+        state["name"] = plan
+    current_state = status.get("state")
+    if not isinstance(state.get("current_state"), str) and isinstance(current_state, str):
+        state["current_state"] = current_state
+    config = state.get("config")
+    if not isinstance(config, dict):
+        state["config"] = {}
+    return state
+
+
+def _projection_uses_recovery(state: Mapping[str, Any]) -> bool:
+    current_state = state.get("current_state")
+    return current_state in {
+        STATE_AWAITING_HUMAN,
+        STATE_BLOCKED,
+        STATE_FAILED,
+    }
+
+
+def _projection_cursor_payload(
+    status: Mapping[str, Any],
+    observed_phase: str | None,
+) -> dict[str, Any] | None:
+    payload = status.get("workflow_cursor")
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    if observed_phase is None:
+        return None
+    cursor = workflow_cursor(observed_phase)
+    if cursor is None:
+        return None
+    return cursor.to_dict()
+
+
+def _observed_phase_context(
+    state: Mapping[str, Any],
+    status: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
+    active_step = status.get("active_step")
+    if isinstance(active_step, Mapping):
+        active_phase = active_phase_name(active_step)
+        if isinstance(active_phase, str) and active_phase:
+            return active_phase, "active_step"
+    state_active_step = state.get("active_step")
+    if isinstance(state_active_step, Mapping):
+        active_phase = active_phase_name(state_active_step)
+        if isinstance(active_phase, str) and active_phase:
+            return active_phase, "active_step"
+    resume_cursor = state.get("resume_cursor")
+    if isinstance(resume_cursor, Mapping):
+        phase = resume_cursor.get("phase")
+        if isinstance(phase, str) and phase:
+            return phase, "resume_cursor"
+    latest_failure = state.get("latest_failure")
+    if isinstance(latest_failure, Mapping):
+        phase = latest_failure.get("phase")
+        if isinstance(phase, str) and phase:
+            return phase, "latest_failure"
+    last_step = status.get("last_step")
+    if isinstance(last_step, Mapping):
+        phase = last_step.get("step")
+        if isinstance(phase, str) and phase:
+            return phase, "last_step"
+    return None, None
+
+
+def _gate_operator_issue(state: Mapping[str, Any]) -> tuple[str, str] | None:
+    last_gate = state.get("last_gate")
+    if not isinstance(last_gate, Mapping):
+        return None
+    recommendation = last_gate.get("recommendation")
+    if recommendation == "ESCALATE":
+        return (
+            "gate_escalated",
+            "gate escalated and requires an operator decision",
+        )
+    preflight = last_gate.get("preflight_results")
+    failed = (
+        {name for name, passed in preflight.items() if not passed}
+        if isinstance(preflight, Mapping)
+        else set()
+    )
+    if (
+        state.get("current_state") == STATE_BLOCKED
+        and recommendation == "PROCEED"
+        and not last_gate.get("passed", False)
+        and failed
+        and failed <= {"claude_available", "codex_available"}
+    ):
+        return (
+            "gate_force_proceed_required",
+            "gate proceed is blocked by agent-availability preflight and requires an operator override",
+        )
+    return None
+
+
+def _project_auto_dispatch(
+    plan: str,
+    *,
+    plan_dir: Path | None,
+    status: Mapping[str, Any],
+) -> _AutoDispatchProjection:
+    state = _projection_state_snapshot(plan, plan_dir, status)
+    observed_phase, observed_phase_source = _observed_phase_context(state, status)
+    cursor_payload = _projection_cursor_payload(status, observed_phase)
+    cursor_dispatch_phase = (
+        str(cursor_payload.get("dispatch_phase"))
+        if isinstance(cursor_payload, Mapping) and isinstance(cursor_payload.get("dispatch_phase"), str)
+        else _normalize_auto_target_id(observed_phase)
+    )
+    cursor_next_dispatches = tuple(
+        str(item)
+        for item in (cursor_payload.get("next_dispatch_phases") if isinstance(cursor_payload, Mapping) else ())
+        if isinstance(item, str) and item
+    )
+    blocker_recovery = status.get("blocker_recovery")
+    if (
+        state.get("current_state") == STATE_BLOCKED
+        and isinstance(blocker_recovery, Mapping)
+        and blocker_recovery.get("has_terminal_blockers") is True
+    ):
+        return _AutoDispatchProjection(
+            next_step=None,
+            valid_next=(),
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    try:
+        projection = read_valid_targets(
+            state,
+            plugin_id="megaplan",
+            recovery=_projection_uses_recovery(state),
+        )
+    except Exception:
+        projection = ()
+
+    valid_targets: list[str] = []
+    mismatches: list[str] = []
+    for target in projection:
+        target_id = _normalize_auto_target_id(getattr(target, "id", None))
+        if not _is_auto_supported_target(target_id):
+            continue
+        metadata = getattr(target, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        if metadata.get("actionable", True) is False:
+            continue
+        if _projection_uses_recovery(state):
+            valid_targets.append(target_id)
+            continue
+        if metadata.get("dispatch_surface") == "workflow.native_policy":
+            valid_targets.append(target_id)
+            continue
+        if not cursor_next_dispatches:
+            valid_targets.append(target_id)
+            continue
+        if target_id in cursor_next_dispatches:
+            valid_targets.append(target_id)
+            continue
+        if (
+            observed_phase_source in {"active_step", "resume_cursor", "latest_failure"}
+            and cursor_dispatch_phase is not None
+            and target_id == cursor_dispatch_phase
+        ):
+            valid_targets.append(target_id)
+            continue
+        mismatches.append(target_id)
+
+    unique_valid_targets = tuple(dict.fromkeys(valid_targets))
+    if unique_valid_targets:
+        return _AutoDispatchProjection(
+            next_step=unique_valid_targets[0],
+            valid_next=unique_valid_targets,
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    if (
+        cursor_dispatch_phase is not None
+        and _is_auto_supported_target(cursor_dispatch_phase)
+        and observed_phase_source in {"active_step", "resume_cursor", "latest_failure"}
+    ):
+        return _AutoDispatchProjection(
+            next_step=cursor_dispatch_phase,
+            valid_next=(cursor_dispatch_phase,),
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    gate_issue = _gate_operator_issue(state)
+    if gate_issue is not None:
+        return _AutoDispatchProjection(
+            next_step=None,
+            valid_next=(),
+            issue=gate_issue[0],
+            message=gate_issue[1],
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    if mismatches and cursor_next_dispatches:
+        expected = ", ".join(cursor_next_dispatches)
+        actual = ", ".join(mismatches)
+        source = observed_phase_source or "observed_phase"
+        return _AutoDispatchProjection(
+            next_step=None,
+            valid_next=(),
+            issue="workflow_cursor_mismatch",
+            message=(
+                f"workflow cursor from {source} expects one of [{expected}] "
+                f"but control projection offered [{actual}]"
+            ),
+            observed_phase=cursor_dispatch_phase,
+            observed_phase_source=observed_phase_source,
+        )
+
+    return _AutoDispatchProjection(
+        next_step=None,
+        valid_next=(),
+        observed_phase=cursor_dispatch_phase,
+        observed_phase_source=observed_phase_source,
+    )
 
 
 def _plan_clarification(plan_dir: Path | None) -> dict[str, Any] | None:
@@ -3389,11 +3640,6 @@ def drive(
     external_retry_count = 0
     external_retry_counts_by_phase: dict[str, int] = {}
     blocked_retry_count = 0
-    # Consecutive `override add-note` dispatches on the same critique fork.
-    # Reset when the next_step changes. A repeated successful add-note that
-    # leaves the plan on the same override path is still a no-progress loop
-    # and should eventually escalate to `override force-proceed`.
-    add_note_attempts = 0
     repeated_failure_signature: str | None = None
     repeated_failure_signature_count = 0
     invalid_transition_signature: str | None = None
@@ -3659,15 +3905,26 @@ def drive(
                     last_phase=last_phase,
                 )
 
-        next_step = status.get("next_step")
-        valid_next = status.get("valid_next") or []
+        legacy_next_step = status.get("next_step")
+        legacy_valid_next = status.get("valid_next") or []
+        projection = _project_auto_dispatch(plan, plan_dir=plan_dir, status=status)
+        next_step = projection.next_step
+        valid_next = list(projection.valid_next)
+        status = dict(status)
+        status["legacy_next_step"] = legacy_next_step
+        status["legacy_valid_next"] = list(legacy_valid_next)
+        status["next_step"] = next_step
+        status["valid_next"] = valid_next
 
         log(
-            f"iter {iteration} state={state} next={next_step} valid_next={valid_next}",
+            f"iter {iteration} state={state} next={next_step} valid_next={valid_next} "
+            f"legacy_next={legacy_next_step}",
             iteration=iteration,
             state=state,
             next_step=next_step,
             valid_next=valid_next,
+            legacy_next_step=legacy_next_step,
+            legacy_valid_next=legacy_valid_next,
         )
 
         repeat = _repeated_failure_signature(plan_dir, status)
@@ -3767,7 +4024,13 @@ def drive(
             continue
 
         # Terminal: plan reached a final state (or automation-terminal).
-        if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):
+        if state in AUTOMATION_TERMINAL_STATES and not (
+            state == STATE_BLOCKED
+            and (
+                valid_next
+                or projection.issue in {"gate_escalated", "gate_force_proceed_required"}
+            )
+        ):
             if state == STATE_AWAITING_HUMAN:
                 # Distinguish prep-sourced halts (blocking ambiguities) from
                 # criteria-verification halts. Prep halts include the blocking
@@ -4347,123 +4610,89 @@ def drive(
         last_stall_progress_event_seq = stall_progress_event_seq_now
         last_active_step_progress_sig = active_step_progress_sig_now
 
-        # Escalation: no phase to run but overrides are available.
         if not next_step:
-            if _has_valid_next(status, "override force-proceed"):
-                if on_escalate == "force-proceed":
-                    log("gate escalated — force-proceeding (per on_escalate=force-proceed)")
-                    run_kwargs: dict[str, Any] = {"cwd": cwd, "timeout": status_timeout}
-                    if progress_env:
-                        run_kwargs["progress_env"] = progress_env
-                    _apply_envelope_handshake(run_kwargs, plan_dir)
-                    code, out, err = _override_force_proceed_in_process(
-                        root=Path(cwd or Path.cwd()),
-                        plan=plan,
-                        reason="megaplan auto: escalate → force-proceed",
-                    )
-                    if code != 0:
-                        log(f"force-proceed failed (exit {code}): {err.strip() or out.strip()}")
-                        # Strict-notes invariants surface as specific error
-                        # codes — when we see them the right move is to
-                        # surrender to the human rather than treat the
-                        # subprocess failure as a generic auto-driver fault.
-                        combined_text = f"{out}\n{err}"
-                        strict_signals = (
-                            "unabsorbed_notes_exist",
-                            "escalate_requires_user_approval",
-                        )
-                        if any(signal in combined_text for signal in strict_signals):
-                            _record_failure(
-                                plan_dir=plan_dir,
-                                kind="human_required",
-                                message="force-proceed blocked by strict-notes",
-                                current_state=STATE_BLOCKED,
-                                phase="override",
-                                resume_cursor={"phase": "override", "retry_strategy": "human_approval"},
-                                suggested_action="Address strict notes or approve escalate before resuming.",
-                                metadata={"signals": [signal for signal in strict_signals if signal in combined_text]},
-                            )
-                            return _outcome(
-                                "human_required",
-                                final_state=state,
-                                iterations=iteration,
-                                reason=(
-                                    "force-proceed blocked by strict-notes — human "
-                                    "required to address notes or approve escalate"
-                                ),
-                                last_phase=last_phase,
-                            )
-                        _record_failure(
-                            plan_dir=plan_dir,
-                            kind="override_failed",
-                            message=f"override force-proceed exited {code}",
-                            current_state=STATE_FAILED,
-                            phase="override",
-                            resume_cursor={"phase": "override", "retry_strategy": "rerun_override"},
-                            suggested_action="Inspect override output before resuming.",
-                            metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:]},
-                        )
-                        return _outcome(
-                            "failed",
-                            final_state=state,
-                            iterations=iteration,
-                            reason=f"override force-proceed exited {code}",
-                            last_phase=last_phase,
-                        )
-                    continue
-                if on_escalate == "abort":
-                    log("gate escalated — aborting (per on_escalate=abort)")
-                    run_kwargs = {"cwd": cwd, "timeout": status_timeout}
-                    if progress_env:
-                        run_kwargs["progress_env"] = progress_env
-                    _apply_envelope_handshake(run_kwargs, plan_dir)
-                    _override_abort_in_process(
-                        root=Path(cwd or Path.cwd()),
-                        plan=plan,
-                        reason="megaplan auto: escalate → abort",
-                    )
-                    return _outcome(
-                        "aborted",
-                        final_state=state,
-                        iterations=iteration,
-                        reason="gate escalated and on_escalate=abort",
-                        last_phase=last_phase,
-                    )
-                # on_escalate == "fail"
-                log("gate escalated — failing (per on_escalate=fail)")
+            if projection.issue in {"gate_escalated", "gate_force_proceed_required"}:
+                log(projection.message)
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="gate_escalated",
-                    message="gate escalated and on_escalate=fail",
+                    message=projection.message,
                     current_state=STATE_BLOCKED,
                     phase="gate",
-                    resume_cursor={"phase": "gate", "retry_strategy": "human_decision"},
-                    suggested_action="Resolve the gate escalation before resuming.",
-                    metadata={"iteration": iteration},
+                    resume_cursor={
+                        "phase": projection.observed_phase or "gate",
+                        "retry_strategy": "human_decision",
+                    },
+                    suggested_action=(
+                        "Resolve the gate decision explicitly; auto-drive no longer "
+                        "chooses override routes on your behalf."
+                    ),
+                    metadata={
+                        "iteration": iteration,
+                        "issue": projection.issue,
+                        "legacy_next_step": legacy_next_step,
+                        "legacy_valid_next": legacy_valid_next,
+                    },
                 )
                 return _outcome(
-                    "escalated",
+                    "human_required",
                     final_state=state,
                     iterations=iteration,
-                    reason="gate escalated and on_escalate=fail — human required",
+                    reason=projection.message,
                     last_phase=last_phase,
                 )
-            log(f"no next_step and no override available (valid_next={valid_next})")
+            if projection.issue == "workflow_cursor_mismatch":
+                log(projection.message)
+                _record_failure(
+                    plan_dir=plan_dir,
+                    kind="workflow_cursor_mismatch",
+                    message=projection.message,
+                    current_state=STATE_BLOCKED,
+                    phase=projection.observed_phase,
+                    resume_cursor={
+                        "phase": projection.observed_phase or "status",
+                        "retry_strategy": "repair_workflow_projection",
+                    },
+                    suggested_action=(
+                        "Repair the plan or workflow projection so the observed "
+                        "workflow cursor and control targets agree."
+                    ),
+                    metadata={
+                        "iteration": iteration,
+                        "legacy_next_step": legacy_next_step,
+                        "legacy_valid_next": legacy_valid_next,
+                        "observed_phase_source": projection.observed_phase_source,
+                    },
+                )
+                return _outcome(
+                    "blocked",
+                    final_state=STATE_BLOCKED,
+                    iterations=iteration,
+                    reason=projection.message,
+                    last_phase=projection.observed_phase,
+                    blocking_reasons=["workflow_cursor_mismatch"],
+                )
+            log(f"no actionable workflow target available (valid_next={valid_next})")
             _record_failure(
                 plan_dir=plan_dir,
                 kind="no_next_step",
-                message="no next_step and no override available",
+                message="no actionable workflow target available",
                 current_state=STATE_FAILED,
                 phase=None,
                 resume_cursor={"phase": "status", "retry_strategy": "repair_state"},
-                suggested_action="Repair state.json or workflow mapping before resuming.",
-                metadata={"valid_next": valid_next, "iteration": iteration},
+                suggested_action="Repair state.json or workflow/control mapping before resuming.",
+                metadata={
+                    "valid_next": valid_next,
+                    "iteration": iteration,
+                    "legacy_next_step": legacy_next_step,
+                    "legacy_valid_next": legacy_valid_next,
+                },
             )
             return _outcome(
                 "failed",
                 final_state=state,
                 iterations=iteration,
-                reason="no next_step and no override available",
+                reason="no actionable workflow target available",
                 last_phase=last_phase,
             )
 
@@ -4511,63 +4740,21 @@ def drive(
                 blocking_reasons=["control_binding_mismatch"],
             )
 
-        # Special-case `override add-note`: the CLI requires a non-empty
-        # ``--note`` argument, so we synthesize one from the latest gate
-        # signals / critique flags. After ``max_add_note_attempts``
-        # consecutive dispatches on the same override path, fall through to
-        # ``override force-proceed`` — that's the safety-net escape valve
-        # when human intervention isn't available (Track B fallback).
-        if next_step == "override add-note":
-            if (
-                max_add_note_attempts >= 0
-                and add_note_attempts >= max_add_note_attempts
-                and _has_valid_next(status, "override force-proceed")
-            ):
-                log(
-                    f"override add-note repeated {add_note_attempts} times — "
-                    "escalating to override force-proceed",
-                    add_note_attempts=add_note_attempts,
-                    max_add_note_attempts=max_add_note_attempts,
-                )
-                cmd = [
-                    "override",
-                    "force-proceed",
-                    "--plan",
-                    plan,
-                    "--reason",
-                    (
-                        f"megaplan auto: {add_note_attempts} add-note retries "
-                        "exhausted, forcing proceed"
-                    ),
-                ]
-                last_phase = "override force-proceed"
-                add_note_attempts = 0
-            else:
-                cmd = _build_override_add_note_command(
-                    plan,
-                    plan_dir,
-                    iteration=iteration,
-                    attempt=add_note_attempts + 1,
-                )
-                last_phase = next_step
-        else:
-            # Any non-add-note dispatch resets the add-note attempt counter.
-            add_note_attempts = 0
-            cmd = _phase_command(next_step) + ["--plan", plan]
-            cmd = _append_live_phase_models(cmd, str(next_step))
-            last_phase = next_step
-            # Apply an active execute-tier escalation pin. The pin overrides
-            # tier_models.execute via --phase-model and forces a *fresh*
-            # session: the failed worker's session must not be resumed, or the
-            # stronger model would never actually run (a tier change is a no-op
-            # if the batch --resume's the old session on the old model).
-            if next_step == "execute" and escalation_pin_spec is not None:
-                cmd = [
-                    *cmd,
-                    "--phase-model",
-                    f"execute={escalation_pin_spec}",
-                    "--fresh",
-                ]
+        cmd = _command_for_auto_target(next_step) + ["--plan", plan]
+        cmd = _append_live_phase_models(cmd, str(next_step))
+        last_phase = next_step
+        # Apply an active execute-tier escalation pin. The pin overrides
+        # tier_models.execute via --phase-model and forces a *fresh*
+        # session: the failed worker's session must not be resumed, or the
+        # stronger model would never actually run (a tier change is a no-op
+        # if the batch --resume's the old session on the old model).
+        if next_step == "execute" and escalation_pin_spec is not None:
+            cmd = [
+                *cmd,
+                "--phase-model",
+                f"execute={escalation_pin_spec}",
+                "--fresh",
+            ]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
         prior_phase_failure: dict[str, Any] | None = None
         if plan_dir is not None:
@@ -4584,8 +4771,6 @@ def drive(
                 )
         code, out, err, result = _run_phase(cmd, next_step)
         _clear_completed_phase_active_step(next_step, result)
-        if next_step == "override add-note" and last_phase == "override add-note":
-            add_note_attempts += 1
         # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
         # not by string-matching captured stdout.
         #

@@ -3,6 +3,12 @@
 These are lightweight markers that register phase functions, pipeline
 generators, and decision callables with the native runtime.  They compose
 with the native runner's dict-based context and state propagation.
+
+Ownership:
+    Decorated ``.pypeline`` modules and named native subworkflows own the
+    source-visible product topology.  Boundary contract annotations on
+    phases declare durable effects only — they do not define or own
+    workflow topology.
 """
 
 from __future__ import annotations
@@ -570,9 +576,8 @@ def native_panel(
 
     Notes
     -----
-    This helper is semantically equivalent to
-    :func:`~arnold.pipelines.megaplan._pipeline.pattern_topology.panel_parallel`
-    with ``merge="none"``.  There is no second panel engine — the
+    This helper is semantically equivalent to a fixed-cardinality parallel
+    panel with ``merge="none"``.  There is no second panel engine — the
     implementation is a thin wrapper around :func:`parallel` with a
     collation reducer.
     """

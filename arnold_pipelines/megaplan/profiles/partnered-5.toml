@@ -1,5 +1,5 @@
 # `partnered-5` is a local snapshot of the built-in `partnered` profile, with
-# Zhipu/Fireworks GLM plus explicit GPT-5.4/5.5 handling complexity 4/5 execute tasks.
+# explicit GPT-5.4/5.5 handling complexity 4/5 execute tasks.
 [profiles.partnered-5]
 adaptive_critique = true
 plan                  = "codex:gpt-5.5"
@@ -19,19 +19,14 @@ tiebreaker_challenger = "codex:gpt-5.5"
 
 [profiles.partnered-5.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:deepseek:deepseek-v4-pro"
 3 = "hermes:deepseek:deepseek-v4-pro"
-4 = "hermes:deepseek:deepseek-v4-pro"
-5 = "hermes:deepseek:deepseek-v4-pro"
-6 = "hermes:deepseek:deepseek-v4-pro"
-7 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
-8 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
-9 = "codex:gpt-5.5"
-10 = "codex:gpt-5.5"
+4 = ["codex:gpt-5.4", "hermes:fireworks:accounts/fireworks/models/glm-5p2"]
+5 = "codex:gpt-5.5"
 
 [profiles.partnered-5.tier_models.critique]
 1 = "hermes:deepseek:deepseek-v4-flash"
 2 = "hermes:deepseek:deepseek-v4-pro"
 3 = "hermes:deepseek:deepseek-v4-pro"
-4 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "codex:gpt-5.4"]
+4 = ["codex:gpt-5.4", "hermes:fireworks:accounts/fireworks/models/glm-5p2"]
 5 = "codex:gpt-5.5"

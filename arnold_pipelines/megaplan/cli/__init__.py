@@ -37,7 +37,6 @@ from arnold_pipelines.megaplan._core import (
     active_plan_dirs,
     add_or_increment_debt,
     atomic_write_text,
-    build_next_step_runtime,
     build_phase_observability,
     compute_global_batches,
     config_dir,
@@ -514,12 +513,14 @@ def _emit_response_progress(command: str, response: StepResponse, emitter: Any) 
         return
     state = response.get("state")
     step = str(response.get("step") or command)
+    # Handler next_step payloads are compatibility hints only and must not
+    # become a live CLI-driven route authority.
     emitter.phase_end(
         step,
         success=bool(response.get("success", True)),
         state=state,
         result=response.get("result"),
-        next_step=response.get("next_step"),
+        next_step=None,
     )
     if state == "done":
         emitter.plan_done(
@@ -541,6 +542,14 @@ def _emit_error_progress(command: str, error: CliError, emitter: Any) -> None:
     emitter.phase_end(
         command, success=False, error_code=error.code, message=error.message
     )
+
+
+def _legacy_list_route_hints(state: dict[str, Any]) -> dict[str, Any]:
+    next_steps = infer_next_steps(state)
+    return {
+        "next_step": next_steps[0] if next_steps else None,
+        "valid_next": list(next_steps),
+    }
 
 
 
@@ -587,13 +596,15 @@ def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
             if allowed_states and current_state not in allowed_states:
                 continue
 
-            next_steps = infer_next_steps(state)
+            legacy_route_hints = _legacy_list_route_hints(state)
             entry = {
                 "name": state["name"],
                 "idea": state["idea"],
                 "state": current_state,
                 "iteration": state["iteration"],
-                "next_step": next_steps[0] if next_steps else None,
+                "observed_phase": active_phase_name(state) or current_state,
+                "next_step": legacy_route_hints["next_step"],
+                "legacy_route_hints": legacy_route_hints,
             }
             if not is_local:
                 try:

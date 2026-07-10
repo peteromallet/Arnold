@@ -17,6 +17,9 @@ narrowing is proved by checker rule plus behavior scenario.
 
 - Make final ledger/report generation consume checker evidence. Reject stale,
   hand-authored, path-only, or report-only implemented rows.
+- Make final ledger/report generation consume boundary evidence for rows that
+  cross artifact, state/history, authority, reducer, resume, or external-effect
+  boundaries. Reject source-only completion for those rows.
 - Re-prove every traceability row. No old `enabled` or `implemented` status is
   inherited.
 - Run the full deterministic split-outcome scenario suite, including:
@@ -34,6 +37,11 @@ narrowing is proved by checker rule plus behavior scenario.
   scan, compatibility quarantine checks, and dead-delete mutation checks.
 - Validate resume identity and serialized-state consumer compatibility for
   human gates, tiebreaker pending, execute approvals, and blocked recovery.
+- Validate semantic-health failure fixtures across front-half, tiebreaker,
+  execute, review/finalize, and override/auto surfaces: missing receipt,
+  stale phase result, artifact/state divergence, authority mismatch, child
+  output without reducer promotion, and reducer promotion without child
+  evidence.
 - Pin or hash deterministic prompt/model fixtures used in behavior scenarios,
   or document refresh rules that prevent stale-fixture false confidence.
 - Update end-state/current-state/corrective docs where implementation made
@@ -44,6 +52,8 @@ narrowing is proved by checker rule plus behavior scenario.
 
 - Generated conformance report cannot mark a row implemented without checker
   evidence.
+- Generated conformance report cannot mark a boundary-crossing row implemented
+  without coherent receipts/evidence matching the declared durable effects.
 - Installed package uses the same canonical `.pypeline` source and semantics.
 - All split-outcome behavior scenarios pass.
 - Compatibility paths are either deleted, data-only adapters, or fenced legacy
@@ -58,3 +68,5 @@ narrowing is proved by checker rule plus behavior scenario.
   maps, auto next-step derivation, CLI dispatch, or projected-native
   compatibility.
 - The final report is hand-maintained next to conflicting prose documents.
+- Boundary contracts or receipts are treated as an alternate workflow source
+  instead of proof attached to source-authoritative native topology.

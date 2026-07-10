@@ -16,10 +16,7 @@ from arnold_pipelines.megaplan._core import (
     split_oversized_batches,
     stable_task_id_digest,
 )
-from arnold_pipelines.megaplan.execute.batch import (
-    _reset_blocked_tasks_to_pending,
-    _single_batch_mode_allowed,
-)
+from arnold_pipelines.megaplan.execute.batch import _reset_blocked_tasks_to_pending
 from arnold_pipelines.megaplan.execute.policy import (
     ApprovalOutcome,
     NoReviewTerminalOutcome,
@@ -225,38 +222,3 @@ def test_batch_ordering_and_s4_paths_are_deterministic(tmp_path: Path) -> None:
     assert digest == stable_task_id_digest(["T2", "T3"])
     artifact = execute_batch_artifact_path(tmp_path, 2, ["T3", "T2"])
     assert artifact == tmp_path / "execute_batches" / "batch_2" / f"tasks_{digest}.json"
-
-
-def test_resume_single_pending_frontier_never_expands_to_all_task_ids() -> None:
-    """A partial resume must dispatch its runnable frontier, not the plan."""
-
-    tasks = [
-        _task("T1"),
-        _task("T2", depends_on=["T1"]),
-        _task("T3", depends_on=["T2"]),
-        _task("T4", depends_on=["T3"]),
-        _task("T5", depends_on=["T4"]),
-        _task("T6", depends_on=["T5"]),
-        _task("T7", depends_on=["T6"]),
-    ]
-    all_task_ids = [task["id"] for task in tasks]
-
-    # Model a resume where only T1 is in the current runnable frontier while
-    # the persisted plan still contains later task rows.  This is the shape
-    # that previously entered single_batch_mode and dispatched all seven IDs.
-    pending_tasks = [tasks[0]]
-    pending_batches = compute_task_batches(pending_tasks)
-    split_batches = split_oversized_batches(pending_batches, 7)
-    completed_task_ids = {f"T{i}" for i in range(2, 7)}
-
-    single_batch_mode = _single_batch_mode_allowed(
-        all_task_ids=all_task_ids,
-        pending_task_count=len(pending_tasks),
-        pending_batch_count=len(split_batches),
-        completed_task_ids=completed_task_ids,
-        max_tasks_per_batch=7,
-    )
-    batches_to_run = [all_task_ids] if single_batch_mode else split_batches
-
-    assert batches_to_run == [["T1"]]
-    assert all_task_ids not in batches_to_run

@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
     latest_plan_path,
     latest_plan_meta_path,
     read_json,
@@ -244,7 +245,7 @@ def _digest_execute(plan_dir: Path, state: dict) -> str:
         files_changed = len(audit.get("changed_files", audit.get("files", [])))
 
     # Count batch files
-    batch_count = len(list(plan_dir.glob("execution_batch_*.json")))
+    batch_count = len(list(list_batch_artifacts(plan_dir)))
 
     parts = [
         f"{done} done, {skipped} skipped, {blocked} blocked",

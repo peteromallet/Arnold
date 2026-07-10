@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan._core import (
-    batch_artifact_path,
+    execute_batch_artifact_path,
+    resolve_batch_artifact,
     compute_task_batches,
     configured_robustness,
     intent_and_notes_block,
@@ -274,11 +275,13 @@ def _execute_doc_batch_prompt(
         1,
     )
     batch_total = len(global_batches) or 1
-    checkpoint_path = str(batch_artifact_path(plan_dir, batch_number))
+    checkpoint_path = str(
+        execute_batch_artifact_path(plan_dir, batch_number, batch_task_ids)
+    )
     prior_batch_deviations = "None"
     if batch_number > 1:
-        prior_batch_artifact = batch_artifact_path(plan_dir, batch_number - 1)
-        if prior_batch_artifact.exists():
+        prior_batch_artifact = resolve_batch_artifact(plan_dir, batch_number - 1)
+        if prior_batch_artifact is not None:
             try:
                 prior_batch_payload = read_json(prior_batch_artifact)
             except (OSError, ValueError):

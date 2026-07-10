@@ -33,6 +33,7 @@ from arnold_pipelines.megaplan._core.io import (
     atomic_write_bytes,
     atomic_write_json,
     atomic_write_text,
+    batch_artifact_index,
     find_plan_dir,
     now_utc,
     plan_search_roots,
@@ -298,14 +299,16 @@ class PlanRepository:
         write_plan_state(self.plan_dir, mode="replace", state=state)
 
     def list_execution_batch_artifacts(self) -> list[Path]:
-        return sorted(
-            (
-                path
-                for path in self.list_artifact_paths()
-                if _EXECUTION_BATCH_RE.fullmatch(path.name)
-            ),
-            key=lambda path: path.name,
-        )
+        # Route through the shared io helper so both the S4 directory layout
+        # (execute_batches/batch_{index}/tasks_*.json) and the legacy flat
+        # layout (execution_batch_{N}.json) are recognised. Legacy-only callers
+        # are unaffected because the helper still matches the flat form.
+        indexed = [
+            (batch_artifact_index(path), path)
+            for path in self.list_artifact_paths()
+            if batch_artifact_index(path) is not None
+        ]
+        return [path for _, path in sorted(indexed, key=lambda item: item[0])]
 
     def latest_execution_batch_artifact(self) -> Path | None:
         batches = self.list_execution_batch_artifacts()
@@ -399,8 +402,7 @@ class PlanRepository:
         return int(match.group(1)) if match is not None else None
 
     def _artifact_batch(self, path: Path) -> int | None:
-        match = _EXECUTION_BATCH_RE.fullmatch(path.name)
-        return int(match.group(1)) if match is not None else None
+        return batch_artifact_index(path)
 
     def _artifact_phase(self, path: Path) -> str | None:
         name = path.name

@@ -23,6 +23,10 @@ semantics into canonical source and declared policy.
 - Make human verification gates declared with authority requirements.
 - Make finalize baseline fallback and task shaping/scrubbing boundaries clear:
   phase-local shaping may stay in handlers, fallback routing must be visible.
+- Declare boundary contracts for review child outputs, fanin/reducer
+  promotion, rework-cycle effects, cap authority decisions, human verification
+  records, finalize canonical artifacts, finalize fallback, and final state
+  projection.
 - Quarantine or delete review/finalize component metadata for implemented rows.
 
 ## Verifiable Completion Criterion
@@ -36,6 +40,9 @@ semantics into canonical source and declared policy.
   - finalize fallback follows visible routing.
 - Semantic checker rejects single-handler review fanout, handler-owned cap
   thresholds, and hidden finalize fallback routing.
+- Semantic-health tests reject review/finalize source topology with missing
+  child/reducer receipts, missing human authority, stale finalize artifacts, or
+  final state/history projection drift.
 
 ## Do Not Close If
 
@@ -43,3 +50,5 @@ semantics into canonical source and declared policy.
   handlers.
 - No-review terminal behavior depends on handler/private robustness overrides
   instead of source/policy-visible branches.
+- Review/finalize boundary evidence can mark completion without the native
+  reducer/fallback route being source-visible.

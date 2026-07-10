@@ -34,3 +34,9 @@ def test_status_command_accepts_project_dir_and_plan(
     assert payload["success"] is True
     assert payload["plan"] == plan_name
     assert payload["state"] == "initialized"
+    assert payload["status_route_authority"] == "workflow_source_only"
+    assert payload["legacy_route_hints"]["authority"] == "display_only_non_authoritative"
+    assert payload["legacy_route_hints"]["next_step"] == payload["next_step"]
+    assert payload["legacy_route_hints"]["valid_next"] == payload["valid_next"]
+    assert payload["next_step"] in payload["valid_next"]
+    assert "workflow_cursor" not in payload

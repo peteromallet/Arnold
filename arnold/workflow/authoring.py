@@ -347,6 +347,8 @@ def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _freeze_value(value: Any) -> Any:
+    if getattr(value, "__arnold_preserve_mapping__", False):
+        return value
     if isinstance(value, Mapping):
         return _freeze_mapping(value)
     if isinstance(value, list):

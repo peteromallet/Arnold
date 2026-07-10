@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 from arnold_pipelines.megaplan._core import (
-    batch_artifact_path,
+    execute_batch_artifact_path,
     compute_task_batches,
     configured_robustness,
     creative_form_id,
@@ -218,7 +218,9 @@ def _execute_creative_batch_prompt(
     batch_sense_check_ids = [sc["id"] for sc in batch_sense_checks if isinstance(sc.get("id"), str)]
     global_batches = compute_task_batches(all_tasks)
     batch_number = next((index + 1 for index, batch in enumerate(global_batches) if batch == batch_task_ids), 1)
-    checkpoint_path = str(batch_artifact_path(plan_dir, batch_number))
+    checkpoint_path = str(
+        execute_batch_artifact_path(plan_dir, batch_number, batch_task_ids)
+    )
     gate_carry = _gate_summary_or_skipped(plan_dir)
     try:
         latest_plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
