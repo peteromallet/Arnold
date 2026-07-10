@@ -9,6 +9,7 @@ from arnold_pipelines.megaplan._core.io import plans_root
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.cli import build_parser
 from arnold_pipelines.megaplan.cli.status_view import handle_status
+from arnold_pipelines.megaplan.cli.status_view import _observed_workflow_phase
 from arnold_pipelines.megaplan.handlers.init import handle_init
 from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
 from tests.conftest import load_state
@@ -66,6 +67,31 @@ def test_handle_status_fences_legacy_next_step_hints_from_workflow_cursor(
     assert status["workflow_cursor"]["phase"] == "execute"
     assert status["workflow_cursor"]["next_dispatch_phases"]
     assert status["workflow_cursor"]["phase"] != status["next_step"]
+
+
+def test_blocked_execute_history_is_not_a_completed_workflow_cursor() -> None:
+    """Partial/rework execute must remain on the finalized -> execute route."""
+
+    blocked_execute = {"step": "execute", "result": "blocked"}
+    assert (
+        _observed_workflow_phase(
+            {},
+            active_step=None,
+            last_step=blocked_execute,
+        )
+        is None
+    )
+    assert auto._observed_phase_context(
+        {}, {"last_step": blocked_execute}
+    ) == (None, None)
+
+    # Review rework is a completed, non-successful transition and must keep
+    # its source cursor so the canonical route can return to execute.
+    review_rework = {"step": "review", "result": "needs_rework"}
+    assert _observed_workflow_phase({}, active_step=None, last_step=review_rework) == "review"
+    assert auto._observed_phase_context(
+        {}, {"last_step": review_rework}
+    ) == ("review", "last_step")
 
 
 def test_drive_blocks_when_workflow_cursor_disagrees_with_forward_state_projection(
