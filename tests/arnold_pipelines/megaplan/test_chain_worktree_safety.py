@@ -1274,6 +1274,65 @@ def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
     assert saved.pr_state == "open"
 
 
+def test_pr_state_treats_gh_graphql_missing_pr_as_closed_even_when_error_message_is_generic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The real command wrapper exposes gh diagnostics in ``extra.output``."""
+    messages: list[str] = []
+
+    def missing_pr(*_args, **_kwargs):
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view 206 exited 1",
+            extra={
+                "output": "GraphQL: Could not resolve to a PullRequest with the number of 206.",
+            },
+        )
+
+    monkeypatch.setattr(
+        git_ops,
+        "_compat",
+        lambda: SimpleNamespace(
+            _run_command=missing_pr,
+            GH_PR_STATE_ATTEMPTS=3,
+            _is_transient_gh_error=lambda _exc: False,
+        ),
+    )
+
+    assert git_ops._pr_state(tmp_path, 206, writer=messages.append) == "closed"
+    assert any("stale PR cursor as closed" in message for message in messages)
+
+
+def test_run_command_preserves_gh_stderr_as_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed = "GraphQL: Could not resolve to a PullRequest with the number of 206."
+    monkeypatch.setattr(
+        git_ops,
+        "_compat",
+        lambda: SimpleNamespace(
+            subprocess=SimpleNamespace(
+                run=lambda *_args, **_kwargs: subprocess.CompletedProcess(
+                    ["gh", "pr", "view", "206"], 1, stdout="", stderr=observed
+                ),
+                TimeoutExpired=subprocess.TimeoutExpired,
+            ),
+            _command_env=lambda _cmd: {},
+            _should_retry_gh_without_env=lambda _cmd, _proc: False,
+        ),
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        git_ops._run_command(
+            tmp_path,
+            ["gh", "pr", "view", "206"],
+            writer=lambda _message: None,
+            error_code="gh_pr_view_failed",
+        )
+
+    assert exc_info.value.extra["output"] == observed
+
+
 def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
