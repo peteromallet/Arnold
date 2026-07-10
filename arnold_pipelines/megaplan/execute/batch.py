@@ -41,6 +41,12 @@ from arnold_pipelines.megaplan._core import (
     store_raw_worker_output,
 )
 from arnold_pipelines.megaplan.audits.quality_gates import capture_before_line_counts
+from arnold_pipelines.megaplan.authority.batch_scope import (
+    BATCH_SCOPE_KEY,
+    BatchScope,
+    BatchScopeQuarantine,
+    resolve_batch_scope,
+)
 from arnold_pipelines.megaplan.observability.routing_ledger import (
     format_selected_spec,
     record_step_routing,
@@ -505,6 +511,197 @@ def _resolve_batch_artifact_number(
     if len(candidate_numbers) == 1:
         return next(iter(candidate_numbers))
     return batch_index
+
+
+def _stamp_batch_scope(
+    payload: dict[str, Any],
+    *,
+    batch_number: int,
+    task_ids: Iterable[str],
+    sense_check_ids: Iterable[str],
+) -> BatchScope:
+    """Attach canonical dispatch scope before a batch artifact is persisted."""
+
+    scope = BatchScope.create(
+        batch_number=batch_number,
+        task_ids=task_ids,
+        sense_check_ids=sense_check_ids,
+    )
+    payload[BATCH_SCOPE_KEY] = scope.to_dict()
+    return scope
+
+
+def _prepare_scoped_batch_checkpoint(
+    plan_dir: Path,
+    *,
+    batch_number: int,
+    task_ids: list[str],
+    sense_check_ids: list[str],
+) -> Path:
+    """Create the worker checkpoint with immutable scope before dispatch.
+
+    Workers update checkpoints by reading and rewriting the whole document, so
+    pre-creating the file also preserves scope across interruption before the
+    harness receives the worker's final structured response.
+    """
+
+    artifact_path = execute_batch_artifact_path(plan_dir, batch_number, task_ids)
+    payload: dict[str, Any] = {}
+    if artifact_path.is_file():
+        try:
+            existing = read_json(artifact_path)
+        except (OSError, UnicodeDecodeError, ValueError):
+            existing = {}
+        if isinstance(existing, dict):
+            payload = dict(existing)
+    _stamp_batch_scope(
+        payload,
+        batch_number=batch_number,
+        task_ids=task_ids,
+        sense_check_ids=sense_check_ids,
+    )
+    atomic_write_json(artifact_path, payload)
+    return artifact_path
+
+
+def _all_batch_artifact_paths(plan_dir: Path) -> list[Path]:
+    """Enumerate every S4 and legacy artifact, including same-index resumes."""
+
+    candidates = {
+        path
+        for pattern in (
+            "execute_batches/batch_*/tasks_*.json",
+            "execution_batch_*.json",
+        )
+        for path in plan_dir.glob(pattern)
+        if path.is_file()
+    }
+    return sorted(
+        candidates,
+        key=lambda path: (batch_artifact_index(path) or 0, str(path)),
+    )
+
+
+def _emit_batch_scope_quarantine(
+    plan_dir: Path,
+    quarantine: BatchScopeQuarantine,
+) -> None:
+    """Report scope refusal through the existing authority-divergence event."""
+
+    from arnold_pipelines.megaplan.observability.events import EventKind, emit
+
+    payload = {
+        "diagnostic_version": 1,
+        "authority_status": "quarantined",
+        "authoritative": False,
+        "reason": f"batch_scope_{quarantine.reason}",
+        "artifact_path": quarantine.source_path,
+        "quarantine": quarantine.to_dict(),
+    }
+    try:
+        emit(
+            EventKind.AUTHORITY_DIVERGENCE,
+            plan_dir=plan_dir,
+            phase="execute",
+            payload=payload,
+        )
+    except Exception:
+        log.warning(
+            "failed to emit batch-scope quarantine for %s",
+            quarantine.source_path,
+            exc_info=True,
+        )
+
+
+def _scope_filtered_payload(
+    payload: dict[str, Any], scope: BatchScope
+) -> dict[str, Any]:
+    """Copy only entries named by a proven artifact scope."""
+
+    filtered = dict(payload)
+    task_ids = set(scope.task_ids)
+    sense_check_ids = set(scope.sense_check_ids)
+    filtered["task_updates"] = [
+        dict(update)
+        for update in payload.get("task_updates", []) or []
+        if isinstance(update, dict) and update.get("task_id") in task_ids
+    ]
+    filtered["sense_check_acknowledgments"] = [
+        dict(acknowledgment)
+        for acknowledgment in payload.get("sense_check_acknowledgments", []) or []
+        if isinstance(acknowledgment, dict)
+        and acknowledgment.get("sense_check_id") in sense_check_ids
+    ]
+    return filtered
+
+
+def _replay_proven_batch_artifacts(
+    *,
+    plan_dir: Path,
+    finalize_data: dict[str, Any],
+    known_task_ids: Iterable[str],
+    known_sense_check_ids: Iterable[str],
+    mode: str,
+    state: PlanState,
+) -> list[dict[str, Any]]:
+    """Replay each artifact against only its independently proven scope."""
+
+    proven_payloads: list[dict[str, Any]] = []
+    for artifact_path in _all_batch_artifact_paths(plan_dir):
+        try:
+            payload = read_json(artifact_path)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            quarantine = BatchScopeQuarantine(
+                reason="unreadable_artifact",
+                message=f"artifact could not be read as JSON: {exc}",
+                source_path=str(artifact_path),
+            )
+            _emit_batch_scope_quarantine(plan_dir, quarantine)
+            log.warning("skipping unreadable execution artifact %s", artifact_path)
+            continue
+        if not isinstance(payload, dict):
+            quarantine = BatchScopeQuarantine(
+                reason="malformed_artifact",
+                message="artifact payload must be an object",
+                source_path=str(artifact_path),
+            )
+            _emit_batch_scope_quarantine(plan_dir, quarantine)
+            log.warning("skipping malformed execution artifact %s", artifact_path)
+            continue
+        resolution = resolve_batch_scope(
+            payload,
+            artifact_path,
+            known_task_ids=known_task_ids,
+            known_sense_check_ids=known_sense_check_ids,
+            expected_batch_number=batch_artifact_index(artifact_path),
+        )
+        if resolution.quarantine is not None:
+            _emit_batch_scope_quarantine(plan_dir, resolution.quarantine)
+            log.warning(
+                "skipping unproven execution artifact %s: %s",
+                artifact_path,
+                resolution.quarantine.reason,
+            )
+            continue
+        scope = resolution.scope
+        assert scope is not None
+        filtered_payload = _scope_filtered_payload(payload, scope)
+        merge_issues: list[str] = []
+        _merge_batch_results(
+            finalize_data=finalize_data,
+            payload=filtered_payload,
+            batch_task_ids=list(scope.task_ids),
+            batch_sense_check_ids=list(scope.sense_check_ids),
+            issues=merge_issues,
+            mode=mode,
+            state=state,
+        )
+        if merge_issues:
+            log.debug(
+                "resume-merge issues from %s: %s", artifact_path, merge_issues
+            )
+        proven_payloads.append(payload)
+    return proven_payloads
 
 
 # Private marker set: dispatcher return paths stamp one of these four values.
@@ -1403,6 +1600,12 @@ def _run_and_merge_batch(
             keys=("files_changed",),
         )
     _stamp_head_sha_on_task_records(payload, finalize_data, project_dir)
+    _stamp_batch_scope(
+        payload,
+        batch_number=batch_number,
+        task_ids=batch_task_ids,
+        sense_check_ids=batch_sense_check_ids,
+    )
     atomic_write_json(
         execute_batch_artifact_path(plan_dir, batch_number, batch_task_ids), payload
     )
@@ -1567,6 +1770,12 @@ def handle_execute_one_batch(
     batch_task_ids = global_batches[batch_number - 1]
     active_task_ids = set(batch_task_ids)
     batch_sense_check_ids = _active_sense_check_ids(finalize_data, active_task_ids)
+    _prepare_scoped_batch_checkpoint(
+        plan_dir,
+        batch_number=batch_number,
+        task_ids=batch_task_ids,
+        sense_check_ids=batch_sense_check_ids,
+    )
     batch_template_path = _write_execute_batch_template(
         plan_dir,
         batch_number,
@@ -3290,29 +3499,16 @@ def handle_execute_auto_loop(
         # per-batch artifacts. Load them so aggregation, sense-check
         # accounting, and the final transition use the completed work instead
         # of an empty reconstructed payload.
-        loaded_batch_payloads = [
-            read_json(path) for path in list_batch_artifacts(plan_dir)
-        ]
+        loaded_batch_payloads = _replay_proven_batch_artifacts(
+            plan_dir=plan_dir,
+            finalize_data=finalize_data,
+            known_task_ids=all_task_ids,
+            known_sense_check_ids=all_sense_check_ids,
+            mode=plan_mode,
+            state=state,
+        )
         if loaded_batch_payloads:
             total_batches = max(total_batches, len(loaded_batch_payloads))
-            _all_task_ids = list(all_task_ids)
-            _all_sense_check_ids = list(all_sense_check_ids)
-            _resume_merge_issues: list[str] = []
-            for payload in loaded_batch_payloads:
-                _merge_batch_results(
-                    finalize_data=finalize_data,
-                    payload=payload,
-                    batch_task_ids=_all_task_ids,
-                    batch_sense_check_ids=_all_sense_check_ids,
-                    issues=_resume_merge_issues,
-                    mode=plan_mode,
-                    state=state,
-                )
-            if _resume_merge_issues:
-                log.debug(
-                    "resume-merge issues from loaded batch payloads: %s",
-                    _resume_merge_issues,
-                )
             write_plan_artifact_json(
                 plan_dir, "finalize.json", finalize_data, contract_context=None
             )
@@ -3374,6 +3570,12 @@ def handle_execute_auto_loop(
             all_sense_check_ids
             if single_batch_mode
             else _active_sense_check_ids(finalize_data, set(batch_task_ids))
+        )
+        _prepare_scoped_batch_checkpoint(
+            plan_dir,
+            batch_number=batch_number_for_artifact,
+            task_ids=batch_task_ids,
+            sense_check_ids=batch_sense_check_ids,
         )
         batch_template_path = (
             None

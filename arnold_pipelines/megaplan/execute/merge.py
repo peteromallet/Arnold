@@ -6,11 +6,16 @@ from typing import Any, Callable
 
 from arnold_pipelines.megaplan._core import (
     atomic_write_text,
+    batch_artifact_index,
     is_creative_mode,
     is_prose_mode,
     list_batch_artifacts,
     read_json,
     render_final_md,
+)
+from arnold_pipelines.megaplan.authority.batch_scope import (
+    BatchScopeQuarantine,
+    resolve_batch_scope,
 )
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan.forms.stance import validate_stance
@@ -363,7 +368,7 @@ def _merge_batch_results(
             if task.get("id") in batch_task_id_set
         ]
     )
-    all_tasks_by_id = {
+    plan_tasks_by_id = {
         task["id"]: task
         for task in finalize_data.get("tasks", [])
         if isinstance(task, dict) and isinstance(task.get("id"), str)
@@ -401,9 +406,9 @@ def _merge_batch_results(
         array_fields = ("files_changed", "commands_run")
         object_fields = ()
         optional_fields = evidence_context_fields
-    merge_targets_by_id = all_tasks_by_id if creative_mode else {
+    merge_targets_by_id = {
         task_id: task
-        for task_id, task in all_tasks_by_id.items()
+        for task_id, task in plan_tasks_by_id.items()
         if task_id in batch_task_id_set
     }
     merged_count, _ = _validate_and_merge_batch(
@@ -431,7 +436,7 @@ def _merge_batch_results(
     batch_merged = sum(
         1
         for tid in batch_task_id_set
-        if all_tasks_by_id.get(tid, {}).get("status") in TERMINAL_TASK_STATUSES
+        if plan_tasks_by_id.get(tid, {}).get("status") in TERMINAL_TASK_STATUSES
     )
     if batch_merged < total_batch_tasks:
         issues.append(
@@ -443,10 +448,15 @@ def _merge_batch_results(
         for sense_check in finalize_data.get("sense_checks", [])
         if isinstance(sense_check, dict) and isinstance(sense_check.get("id"), str)
     }
+    merge_sense_checks_by_id = {
+        sense_check_id: sense_check
+        for sense_check_id, sense_check in all_sense_checks_by_id.items()
+        if sense_check_id in batch_sense_check_id_set
+    }
     acknowledged_count, _ = _validate_and_merge_batch(
         payload.get("sense_check_acknowledgments"),
         required_fields=("sense_check_id", "executor_note"),
-        targets_by_id=all_sense_checks_by_id,
+        targets_by_id=merge_sense_checks_by_id,
         id_field="sense_check_id",
         merge_fields=("executor_note",),
         issues=issues,
@@ -467,10 +477,56 @@ def _merge_batch_results(
         )
     _append_execute_reconciliation_advisories(
         before_statuses=pre_merge_statuses,
-        tasks_by_id=all_tasks_by_id,
+        tasks_by_id=plan_tasks_by_id,
         issues=issues,
     )
     return merged_count, total_batch_tasks, acknowledged_count, total_batch_checks
+
+
+def _diagnose_reconciliation_quarantine(
+    plan_dir: Path,
+    quarantine: BatchScopeQuarantine,
+) -> dict[str, Any]:
+    """Emit the authority-divergence diagnostic and return its durable details."""
+
+    diagnostic = {
+        "diagnostic_version": 1,
+        "authority_status": "quarantined",
+        "authoritative": False,
+        "reason": f"batch_scope_{quarantine.reason}",
+        "artifact_path": quarantine.source_path,
+        "quarantine": quarantine.to_dict(),
+    }
+    try:
+        from arnold_pipelines.megaplan.observability.events import EventKind, emit
+
+        emit(
+            EventKind.AUTHORITY_DIVERGENCE,
+            plan_dir=plan_dir,
+            phase="execute",
+            payload=diagnostic,
+        )
+    except Exception as error:
+        diagnostic["diagnostic_error"] = str(error)
+    return diagnostic
+
+
+def _quarantined_reconciliation_result(
+    *,
+    plan_dir: Path,
+    artifact: Path,
+    quarantine: BatchScopeQuarantine,
+) -> dict[str, Any]:
+    diagnostic = _diagnose_reconciliation_quarantine(plan_dir, quarantine)
+    return {
+        "reconciled": False,
+        "artifact": artifact.name,
+        "artifact_path": quarantine.source_path,
+        "reason": "execution artifact scope could not be proven",
+        "authority_status": "quarantined",
+        "quarantine": quarantine.to_dict(),
+        "diagnostic": diagnostic,
+    }
 
 
 def reconcile_latest_execution_batch(plan_dir: Path, state: PlanState) -> dict[str, Any]:
@@ -489,36 +545,75 @@ def reconcile_latest_execution_batch(plan_dir: Path, state: PlanState) -> dict[s
     latest = artifacts[-1]
     try:
         payload = read_json(latest)
+    except Exception as error:
+        return _quarantined_reconciliation_result(
+            plan_dir=plan_dir,
+            artifact=latest,
+            quarantine=BatchScopeQuarantine(
+                reason="unreadable_artifact",
+                message=f"artifact could not be read as JSON: {error}",
+                source_path=str(latest),
+            ),
+        )
+    try:
         finalize_data = read_json(plan_dir / "finalize.json")
     except Exception as error:
         return {
             "reconciled": False,
             "artifact": latest.name,
-            "reason": f"failed to read checkpoint inputs: {error}",
+            "artifact_path": str(latest),
+            "reason": f"failed to read finalize payload: {error}",
         }
-    if not isinstance(payload, dict) or not isinstance(finalize_data, dict):
+    if not isinstance(payload, dict):
+        return _quarantined_reconciliation_result(
+            plan_dir=plan_dir,
+            artifact=latest,
+            quarantine=BatchScopeQuarantine(
+                reason="malformed_artifact",
+                message="artifact payload must be an object",
+                source_path=str(latest),
+            ),
+        )
+    if not isinstance(finalize_data, dict):
         return {
             "reconciled": False,
             "artifact": latest.name,
-            "reason": "checkpoint or finalize payload was not an object",
+            "artifact_path": str(latest),
+            "reason": "finalize payload was not an object",
         }
 
-    batch_task_ids = [
+    known_task_ids = [
         task["id"]
         for task in finalize_data.get("tasks", [])
         if isinstance(task, dict) and isinstance(task.get("id"), str)
     ]
-    batch_sense_check_ids = [
+    known_sense_check_ids = [
         check["id"]
         for check in finalize_data.get("sense_checks", [])
         if isinstance(check, dict) and isinstance(check.get("id"), str)
     ]
+    resolution = resolve_batch_scope(
+        payload,
+        latest,
+        known_task_ids=known_task_ids,
+        known_sense_check_ids=known_sense_check_ids,
+        expected_batch_number=batch_artifact_index(latest),
+    )
+    if resolution.quarantine is not None:
+        return _quarantined_reconciliation_result(
+            plan_dir=plan_dir,
+            artifact=latest,
+            quarantine=resolution.quarantine,
+        )
+    scope = resolution.scope
+    assert scope is not None
+
     issues: list[str] = []
     merged_count, total_task_count, acknowledged_count, total_check_count = _merge_batch_results(
         finalize_data=finalize_data,
         payload=payload,
-        batch_task_ids=batch_task_ids,
-        batch_sense_check_ids=batch_sense_check_ids,
+        batch_task_ids=list(scope.task_ids),
+        batch_sense_check_ids=list(scope.sense_check_ids),
         issues=issues,
         mode=state.get("config", {}).get("mode", "code"),
         state=state,
