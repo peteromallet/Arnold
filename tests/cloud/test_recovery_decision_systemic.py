@@ -301,3 +301,14 @@ def test_repair_exhaustion_does_not_emit_human_marker_or_notification() -> None:
     assert "classification=broken_superfixer" in terminal
     assert "send_discord_escalation" not in terminal
     assert "write_needs_human_marker" not in terminal
+
+
+def test_repair_loop_shell_quotes_canonical_relaunch_command() -> None:
+    wrapper = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert "printf -v quoted_command_shell '%q' \"$quoted_command\"" in wrapper
+    assert 'bash -lc $quoted_command_shell' in wrapper
+    assert 'bash -lc "$quoted_command"' not in wrapper

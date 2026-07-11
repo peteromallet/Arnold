@@ -45,7 +45,8 @@ _DICT_FIELDS = {
     "target",
     "verification",
 }
-_INDEX_TOP_LEVEL_KEYS = ("sessions", "incidents")
+_INDEX_BUCKET_KEYS = ("sessions", "incidents")
+_INDEX_METADATA_KEYS = ("resident_delegation",)
 _INDEX_REF_KEYS = ("latest-attempt", "latest-outcome", "unresolved-escalation")
 _ACTIVE_SESSION_STATUSES = frozenset(
     {"active", "running", "repairing", "in_progress", "pending"}
@@ -1671,14 +1672,16 @@ def _coerce_json_object(
 
 
 def _normalize_repair_index(payload: Mapping[str, Any]) -> dict[str, Any]:
-    extras = sorted(set(payload) - set(_INDEX_TOP_LEVEL_KEYS))
+    allowed_keys = set(_INDEX_BUCKET_KEYS) | set(_INDEX_METADATA_KEYS)
+    extras = sorted(set(payload) - allowed_keys)
     if extras:
         raise ValueError(
-            "repair index only supports top-level keys: sessions, incidents"
+            "repair index only supports top-level keys: sessions, incidents, "
+            "resident_delegation"
         )
 
-    normalized = {bucket: {} for bucket in _INDEX_TOP_LEVEL_KEYS}
-    for bucket in _INDEX_TOP_LEVEL_KEYS:
+    normalized = {bucket: {} for bucket in _INDEX_BUCKET_KEYS}
+    for bucket in _INDEX_BUCKET_KEYS:
         source = payload.get(bucket, {})
         if not isinstance(source, dict):
             raise ValueError(f"repair index field {bucket!r} must be an object")
@@ -1714,6 +1717,13 @@ def _normalize_repair_index(payload: Mapping[str, Any]) -> dict[str, Any]:
                     )
                 entry_copy["refs"][ref_key] = deepcopy(ref_value)
             normalized[bucket][str(entry_id)] = entry_copy
+    for metadata_key in _INDEX_METADATA_KEYS:
+        if metadata_key not in payload:
+            continue
+        metadata = payload[metadata_key]
+        if not isinstance(metadata, dict):
+            raise ValueError(f"repair index field {metadata_key!r} must be an object")
+        normalized[metadata_key] = deepcopy(metadata)
     return normalized
 
 
@@ -1730,7 +1740,7 @@ def _update_index_entry(
     entry_id: str,
     entry_updates: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if bucket not in _INDEX_TOP_LEVEL_KEYS:
+    if bucket not in _INDEX_BUCKET_KEYS:
         raise ValueError(f"unsupported repair index bucket: {bucket}")
     if not isinstance(entry_id, str) or not entry_id.strip():
         raise ValueError("repair index entry id must be a non-empty string")
