@@ -144,12 +144,35 @@ def emit_override_authority_receipt(
     actor: str = "operator",
     role: str = "human.override",
     details: Mapping[str, Any] | None = None,
+    source_view_hash: str | None = None,
+    source_view_revision: str | None = None,
 ) -> None:
     if action not in _OVERRIDE_AUTHORITY_TRANSITIONS:
         return
     try:
         contract = override_authority_contract_for_transition(action)
         freshness_token = current_freshness_token(state, transition=action)
+
+        # --- assemble receipt details with optional source-view binding ----------
+        receipt_details: dict[str, Any] = {
+            "dispatch_surface": "workflow.native_policy",
+            "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
+            "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
+        }
+        if source_view_hash is not None:
+            receipt_details["source_view_hash"] = source_view_hash
+        if source_view_revision is not None:
+            receipt_details["source_view_revision"] = source_view_revision
+
+        record_details: dict[str, Any] = {
+            "route_signal": DECLARED_OVERRIDE_POLICY_TARGETS[action]["route_signal"],
+            "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
+            "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
+            **(dict(details) if details else {}),
+        }
+        if source_view_hash is not None:
+            record_details["source_view_hash"] = source_view_hash
+
         record = build_override_authority_record(
             action,
             plan_dir=plan_dir,
@@ -157,12 +180,7 @@ def emit_override_authority_receipt(
             role=role,
             freshness_token=freshness_token,
             expected_freshness_token=freshness_token,
-            details={
-                "route_signal": DECLARED_OVERRIDE_POLICY_TARGETS[action]["route_signal"],
-                "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
-                "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
-                **(dict(details) if details else {}),
-            },
+            details=record_details,
         )
         config = state.get("config")
         project_dir = (
@@ -185,11 +203,7 @@ def emit_override_authority_receipt(
             },
             outcome=BoundaryOutcome.COMPLETE,
             authority_records=(record,),
-            details={
-                "dispatch_surface": "workflow.native_policy",
-                "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
-                "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
-            },
+            details=receipt_details,
         )
         write_boundary_receipt(
             plan_dir,
@@ -524,10 +538,42 @@ def apply_transition(
         and isinstance(transition.target_id, str)
         and transition.target_id
     ):
+        # --- optionally bind the receipt to a source HumanGateView hash ----------
+        source_view_hash: str | None = None
+        source_view_revision: str | None = None
+        try:
+            from arnold_pipelines.megaplan.authority.views import derive_human_gate_view
+
+            meta = next_state.get("meta") if isinstance(next_state, Mapping) else None
+            plan_revision = (
+                meta.get("current_invocation_id")
+                if isinstance(meta, Mapping)
+                else None
+            )
+            override_signal: dict[str, Any] = {
+                "gate_type": "override",
+                "gate_reason": transition.target_id,
+                "source": f"control://override/{transition.target_id}",
+            }
+            if plan_revision and isinstance(plan_revision, str):
+                override_signal["plan_ref"] = plan_revision
+            if hasattr(transition, "actor") and transition.actor:
+                override_signal["actor"] = transition.actor
+            if hasattr(transition, "reason") and transition.reason:
+                override_signal["reason"] = transition.reason
+            view = derive_human_gate_view([override_signal], current_plan_revision=plan_revision)
+            source_view_hash = view.view_hash
+            if view.source_paths:
+                source_view_revision = view.source_paths[0]
+        except Exception:
+            pass  # source-view binding is best-effort; never block the receipt
+
         emit_override_authority_receipt(
             Path(plan_dir),
             next_state,
             transition.target_id,
+            source_view_hash=source_view_hash,
+            source_view_revision=source_view_revision,
         )
     events = tuple(binding_result.events) + (
         _event_payload(

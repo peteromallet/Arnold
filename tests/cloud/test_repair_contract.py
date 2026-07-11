@@ -1521,3 +1521,329 @@ def test_build_verification_record_default_timestamp_is_iso() -> None:
     rec = repair_contract.build_verification_record("complete")
     # Must be parseable as ISO datetime
     datetime.fromisoformat(rec["recorded_at"])
+
+
+# ---------------------------------------------------------------------------
+# classify_repair_dispatch — recovery-view preferred path
+# ---------------------------------------------------------------------------
+
+
+def _make_recovery_view_dict(
+    *,
+    custody_bucket: str = "repairable",
+    status: str = "repairable",
+    recovery_needed: bool = True,
+    permitted_actions: list[dict[str, object]] | None = None,
+    diagnostics: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "status": status,
+        "recovery_needed": recovery_needed,
+        "custody_bucket": custody_bucket,
+        "observations": [],
+        "permitted_actions": permitted_actions or [],
+        "source_paths": ["recovery://test"],
+        "diagnostics": diagnostics or [],
+        "view_hash": "test-hash",
+        "shadow": True,
+        "read_only": True,
+    }
+
+
+def test_recovery_view_dispatches_repairable_with_request() -> None:
+    """When recovery_view custody is repairable and a request_id exists, dispatch L1."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="repairable",
+        permitted_actions=[{"action_type": "repair_dispatch", "rationale": "ready", "source": "test"}],
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_L1
+    assert decision.custody_bucket == "repairable"
+    assert any("recovery view" in r for r in decision.rationale)
+
+
+def test_recovery_view_dispatches_repairing_custody() -> None:
+    """When recovery_view custody is repairing, dispatch REPAIRING."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="repairing",
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairing",
+            "active_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_REPAIRING
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_QUEUE_ONLY
+    assert "recovery view: repair already in progress" in decision.rationale
+
+
+def test_recovery_view_dispatches_human_required() -> None:
+    """When recovery_view custody is human_required, dispatch HUMAN_REQUIRED."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="human_required",
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "human_required",
+            "active_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "unknown",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_HUMAN_REQUIRED
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_HUMAN_REQUIRED
+
+
+def test_recovery_view_dispatches_broken_superfixer() -> None:
+    """When recovery_view custody is broken_superfixer, escalate."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="broken_superfixer",
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "broken_superfixer",
+            "active_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "unknown",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_BROKEN_SUPERFIXER
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_BROKEN_SUPERFIXER
+
+
+def test_recovery_view_dispatches_healthy_as_no_action() -> None:
+    """When recovery_view custody is healthy, dispatch NO_ACTION."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="healthy",
+        recovery_needed=False,
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "done",
+            "failure_kind": "",
+            "terminal_outcomes": ["complete"],
+        },
+        plan_state={"current_state": "done", "resume_cursor": {}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_TERMINAL
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_QUEUE_ONLY
+
+
+def test_recovery_view_blocked_escalates_to_human() -> None:
+    """When recovery_view is blocked and recovery_needed, escalate to human."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="blocked",
+        status="blocked",
+        recovery_needed=True,
+        diagnostics=[{"code": "runner_unavailable", "reason": "no runner", "source": "test"}],
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_HUMAN_REQUIRED
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_HUMAN_REQUIRED
+    assert any("blocked" in r.lower() for r in decision.rationale)
+
+
+def test_recovery_view_permitted_repair_dispatch_upgrades_no_action() -> None:
+    """Permitted repair_dispatch action overrides no_action when request present.
+
+    Uses a non-terminal state so the healthy bucket routes to NO_ACTION first,
+    then the permitted repair_dispatch action upgrades to L1.
+    """
+    recovery = _make_recovery_view_dict(
+        custody_bucket="healthy",
+        recovery_needed=False,
+        permitted_actions=[{"action_type": "repair_dispatch", "rationale": "override", "source": "test"}],
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "healthy",
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "",
+            "terminal_outcomes": [],  # empty → not terminal
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_L1
+
+
+def test_recovery_view_legacy_fallback_when_no_recovery_view() -> None:
+    """When recovery_view is absent, legacy path is used (backward compat)."""
+    decision = repair_contract.classify_repair_dispatch(
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {"kind": "execution_blocked", "phase": "execute"},
+        },
+        current_target={
+            "current_refs": {
+                "current_plan_name": "test-plan",
+                "plan_current_state": "blocked",
+            },
+            "plan_state": {"fingerprint": "sha256:proof"},
+        },
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_L1
+
+
+def test_recovery_view_drift_emission_when_custody_disagrees(tmp_path: Path) -> None:
+    """Drift event is emitted when legacy custody bucket disagrees with recovery view."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="repairable",
+    )
+    # Use a path that exists so emit can write
+    event_plan_dir = tmp_path / "event-dir"
+    event_plan_dir.mkdir()
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        event_plan_dir=event_plan_dir,
+        custody_projection={
+            "custody_bucket": "repairing",  # disagrees with recovery view's "repairable"
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    # Decision should use recovery view's custody (repairable → L1)
+    assert decision.custody_bucket == "repairable"
+    assert decision.decision == repair_contract.DISPATCH_DECISION_L1
+
+
+def test_recovery_view_custody_bucket_preferred_over_legacy() -> None:
+    """Recovery view custody bucket is used even when legacy says differently."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="human_required",
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",  # legacy says repairable
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    # Recovery view wins: human_required
+    assert decision.decision == repair_contract.DISPATCH_DECISION_HUMAN_REQUIRED
+    assert decision.custody_bucket == "human_required"
+
+
+def test_recovery_view_unrecognized_custody_is_broken_superfixer() -> None:
+    """Unknown custody bucket from recovery view escalates to superfixer."""
+    recovery = _make_recovery_view_dict(
+        custody_bucket="an_unrecognized_bucket",
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "unknown",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_BROKEN_SUPERFIXER
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_BROKEN_SUPERFIXER
+
+
+def test_recovery_view_empty_does_not_trigger_recovery_path() -> None:
+    """Empty/None recovery_view falls through to legacy/canonical path."""
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=None,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {"kind": "execution_blocked", "phase": "execute"},
+        },
+        current_target={
+            "current_refs": {
+                "current_plan_name": "test-plan",
+                "plan_current_state": "blocked",
+            },
+            "plan_state": {"fingerprint": "sha256:proof"},  # needed by _has_current_target_evidence
+        },
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_L1
+    assert any("known repairable" in r for r in decision.rationale)

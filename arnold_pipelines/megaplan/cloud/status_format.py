@@ -204,6 +204,66 @@ def _append_shadow_views(out: list[str], entry: Mapping[str, Any]) -> None:
             )
         _append_shadow_diagnostics(out, publication)
 
+    human_gate = entry.get("human_gate")
+    if isinstance(human_gate, Mapping):
+        out.append(
+            "      human_gate [shadow, read-only]: "
+            f"status={human_gate.get('status') or 'unknown'} "
+            f"human_required={human_gate.get('human_required')} "
+            f"hash={human_gate.get('view_hash') or '?'}"
+        )
+        for observation in _sorted_mapping_items(human_gate.get("observations"), "observation_id"):
+            gate_type = observation.get("gate_type") or "unknown"
+            gate_reason = observation.get("gate_reason") or ""
+            stale = observation.get("stale_token")
+            superseded = observation.get("superseded")
+            flags = []
+            if stale:
+                flags.append("stale")
+            if superseded:
+                flags.append("superseded")
+            flag_str = f" [{','.join(flags)}]" if flags else ""
+            out.append(
+                f"        observation: {gate_type} - {gate_reason}{flag_str} "
+                f"[source: {observation.get('source') or '?'}]"
+            )
+        _append_shadow_diagnostics(out, human_gate)
+
+    recovery = entry.get("recovery")
+    if isinstance(recovery, Mapping):
+        out.append(
+            "      recovery [shadow, read-only]: "
+            f"status={recovery.get('status') or 'unknown'} "
+            f"recovery_needed={recovery.get('recovery_needed')} "
+            f"hash={recovery.get('view_hash') or '?'}"
+        )
+        for observation in _sorted_mapping_items(recovery.get("observations"), "observation_id"):
+            bucket = observation.get("custody_bucket") or "unknown"
+            state = observation.get("current_state") or ""
+            active = observation.get("active_request_count")
+            active_str = f" active_requests={active}" if active is not None else ""
+            out.append(
+                f"        custody: {bucket} state={state}{active_str} "
+                f"[source: {observation.get('source') or '?'}]"
+            )
+        for action in _sorted_mapping_items(recovery.get("permitted_actions"), "action_id"):
+            action_type = action.get("action_type") or "unknown"
+            rationale = action.get("rationale") or ""
+            out.append(
+                f"        permitted: {action_type} — {rationale} "
+                f"[source: {action.get('source') or '?'}]"
+            )
+        _append_shadow_diagnostics(out, recovery)
+
+    # --- composition facade (aggregate hash only) ---------------------------
+    facade = entry.get("megaplan_plan_view")
+    if isinstance(facade, Mapping):
+        out.append(
+            "      megaplan_plan_view [shadow, read-only, facade]: "
+            f"hash={facade.get('view_hash') or '?'} "
+            f"schema_version={facade.get('schema_version') or '?'}"
+        )
+
 
 def _append_shadow_diagnostics(out: list[str], view: Mapping[str, Any]) -> None:
     """Append deterministic source paths and reasons for one shadow view."""

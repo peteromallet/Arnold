@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "step": "resume",
+  "plan": "sprint-3-consumer-migration-20260711-0130",
+  "phase": "plan",
+  "command": [
+    "plan",
+    "--plan",
+    "sprint-3-consumer-migration-20260711-0130"
+  ],
+  "state": "planned"
+}

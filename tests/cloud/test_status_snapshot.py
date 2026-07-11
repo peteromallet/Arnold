@@ -879,7 +879,12 @@ def test_detailed_status_renders_separate_shadow_views_with_hashes_and_sources(f
     assert "execution_authority [shadow, read-only]:" in detailed
     assert "runner [shadow, read-only]:" in detailed
     assert "publication [shadow, read-only]:" in detailed
-    assert detailed.count("hash=") == 3
+    # Five separated read-only domains (execution, runner, publication,
+    # human_gate, recovery) plus the composition facade each carry a hash.
+    assert "human_gate [shadow, read-only]:" in detailed
+    assert "recovery [shadow, read-only]:" in detailed
+    assert "megaplan_plan_view [shadow, read-only, facade]:" in detailed
+    assert detailed.count("hash=") == 6
     assert "observation: branch=contradicted" in detailed
     assert "diagnostic: publication_observation_contradiction subject=branch" in detailed
     assert str(marker_file) in detailed

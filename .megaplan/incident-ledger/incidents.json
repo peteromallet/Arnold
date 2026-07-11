@@ -634,6 +634,67 @@
     },
     {
       "actions": [],
+      "attempts": [],
+      "claims": [],
+      "deadline_ts": null,
+      "decisions": [],
+      "event_count": 1,
+      "events": [
+        {
+          "actor": "repair_system",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "vr-04afbaeb4f01",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.verified_recovered",
+          "next_expected_event": null,
+          "outcome": "recovered",
+          "parent": [],
+          "problem_id": null,
+          "seq": 345,
+          "session_id": "custody-control-plane",
+          "summary": "repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/custody-control-plane-240c2cca/arnold",
+          "timestamp": "2026-07-08T03:28:15.323696+00:00",
+          "trigger": null,
+          "type": "verified_recovered"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "data": {},
+          "kind": "verification_record"
+        }
+      ],
+      "first_seq": 345,
+      "first_timestamp": "2026-07-08T03:28:15.323696+00:00",
+      "incident_id": "inc-custody-control-plane",
+      "last_seq": 345,
+      "last_timestamp": "2026-07-08T03:28:15.323696+00:00",
+      "latest_actor": "repair_system",
+      "latest_kind": "incident.verified_recovered",
+      "next_expected_event": null,
+      "outcome": "recovered",
+      "placeholders": {
+        "install_freshness": "unknown",
+        "recurrence": "unknown",
+        "shipped_fix": "unknown"
+      },
+      "problem_ids": [
+        "problem-bef9405c197d"
+      ],
+      "session_ids": [
+        "custody-control-plane"
+      ],
+      "state": "verified_recovered",
+      "summary": "repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/custody-control-plane-240c2cca/arnold"
+    },
+    {
+      "actions": [],
       "attempts": [
         {
           "attempt_id": "demo-session-discord_escalated",
@@ -693,10 +754,12 @@
             323,
             328,
             333,
-            338
+            338,
+            343
           ],
           "latest_outcome": "discord_escalated",
           "types": [
+            "repair_attempt",
             "repair_attempt",
             "repair_attempt",
             "repair_attempt",
@@ -991,10 +1054,20 @@
             334,
             335,
             336,
-            337
+            337,
+            339,
+            340,
+            341,
+            342,
+            344
           ],
           "latest_outcome": "attempted",
           "types": [
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
             "repair_attempt",
             "repair_attempt",
             "repair_attempt",
@@ -1235,7 +1308,7 @@
       "claims": [],
       "deadline_ts": null,
       "decisions": [],
-      "event_count": 290,
+      "event_count": 296,
       "events": [
         {
           "actor": "meta_repair",
@@ -7906,9 +7979,171 @@
           "timestamp": "2026-07-08T00:23:40.299639+00:00",
           "trigger": null,
           "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-d1294e6747cb",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 339,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-08T03:19:47.673367+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-8da4a49e6c28",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 340,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-08T03:19:48.244275+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-8e1fbcb5bea6",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 341,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-08T03:19:48.854687+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-288c511eb1ad",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 342,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-08T03:19:50.574801+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "ira-cda1fd89fed1",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 343,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-08T03:19:51.752975+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-0eb51a585331",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 344,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-584/test_repair_loop_serializes_sa0/ws",
+          "timestamp": "2026-07-08T03:20:18.295672+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
         }
       ],
       "evidence_refs": [
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
         {
           "data": {},
           "kind": "verification_record"
@@ -9073,12 +9308,12 @@
       "first_seq": 5,
       "first_timestamp": "2026-07-03T21:24:24.562997+00:00",
       "incident_id": "inc-demo-session",
-      "last_seq": 338,
-      "last_timestamp": "2026-07-08T00:23:40.299639+00:00",
+      "last_seq": 344,
+      "last_timestamp": "2026-07-08T03:20:18.295672+00:00",
       "latest_actor": "immediate_repair",
       "latest_kind": "incident.repair_attempt",
       "next_expected_event": "repair_attempt.verification",
-      "outcome": "discord_escalated",
+      "outcome": "attempted",
       "placeholders": {
         "install_freshness": "unknown",
         "recurrence": "repeated_attempts_without_new_evidence",
@@ -9094,7 +9329,151 @@
         "demo-session"
       ],
       "state": "repair_attempt",
-      "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
+      "summary": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-584/test_repair_loop_serializes_sa0/ws"
+    },
+    {
+      "actions": [],
+      "attempts": [
+        {
+          "attempt_id": "megaplan-north-star-sense-checks-revise-design-partial_liveness-2",
+          "event_seqs": [
+            346
+          ],
+          "latest_outcome": "partial_liveness",
+          "types": [
+            "repair_attempt"
+          ]
+        }
+      ],
+      "claims": [],
+      "deadline_ts": null,
+      "decisions": [],
+      "event_count": 1,
+      "events": [
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "megaplan-north-star-sense-checks-revise-design-partial_liveness-2",
+          "deadline_ts": null,
+          "event_id": "ira-d51cb5ac3d69",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "partial_liveness",
+          "parent": [],
+          "problem_id": null,
+          "seq": 346,
+          "session_id": "megaplan-north-star-sense-checks-revise-design",
+          "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/megaplan-north-star-sense-checks-revise-design/arnold",
+          "timestamp": "2026-07-09T20:57:14.461326+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "data": {},
+          "kind": "verification_record"
+        }
+      ],
+      "first_seq": 346,
+      "first_timestamp": "2026-07-09T20:57:14.461326+00:00",
+      "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
+      "last_seq": 346,
+      "last_timestamp": "2026-07-09T20:57:14.461326+00:00",
+      "latest_actor": "immediate_repair",
+      "latest_kind": "incident.repair_attempt",
+      "next_expected_event": "repair_attempt.verification",
+      "outcome": "partial_liveness",
+      "placeholders": {
+        "install_freshness": "unknown",
+        "recurrence": "unknown",
+        "shipped_fix": "unknown"
+      },
+      "problem_ids": [
+        "problem-72f87afd3954"
+      ],
+      "session_ids": [
+        "megaplan-north-star-sense-checks-revise-design"
+      ],
+      "state": "repair_attempt",
+      "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/megaplan-north-star-sense-checks-revise-design/arnold"
+    },
+    {
+      "actions": [],
+      "attempts": [
+        {
+          "attempt_id": "runauthority-epic-cloud-partial_liveness-3",
+          "event_seqs": [
+            347
+          ],
+          "latest_outcome": "partial_liveness",
+          "types": [
+            "repair_attempt"
+          ]
+        }
+      ],
+      "claims": [],
+      "deadline_ts": null,
+      "decisions": [],
+      "event_count": 1,
+      "events": [
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "runauthority-epic-cloud-partial_liveness-3",
+          "deadline_ts": null,
+          "event_id": "ira-04b65ce3ad79",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "partial_liveness",
+          "parent": [],
+          "problem_id": null,
+          "seq": 347,
+          "session_id": "runauthority-epic-cloud",
+          "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/runauthority-epic-cloud/Arnold",
+          "timestamp": "2026-07-10T23:23:09.226019+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "data": {},
+          "kind": "verification_record"
+        }
+      ],
+      "first_seq": 347,
+      "first_timestamp": "2026-07-10T23:23:09.226019+00:00",
+      "incident_id": "inc-runauthority-epic-cloud",
+      "last_seq": 347,
+      "last_timestamp": "2026-07-10T23:23:09.226019+00:00",
+      "latest_actor": "immediate_repair",
+      "latest_kind": "incident.repair_attempt",
+      "next_expected_event": "repair_attempt.verification",
+      "outcome": "partial_liveness",
+      "placeholders": {
+        "install_freshness": "unknown",
+        "recurrence": "unknown",
+        "shipped_fix": "unknown"
+      },
+      "problem_ids": [
+        "problem-72f87afd3954"
+      ],
+      "session_ids": [
+        "runauthority-epic-cloud"
+      ],
+      "state": "repair_attempt",
+      "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/runauthority-epic-cloud/Arnold"
     },
     {
       "actions": [],
@@ -11160,10 +11539,10 @@
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:4f5774d7c90a20e7e0cf04f1a2b8686350d83cc6fdd199e3f19a1f8de53f2ff4",
-    "event_count": 338,
-    "journal_line_count": 338,
-    "last_seq": 338,
+    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
+    "event_count": 347,
+    "journal_line_count": 347,
+    "last_seq": 347,
     "malformed_line_count": 0
   }
 }

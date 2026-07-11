@@ -381,3 +381,95 @@ def test_epic_chain_treats_already_running_launch_as_live_child(tmp_path: Path) 
     assert payload["active_child"]["effective_status"] == "not_started"
     state = load_epic_chain_state(parent_spec)
     assert state.last_state == "running"
+
+
+def test_epic_chain_authority_drift_captured_when_legacy_complete_but_views_disagree(
+    tmp_path: Path,
+) -> None:
+    """Child-run aggregation captures drift when legacy says complete but
+    authority views (execution batches) say otherwise.
+
+    This proves that child-run aggregation avoids raw plan-state shortcuts
+    as authority — the legacy ``completed_prefix >= len(milestones)`` check
+    is still the effective decision (fail-safe), but authority drift is
+    observable in ``ObservedChildEpic.authority_drift`` and inside the
+    classification metadata.
+    """
+    child_spec = _write_child_chain_spec(tmp_path, "test-child")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+
+    # Set up chain state: all milestones "completed" but the plan directory
+    # has no execution batch artifacts, so authority views will disagree.
+    # NOTE: current_milestone_index must be 0 (not past completed milestones)
+    # to prevent _normalize_stale_current_plan_reference from clearing
+    # current_plan_name on load. The effective_status is still "complete"
+    # because completed_prefix (1) >= len(milestones) (1).
+    plan_name = "test-plan"
+    _write_plan_state(tmp_path, plan_name, "done")
+    save_chain_state(
+        child_spec,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name=plan_name,
+            last_state="done",
+            completed=[{"label": "m1", "plan": plan_name, "status": "done"}],
+            metadata={
+                "execution_environment": {
+                    "project_root": str(tmp_path),
+                }
+            },
+        ),
+    )
+
+    from arnold_pipelines.megaplan.chain.epic_chain import _observe_child_epic, EpicSpec
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    child = _observe_child_epic(epic, parent_spec_path=parent_spec)
+
+    # Legacy classification says complete (all milestones done).
+    assert child.effective_status == "complete"
+    assert child.reason == "all_child_milestones_completed"
+
+    # Authority drift should be captured because no execution batches exist.
+    assert child.authority_drift is not None
+    assert child.authority_drift["kind"] == "legacy_complete_authority_disagrees"
+    assert child.authority_drift["legacy_effective_status"] == "complete"
+    assert child.authority_drift["authority_verdict"] is False
+    assert "no execution_batch_" in child.authority_drift["authority_reason"]
+
+    # Classification metadata should also carry the drift annotation.
+    metadata = child.classification.get("metadata", {})
+    assert isinstance(metadata, dict)
+    assert "epic_chain_authority_drift" in metadata
+    drift = metadata["epic_chain_authority_drift"]
+    assert drift["kind"] == "legacy_complete_authority_disagrees"
+
+
+def test_epic_chain_no_authority_drift_when_plan_dir_unavailable(
+    tmp_path: Path,
+) -> None:
+    """When the child has no project_root or no current_plan_name, the
+    authority drift check is skipped cleanly — the child is still classified
+    correctly and there are no false-positive drifts."""
+    child_spec = _write_child_chain_spec(tmp_path, "test-child")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+
+    # Chain state with completed milestones but NO current_plan_name and
+    # NO execution_environment metadata (so project_root is None).
+    save_chain_state(
+        child_spec,
+        ChainState(
+            current_milestone_index=1,
+            last_state="done",
+            completed=[{"label": "m1", "plan": "some-plan", "status": "done"}],
+        ),
+    )
+
+    from arnold_pipelines.megaplan.chain.epic_chain import _observe_child_epic, EpicSpec
+
+    epic = EpicSpec(id="test-child", spec=str(child_spec))
+    child = _observe_child_epic(epic, parent_spec_path=parent_spec)
+
+    assert child.effective_status == "complete"
+    # Authority drift should be None when the check can't run (no project_root/plan).
+    assert child.authority_drift is None
