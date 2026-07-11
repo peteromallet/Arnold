@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 
 import pytest
 
 from arnold_pipelines.megaplan.authority import (
     DispatchGrant,
+    DispatchIdentity,
     LegacyTaskLabel,
+    ResultEnvelope,
     TASK_COMPLETION_CLAIM,
     TASK_RESULT_CAPABILITY,
     TaskAttempt,
@@ -15,6 +18,15 @@ from arnold_pipelines.megaplan.authority import (
     derive_plan_execution_view,
     derive_publication_view,
     derive_runner_view,
+)
+from arnold_pipelines.megaplan._core import execute_batch_artifact_path
+from arnold_pipelines.megaplan.authority.batch_scope import (
+    DISPATCH_IDENTITY_KEY,
+    RESULT_ENVELOPES_KEY,
+)
+from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    accepted_attempt_execution_projection,
+    effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.authority_readers import AuthorityDecision
 from arnold_pipelines.megaplan.orchestration.evidence_contract import EvidenceStatus
@@ -69,6 +81,65 @@ def _satisfied(task_id: str) -> AuthorityDecision:
         satisfied=True,
         diagnostics={"source": f"reports/{task_id}.json"},
     )
+
+
+def _task_states_by_id(view):
+    return {item.task_id: item for item in view.tasks}
+
+
+def _write_validated_attempt_artifact(
+    plan_dir,
+    *,
+    task_id: str,
+    outcome: str = "accepted",
+    batch_number: int = 1,
+) -> ResultEnvelope:
+    evidence, fence, grant, attempt, _claim_key, claim, *_ = _records(task_id)
+    dispatch = DispatchIdentity.from_records(
+        grant,
+        fence,
+        prerequisite_digest="digest-1",
+        worker_id="worker-1",
+    )
+    envelope = ResultEnvelope(
+        dispatch=dispatch,
+        attempt=attempt,
+        claim=claim,
+        evidence=(evidence,),
+    )
+    entry = {
+        "task_id": task_id,
+        "status": "done",
+        "files_changed": [f"src/{task_id}.py"],
+        "authority": {"envelope_digest": envelope.digest()},
+        "authority_validation": {
+            "outcome": outcome,
+            "entry_kind": "task_update",
+            "entry_index": 0,
+            "subject_id": task_id,
+            "reason": (
+                "task_update_authority_valid"
+                if outcome == "accepted"
+                else "worker_identity_mismatch"
+            ),
+            "idempotency_key": claim.idempotency_key,
+            "envelope_digest": envelope.digest(),
+            "source_path": "execute_batches/batch_1/tasks.json",
+        },
+    }
+    path = execute_batch_artifact_path(plan_dir, batch_number, [task_id])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "task_updates": [entry],
+                DISPATCH_IDENTITY_KEY: dispatch.to_dict(),
+                RESULT_ENVELOPES_KEY: [envelope.to_dict()],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return envelope
 
 
 def test_megaplan_wrappers_retain_generic_wire_contract_and_reject_other_policy() -> None:
@@ -156,6 +227,158 @@ def test_plan_execution_projection_is_deterministic_idempotent_and_read_only() -
     assert len(first.view_hash) == 64
     assert plan == original
     assert first.accepted_task_ids == ("T1",)
+
+
+def test_plan_execution_derives_dependency_closure_and_ready_wave_from_accepted_attempts() -> None:
+    authority = reduce_run_authority(
+        _records("T5") + _records("T2") + _records("T1"),
+        run_id=RUN,
+        run_revision=REVISION,
+    )
+    plan = {"tasks": [
+        {"id": "T1", "status": "done", "depends_on": []},
+        {"id": "T2", "status": "done", "depends_on": ["T1"]},
+        {"id": "T3", "status": "done", "depends_on": ["T2"]},
+        {"id": "T4", "status": "pending", "depends_on": ["T2"]},
+        {"id": "T5", "status": "done", "depends_on": ["T3"]},
+    ]}
+
+    view = derive_plan_execution_view(
+        authority,
+        plan,
+        evidence_decisions={
+            "T1": _satisfied("T1"),
+            "T2": _satisfied("T2"),
+            "T5": _satisfied("T5"),
+        },
+    )
+    states = _task_states_by_id(view)
+
+    assert view.accepted_task_ids == ("T1", "T2", "T5")
+    assert [
+        (item.task_id, item.attempt_id, item.claim_id, item.decision_id, item.grant_id)
+        for item in view.accepted_task_attempts
+    ] == [
+        ("T1", "attempt-T1", "claim-T1", "decision-T1", "dispatch-T1"),
+        ("T2", "attempt-T2", "claim-T2", "decision-T2", "dispatch-T2"),
+        ("T5", "attempt-T5", "claim-T5", "decision-T5", "dispatch-T5"),
+    ]
+    assert [item.source_paths for item in view.accepted_task_attempts] == [
+        ("reports/T1.json",),
+        ("reports/T2.json",),
+        ("reports/T5.json",),
+    ]
+    assert view.dependency_closed_completed_task_ids == ("T1", "T2")
+    assert view.next_ready_wave == ("T3", "T4")
+
+    assert states["T1"].dependency_closed is True
+    assert states["T2"].dependency_closed is True
+    assert states["T5"].accepted is True
+    assert states["T5"].dependency_closed is False
+    assert states["T5"].accepted_attempt_ids == ("attempt-T5",)
+    assert states["T5"].unresolved_dependency_ids == ("T3",)
+    assert states["T3"].accepted is False
+    assert states["T3"].dependency_closed is False
+
+    diagnostics = {(item.code, item.subject_id) for item in view.diagnostics}
+    assert ("accepted_task_dependency_unresolved", "T5") in diagnostics
+    assert ("unresolved_dependency", "T5") in diagnostics
+    assert ("legacy_terminal_without_authority", "T3") in diagnostics
+
+
+def test_plan_execution_preserves_existing_fields_claims_quarantine_and_diagnostics() -> None:
+    unresolved_records = _records("T1")
+    bad_claim_records = _records("T2")
+    quarantine = QuarantineRecord(
+        "q-stale", RUN, REVISION, "claim", "claim-stale", "missing_matching_revision",
+        "execute_batches/batch_2/tasks.json", (), {"task_id": "T-stale"},
+    )
+    authority = reduce_run_authority(
+        unresolved_records[:-1] + bad_claim_records[4:6] + (quarantine,),
+        run_id=RUN,
+        run_revision=REVISION,
+    )
+
+    view = derive_plan_execution_view(
+        authority,
+        {"tasks": [
+            {"id": "T1", "status": "done", "depends_on": []},
+            {"id": "T2", "status": "pending", "depends_on": ["T1"]},
+        ]},
+        evidence_decisions={"T1": _satisfied("T1"), "T2": _satisfied("T2")},
+    )
+    states = _task_states_by_id(view)
+    payload = view.to_dict()
+
+    assert view.accepted_task_ids == ()
+    assert view.accepted_task_attempts == ()
+    assert view.dependency_closed_completed_task_ids == ()
+    assert view.next_ready_wave == ("T1",)
+    assert view.unresolved_claim_ids == ("claim-T1",)
+    assert states["T1"].unresolved_claim_ids == ("claim-T1",)
+    assert states["T2"].unresolved_dependency_ids == ("T1",)
+    assert "q-stale" in view.quarantine_ids
+    assert payload["accepted_task_ids"] == []
+    assert payload["accepted_task_attempts"] == []
+    assert payload["dependency_closed_completed_task_ids"] == []
+    assert payload["next_ready_wave"] == ["T1"]
+
+    diagnostics = {(item.code, item.subject_id, item.source) for item in view.diagnostics}
+    assert ("legacy_terminal_without_authority", "T1", "finalize.json") in diagnostics
+    assert (
+        "quarantined_authority_record",
+        "claim-stale",
+        "execute_batches/batch_2/tasks.json",
+    ) in diagnostics
+    assert ("quarantined_incomplete_link", "claim-T2", "contract://claim/claim-T2") in diagnostics
+
+
+def test_execute_scheduler_prefers_accepted_attempt_projection(tmp_path) -> None:
+    envelope = _write_validated_attempt_artifact(tmp_path, task_id="T1")
+    tasks = [
+        {"id": "T1", "status": "pending", "depends_on": []},
+        {
+            "id": "T2",
+            "status": "done",
+            "depends_on": ["T1"],
+            "files_changed": ["src/T2.py"],
+            "head_sha": "abc123",
+        },
+    ]
+
+    projection = accepted_attempt_execution_projection(tasks, plan_dir=tmp_path)
+    completed = effective_execute_completed_task_ids(tasks, plan_dir=tmp_path)
+
+    assert projection is not None
+    assert projection.view.accepted_task_ids == ("T1",)
+    assert projection.view.dependency_closed_completed_task_ids == ("T1",)
+    assert projection.view.next_ready_wave == ("T2",)
+    assert projection.view.accepted_task_attempts[0].attempt_id == envelope.attempt.attempt_id
+    assert completed == {"T1"}
+
+
+def test_execute_scheduler_rejected_projection_prevents_raw_done_fallback(tmp_path) -> None:
+    _write_validated_attempt_artifact(tmp_path, task_id="T1", outcome="rejected")
+    tasks = [
+        {
+            "id": "T1",
+            "status": "done",
+            "depends_on": [],
+            "files_changed": ["src/T1.py"],
+            "head_sha": "abc123",
+        },
+    ]
+    decisions: dict[str, AuthorityDecision] = {}
+
+    completed = effective_execute_completed_task_ids(
+        tasks,
+        plan_dir=tmp_path,
+        decisions=decisions,
+    )
+
+    assert completed == set()
+    assert decisions["T1"].status is EvidenceStatus.unknown
+    assert decisions["T1"].diagnostics["execute_completion"] == "accepted_attempt_projection"
 
 
 def test_raw_terminal_labels_and_unresolved_claims_never_complete_tasks() -> None:

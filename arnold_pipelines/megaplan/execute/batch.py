@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -43,9 +44,23 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.audits.quality_gates import capture_before_line_counts
 from arnold_pipelines.megaplan.authority.batch_scope import (
     BATCH_SCOPE_KEY,
+    DISPATCH_IDENTITY_KEY,
+    RESULT_ENVELOPES_KEY,
     BatchScope,
     BatchScopeQuarantine,
-    resolve_batch_scope,
+)
+from arnold_pipelines.megaplan.authority.binding import (
+    DispatchIdentity,
+    EvidenceEnvelope,
+    ResultEnvelope,
+    SENSE_CHECK_RESULT_CAPABILITY,
+    SENSE_CHECK_ACK_CLAIM,
+    SenseCheckAttempt,
+    SenseCheckClaim,
+    TASK_RESULT_CAPABILITY,
+    TASK_COMPLETION_CLAIM,
+    TaskAttempt,
+    TaskClaim,
 )
 from arnold_pipelines.megaplan.observability.routing_ledger import (
     format_selected_spec,
@@ -67,6 +82,7 @@ from arnold_pipelines.megaplan.execute.aggregation import (
 from arnold_pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
     _merge_batch_results,
+    _merge_scoped_batch_artifact_through_validator,
 )
 from arnold_pipelines.megaplan.execute.quality import (
     AttributionResult,
@@ -123,6 +139,7 @@ from arnold_pipelines.megaplan.types import (
     StepResponse,
 )
 from arnold.execution.step_invocation import StepInvocation
+from arnold_pipelines.run_authority import ContractError
 from arnold_pipelines.megaplan.planning.state import (
     STATE_BLOCKED,
     STATE_EXECUTED,
@@ -531,12 +548,400 @@ def _stamp_batch_scope(
     return scope
 
 
+def _latest_run_revision(state: PlanState | None, plan_dir: Path | None = None) -> str:
+    """Return the best stable plan revision available at dispatch time."""
+
+    if isinstance(state, dict):
+        versions = state.get("plan_versions")
+        if isinstance(versions, list) and versions:
+            latest = versions[-1]
+            if isinstance(latest, dict):
+                revision = latest.get("hash") or latest.get("file")
+                if isinstance(revision, str) and revision.strip():
+                    return revision
+        meta = state.get("meta")
+        if isinstance(meta, dict):
+            invocation_id = meta.get("current_invocation_id")
+            if isinstance(invocation_id, str) and invocation_id.strip():
+                return invocation_id
+        created_at = state.get("created_at")
+        if isinstance(created_at, str) and created_at.strip():
+            return created_at
+    if plan_dir is not None:
+        return plan_dir.name
+    return "unknown-plan-revision"
+
+
+def _coordinator_attempt_id(
+    state: PlanState | None,
+    *,
+    run_id: str,
+    batch_number: int,
+    task_set_digest: str,
+) -> str:
+    active_step = state.get("active_step") if isinstance(state, dict) else None
+    if isinstance(active_step, dict):
+        active_run_id = active_step.get("run_id")
+        if isinstance(active_run_id, str) and active_run_id.strip():
+            return active_run_id
+    return f"{run_id}:execute:batch:{batch_number}:{task_set_digest}"
+
+
+def _fence_token(state: PlanState | None) -> int:
+    active_step = state.get("active_step") if isinstance(state, dict) else None
+    if isinstance(active_step, dict):
+        attempt = active_step.get("attempt")
+        if isinstance(attempt, int) and not isinstance(attempt, bool) and attempt >= 0:
+            return attempt
+    if isinstance(state, dict):
+        iteration = state.get("iteration")
+        if (
+            isinstance(iteration, int)
+            and not isinstance(iteration, bool)
+            and iteration >= 0
+        ):
+            return iteration
+    return 0
+
+
+def _prerequisite_digest(
+    *,
+    scope: BatchScope,
+    finalize_data: dict[str, Any] | None,
+) -> str:
+    """Hash dispatch prerequisite observations without expanding scope authority."""
+
+    selected_task_ids = set(scope.task_ids)
+    selected_sense_check_ids = set(scope.sense_check_ids)
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "batch_number": scope.batch_number,
+        "task_ids": list(scope.task_ids),
+        "sense_check_ids": list(scope.sense_check_ids),
+    }
+    if isinstance(finalize_data, dict):
+        task_prerequisites: list[dict[str, Any]] = []
+        for task in finalize_data.get("tasks", []) or []:
+            if not isinstance(task, dict) or task.get("id") not in selected_task_ids:
+                continue
+            depends_on = task.get("depends_on", [])
+            if not isinstance(depends_on, list):
+                depends_on = []
+            task_prerequisites.append(
+                {
+                    "task_id": task.get("id"),
+                    "depends_on": sorted(
+                        dep for dep in depends_on if isinstance(dep, str) and dep
+                    ),
+                }
+            )
+        payload["task_prerequisites"] = sorted(
+            task_prerequisites, key=lambda item: str(item["task_id"])
+        )
+
+        check_bindings: list[dict[str, Any]] = []
+        for check in finalize_data.get("sense_checks", []) or []:
+            if (
+                not isinstance(check, dict)
+                or check.get("id") not in selected_sense_check_ids
+            ):
+                continue
+            check_bindings.append(
+                {
+                    "sense_check_id": check.get("id"),
+                    "task_id": check.get("task_id"),
+                }
+            )
+        payload["sense_check_bindings"] = sorted(
+            check_bindings, key=lambda item: str(item["sense_check_id"])
+        )
+
+        prerequisite_scopes = build_prerequisite_scopes(finalize_data)
+        blocking_actions = [
+            scope_record.to_dict()
+            for scope_record in prerequisite_scopes.values()
+            if selected_task_ids.intersection(scope_record.effective_task_ids)
+        ]
+        payload["blocking_actions"] = sorted(
+            blocking_actions, key=lambda item: str(item["action_id"])
+        )
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _dispatch_worker_id(scope: BatchScope) -> str:
+    return f"megaplan-execute-batch-{scope.batch_number}-{scope.task_set_digest}"
+
+
+def _build_dispatch_identity(
+    *,
+    plan_dir: Path | None,
+    state: PlanState | None,
+    scope: BatchScope,
+    finalize_data: dict[str, Any] | None = None,
+) -> DispatchIdentity:
+    state_name = state.get("name") if isinstance(state, dict) else None
+    run_id = str(
+        state_name
+        if isinstance(state_name, str) and state_name
+        else plan_dir.name if plan_dir is not None else "unknown-run"
+    )
+    capabilities = [TASK_RESULT_CAPABILITY]
+    if scope.sense_check_ids:
+        capabilities.append(SENSE_CHECK_RESULT_CAPABILITY)
+    return DispatchIdentity.create(
+        dispatch_id=(
+            f"{run_id}:execute:batch:{scope.batch_number}:{scope.task_set_digest}"
+        ),
+        run_id=run_id,
+        run_revision=_latest_run_revision(state, plan_dir),
+        coordinator_attempt_id=_coordinator_attempt_id(
+            state,
+            run_id=run_id,
+            batch_number=scope.batch_number,
+            task_set_digest=scope.task_set_digest,
+        ),
+        fence_token=_fence_token(state),
+        subject_ids=(*scope.task_ids, *scope.sense_check_ids),
+        capabilities=tuple(capabilities),
+        prerequisite_digest=_prerequisite_digest(
+            scope=scope,
+            finalize_data=finalize_data,
+        ),
+        worker_id=_dispatch_worker_id(scope),
+    )
+
+
+def _stamp_dispatch_metadata(
+    payload: dict[str, Any],
+    *,
+    plan_dir: Path | None,
+    state: PlanState | None,
+    scope: BatchScope,
+    finalize_data: dict[str, Any] | None = None,
+) -> DispatchIdentity:
+    """Attach Sprint 2 dispatch metadata beside, not inside, batch scope."""
+
+    identity = _build_dispatch_identity(
+        plan_dir=plan_dir,
+        state=state,
+        scope=scope,
+        finalize_data=finalize_data,
+    )
+    payload[DISPATCH_IDENTITY_KEY] = identity.to_dict()
+    payload.setdefault(RESULT_ENVELOPES_KEY, [])
+    return identity
+
+
+def _jsonable_authority_payload(value: Any) -> Any:
+    """Return a JSON contract-safe copy of model-provided result data."""
+
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _jsonable_authority_payload(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if str(key) != "authority"
+        }
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_authority_payload(item) for item in value]
+    return str(value)
+
+
+def _result_authority_echo(envelope: ResultEnvelope) -> dict[str, Any]:
+    """Compact worker-result echo for adapters that do not load full envelopes."""
+
+    dispatch = envelope.dispatch
+    return {
+        "schema_version": 1,
+        "envelope_digest": envelope.digest(),
+        "dispatch_id": dispatch.dispatch_id,
+        "run_revision": dispatch.run_revision,
+        "plan_revision": dispatch.plan_revision,
+        "fence": dispatch.fence.to_dict(),
+        "scope": {
+            "subject_ids": list(dispatch.subject_ids),
+            "capabilities": list(dispatch.capabilities),
+        },
+        "prerequisite_digest": dispatch.prerequisite_digest,
+        "worker_id": dispatch.worker_id,
+        "attempt": envelope.attempt.to_dict(),
+    }
+
+
+def _task_result_envelope(
+    *,
+    identity: DispatchIdentity,
+    entry: dict[str, Any],
+    ordinal: int,
+    source: str,
+) -> ResultEnvelope | None:
+    task_id = entry.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return None
+    base_id = f"{identity.dispatch_id}:task:{task_id}"
+    evidence = EvidenceEnvelope(
+        evidence_id=f"{base_id}:worker-result",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        evidence_type="megaplan.task_update",
+        source=source,
+        payload={
+            "subject_id": task_id,
+            "dispatch_id": identity.dispatch_id,
+            "result": _jsonable_authority_payload(entry),
+        },
+    )
+    attempt = TaskAttempt(
+        attempt_id=f"{base_id}:attempt:{ordinal}",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id=task_id,
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        ordinal=ordinal,
+    )
+    claim = TaskClaim(
+        claim_id=f"{base_id}:claim:{ordinal}",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id=task_id,
+        attempt_id=attempt.attempt_id,
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        claim_type=TASK_COMPLETION_CLAIM,
+        evidence_ids=(evidence.evidence_id,),
+        idempotency_key=f"{base_id}:claim:{ordinal}",
+        payload=_jsonable_authority_payload(entry),
+    )
+    return ResultEnvelope(
+        dispatch=identity,
+        attempt=attempt,
+        claim=claim,
+        evidence=(evidence,),
+    )
+
+
+def _sense_check_result_envelope(
+    *,
+    identity: DispatchIdentity,
+    entry: dict[str, Any],
+    ordinal: int,
+    source: str,
+) -> ResultEnvelope | None:
+    sense_check_id = entry.get("sense_check_id")
+    if not isinstance(sense_check_id, str) or not sense_check_id.strip():
+        return None
+    base_id = f"{identity.dispatch_id}:sense_check:{sense_check_id}"
+    evidence = EvidenceEnvelope(
+        evidence_id=f"{base_id}:worker-result",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        evidence_type="megaplan.sense_check_acknowledgment",
+        source=source,
+        payload={
+            "subject_id": sense_check_id,
+            "dispatch_id": identity.dispatch_id,
+            "result": _jsonable_authority_payload(entry),
+        },
+    )
+    attempt = SenseCheckAttempt(
+        attempt_id=f"{base_id}:attempt:{ordinal}",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id=sense_check_id,
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        ordinal=ordinal,
+    )
+    claim = SenseCheckClaim(
+        claim_id=f"{base_id}:claim:{ordinal}",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id=sense_check_id,
+        attempt_id=attempt.attempt_id,
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        claim_type=SENSE_CHECK_ACK_CLAIM,
+        evidence_ids=(evidence.evidence_id,),
+        idempotency_key=f"{base_id}:claim:{ordinal}",
+        payload=_jsonable_authority_payload(entry),
+    )
+    return ResultEnvelope(
+        dispatch=identity,
+        attempt=attempt,
+        claim=claim,
+        evidence=(evidence,),
+    )
+
+
+def _stamp_result_envelopes(
+    payload: dict[str, Any],
+    *,
+    identity: DispatchIdentity,
+    artifact_path: Path,
+) -> tuple[ResultEnvelope, ...]:
+    """Attach worker-result authority echoes built from persisted dispatch."""
+
+    source = str(artifact_path)
+    envelopes: list[ResultEnvelope] = []
+    task_entries = payload.get("task_updates")
+    if isinstance(task_entries, list):
+        for index, entry in enumerate(task_entries, start=1):
+            if not isinstance(entry, dict):
+                continue
+            try:
+                envelope = _task_result_envelope(
+                    identity=identity,
+                    entry=entry,
+                    ordinal=index,
+                    source=source,
+                )
+            except ContractError as error:
+                entry["authority_generation_error"] = str(error)
+                continue
+            if envelope is None:
+                continue
+            entry["authority"] = _result_authority_echo(envelope)
+            envelopes.append(envelope)
+
+    sense_check_entries = payload.get("sense_check_acknowledgments")
+    if isinstance(sense_check_entries, list):
+        for index, entry in enumerate(sense_check_entries, start=1):
+            if not isinstance(entry, dict):
+                continue
+            try:
+                envelope = _sense_check_result_envelope(
+                    identity=identity,
+                    entry=entry,
+                    ordinal=index,
+                    source=source,
+                )
+            except ContractError as error:
+                entry["authority_generation_error"] = str(error)
+                continue
+            if envelope is None:
+                continue
+            entry["authority"] = _result_authority_echo(envelope)
+            envelopes.append(envelope)
+
+    payload[RESULT_ENVELOPES_KEY] = [envelope.to_dict() for envelope in envelopes]
+    return tuple(envelopes)
+
+
 def _prepare_scoped_batch_checkpoint(
     plan_dir: Path,
     *,
     batch_number: int,
     task_ids: list[str],
     sense_check_ids: list[str],
+    state: PlanState | None = None,
+    finalize_data: dict[str, Any] | None = None,
 ) -> Path:
     """Create the worker checkpoint with immutable scope before dispatch.
 
@@ -554,12 +959,20 @@ def _prepare_scoped_batch_checkpoint(
             existing = {}
         if isinstance(existing, dict):
             payload = dict(existing)
-    _stamp_batch_scope(
+    scope = _stamp_batch_scope(
         payload,
         batch_number=batch_number,
         task_ids=task_ids,
         sense_check_ids=sense_check_ids,
     )
+    identity = _stamp_dispatch_metadata(
+        payload,
+        plan_dir=plan_dir,
+        state=state,
+        scope=scope,
+        finalize_data=finalize_data,
+    )
+    _stamp_result_envelopes(payload, identity=identity, artifact_path=artifact_path)
     atomic_write_json(artifact_path, payload)
     return artifact_path
 
@@ -613,28 +1026,6 @@ def _emit_batch_scope_quarantine(
         )
 
 
-def _scope_filtered_payload(
-    payload: dict[str, Any], scope: BatchScope
-) -> dict[str, Any]:
-    """Copy only entries named by a proven artifact scope."""
-
-    filtered = dict(payload)
-    task_ids = set(scope.task_ids)
-    sense_check_ids = set(scope.sense_check_ids)
-    filtered["task_updates"] = [
-        dict(update)
-        for update in payload.get("task_updates", []) or []
-        if isinstance(update, dict) and update.get("task_id") in task_ids
-    ]
-    filtered["sense_check_acknowledgments"] = [
-        dict(acknowledgment)
-        for acknowledgment in payload.get("sense_check_acknowledgments", []) or []
-        if isinstance(acknowledgment, dict)
-        and acknowledgment.get("sense_check_id") in sense_check_ids
-    ]
-    return filtered
-
-
 def _replay_proven_batch_artifacts(
     *,
     plan_dir: Path,
@@ -659,48 +1050,31 @@ def _replay_proven_batch_artifacts(
             _emit_batch_scope_quarantine(plan_dir, quarantine)
             log.warning("skipping unreadable execution artifact %s", artifact_path)
             continue
-        if not isinstance(payload, dict):
-            quarantine = BatchScopeQuarantine(
-                reason="malformed_artifact",
-                message="artifact payload must be an object",
-                source_path=str(artifact_path),
-            )
-            _emit_batch_scope_quarantine(plan_dir, quarantine)
-            log.warning("skipping malformed execution artifact %s", artifact_path)
-            continue
-        resolution = resolve_batch_scope(
-            payload,
-            artifact_path,
+        merge_result = _merge_scoped_batch_artifact_through_validator(
+            plan_dir=plan_dir,
+            artifact_path=artifact_path,
+            payload=payload,
+            finalize_data=finalize_data,
             known_task_ids=known_task_ids,
             known_sense_check_ids=known_sense_check_ids,
-            expected_batch_number=batch_artifact_index(artifact_path),
-        )
-        if resolution.quarantine is not None:
-            _emit_batch_scope_quarantine(plan_dir, resolution.quarantine)
-            log.warning(
-                "skipping unproven execution artifact %s: %s",
-                artifact_path,
-                resolution.quarantine.reason,
-            )
-            continue
-        scope = resolution.scope
-        assert scope is not None
-        filtered_payload = _scope_filtered_payload(payload, scope)
-        merge_issues: list[str] = []
-        _merge_batch_results(
-            finalize_data=finalize_data,
-            payload=filtered_payload,
-            batch_task_ids=list(scope.task_ids),
-            batch_sense_check_ids=list(scope.sense_check_ids),
-            issues=merge_issues,
             mode=mode,
             state=state,
         )
-        if merge_issues:
-            log.debug(
-                "resume-merge issues from %s: %s", artifact_path, merge_issues
+        if merge_result.quarantine is not None:
+            _emit_batch_scope_quarantine(plan_dir, merge_result.quarantine)
+            log.warning(
+                "skipping unproven execution artifact %s: %s",
+                artifact_path,
+                merge_result.quarantine.reason,
             )
-        proven_payloads.append(payload)
+            continue
+        if merge_result.issues:
+            log.debug(
+                "resume-merge issues from %s: %s",
+                artifact_path,
+                list(merge_result.issues),
+            )
+        proven_payloads.append(merge_result.payload or payload)
     return proven_payloads
 
 
@@ -1071,6 +1445,12 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
                 "commands_run",
                 "evidence_files",
                 "auto_attributed_files",
+                "sections_written",
+                "stance",
+                "stop_signal",
+                "stance_violations",
+                "head_sha",
+                "code_hash",
             )
             if key in item
         }
@@ -1511,6 +1891,28 @@ def _run_and_merge_batch(
                 state=state,
             )
         )
+    _stamp_head_sha_on_task_records(payload, finalize_data, project_dir)
+    batch_artifact_path = execute_batch_artifact_path(
+        plan_dir, batch_number, batch_task_ids
+    )
+    scope = _stamp_batch_scope(
+        payload,
+        batch_number=batch_number,
+        task_ids=batch_task_ids,
+        sense_check_ids=batch_sense_check_ids,
+    )
+    identity = _stamp_dispatch_metadata(
+        payload,
+        plan_dir=plan_dir,
+        state=state,
+        scope=scope,
+        finalize_data=finalize_data,
+    )
+    _stamp_result_envelopes(
+        payload,
+        identity=identity,
+        artifact_path=batch_artifact_path,
+    )
     merged_count, total_batch_tasks, acknowledged_count, total_batch_checks = (
         _merge_batch_results(
             finalize_data=finalize_data,
@@ -1520,6 +1922,7 @@ def _run_and_merge_batch(
             issues=deviations,
             mode=plan_mode,
             state=state,
+            source_path=batch_artifact_path,
         )
     )
     attribution_result = AttributionResult(records=[], recursive_snapshot=None)
@@ -1599,16 +2002,7 @@ def _run_and_merge_batch(
             artifact_prefix=f"execution_batch_{batch_number}",
             keys=("files_changed",),
         )
-    _stamp_head_sha_on_task_records(payload, finalize_data, project_dir)
-    _stamp_batch_scope(
-        payload,
-        batch_number=batch_number,
-        task_ids=batch_task_ids,
-        sense_check_ids=batch_sense_check_ids,
-    )
-    atomic_write_json(
-        execute_batch_artifact_path(plan_dir, batch_number, batch_task_ids), payload
-    )
+    atomic_write_json(batch_artifact_path, payload)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
     atomic_write_text(
@@ -1775,6 +2169,8 @@ def handle_execute_one_batch(
         batch_number=batch_number,
         task_ids=batch_task_ids,
         sense_check_ids=batch_sense_check_ids,
+        state=state,
+        finalize_data=finalize_data,
     )
     batch_template_path = _write_execute_batch_template(
         plan_dir,
@@ -1949,11 +2345,13 @@ def handle_execute_one_batch(
         root=root,
         state=state,
     )
+    effective_completed_id_set = set(effective_completed_ids)
     batch_blocked_ids = [
         task.get("id")
         for task in tracked_tasks
         if task.get("id") in set(batch_task_ids)
         and task.get("status") == "blocked"
+        and task.get("id") not in effective_completed_id_set
     ]
     blocked_task_reason = _blocked_task_reason(batch_blocked_ids)
     if blocked_task_reason:
@@ -1961,7 +2359,7 @@ def handle_execute_one_batch(
     if result.routing_degradations:
         blocking_reasons.extend(result.routing_degradations)
     all_tracked = all(task.get("id") in effective_completed_ids for task in tracked_tasks)
-    any_done = any(task.get("status") == "done" for task in tracked_tasks)
+    any_done = any(task.get("id") in effective_completed_id_set for task in tracked_tasks)
     if all_tracked and tracked_tasks and not any_done:
         blocking_reasons.append(
             "All tasks were skipped with none completed — execution produced no work."
@@ -3046,6 +3444,12 @@ def handle_execute_auto_loop(
             finalize_data,
             blocked_before_retry,
         )
+        authority_completed_before_retry = _scheduler_completed_ids_for_tasks(
+            tasks,
+            plan_dir=plan_dir,
+            root=root,
+            state=state,
+        )
         # ------------------------------------------------------------------
         # Explicit partial-failure resume partition (T12).
         #
@@ -3069,14 +3473,16 @@ def handle_execute_auto_loop(
         )
         reset_ids = _reset_blocked_tasks_to_pending(
             finalize_data,
-            exclude_task_ids=baseline_unavailable_ids,
+            exclude_task_ids=baseline_unavailable_ids | authority_completed_before_retry,
         )
         # Defensive invariant: the reset set must equal the policy's rerun set
         # minus baseline-unavailable checkpoints.  A mismatch would mean the
         # handler is silently rerunning (or dropping) tasks the policy did not
         # authorize — a non-local consistency violation.
         expected_reset = sorted(
-            set(resume_decision.rerun_task_ids) - baseline_unavailable_ids
+            set(resume_decision.rerun_task_ids)
+            - baseline_unavailable_ids
+            - authority_completed_before_retry
         )
         if reset_ids != expected_reset:
             log.warning(
@@ -3123,6 +3529,7 @@ def handle_execute_auto_loop(
                 "rerun_task_ids": list(resume_decision.rerun_task_ids),
                 "preserved_task_ids": list(resume_decision.preserved_task_ids),
                 "baseline_unavailable_ids": sorted(baseline_unavailable_ids),
+                "authority_completed_ids": sorted(authority_completed_before_retry),
                 "debt_registry_preserved": resume_decision.debt_registry_preserved,
                 "preserved_receipt_ids": list(resume_decision.preserved_receipt_ids),
             },
@@ -3185,23 +3592,17 @@ def handle_execute_auto_loop(
         root=root,
         state=state,
     )
-    completed_task_ids |= {
-        task["id"]
-        for task in tasks
-        if isinstance(task, dict)
-        and task.get("status") == "skipped"
-        and isinstance(task.get("id"), str)
-    }
     blocked_task_ids = {
         task["id"]
         for task in tasks
         if task.get("status") == "blocked" and isinstance(task.get("id"), str)
+        and task["id"] not in completed_task_ids
     }
     pending_tasks = [
         task
         for task in tasks
         if isinstance(task.get("id"), str)
-        and task.get("status") not in {"blocked", "skipped"}
+        and task.get("status") != "blocked"
         and task.get("id") not in completed_task_ids
     ]
     review_data: dict[str, Any] = {}
@@ -3305,6 +3706,7 @@ def handle_execute_auto_loop(
                 task["id"]
                 for task in tasks
                 if task.get("status") == "blocked" and isinstance(task.get("id"), str)
+                and task["id"] not in completed_task_ids
             }
         if blocked_task_ids:
             finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(
@@ -3320,6 +3722,7 @@ def handle_execute_auto_loop(
                     for task in tasks
                     if task.get("status") == "blocked"
                     and isinstance(task.get("id"), str)
+                    and task["id"] not in completed_task_ids
                 }
         # Now, only short-circuit if blocked tasks remain (within-session).
         # Route blocked-task evaluation through typed policy outcomes
@@ -3576,6 +3979,8 @@ def handle_execute_auto_loop(
             batch_number=batch_number_for_artifact,
             task_ids=batch_task_ids,
             sense_check_ids=batch_sense_check_ids,
+            state=state,
+            finalize_data=finalize_data,
         )
         batch_template_path = (
             None
@@ -3804,6 +4209,7 @@ def handle_execute_auto_loop(
             if task.get("status") == "blocked"
             and isinstance(task.get("id"), str)
             and task["id"] in set(batch_task_ids)
+            and task["id"] not in completed_task_ids
         }
         # Stamp each newly-blocked task with the current invocation_id so the
         # short-circuit can distinguish within-session from cross-session blocks.
@@ -3972,6 +4378,7 @@ def handle_execute_auto_loop(
         if task.get("status") == "blocked"
         and isinstance(task.get("id"), str)
         and task["id"] in active_task_ids
+        and task["id"] not in completed_task_ids
     }
     baseline_unavailable_blocked_ids = baseline_unavailable_checkpoint_ids(
         finalize_data, active_blocked_task_ids

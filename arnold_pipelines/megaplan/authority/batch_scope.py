@@ -14,9 +14,13 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from arnold_pipelines.megaplan._core.io import stable_task_id_digest
+from arnold_pipelines.megaplan.authority.binding import DispatchIdentity, ResultEnvelope
+from arnold_pipelines.run_authority import ContractError
 
 BATCH_SCOPE_KEY = "batch_scope"
 BATCH_SCOPE_SCHEMA_VERSION = 1
+DISPATCH_IDENTITY_KEY = "dispatch_identity"
+RESULT_ENVELOPES_KEY = "result_envelopes"
 
 _S4_BATCH_DIR_RE = re.compile(r"batch_([1-9][0-9]*)")
 _S4_TASK_FILE_RE = re.compile(r"tasks_([0-9a-f]{12})\.json")
@@ -147,6 +151,30 @@ class BatchScopeResolution:
         return self.scope is not None
 
 
+@dataclass(frozen=True, slots=True)
+class BatchAuthorityMetadata:
+    """Persisted dispatch authority read beside compatibility batch scope."""
+
+    dispatch_identity: DispatchIdentity
+    result_envelopes: tuple[ResultEnvelope, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BatchAuthorityMetadataResolution:
+    """Exactly one of decoded authority metadata or a quarantine record."""
+
+    metadata: BatchAuthorityMetadata | None = None
+    quarantine: BatchScopeQuarantine | None = None
+
+    def __post_init__(self) -> None:
+        if (self.metadata is None) == (self.quarantine is None):
+            raise ValueError("resolution must contain exactly one of metadata or quarantine")
+
+    @property
+    def is_proven(self) -> bool:
+        return self.metadata is not None
+
+
 def _readable_ids(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
@@ -168,6 +196,95 @@ def _quarantine(
             sense_check_ids=(
                 _readable_ids(metadata.get("sense_check_ids")) if metadata else ()
             ),
+        )
+    )
+
+
+def _authority_quarantine(
+    source_path: str,
+    reason: str,
+    message: str,
+) -> BatchAuthorityMetadataResolution:
+    return BatchAuthorityMetadataResolution(
+        quarantine=BatchScopeQuarantine(
+            reason=reason,
+            message=message,
+            source_path=source_path,
+        )
+    )
+
+
+def resolve_batch_authority_metadata(
+    artifact_payload: Mapping[str, Any],
+    source_path: str | Path,
+) -> BatchAuthorityMetadataResolution:
+    """Decode persisted dispatch/result envelopes without using ``batch_scope``.
+
+    ``batch_scope`` remains a compatibility proof for legacy artifact filtering.
+    Authority metadata is accepted only from the dispatch identity and result
+    envelopes that were persisted beside that proof.
+    """
+
+    source = str(source_path)
+    raw_identity = artifact_payload.get(DISPATCH_IDENTITY_KEY)
+    if raw_identity is None:
+        return _authority_quarantine(
+            source,
+            "missing_dispatch_identity",
+            "artifact has no persisted dispatch identity",
+        )
+    if not isinstance(raw_identity, Mapping):
+        return _authority_quarantine(
+            source,
+            "malformed_dispatch_identity",
+            "persisted dispatch identity must be an object",
+        )
+    try:
+        identity = DispatchIdentity.from_dict(raw_identity)
+    except ContractError as exc:
+        return _authority_quarantine(
+            source,
+            "malformed_dispatch_identity",
+            f"persisted dispatch identity is invalid: {exc}",
+        )
+
+    raw_envelopes = artifact_payload.get(RESULT_ENVELOPES_KEY)
+    if raw_envelopes is None:
+        raw_envelopes = ()
+    if not isinstance(raw_envelopes, (list, tuple)):
+        return _authority_quarantine(
+            source,
+            "malformed_result_envelopes",
+            "persisted result envelopes must be an array",
+        )
+    envelopes: list[ResultEnvelope] = []
+    for index, raw_envelope in enumerate(raw_envelopes):
+        if not isinstance(raw_envelope, Mapping):
+            return _authority_quarantine(
+                source,
+                "malformed_result_envelopes",
+                f"persisted result_envelopes[{index}] must be an object",
+            )
+        try:
+            envelope = ResultEnvelope.from_dict(raw_envelope)
+        except ContractError as exc:
+            return _authority_quarantine(
+                source,
+                "malformed_result_envelopes",
+                f"persisted result_envelopes[{index}] is invalid: {exc}",
+            )
+        if envelope.dispatch.digest() != identity.digest():
+            return _authority_quarantine(
+                source,
+                "result_envelope_dispatch_mismatch",
+                f"persisted result_envelopes[{index}] does not reference the dispatch identity",
+            )
+        envelopes.append(envelope)
+
+    return BatchAuthorityMetadataResolution(
+        metadata=BatchAuthorityMetadata(
+            dispatch_identity=identity,
+            result_envelopes=tuple(envelopes),
         )
     )
 
@@ -352,8 +469,13 @@ def resolve_batch_scope(
 __all__ = [
     "BATCH_SCOPE_KEY",
     "BATCH_SCOPE_SCHEMA_VERSION",
+    "DISPATCH_IDENTITY_KEY",
+    "RESULT_ENVELOPES_KEY",
+    "BatchAuthorityMetadata",
+    "BatchAuthorityMetadataResolution",
     "BatchScope",
     "BatchScopeQuarantine",
     "BatchScopeResolution",
+    "resolve_batch_authority_metadata",
     "resolve_batch_scope",
 ]
