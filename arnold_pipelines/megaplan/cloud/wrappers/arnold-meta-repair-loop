@@ -440,6 +440,113 @@ log "commit_allowed=$COMMIT_ALLOWED push_allowed=$PUSH_ALLOWED"
 # ---- Codex dispatch ---------------------------------------------------------
 RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.txt"
 ERR_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.err"
+FALLBACK_BRIEF_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-direct-hermes-brief.md"
+FALLBACK_RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-direct-hermes-resp.txt"
+
+has_recordable_verdict() {
+  local response_path="${1:-}"
+  local first_line=""
+  if [[ -f "$response_path" ]]; then
+    first_line="$(head -1 "$response_path" | tr -d '\r\n')"
+  fi
+  [[ "$first_line" == FIXED* || "$first_line" == ESCALATE* || "$first_line" == NO_FIX* ]]
+}
+
+run_direct_hermes_fallback() {
+  if [[ ! -f "$LAUNCHER" ]]; then
+    log "direct Hermes fallback unavailable launcher=$LAUNCHER"
+    return 1
+  fi
+
+  {
+    cat <<EOF
+# Direct Hermes Meta-Repair Fallback
+
+The Codex orchestration path failed before producing a recordable verdict.
+You are the direct repair agent now. Work on the Arnold source checkout at
+\`$ARNOLD_SRC\`; do not modify the audited project workspace. Perform the
+bounded investigation and repair yourself without launching another Codex
+or Hermes agent. Preserve the output contract in the brief below.
+
+EOF
+    cat "$BRIEF_PATH"
+  } > "$FALLBACK_BRIEF_PATH"
+  redact_file_in_place "$FALLBACK_BRIEF_PATH"
+
+  log "dispatching direct Hermes fallback session=$SESSION model=$DEEPSEEK_MODEL"
+  (
+    if [[ -f /workspace/.cloud-hot-env ]]; then
+      set -a
+      # shellcheck disable=SC1091
+      . /workspace/.cloud-hot-env
+      set +a
+    fi
+    export PYENV_VERSION=3.11.11
+    export ARNOLD_PATH="$ARNOLD_SRC"
+    export ARNOLD_SRC="$ARNOLD_SRC"
+    export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
+    # Import the launcher from a neutral directory.  A source checkout may
+    # contain a product-local `megaplan` package that shadows Hermes runtime
+    # discovery before the agent starts.
+    cd /workspace || exit 1
+    timeout "$SUBAGENT_TIMEOUT" python3 "$LAUNCHER" \
+      --model "$DEEPSEEK_MODEL" \
+      --toolsets "file,web,terminal" \
+      --query-file "$FALLBACK_BRIEF_PATH" \
+      --project-dir /workspace
+  ) > "$FALLBACK_RESP_PATH" 2>> "$ERR_PATH" || true
+  redact_file_in_place "$FALLBACK_RESP_PATH"
+  redact_file_in_place "$ERR_PATH"
+
+  if ! has_recordable_verdict "$FALLBACK_RESP_PATH"; then
+    log "direct Hermes fallback produced no recordable verdict"
+    return 1
+  fi
+  cp "$FALLBACK_RESP_PATH" "$RESP_PATH"
+  log "direct Hermes fallback produced a recordable verdict"
+}
+
+persist_unrecordable_launch_failure() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+    "$SESSION" "$TRIGGER_TYPE" "$REPAIR_DATA_DIR" "$RESP_PATH" "$ERR_PATH" <<'PY'
+import sys
+import uuid
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.meta_repair import (
+    MetaRepairRecord,
+    MetaRepairTrigger,
+    persist_meta_repair_record,
+)
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+session, trigger_raw, repair_data_dir, response_path, error_path = sys.argv[1:6]
+try:
+    trigger = MetaRepairTrigger(trigger_raw)
+except ValueError:
+    trigger = None
+
+response = Path(response_path).read_text(encoding="utf-8") if Path(response_path).exists() else ""
+error = Path(error_path).read_text(encoding="utf-8") if Path(error_path).exists() else ""
+diagnosis = (
+    "Codex meta-repair orchestrator returned no output and direct Hermes "
+    "fallback produced no recordable verdict."
+)
+record = MetaRepairRecord(
+    meta_repair_id=str(uuid.uuid4()),
+    session=session,
+    trigger=trigger,
+    diagnosis=diagnosis,
+    subagent_results={
+        "orchestrator_response": redact_text(response[:2000]),
+        "launch_error": redact_text(error[-2000:]),
+    },
+    outcome="model_tool_launch_failure",
+)
+path = persist_meta_repair_record(record, repair_data_dir=repair_data_dir)
+print(f"RECORD_PATH={path}")
+PY
+}
 
 if command -v codex >/dev/null 2>&1; then
   log "dispatching Codex meta-repair session=$SESSION deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
@@ -468,9 +575,12 @@ if command -v codex >/dev/null 2>&1; then
     fi
   fi
 else
-  log "codex CLI missing; cannot dispatch meta-repair"
+  log "codex CLI missing; trying direct Hermes fallback"
   echo "codex CLI missing; no automated meta-repair." > "$RESP_PATH"
-  exit 1
+fi
+
+if ! has_recordable_verdict "$RESP_PATH"; then
+  run_direct_hermes_fallback || true
 fi
 
 RESP_TEXT="$(cat "$RESP_PATH")"
@@ -479,8 +589,10 @@ log "codex response $(wc -l <<<"$RESP_TEXT" | tr -d ' ') lines"
 # ---- parse verdict from response -------------------------------------------
 VERDICT="$(echo "$RESP_TEXT" | head -1 | tr -d '\r\n')"
 
-if [[ "$VERDICT" != FIXED* && "$VERDICT" != ESCALATE* && "$VERDICT" != NO_FIX* ]] && grep -qE 'Codex meta-repair orchestrator returned no output|Codex meta-repair prompt exceeded input limit|Not inside a trusted directory|--skip-git-repo-check was not specified|Input exceeds the maximum length|input_too_large' "$RESP_PATH" "$ERR_PATH" 2>/dev/null; then
-  log "codex launch failed before producing a recordable meta-repair response; leaving recursion guard unpoisoned"
+if ! has_recordable_verdict "$RESP_PATH"; then
+  FAILURE_RECORD_INFO="$(persist_unrecordable_launch_failure 2>&1)" || true
+  FAILURE_RECORD_PATH="$(echo "$FAILURE_RECORD_INFO" | sed -n 's/^RECORD_PATH=//p')"
+  log "all meta-repair launch paths failed before a recordable verdict; negative evidence persisted path=$FAILURE_RECORD_PATH and recursion guard remains unpoisoned"
   exit 1
 fi
 
