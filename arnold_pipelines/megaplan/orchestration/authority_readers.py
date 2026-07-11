@@ -4,13 +4,18 @@ Every production site that reads raw terminal task status, milestone outcome,
 or batch completion state and can increase authority (by skipping work,
 unblocking dependencies, resuming/redriving, selecting a plan, classifying
 success, setting success exit status, or advancing work) must be listed here
-with one of three dispositions:
+with one of five dispositions:
 
-* ``migrated`` — rewired through the shared authority adapter (TODO in later
-  M2 steps).
-* ``tested`` — covered by explicit authority-aware tests.
-* ``deferred`` — not migrated in this milestone, with an explicit reason.
-  Informational/status-only readers are also classified here.
+* ``enforced`` — authority adapter fully controls the decision; legacy path
+  is either removed or gated behind equivalence diagnostics.
+* ``warn-only`` — authority is wired and produces drift diagnostics, but the
+  legacy decision path is preserved as the effective outcome (fail-open).
+* ``shadow-only`` — authority runs purely in diagnostic/shadow mode with no
+  behavioural change to the production path.
+* ``informational`` — read-only status display that never increases
+  authority (operator visibility only).
+* ``deferred`` — not migrated in this milestone, with an explicit deferral
+  reason.
 
 This inventory is the source of truth for the T16 raw-status grep/code audit
 and the SC1 sense check.
@@ -60,10 +65,15 @@ from arnold_pipelines.run_authority import ContractError, reduce_run_authority
 
 # ── Route disposition vocabulary ──────────────────────────────────────────
 
-MIGRATED = "migrated"
-TESTED = "tested"
-DEFERRED = "deferred"
+ENFORCED = "enforced"
+WARN_ONLY = "warn-only"
+SHADOW_ONLY = "shadow-only"
 INFORMATIONAL = "informational"
+DEFERRED = "deferred"
+
+# Legacy aliases kept for backward compatibility during migration window.
+MIGRATED = ENFORCED  # noqa: backward-compat alias
+TESTED = ENFORCED    # noqa: backward-compat alias
 
 
 @dataclass(frozen=True)
@@ -74,7 +84,7 @@ class AuthorityRoute:
     file: str
     line_range: str
     description: str
-    disposition: str  # migrated | tested | deferred | informational
+    disposition: str  # enforced | warn-only | shadow-only | informational | deferred
     owner_or_reason: str
     route_family: str  # execute | resume | chain | supervisor | status | timeout
 
@@ -1270,8 +1280,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="1650-1654",
         description="Auto-loop task selection: builds completed_task_ids from raw task.get('status') in {'done','skipped'}",
-        disposition=MIGRATED,
-        owner_or_reason="T4: replace with corroborated_completed_task_ids() via authority adapter",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters (effective_execute_completed_task_ids) exist and are used by chain/supervisor; batch.py raw reads not yet replaced at source. Drift diagnostics emitted.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -1279,8 +1289,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="951-957",
         description="Batch prerequisite gate: completed_ids from batch_status_overlay trusting raw {'done','skipped'}",
-        disposition=MIGRATED,
-        owner_or_reason="T6: migrate to authority decisions; prior-batch divergence blocks, current-batch repairs",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters wired downstream (chain/supervisor use effective_execute_completed_task_ids); batch.py raw reads not yet replaced at source.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -1288,8 +1298,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="1114-1118",
         description="All-tracked check for batch completion: all(t.get('status') in {'done','skipped'})",
-        disposition=MIGRATED,
-        owner_or_reason="T6/T7: replace with corroborated completed IDs; divergent tracked tasks → BLOCKED_BY_PREREQ",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters exist; chain/supervisor completion checks use effective_execute_completed_task_ids with drift diagnostics; batch.py source not yet migrated.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -1297,8 +1307,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="2083",
         description="Post-batch completed_id update re-reading raw status from finalize.json",
-        disposition=MIGRATED,
-        owner_or_reason="T4: use corroborated completed set post-batch rather than raw status re-read",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters available; chain/supervisor consumers use authority-backed completion; batch.py still re-reads raw status at source.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -1306,8 +1316,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/_core/io.py",
         line_range="58-104",
         description="compute_task_batches: accepts completed_ids as satisfied deps; wrapper must supply corroborated IDs",
-        disposition=MIGRATED,
-        owner_or_reason="T5: keep function pure; add call-site wrapper that passes only corroborated completed_ids",
+        disposition=WARN_ONLY,
+        owner_or_reason="Pure function — callers (chain/supervisor) now supply authority-backed completed_ids via effective_execute_completed_task_ids; function itself accepts any input.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -1315,8 +1325,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/_core/scheduler/topo.py",
         line_range="15-62",
         description="schedule_batches: threads completed_ids through; same pure-assertion consumer as compute_task_batches",
-        disposition=MIGRATED,
-        owner_or_reason="T5: keep function pure; guarantee input completed_ids are already corroborated by wrapper",
+        disposition=WARN_ONLY,
+        owner_or_reason="Pure function — callers supply authority-backed completed_ids; no internal raw status reads.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -1324,8 +1334,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/_binding/reducer.py",
         line_range="132",
         description="all_tracked = all(t.get('status') in {'done','skipped'}) determines BatchOutcome.SUCCESS",
-        disposition=MIGRATED,
-        owner_or_reason="T7: use authority-aware corroborated completed IDs; raw done divergence → non-success",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters exist; chain/supervisor cross-check reducer outcome against authority with drift diagnostics; reducer source not yet migrated.",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -1333,8 +1343,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/timeout.py",
         line_range="350",
         description="Timeout recovery completed_tasks from raw status in {'done','skipped'}",
-        disposition=MIGRATED,
-        owner_or_reason="T8: use best-effort corroborated completion; label uncorroborated as asserted_terminal",
+        disposition=WARN_ONLY,
+        owner_or_reason="Best-effort corroborated completion via effective_execute_completed_task_ids; uncorroborated tasks labelled; fail-open (SD3).",
         route_family="execute",
     ),
     AuthorityRoute(
@@ -1342,8 +1352,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/prompts/execute.py",
         line_range="156",
         description="Prompt helper filtering done_tasks from raw task.get('status') in ('done','skipped')",
-        disposition=MIGRATED,
-        owner_or_reason="T4: feed only corroborated completed IDs to prompt helpers showing completed dependencies",
+        disposition=WARN_ONLY,
+        owner_or_reason="Prompt helpers accept completed IDs from callers; chain/supervisor now supply authority-backed IDs; helper itself is pure projection.",
         route_family="execute",
     ),
 
@@ -1353,8 +1363,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/_core/workflow.py",
         line_range="508-699",
         description="resume_plan: reads resume_cursor, dispatches phase, pops cursor on success — no corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T9: guard with authority adapter; block if execute data incomplete; preserve cursor on divergence",
+        disposition=WARN_ONLY,
+        owner_or_reason="Control interface rewired (T9) with source_view_hash/revision on override receipts; compatibility path preserved for callers without view hash. Drift diagnostics emitted.",
         route_family="resume",
     ),
     AuthorityRoute(
@@ -1362,8 +1372,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/_pipeline/resume.py",
         line_range="133,166",
         description="Pipeline resume cursor: ResumeCursor.load() and with_entry() re-enter pipeline without corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T9: storage support only; annotate if guard needs cursor payload preservation",
+        disposition=WARN_ONLY,
+        owner_or_reason="Storage support; cursor payload preservation available for guard annotation; not yet gated on authority.",
         route_family="resume",
     ),
     AuthorityRoute(
@@ -1371,8 +1381,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/auto.py",
         line_range="1675-1691",
         description="_active_phase_already_completed: trusts phase_produced_state without task-level corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T10: for execute-produced states require corroborated task completion before clearing active step",
+        disposition=WARN_ONLY,
+        owner_or_reason="Human gate and control interface rewired (T9/T10); active-phase completion still legacy-trusting with compatibility path preserved.",
         route_family="resume",
     ),
     AuthorityRoute(
@@ -1380,8 +1390,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/auto.py",
         line_range="2217-2280",
         description="Auto terminal success signaling: terminal_status == 'done' gates PLAN_FINISHED, exit-code-0, shadow verdict",
-        disposition=MIGRATED,
-        owner_or_reason="T10: require corroborated task/milestone completion or emit divergence outcome; preserve recoverability",
+        disposition=WARN_ONLY,
+        owner_or_reason="Human gate rewired with view hash/revision; terminal success gating produces drift diagnostics but legacy outcome preserved (fail-open per SD3).",
         route_family="resume",
     ),
 
@@ -1389,10 +1399,10 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     AuthorityRoute(
         id="CHAIN-01",
         file="arnold_pipelines/megaplan/chain/__init__.py",
-        line_range="598-646",
-        description="_latest_execution_batch_all_tasks_done: raw status=='done' check on batch artifacts + finalize.json",
-        disposition=MIGRATED,
-        owner_or_reason="T11: replace with authority-aware helper over latest batch + finalize task records",
+        line_range="1742-1968",
+        description="_latest_execution_batch_all_tasks_done: now uses effective_execute_completed_task_ids (authority-backed) over batch artifacts + finalize.json",
+        disposition=ENFORCED,
+        owner_or_reason="Fully migrated to authority adapter via effective_execute_completed_task_ids with accepted-attempt projections and evidence nucleus; completion decisions are authority-backed.",
         route_family="chain",
     ),
     AuthorityRoute(
@@ -1400,17 +1410,17 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="887-973",
         description="_handle_outcome: advances on outcome.status in {'done','finalized'} without task-level corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T12: corroborate plan constituent tasks before returning 'advance' for done/finalized outcomes",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority drift diagnostics captured via epic chain aggregation (T11); legacy ADVANCE decision preserved as effective outcome (fail-open per SD2).",
         route_family="chain",
     ),
     AuthorityRoute(
         id="CHAIN-03",
         file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="666-698",
-        description="_recover_blocked_execute_if_tasks_done: uses _latest_execution_batch_all_tasks_done raw status",
-        disposition=MIGRATED,
-        owner_or_reason="T12: guard with same authority-aware helper; block on uncorroborated legacy state",
+        description="_recover_blocked_execute_if_tasks_done: uses _latest_execution_batch_all_tasks_done (now authority-enforced)",
+        disposition=WARN_ONLY,
+        owner_or_reason="Delegates to CHAIN-01 (enforced) for completion check; recovery decision itself is fail-open with drift diagnostics per T12.",
         route_family="chain",
     ),
     AuthorityRoute(
@@ -1418,8 +1428,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="1125-1154",
         description="Seed plan terminal skip: compares plan state against TERMINAL_SKIP_STATES {'done','aborted','failed'}",
-        disposition=MIGRATED,
-        owner_or_reason="T12: corroborate before skipping seed phase; stop/block with diagnostics for uncorroborated legacy",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority drift captured via epic chain aggregation (T11); legacy terminal-state comparison preserved as effective outcome (fail-open).",
         route_family="chain",
     ),
     AuthorityRoute(
@@ -1427,8 +1437,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="1167-1217",
         description="current_plan_name pointer reads used to skip or advance chain work",
-        disposition=MIGRATED,
-        owner_or_reason="T12: informational pointer reads are fine; skip/advance from pointer must be corroborated",
+        disposition=WARN_ONLY,
+        owner_or_reason="Informational pointer reads are safe; skip/advance from pointer cross-checked with authority drift diagnostics (T11/T12); legacy preserved.",
         route_family="chain",
     ),
 
@@ -1436,10 +1446,10 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     AuthorityRoute(
         id="SUP-01",
         file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
-        line_range="696-719",
-        description="_recover_blocked_execute_if_tasks_done: duplicate of CHAIN-03 raw status check for blocked→executed",
-        disposition=MIGRATED,
-        owner_or_reason="T13: share or mirror chain's authority-aware helper; prevent raw-status drift between copies",
+        line_range="875-930",
+        description="_recover_blocked_execute_if_tasks_done: duplicate of CHAIN-03; now uses _latest_execution_batch_all_tasks_done backed by effective_execute_completed_task_ids (shared authority helper)",
+        disposition=WARN_ONLY,
+        owner_or_reason="QUARANTINED duplicate of CHAIN-03. Equivalence covered by shared effective_execute_completed_task_ids and _latest_execution_batch_all_tasks_done (both use accepted-attempt projections). Recovery decision fail-open per T12.",
         route_family="supervisor",
     ),
     AuthorityRoute(
@@ -1447,8 +1457,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="453-463",
         description="_assert_dependencies_completed: gates on completed_node_ids labels only — no evidence corroboration",
-        disposition=MIGRATED,
-        owner_or_reason="T13: replace with corroborated milestone/task authority for dependency unlocks",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority shadow derivation wired (T12); cross-checks ladder ADVANCE against authority-backed completion; legacy dependency gates preserved (fail-open).",
         route_family="supervisor",
     ),
     AuthorityRoute(
@@ -1456,8 +1466,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="97-385",
         description="run_chain milestone advancement loop: advances on LadderAction.ADVANCE from driver outcome",
-        disposition=MIGRATED,
-        owner_or_reason="T13: gate ADVANCE, PR-merge advancement, and blocked-execute recovery on shared authority helper",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority shadow derivation wired (T12) for ADVANCE and PR-merge paths; drift captured as diagnostic; legacy ADVANCE preserved as effective (fail-open per SD2).",
         route_family="supervisor",
     ),
     AuthorityRoute(
@@ -1465,8 +1475,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="150-385",
         description="Supervisor dependency gates, PR-merge advancement, and blocked-execute recovery in run_chain",
-        disposition=MIGRATED,
-        owner_or_reason="T13: use same authority semantics as canonical chain; divergence → blocked/stopped with diagnostics",
+        disposition=WARN_ONLY,
+        owner_or_reason="Same authority semantics as canonical chain (T12); divergence captured as diagnostic; legacy preserved (fail-open).",
         route_family="supervisor",
     ),
 
@@ -1532,8 +1542,8 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
         file="arnold_pipelines/megaplan/execute/timeout.py",
         line_range="1-388",
         description="Timeout recovery summary: best-effort operator reporting; not a blocking authority gate",
-        disposition=MIGRATED,
-        owner_or_reason="T8: migrate to best-effort corroborated completion; label uncorroborated; fail-open (SD3)",
+        disposition=WARN_ONLY,
+        owner_or_reason="Best-effort corroborated completion via effective_execute_completed_task_ids; uncorroborated tasks labelled as asserted_terminal; fail-open (SD3).",
         route_family="timeout",
     ),
 )
@@ -1541,9 +1551,19 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
 
 # ── Convenience views ──────────────────────────────────────────────────────
 
-def migrated_routes() -> tuple[AuthorityRoute, ...]:
-    """Return every route with disposition == 'migrated'."""
-    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == MIGRATED)
+def enforced_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'enforced'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == ENFORCED)
+
+
+def warn_only_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'warn-only'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == WARN_ONLY)
+
+
+def shadow_only_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'shadow-only'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == SHADOW_ONLY)
 
 
 def deferred_routes() -> tuple[AuthorityRoute, ...]:
@@ -1554,6 +1574,12 @@ def deferred_routes() -> tuple[AuthorityRoute, ...]:
 def informational_routes() -> tuple[AuthorityRoute, ...]:
     """Return every route with disposition == 'informational'."""
     return tuple(r for r in AUTHORITY_ROUTES if r.disposition == INFORMATIONAL)
+
+
+# Backward-compat alias — prefer enforced_routes().
+def migrated_routes() -> tuple[AuthorityRoute, ...]:
+    """Backward-compat: return every route with disposition == 'enforced'."""
+    return enforced_routes()
 
 
 def routes_by_family(family: str) -> tuple[AuthorityRoute, ...]:

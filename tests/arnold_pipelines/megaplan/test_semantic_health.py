@@ -2369,3 +2369,78 @@ def test_s3_child_boundary_missing_phase_result_generates_finding(
             f"missing phase-result finding for S3 child boundary '{bid}'"
         )
         assert by_id[fid].severity == FindingSeverity.ERROR
+
+
+# ── T9: override receipt source-view-hash / revision binding ────────────
+
+
+def test_override_receipt_includes_source_view_hash_when_provided(
+    tmp_path: Path,
+) -> None:
+    """When source_view_hash is passed to emit_override_authority_receipt
+    it must appear in both the receipt details and the authority record details."""
+    from arnold_pipelines.megaplan.control_interface import emit_override_authority_receipt
+
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="blocked"))
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state.setdefault("meta", {})["overrides"] = [
+        {"action": "resume-clarify", "timestamp": "2026-07-08T12:00:00Z"}
+    ]
+    _write_artifact(plan_dir, "clarification_answers.json", "{}")
+    # update state on disk
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    emit_override_authority_receipt(
+        plan_dir,
+        state,
+        "resume-clarify",
+        source_view_hash="abc123hash",
+        source_view_revision="control://override/resume-clarify",
+    )
+
+    receipt_path = plan_dir / "boundary_receipts" / "override_resume_clarify_authority.json"
+    assert receipt_path.exists(), "expected receipt to be written"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    # Receipt details must carry the source view hash and revision
+    details = receipt.get("details", {})
+    assert details.get("source_view_hash") == "abc123hash"
+    assert details.get("source_view_revision") == "control://override/resume-clarify"
+
+    # Authority record must also carry the source view hash
+    records = receipt.get("authority_records", [])
+    assert len(records) >= 1
+    record = records[0]
+    record_details = record.get("details", {})
+    assert record_details.get("source_view_hash") == "abc123hash"
+
+
+def test_override_receipt_without_source_view_hash_is_compatible(
+    tmp_path: Path,
+) -> None:
+    """emit_override_authority_receipt without source_view_hash must still
+    produce a valid receipt (backward-compatible path)."""
+    from arnold_pipelines.megaplan.control_interface import emit_override_authority_receipt
+
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="blocked"))
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state.setdefault("meta", {})["overrides"] = [
+        {"action": "resume-clarify", "timestamp": "2026-07-08T12:00:00Z"}
+    ]
+    _write_artifact(plan_dir, "clarification_answers.json", "{}")
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    emit_override_authority_receipt(plan_dir, state, "resume-clarify")
+
+    receipt_path = plan_dir / "boundary_receipts" / "override_resume_clarify_authority.json"
+    assert receipt_path.exists()
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    details = receipt.get("details", {})
+    assert "source_view_hash" not in details
+    assert "source_view_revision" not in details
+    # The receipt must still be valid with the core keys
+    assert details.get("dispatch_surface") == "workflow.native_policy"
+    assert "declared_target_ref" in details

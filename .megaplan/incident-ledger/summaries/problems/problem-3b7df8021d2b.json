@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-11T07:41:05.824626+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-runauthority-epic-cloud"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 1,
+  "owner_actor": "immediate_repair",
+  "problem_id": "problem-3b7df8021d2b",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:d175868a8fcf30fa05a2c2333f0b229576751848bc8a061acd4113d6455a0c06",
+    "last_seq": 354,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-3b7df8021d2b: repair-data outcome=discord_escalated kind=chain workspace=/workspace/runauthority-epic-cloud/Arnold"
+}

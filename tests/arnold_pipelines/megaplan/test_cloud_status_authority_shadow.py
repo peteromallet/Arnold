@@ -56,6 +56,7 @@ def test_cloud_status_shadow_keeps_authority_liveness_and_custody_separate(
     shadow = views["status_authority_shadow"]
     diagnostics = {item["code"]: item for item in shadow["diagnostics"]}
 
+    # --- legacy invariants preserved ----------------------------------------
     assert shadow["shadow"] is True
     assert shadow["read_only"] is True
     assert shadow["status_consumers_unchanged"] is True
@@ -72,11 +73,47 @@ def test_cloud_status_shadow_keeps_authority_liveness_and_custody_separate(
     assert diagnostics["publication_separate_from_execution_authority"][
         "domain"
     ] == "publication"
-    assert diagnostics["human_gate_separate_from_execution_authority"][
-        "source"
-    ] == str(needs_human_path)
-    assert diagnostics["recovery_custody_separate_from_execution_authority"][
-        "source"
-    ] == str(repair_progress_path)
+    assert str(needs_human_path) in diagnostics[
+        "human_gate_separate_from_execution_authority"
+    ]["source"]
+    assert str(repair_progress_path) in diagnostics[
+        "recovery_custody_separate_from_execution_authority"
+    ]["source"]
     assert "runner" not in views["execution_authority"]
     assert "publication" not in views["execution_authority"]
+
+    # --- five separated read-only domains ----------------------------------
+    assert "human_gate" in views
+    assert "recovery" in views
+    assert "megaplan_plan_view" in views
+
+    human_gate = views["human_gate"]
+    assert human_gate["shadow"] is True
+    assert human_gate["read_only"] is True
+    assert isinstance(human_gate["view_hash"], str) and len(human_gate["view_hash"]) == 64
+    assert isinstance(human_gate.get("observations"), (list, tuple))
+
+    recovery = views["recovery"]
+    assert recovery["shadow"] is True
+    assert recovery["read_only"] is True
+    assert isinstance(recovery["view_hash"], str) and len(recovery["view_hash"]) == 64
+    assert isinstance(recovery.get("observations"), (list, tuple))
+
+    # --- composition facade carries all five domains -----------------------
+    facade = views["megaplan_plan_view"]
+    assert facade["shadow"] is True
+    assert facade["read_only"] is True
+    assert isinstance(facade["view_hash"], str) and len(facade["view_hash"]) == 64
+    assert "execution" in facade
+    assert "runner" in facade
+    assert "publication" in facade
+    assert "human_gate" in facade
+    assert "recovery" in facade
+    # Facade hash differs from sub-view hashes (composition, not re-derivation)
+    assert facade["view_hash"] not in {
+        views["execution_authority"]["view_hash"],
+        views["runner"]["view_hash"],
+        views["publication"]["view_hash"],
+        human_gate["view_hash"],
+        recovery["view_hash"],
+    }

@@ -476,12 +476,12 @@ def test_publication_view_keeps_observations_unknowns_and_blockers_separate() ->
     assert blocked.status == "blocked"
     assert blocked.to_dict()["shadow"] is blocked.to_dict()["read_only"] is True
     assert {item.field for item in blocked.observations} == {
-        "branch", "dirty_workspace", "pushed_sha", "pull_request", "auth", "no_push",
+        "branch", "branch_ancestry", "dirty_workspace", "pushed_sha", "pull_request", "auth", "no_push",
     }
-    assert {item.code for item in blocked.diagnostics} == {"no_push_configured"}
+    assert {item.code for item in blocked.diagnostics} == {"no_push_configured", "publication_observation_unknown"}
     assert "chain/command" in blocked.source_paths
     unknown = {item.field for item in incomplete.observations if item.state == "unknown"}
-    assert unknown == {"dirty_workspace", "pushed_sha", "pull_request", "auth", "no_push"}
+    assert unknown == {"branch_ancestry", "dirty_workspace", "pushed_sha", "pull_request", "auth", "no_push"}
     assert incomplete.status == "unknown"
     assert all("accepted_task_ids" not in view.to_dict() for view in (blocked, incomplete))
 
@@ -535,3 +535,206 @@ def test_publication_blocked_is_independent_of_execution_and_runner_views() -> N
     assert runner.status == "stopped"
     assert publication.status == "blocked"
     assert publication.view_hash not in {execution.view_hash, runner.view_hash}
+
+
+# ---------------------------------------------------------------------------
+# derive_megaplan_recovery_view — recovery/repair custody projection
+# ---------------------------------------------------------------------------
+
+
+from arnold_pipelines.megaplan.authority import (
+    derive_megaplan_recovery_view,
+    MegaplanRecoveryView,
+    RecoveryCustodyObservation,
+    PermittedAction,
+    RecoveryDiagnostic,
+)
+
+
+def _r_custody(**overrides: object) -> dict[str, object]:
+    result: dict[str, object] = {
+        "custody_bucket": "repairable_not_repairing",
+        "blocker_id": "blocker-99",
+        "current_state": "blocked",
+        "retry_strategy": "manual_review",
+        "failure_kind": "execution_blocked",
+        "active_request_ids": ["req-1"],
+    }
+    result.update(overrides)
+    return result
+
+
+def test_derive_recovery_view_repairable_with_custody() -> None:
+    """Recovery view derives correctly from a repairable custody projection."""
+    view = derive_megaplan_recovery_view(repair_custody=_r_custody())
+    assert isinstance(view, MegaplanRecoveryView)
+    assert view.status == "repairable"
+    assert view.recovery_needed is True
+    assert view.custody_bucket == "repairable_not_repairing"
+    assert len(view.observations) == 1
+    assert view.observations[0].custody_bucket == "repairable_not_repairing"
+    assert view.observations[0].active_request_count == 1
+
+
+def test_derive_recovery_view_repairing() -> None:
+    """Repairing custody yields repairing status."""
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(custody_bucket="repairing", active_request_ids=[])
+    )
+    assert view.status == "repairing"
+    assert view.recovery_needed is True
+    assert view.custody_bucket == "repairing"
+
+
+def test_derive_recovery_view_human_required() -> None:
+    """Human-required custody yields human_required status."""
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(custody_bucket="human_required")
+    )
+    assert view.status == "human_required"
+    assert view.recovery_needed is True
+
+
+def test_derive_recovery_view_broken_superfixer() -> None:
+    """Broken superfixer custody yields broken_superfixer status."""
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(custody_bucket="broken_superfixer")
+    )
+    assert view.status == "broken_superfixer"
+    assert view.recovery_needed is True
+
+
+def test_derive_recovery_view_healthy_when_no_evidence() -> None:
+    """Empty custody (no bucket match → no distress) yields healthy."""
+    view = derive_megaplan_recovery_view(repair_custody={"custody_bucket": "some_unknown_value"})
+    assert view.status == "healthy"
+    assert view.recovery_needed is False
+
+
+def test_derive_recovery_view_unknown_without_custody() -> None:
+    """None custody yields unknown status with custody_unavailable diagnostic."""
+    view = derive_megaplan_recovery_view(repair_custody=None)
+    assert view.status == "unknown"
+    assert view.recovery_needed is False
+    assert view.custody_bucket is None
+    assert any(d.code == "custody_unavailable" for d in view.diagnostics)
+
+
+def test_derive_recovery_view_permitted_actions_repairable() -> None:
+    """Repairable custody yields repair_dispatch + retry permitted actions."""
+    view = derive_megaplan_recovery_view(repair_custody=_r_custody())
+    action_types = {a.action_type for a in view.permitted_actions}
+    assert "repair_dispatch" in action_types
+    assert "retry" in action_types
+
+
+def test_derive_recovery_view_permitted_actions_human_required() -> None:
+    """Human-required custody yields human_escalation permitted action."""
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(custody_bucket="human_required")
+    )
+    action_types = {a.action_type for a in view.permitted_actions}
+    assert "human_escalation" in action_types
+
+
+def test_derive_recovery_view_permitted_actions_broken() -> None:
+    """Broken superfixer yields investigate_superfixer + human_escalation."""
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(custody_bucket="broken_superfixer")
+    )
+    action_types = {a.action_type for a in view.permitted_actions}
+    assert "investigate_superfixer" in action_types
+    assert "human_escalation" in action_types
+
+
+def test_derive_recovery_view_deterministic_hashing() -> None:
+    """Same inputs produce same view_hash and observations."""
+    custody = _r_custody()
+    v1 = derive_megaplan_recovery_view(repair_custody=custody)
+    v2 = derive_megaplan_recovery_view(repair_custody=dict(custody))
+    assert v1.view_hash == v2.view_hash
+    assert v1.status == v2.status
+    assert len(v1.observations) == len(v2.observations)
+
+
+def test_derive_recovery_view_observations_order_independent() -> None:
+    """Recovery view observations are sorted (insertion order irrelevant)."""
+    v1 = derive_megaplan_recovery_view(repair_custody=_r_custody())
+    v2 = derive_megaplan_recovery_view(repair_custody=_r_custody())
+    assert v1.observations == v2.observations
+
+
+def test_derive_recovery_view_json_roundtrip() -> None:
+    """MegaplanRecoveryView survives JSON serialization round-trip."""
+    import json as _json
+    view = derive_megaplan_recovery_view(repair_custody=_r_custody())
+    dumped = view.to_json()
+    loaded = _json.loads(dumped)
+    assert loaded["status"] == "repairable"
+    assert loaded["recovery_needed"] is True
+    assert loaded["custody_bucket"] == "repairable_not_repairing"
+    assert loaded["shadow"] is True
+    assert loaded["read_only"] is True
+
+
+def test_derive_recovery_view_custody_unknown_bucket_is_healthy() -> None:
+    """Unrecognized custody bucket not in the known set defaults to healthy."""
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(custody_bucket="garbage_bucket")
+    )
+    assert view.status == "healthy"
+
+
+def test_derive_recovery_view_stale_active_steps_diagnostic() -> None:
+    """Stale active-step observations produce a stale_active_steps diagnostic."""
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(),
+        active_step_observations=[
+            {"source": "step/1", "stale": True},
+            {"source": "step/2", "stale": True},
+            {"source": "step/3", "stale": False},
+        ],
+    )
+    assert any(d.code == "stale_active_steps" for d in view.diagnostics)
+
+
+def test_derive_recovery_view_runner_blocked_diagnostic() -> None:
+    """A stopped runner produces a runner_unavailable diagnostic and blocked status."""
+    from arnold_pipelines.megaplan.authority.views import RunnerView, RunnerObservation
+
+    obs = RunnerObservation(
+        observation_id="obs-1", observation_type="process",
+        source="cloud/process.json", state="stopped",
+    )
+    runner = RunnerView(
+        schema_version=1, status="stopped", expected_identity=None,
+        observations=(obs,), source_paths=("cloud/process.json",),
+        diagnostics=(), view_hash="hash-1",
+    )
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(custody_bucket="repairable_not_repairing"),
+        runner_view=runner,
+    )
+    assert view.status == "blocked"
+    assert any(d.code == "runner_unavailable" for d in view.diagnostics)
+
+
+def test_derive_recovery_view_human_gate_blocked_diagnostic() -> None:
+    """A blocked human gate produces a human_gate_blocked diagnostic."""
+    from arnold_pipelines.megaplan.authority.views import HumanGateView, HumanGateObservation
+
+    hobs = HumanGateObservation(
+        observation_id="hobs-1", gate_type="needs_human",
+        gate_reason="manual review", source="markers/needs_human.json",
+    )
+    hgv = HumanGateView(
+        schema_version=1, status="blocked", human_required=True,
+        typed_gate="needs_human", observations=(hobs,),
+        source_paths=("markers/needs_human.json",), diagnostics=(), view_hash="hg-hash",
+    )
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(custody_bucket="repairable_not_repairing"),
+        human_gate_view=hgv,
+    )
+    assert view.status == "blocked"
+    assert any(d.code == "human_gate_blocked" for d in view.diagnostics)

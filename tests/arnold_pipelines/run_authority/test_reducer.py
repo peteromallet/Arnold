@@ -141,3 +141,71 @@ def test_reducer_source_has_no_external_or_domain_specific_reads() -> None:
         "import git", "megaplan", "finalize.json", "state.json", "os.environ",
     )
     assert all(term not in source for term in forbidden)
+
+
+def test_crash_restart_replay_with_prefix_and_reordering_produces_identical_projection() -> None:
+    """Simulate a crash-restart: prefix of records seen, then all records replayed
+    in a different order, some duplicated.  The reducer must produce the same
+    deterministic RunAuthorityView regardless of duplicate streams, replay
+    prefixes, or restart-equivalent reordering."""
+    evidence = EvidenceEnvelope("ev-1", "run-1", "rev-2", "result", "worker://one", {"ok": True})
+    fence = CoordinatorFence("run-1", "rev-2", "coord-1", 3)
+    grant = CapabilityGrant(
+        "grant-1", "run-1", "rev-2", "coord-1", 3, ("subject-1",), ("submit",), ("ev-1",)
+    )
+    attempt = SubjectAttempt("attempt-1", "run-1", "rev-2", "subject-1", "grant-1", "coord-1", 3, 1)
+    claim = Claim(
+        "claim-1", "run-1", "rev-2", "subject-1", "attempt-1", "grant-1", "coord-1", 3,
+        "result", ("ev-1",), "claim-key", {"state": "complete"},
+    )
+    decision = Decision(
+        "decision-1", "run-1", "rev-2", "subject-1", "attempt-1", "grant-1", "coord-1", 3,
+        "claim-1", "accepted", ("ev-1",), "decision-key", {"reason": "verified"},
+    )
+    claim_key = IdempotencyKey("claim-key", claim.payload_hash)
+    decision_key = IdempotencyKey("decision-key", decision.payload_hash)
+
+    full_stream = (evidence, fence, grant, attempt, claim_key, claim, decision_key, decision)
+
+    # All scenarios use the same journal_cursor so the resulting views
+    # (including cursor and view_hash) are identical — the contract is that
+    # the caller supplies the journal boundary and the reducer must not
+    # depend on input ordering or duplicate count for its projections.
+    cursor = 8
+
+    # Baseline: normal ordered stream
+    baseline = reduce_run_authority(full_stream, run_id="run-1", run_revision="rev-2", journal_cursor=cursor)
+
+    # Scenario 1: duplicate stream (full replay of every record)
+    duplicate = reduce_run_authority(
+        full_stream + full_stream, run_id="run-1", run_revision="rev-2", journal_cursor=cursor
+    )
+    assert duplicate.to_dict() == baseline.to_dict()
+
+    # Scenario 2: crash after prefix, then full replay
+    # (events 1-4 seen, crash, then all events 1-8 replayed)
+    prefix = full_stream[:4]  # evidence, fence, grant, attempt
+    crash_replay = reduce_run_authority(
+        prefix + full_stream, run_id="run-1", run_revision="rev-2", journal_cursor=cursor
+    )
+    assert crash_replay.to_dict() == baseline.to_dict()
+
+    # Scenario 3: restart-equivalent reordering after crash
+    # Prefix duplicated, then full stream reversed then forward again
+    shuffled = reduce_run_authority(
+        prefix + tuple(reversed(full_stream)) + full_stream,
+        run_id="run-1", run_revision="rev-2", journal_cursor=cursor,
+    )
+    assert shuffled.to_dict() == baseline.to_dict()
+
+    # Scenario 4: interleaved duplicates
+    interleaved = (evidence, evidence, fence, grant, attempt, claim_key,
+                   claim, decision_key, decision, fence, grant, attempt)
+    interleaved_view = reduce_run_authority(
+        interleaved, run_id="run-1", run_revision="rev-2", journal_cursor=cursor
+    )
+    assert interleaved_view.to_dict() == baseline.to_dict()
+
+    # All views must have the same hash (strongest determinism check)
+    assert len({baseline.view_hash, duplicate.view_hash, crash_replay.view_hash,
+                shuffled.view_hash, interleaved_view.view_hash}) == 1
