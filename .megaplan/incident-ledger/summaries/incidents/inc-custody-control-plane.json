@@ -1,0 +1,31 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 1,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-11T07:41:05.814472+00:00",
+  "incident_id": "inc-custody-control-plane",
+  "kind": "incident_summary",
+  "latest_actor": "repair_system",
+  "next_expected_event": null,
+  "outcome": "recovered",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-bef9405c197d"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:d175868a8fcf30fa05a2c2333f0b229576751848bc8a061acd4113d6455a0c06",
+    "last_seq": 345,
+    "projection": "incidents"
+  },
+  "state": "verified_recovered",
+  "summary_text": "inc-custody-control-plane: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/custody-control-plane-240c2cca/arnold"
+}

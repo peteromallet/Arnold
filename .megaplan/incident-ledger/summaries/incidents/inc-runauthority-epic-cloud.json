@@ -1,0 +1,170 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 33,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "runauthority-epic-cloud",
+      "status": "2026-07-10T23:23:09.226019+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "runauthority-epic-cloud",
+      "status": "2026-07-10T23:23:09.226019+00:00"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-runauthority-epic-cloud.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-runauthority-epic-cloud.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/incident-ledger/summaries/problems/problem-72f87afd3954.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/incident-ledger/summaries/problems/problem-72f87afd3954.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "recursion_blocked"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "recursion_blocked"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "recursion_blocked"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "recursion_blocked"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T011720Z.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T011720Z.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T013357Z.json",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260711T013357Z.json",
+      "session_id": "runauthority-epic-cloud"
+    }
+  ],
+  "generated_at": "2026-07-11T07:41:05.821220+00:00",
+  "incident_id": "inc-runauthority-epic-cloud",
+  "kind": "incident_summary",
+  "latest_actor": "watchdog",
+  "next_expected_event": "watchdog.dispatch",
+  "outcome": "stopped",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "repeated_attempts_without_new_evidence",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-3b7df8021d2b",
+    "problem-67a765759422",
+    "problem-72f87afd3954",
+    "problem-8f475cf8e677",
+    "problem-bd43205325d0",
+    "problem-e20c45ae0eb0",
+    "problem-fc037a661409"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:d175868a8fcf30fa05a2c2333f0b229576751848bc8a061acd4113d6455a0c06",
+    "last_seq": 369,
+    "projection": "incidents"
+  },
+  "state": "detection",
+  "summary_text": "inc-runauthority-epic-cloud: session stopped and needs repair attention"
+}
