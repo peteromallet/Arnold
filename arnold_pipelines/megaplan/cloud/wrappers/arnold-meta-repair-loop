@@ -187,7 +187,6 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     build_meta_repair_prompt,
     evaluate_meta_repair_triggers,
     load_redacted_evidence,
-    stale_repair_evidence_reason,
 )
 
 session, repair_data_dir, repair_data_path, marker_dir, enabled, watchdog_trigger = sys.argv[1:7]
@@ -209,29 +208,21 @@ if trigger is not None:
         marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
     )
-    stale_reason = stale_repair_evidence_reason(
+    evidence["current_target_corroboration"] = current_target_observation
+    classification = MetaRepairClassification(
+        session=session,
+        trigger=trigger,
+        rationale=(
+            f"watchdog preclassified trigger={trigger.value}; "
+            "meta loop preserves bounded trigger custody and treats live target discovery as corroboration",
+        ),
         evidence=evidence,
-        current_target_observation=current_target_observation,
     )
-    if stale_reason:
-        classification = MetaRepairClassification(
-            session=session,
-            trigger=None,
-            rationale=(stale_reason,),
-            evidence=evidence,
-        )
-    else:
-        classification = MetaRepairClassification(
-            session=session,
-            trigger=trigger,
-            rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
-            evidence=evidence,
-        )
-        prompt = build_meta_repair_prompt(
-            classification,
-            repair_data_dir=repair_data_dir,
-            force_emergency=force_emergency,
-        )
+    prompt = build_meta_repair_prompt(
+        classification,
+        repair_data_dir=repair_data_dir,
+        force_emergency=force_emergency,
+    )
 else:
     classification, prompt = evaluate_meta_repair_triggers(
         session,
