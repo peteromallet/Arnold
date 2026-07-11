@@ -2346,6 +2346,84 @@ class TestLiveSignalFiltering:
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
 
+    def test_meta_repair_summary_reconciles_partial_liveness_with_new_chain_target(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "old-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "old-plan", "current_state": "done", "latest_failure": None}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "new-plan",
+                    "last_state": "finalized",
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        sidecar_events = tmp_path / "repair-data.d" / "events"
+        repair_root.mkdir(parents=True)
+        sidecar_events.mkdir(parents=True)
+        (repair_root / "old-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "old-session",
+                    "outcome": "partial_liveness",
+                    "current_attempt_id": 1,
+                    "current_advancement_snapshot": {
+                        "milestone_or_plan": "superseded-plan",
+                        "current_state": "authority_divergence",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sidecar_events / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "session": "old-session",
+                        "run_kind": "chain",
+                        "plan_name": "superseded-plan",
+                        "health": "alive",
+                        "outcome": "partial_liveness",
+                        "recorded_at": f"2026-07-03T22:0{idx}:00+00:00",
+                    }
+                )
+                + "\n"
+                for idx in range(2)
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "old-plan",
+                    "session": "old-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert findings["findings"] == []
+        assert len(findings["green_checks"]) == 1
+
     def test_gather_flags_watchdog_complete_chain_health_disagreement(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"

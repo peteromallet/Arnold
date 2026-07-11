@@ -757,6 +757,7 @@ def _meta_repair_summary(
     meta_refs,
     *,
     run_kind="",
+    current_plan_name="",
     current_state="",
     active_step_phase="",
     active_step_liveness=None,
@@ -909,6 +910,26 @@ def _meta_repair_summary(
             "missing_meta_run_evidence": False,
         }
     try:
+        observed_plan_name = chain_current_plan if normalized_kind != "plan" else str(current_plan_name or "").strip()
+        current_target_observation = {
+            "authoritative_source": "chain_state" if normalized_kind != "plan" and chain_current else "plan_state",
+            "current_refs": {
+                "run_kind": normalized_kind,
+                "current_plan_name": observed_plan_name,
+                "chain_current_plan_name": chain_current_plan,
+                "plan_current_state": normalized_state,
+                "chain_last_state": chain_last_state,
+            },
+            "plan_state": {"present": bool(current_plan_name)},
+            "chain_state": {"present": bool(chain_current)},
+            "active_step_heartbeat": {
+                "active": bool(str(active_step_phase or "").strip()),
+                "worker_pid_alive": active_step_liveness.get("worker_pid_alive")
+                if isinstance(active_step_liveness, dict)
+                else None,
+            },
+            "stale_evidence": [],
+        }
         classification, _ = evaluate_meta_repair_triggers(
             session,
             repair_data_dir=repair_root,
@@ -916,6 +937,7 @@ def _meta_repair_summary(
             attempt_outcomes=attempt_outcomes,
             failure_kinds=failure_kinds,
             repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
+            current_target_observation=current_target_observation,
             load_evidence=True,
         )
         should_dispatch = bool(classification.should_dispatch)
@@ -3005,6 +3027,7 @@ def _plan_evidence(entry):
         repair_data,
         cross_refs.get("meta_repair_refs") or [],
         run_kind=run_kind,
+        current_plan_name=plan,
         current_state=state.get("current_state") or "",
         active_step_phase=active.get("phase") or "",
         active_step_liveness=active_liveness,
