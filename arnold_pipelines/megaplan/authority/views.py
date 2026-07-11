@@ -126,6 +126,7 @@ class RunnerView:
 
 _PUBLICATION_FIELDS = (
     "branch",
+    "branch_ancestry",
     "dirty_workspace",
     "pushed_sha",
     "pull_request",
@@ -386,6 +387,7 @@ def _publication_observation_values(
     values: dict[str, str | bool] = {}
     string_aliases = {
         "branch": ("branch", "branch_name", "current_branch"),
+        "branch_ancestry": ("branch_ancestry", "ancestry", "ancestry_status"),
         "pushed_sha": ("pushed_sha", "pushed_commit", "remote_sha", "published_sha"),
         "pull_request": ("pull_request", "pr_url", "pr", "pr_number"),
     }
@@ -407,6 +409,8 @@ def _publication_observation_values(
     typed_fields = {
         "branch": "branch",
         "git_branch": "branch",
+        "branch_ancestry": "branch_ancestry",
+        "ancestry": "branch_ancestry",
         "workspace": "dirty_workspace",
         "dirty_workspace": "dirty_workspace",
         "push": "pushed_sha",
@@ -483,10 +487,20 @@ def derive_publication_view(
         diagnostics.append(PublicationDiagnostic(
             "publication_auth_unavailable", item.field, "publication credentials are unavailable", item.source,
         ))
+    if by_field["branch_ancestry"].state == "known" and by_field["branch_ancestry"].value == "invalid":
+        item = by_field["branch_ancestry"]
+        diagnostics.append(PublicationDiagnostic(
+            "invalid_branch_ancestry", item.field,
+            "branch has no common history with the target base", item.source,
+        ))
 
     if any(item.state == "contradicted" for item in normalized):
         status = "contradicted"
-    elif any(by_field[field].value is True for field in ("dirty_workspace", "no_push")) or by_field["auth"].value is False:
+    elif (
+        any(by_field[field].value is True for field in ("dirty_workspace", "no_push"))
+        or by_field["auth"].value is False
+        or (by_field["branch_ancestry"].state == "known" and by_field["branch_ancestry"].value == "invalid")
+    ):
         status = "blocked"
     elif all(by_field[field].state == "known" for field in _PUBLICATION_FIELDS):
         status = "ready"
@@ -954,18 +968,1017 @@ def derive_plan_execution_view(
     return PlanExecutionView(**values, view_hash=digest)
 
 
+# ---------------------------------------------------------------------------
+# HumanGateView — read-only projection of human-gate signals
+# ---------------------------------------------------------------------------
+
+_VALID_GATE_TYPES = frozenset(
+    {
+        "needs_human",
+        "override",
+        "user_action",
+        "approval_checkpoint",
+        "denial_checkpoint",
+        "suspension",
+    }
+)
+
+_VALID_GATE_STATUSES = frozenset(
+    {"blocked", "attention_needed", "resolved", "unknown"}
+)
+
+
+@dataclass(frozen=True, order=True)
+class HumanGateObservation:
+    """A single observation about a potential human gate.
+
+    This is deliberately *not* authority.  A ``needs_human`` sidecar or an
+    ``override`` artifact is observed and projected; the observation does not
+    block execution or declare a gate outcome on its own.
+    """
+
+    observation_id: str
+    gate_type: str
+    gate_reason: str
+    source: str
+    stale_token: bool = False
+    superseded: bool = False
+
+    def __post_init__(self) -> None:
+        if self.gate_type not in _VALID_GATE_TYPES:
+            raise ValueError(
+                f"unsupported gate_type {self.gate_type!r}; must be one of "
+                + ", ".join(sorted(_VALID_GATE_TYPES))
+            )
+        if not self.observation_id or not self.gate_reason or not self.source:
+            raise ValueError(
+                "HumanGateObservation requires observation_id, gate_reason, and source"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observation_id": self.observation_id,
+            "gate_type": self.gate_type,
+            "gate_reason": self.gate_reason,
+            "source": self.source,
+            "stale_token": self.stale_token,
+            "superseded": self.superseded,
+        }
+
+
+@dataclass(frozen=True, order=True)
+class HumanGateDiagnostic:
+    """A non-authoritative reason a human-gate signal may be stale, superseded,
+    or ambiguous.
+
+    Diagnostics are observations about observations — they explain *why* a
+    signal should not be treated as a live gate, but they do not themselves
+    open or close gates.
+    """
+
+    code: str
+    reason: str
+    source: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"code": self.code, "reason": self.reason, "source": self.source}
+
+
+@dataclass(frozen=True)
+class HumanGateView:
+    """Read-only projection of human-gate signals.
+
+    This view collects ``needs_human``, ``override``, ``user_action``, and
+    related sidecar observations and reports whether human attention appears
+    to be required, resolved, or unknown.  It is a Megaplan-local sibling of
+    ``RunnerView`` and ``PublicationView`` — diagnostics only, never execution
+    authority.
+    """
+
+    schema_version: int
+    status: str
+    human_required: bool
+    typed_gate: str | None
+    observations: tuple[HumanGateObservation, ...]
+    source_paths: tuple[str, ...]
+    diagnostics: tuple[HumanGateDiagnostic, ...]
+    view_hash: str
+
+    def __post_init__(self) -> None:
+        if self.status not in _VALID_GATE_STATUSES:
+            raise ValueError(
+                f"unsupported HumanGateView status {self.status!r}"
+            )
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status,
+            "human_required": self.human_required,
+            "typed_gate": self.typed_gate,
+            "observations": [item.to_dict() for item in self.observations],
+            "source_paths": list(self.source_paths),
+            "diagnostics": [item.to_dict() for item in self.diagnostics],
+            "shadow": True,
+            "read_only": True,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._payload(), "view_hash": self.view_hash}
+
+    def to_json(self) -> str:
+        return canonical_json(self.to_dict())
+
+
+def _normalize_human_gate_observation(
+    signal: Mapping[str, Any],
+    *,
+    current_plan_revision: str | None,
+) -> HumanGateObservation:
+    """Normalize one human-gate signal into a stable observation.
+
+    The signal may come from a needs-human sidecar, override artifact,
+    user_action record, or checkpoint.  Every field is extracted defensively;
+    nothing is trusted as authority.
+    """
+
+    source = _optional_string(signal.get("source")) or "observation://unknown"
+    gate_type_raw = _optional_string(
+        signal.get("gate_type") or signal.get("type") or signal.get("kind")
+    )
+    gate_type = gate_type_raw.lower() if gate_type_raw else "needs_human"
+    if gate_type not in _VALID_GATE_TYPES:
+        gate_type = "needs_human"
+
+    reason = _optional_string(
+        signal.get("gate_reason")
+        or signal.get("reason")
+        or signal.get("rationale")
+    ) or "unspecified"
+
+    # --- stale-token detection ------------------------------------------------
+    stale_token = False
+    plan_ref_raw = signal.get("plan_ref") or signal.get("plan_revision") or signal.get("target_ref")
+    plan_ref = _optional_string(plan_ref_raw)
+    if current_plan_revision and plan_ref and plan_ref != current_plan_revision:
+        stale_token = True
+
+    # Also honour an explicit stale marker.
+    if signal.get("stale_token") is True or signal.get("stale") is True:
+        stale_token = True
+
+    # --- superseded-override detection ----------------------------------------
+    superseded = False
+    if signal.get("superseded") is True or signal.get("superseded_override") is True:
+        superseded = True
+
+    # --- deterministic observation id -----------------------------------------
+    observation_id = _optional_string(
+        signal.get("observation_id") or signal.get("id")
+    )
+    if observation_id is None:
+        unsigned = {
+            "gate_type": gate_type,
+            "gate_reason": reason,
+            "source": source,
+            "stale_token": stale_token,
+            "superseded": superseded,
+        }
+        observation_id = hashlib.sha256(
+            canonical_json(unsigned).encode("utf-8")
+        ).hexdigest()
+
+    return HumanGateObservation(
+        observation_id=observation_id,
+        gate_type=gate_type,
+        gate_reason=reason,
+        source=source,
+        stale_token=stale_token,
+        superseded=superseded,
+    )
+
+
+def derive_human_gate_view(
+    human_gate_signals: Iterable[Mapping[str, Any]],
+    *,
+    current_plan_revision: str | None = None,
+) -> HumanGateView:
+    """Project human-gate readiness without opening or closing gates.
+
+    Every input is treated as an observation.  The view reports whether human
+    attention appears required and diagnoses stale tokens (gate references a
+    different plan revision) and superseded overrides, but it never blocks
+    execution on its own.
+
+    Parameters
+    ----------
+    human_gate_signals:
+        Iterable of signal mappings.  Each mapping is expected to have at
+        least a ``source`` and a ``gate_type`` (or ``type``/``kind``) key,
+        plus optional ``plan_ref``, ``stale_token``, and ``superseded`` flags.
+    current_plan_revision:
+        When provided, plan references in signals that differ from this value
+        are flagged as stale-token diagnostics.
+    """
+
+    normalized = tuple(
+        sorted(
+            {
+                _normalize_human_gate_observation(
+                    signal, current_plan_revision=current_plan_revision
+                )
+                for signal in human_gate_signals
+                if isinstance(signal, Mapping)
+            },
+            key=lambda item: canonical_json(item.to_dict()),
+        )
+    )
+
+    diagnostics: list[HumanGateDiagnostic] = []
+
+    # --- stale-token diagnostics ----------------------------------------------
+    stale_tokens = tuple(item for item in normalized if item.stale_token)
+    for item in stale_tokens:
+        diagnostics.append(
+            HumanGateDiagnostic(
+                "stale_token",
+                f"human-gate observation {item.observation_id!r} references a "
+                f"different plan revision; gate_type={item.gate_type!r}",
+                item.source,
+            )
+        )
+
+    # --- superseded-override diagnostics --------------------------------------
+    superseded_items = tuple(item for item in normalized if item.superseded)
+    for item in superseded_items:
+        diagnostics.append(
+            HumanGateDiagnostic(
+                "superseded_override",
+                f"override observation {item.observation_id!r} has been "
+                f"superseded by a more recent override",
+                item.source,
+            )
+        )
+
+    # --- ambiguous / mechanical diagnostics -----------------------------------
+    needs_human_items = tuple(
+        item for item in normalized if item.gate_type == "needs_human"
+    )
+    override_items = tuple(
+        item for item in normalized if item.gate_type == "override"
+    )
+    user_action_items = tuple(
+        item for item in normalized if item.gate_type == "user_action"
+    )
+
+    # If there's a needs_human but it's stale, report it.
+    live_needs_human = tuple(
+        item for item in needs_human_items if not item.stale_token
+    )
+    if needs_human_items and not live_needs_human:
+        diagnostics.append(
+            HumanGateDiagnostic(
+                "stale_needs_human",
+                "all needs-human observations reference stale plan revisions; "
+                "no live human gate detected",
+                ",".join(sorted({item.source for item in needs_human_items})),
+            )
+        )
+
+    # If there's an override but it's stale or superseded, note it.
+    live_overrides = tuple(
+        item
+        for item in override_items
+        if not item.stale_token and not item.superseded
+    )
+    if override_items and not live_overrides:
+        diagnostics.append(
+            HumanGateDiagnostic(
+                "stale_or_superseded_override",
+                "all override observations are either stale or superseded; "
+                "no active override is in effect",
+                ",".join(sorted({item.source for item in override_items})),
+            )
+        )
+
+    # --- status determination -------------------------------------------------
+    # Priority: blocked (live needs-human or user_action present) >
+    #           attention_needed (some signal but not definitely blocking) >
+    #           resolved (explicit approval/denial checkpoint without live needs-human) >
+    #           unknown
+
+    has_live_blocker = bool(live_needs_human) or bool(user_action_items)
+    has_approval = any(
+        item.gate_type in ("approval_checkpoint",) for item in normalized
+    )
+    has_denial = any(
+        item.gate_type in ("denial_checkpoint",) for item in normalized
+    )
+    has_resolution = has_approval or has_denial or bool(live_overrides)
+
+    if has_live_blocker:
+        status = "blocked"
+        human_required = True
+    elif has_resolution and not has_live_blocker:
+        status = "resolved"
+        human_required = False
+    elif normalized:
+        status = "attention_needed"
+        human_required = False  # diagnostic, not a definite block
+    else:
+        status = "unknown"
+        human_required = False
+
+    # --- typed gate extraction ------------------------------------------------
+    typed_gate: str | None = None
+    if human_required and live_needs_human:
+        typed_gate = live_needs_human[0].gate_reason or live_needs_human[0].gate_type
+
+    values = {
+        "schema_version": 1,
+        "status": status,
+        "human_required": human_required,
+        "typed_gate": typed_gate,
+        "observations": normalized,
+        "source_paths": tuple(sorted({item.source for item in normalized})),
+        "diagnostics": tuple(sorted(set(diagnostics))),
+    }
+    unsigned = HumanGateView(**values, view_hash="pending")
+    digest = hashlib.sha256(
+        canonical_json(unsigned._payload()).encode("utf-8")
+    ).hexdigest()
+    return HumanGateView(**values, view_hash=digest)
+
+
+# ---------------------------------------------------------------------------
+# MegaplanRecoveryView — read-only projection of recovery/repair custody
+# ---------------------------------------------------------------------------
+
+_VALID_RECOVERY_STATUSES = frozenset(
+    {
+        "repairing",
+        "repairable",
+        "human_required",
+        "broken_superfixer",
+        "healthy",
+        "blocked",
+        "unknown",
+    }
+)
+
+_VALID_PERMITTED_ACTION_TYPES = frozenset(
+    {
+        "retry",
+        "repair_dispatch",
+        "human_escalation",
+        "no_action",
+        "investigate_superfixer",
+    }
+)
+
+
+@dataclass(frozen=True, order=True)
+class RecoveryCustodyObservation:
+    """A single, source-addressable fact about repair/retry custody.
+
+    This observation is deliberately *not* authority.  It reports what the
+    repair custody projection found without deciding whether a repair should
+    proceed.  Sibling views (runner, execution, publication, human-gate) are
+    consumed separately so that recovery classification does not conflate
+    repair state with runner liveness or publication blockers.
+    """
+
+    observation_id: str
+    custody_bucket: str
+    blocker_id: str
+    current_state: str
+    retry_strategy: str
+    failure_kind: str
+    active_request_count: int
+    source: str
+
+    def __post_init__(self) -> None:
+        if not self.observation_id or not self.source:
+            raise ValueError(
+                "RecoveryCustodyObservation requires observation_id and source"
+            )
+        if self.active_request_count < 0:
+            raise ValueError("active_request_count must be non-negative")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observation_id": self.observation_id,
+            "custody_bucket": self.custody_bucket,
+            "blocker_id": self.blocker_id,
+            "current_state": self.current_state,
+            "retry_strategy": self.retry_strategy,
+            "failure_kind": self.failure_kind,
+            "active_request_count": self.active_request_count,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True, order=True)
+class PermittedAction:
+    """A recovery action that is permitted given the current projection.
+
+    Permitted actions are derived from the custody bucket, sibling views,
+    and active-step observations.  They are diagnostic — they describe what
+    *may* be done, not what *must* be done.
+    """
+
+    action_id: str
+    action_type: str
+    rationale: str
+    source: str
+
+    def __post_init__(self) -> None:
+        if self.action_type not in _VALID_PERMITTED_ACTION_TYPES:
+            raise ValueError(
+                f"unsupported permitted action type {self.action_type!r}; "
+                f"must be one of {', '.join(sorted(_VALID_PERMITTED_ACTION_TYPES))}"
+            )
+        if not self.action_id or not self.rationale or not self.source:
+            raise ValueError(
+                "PermittedAction requires action_id, rationale, and source"
+            )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "action_id": self.action_id,
+            "action_type": self.action_type,
+            "rationale": self.rationale,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True, order=True)
+class RecoveryDiagnostic:
+    """A non-authoritative reason the recovery view may be uncertain, stale,
+    or contradictory.
+
+    Diagnostics explain *why* a recovery action may not be safe or why the
+    current custody projection may need re-evaluation.  They are observations
+    about observations.
+    """
+
+    code: str
+    reason: str
+    source: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"code": self.code, "reason": self.reason, "source": self.source}
+
+
+@dataclass(frozen=True)
+class MegaplanRecoveryView:
+    """Read-only projection of repair/recovery custody and permitted actions.
+
+    This view composes a preloaded repair custody projection with sibling
+    runner, execution, publication, and human-gate views to classify whether
+    recovery is needed, what custody bucket the run is in, and which recovery
+    actions are permitted.
+
+    It is a Megaplan-local sibling of ``RunnerView``, ``PublicationView``,
+    ``PlanExecutionView``, and ``HumanGateView`` — diagnostics only, never
+    execution authority.
+    """
+
+    schema_version: int
+    status: str
+    recovery_needed: bool
+    custody_bucket: str | None
+    observations: tuple[RecoveryCustodyObservation, ...]
+    permitted_actions: tuple[PermittedAction, ...]
+    source_paths: tuple[str, ...]
+    diagnostics: tuple[RecoveryDiagnostic, ...]
+    view_hash: str
+
+    def __post_init__(self) -> None:
+        if self.status not in _VALID_RECOVERY_STATUSES:
+            raise ValueError(
+                f"unsupported MegaplanRecoveryView status {self.status!r}"
+            )
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status,
+            "recovery_needed": self.recovery_needed,
+            "custody_bucket": self.custody_bucket,
+            "observations": [item.to_dict() for item in self.observations],
+            "permitted_actions": [item.to_dict() for item in self.permitted_actions],
+            "source_paths": list(self.source_paths),
+            "diagnostics": [item.to_dict() for item in self.diagnostics],
+            "shadow": True,
+            "read_only": True,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._payload(), "view_hash": self.view_hash}
+
+    def to_json(self) -> str:
+        return canonical_json(self.to_dict())
+
+
+def _normalize_recovery_custody_observation(
+    custody: Mapping[str, Any],
+    *,
+    source: str = "custody://projection",
+) -> RecoveryCustodyObservation:
+    """Normalize one repair custody projection into a stable observation.
+
+    Every field is extracted defensively; nothing is trusted as authority.
+    The custody projection is treated as a preloaded artifact — this function
+    does not read the filesystem, Git, processes, or the wall clock.
+    """
+
+    custody_bucket = _optional_string(custody.get("custody_bucket")) or "unknown"
+    blocker_id = _optional_string(custody.get("blocker_id")) or ""
+    current_state = _optional_string(custody.get("current_state")) or "unknown"
+    retry_strategy = _optional_string(custody.get("retry_strategy")) or ""
+    failure_kind = _optional_string(custody.get("failure_kind")) or ""
+    active_requests = custody.get("active_request_ids")
+    active_count = len(active_requests) if isinstance(active_requests, (list, tuple)) else 0
+
+    unsigned = {
+        "custody_bucket": custody_bucket,
+        "blocker_id": blocker_id,
+        "current_state": current_state,
+        "retry_strategy": retry_strategy,
+        "failure_kind": failure_kind,
+        "active_request_count": active_count,
+        "source": source,
+    }
+    observation_id = hashlib.sha256(
+        canonical_json(unsigned).encode("utf-8")
+    ).hexdigest()
+
+    return RecoveryCustodyObservation(
+        observation_id=observation_id,
+        custody_bucket=custody_bucket,
+        blocker_id=blocker_id,
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
+        active_request_count=active_count,
+        source=source,
+    )
+
+
+def derive_megaplan_recovery_view(
+    repair_custody: Mapping[str, Any] | None = None,
+    *,
+    runner_view: RunnerView | None = None,
+    execution_view: PlanExecutionView | None = None,
+    publication_view: PublicationView | None = None,
+    human_gate_view: HumanGateView | None = None,
+    active_step_observations: Iterable[Mapping[str, Any]] = (),
+    custody_source: str = "custody://projection",
+) -> MegaplanRecoveryView:
+    """Project recovery/repair readiness without performing I/O or deciding execution.
+
+    The function composes a preloaded repair custody projection with sibling
+    runner, execution, publication, and human-gate views to classify whether
+    recovery is needed and which recovery actions are permitted.
+
+    Parameters
+    ----------
+    repair_custody:
+        A preloaded ``RepairCustodyProjection`` (or compatible mapping).  When
+        ``None``, the view reports ``unknown`` and emits no custody observation.
+    runner_view:
+        Precomputed ``RunnerView`` for liveness cross-checking.
+    execution_view:
+        Precomputed ``PlanExecutionView`` for task-state cross-checking.
+    publication_view:
+        Precomputed ``PublicationView`` for publication-blocker cross-checking.
+    human_gate_view:
+        Precomputed ``HumanGateView`` for human-gate cross-checking.
+    active_step_observations:
+        Iterable of stale or active-step observations that may inform recovery
+        classification (e.g., step-duration anomalies, retry-loop evidence).
+    custody_source:
+        Source path label for the custody projection artifact.
+    """
+
+    diagnostics: list[RecoveryDiagnostic] = []
+    observations: list[RecoveryCustodyObservation] = []
+    permitted_actions: list[PermittedAction] = []
+    source_paths: set[str] = set()
+
+    # --- normalize custody projection ----------------------------------------
+    custody_obs: RecoveryCustodyObservation | None = None
+    custody_bucket: str | None = None
+    if repair_custody is not None and isinstance(repair_custody, Mapping):
+        custody_obs = _normalize_recovery_custody_observation(
+            repair_custody, source=custody_source
+        )
+        observations.append(custody_obs)
+        source_paths.add(custody_source)
+        custody_bucket = custody_obs.custody_bucket
+    else:
+        diagnostics.append(
+            RecoveryDiagnostic(
+                "custody_unavailable",
+                "no repair custody projection available; recovery classification is unknown",
+                custody_source,
+            )
+        )
+
+    # --- incorporate sibling view source paths -------------------------------
+    for view in (runner_view, publication_view, human_gate_view):
+        if view is not None and hasattr(view, "source_paths"):
+            source_paths.update(view.source_paths)
+    if execution_view is not None:
+        for task in execution_view.tasks:
+            source_paths.update(task.source_paths)
+
+    # --- runner-liveness cross-check -----------------------------------------
+    runner_dead = False
+    if runner_view is not None:
+        if runner_view.status in ("stopped", "stale", "identity_mismatch"):
+            runner_dead = True
+            diagnostics.append(
+                RecoveryDiagnostic(
+                    "runner_unavailable",
+                    f"runner is {runner_view.status}; recovery actions may be unsafe",
+                    ",".join(runner_view.source_paths)
+                    or "observation://unknown",
+                )
+            )
+
+    # --- publication-blocker cross-check -------------------------------------
+    publication_blocked = False
+    if publication_view is not None:
+        if publication_view.status in ("blocked", "contradicted"):
+            publication_blocked = True
+            diagnostics.append(
+                RecoveryDiagnostic(
+                    "publication_blocked",
+                    f"publication is {publication_view.status}; recovery may be "
+                    "ineffective until publication is resolved",
+                    ",".join(publication_view.source_paths)
+                    or "observation://unknown",
+                )
+            )
+
+    # --- execution-view cross-check ------------------------------------------
+    if execution_view is not None and execution_view.quarantine_ids:
+        diagnostics.append(
+            RecoveryDiagnostic(
+                "authority_quarantine",
+                f"execution authority has {len(execution_view.quarantine_ids)} "
+                "quarantined records; recovery decisions may be based on "
+                "incomplete authority",
+                ",".join(execution_view.source_paths) or "observation://unknown",
+            )
+        )
+
+    # --- human-gate cross-check ----------------------------------------------
+    human_blocked = False
+    if human_gate_view is not None:
+        if human_gate_view.status == "blocked" and human_gate_view.human_required:
+            human_blocked = True
+            diagnostics.append(
+                RecoveryDiagnostic(
+                    "human_gate_blocked",
+                    "human gate is blocked and requires human attention; "
+                    "automated recovery may be overridden",
+                    ",".join(human_gate_view.source_paths)
+                    or "observation://unknown",
+                )
+            )
+
+    # --- active-step staleness diagnostics -----------------------------------
+    stale_steps = 0
+    for step in active_step_observations:
+        if not isinstance(step, Mapping):
+            continue
+        step_source = _optional_string(step.get("source")) or "observation://unknown"
+        source_paths.add(step_source)
+        if step.get("stale") is True or step.get("stale_step") is True:
+            stale_steps += 1
+    if stale_steps > 0:
+        diagnostics.append(
+            RecoveryDiagnostic(
+                "stale_active_steps",
+                f"{stale_steps} active-step observation(s) are stale; "
+                "recovery custody may be out of date",
+                ",".join(sorted(source_paths)) or "observation://unknown",
+            )
+        )
+
+    # --- permitted-action derivation -----------------------------------------
+    # Actions are derived from the custody bucket *and* sibling-view
+    # cross-checks.  The mapping is:
+    #
+    #   custody bucket            | default permitted actions
+    #   --------------------------+----------------------------------------
+    #   repairing                 | no_action (already repairing)
+    #   repairable_not_repairing  | repair_dispatch, retry
+    #   human_required            | human_escalation
+    #   broken_superfixer         | investigate_superfixer
+    #   (unknown/missing)         | no_action
+    #
+    # When the runner is dead, publication is blocked, or the human gate
+    # requires attention, recovery actions that would be ineffective or
+    # overridden are still listed but paired with diagnostics.
+
+    action_counter = 0
+
+    def _add_action(action_type: str, rationale: str, source: str) -> None:
+        nonlocal action_counter
+        action_id = hashlib.sha256(
+            canonical_json(
+                {
+                    "action_type": action_type,
+                    "rationale": rationale,
+                    "source": source,
+                }
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        permitted_actions.append(
+            PermittedAction(
+                action_id=action_id,
+                action_type=action_type,
+                rationale=rationale,
+                source=source,
+            )
+        )
+
+    if custody_bucket is None:
+        _add_action(
+            "no_action",
+            "no custody projection available; recovery classification is unknown",
+            custody_source,
+        )
+    elif custody_bucket == "repairing":
+        _add_action(
+            "no_action",
+            "repair is already in progress",
+            ",".join(sorted(source_paths)) or custody_source,
+        )
+    elif custody_bucket == "repairable_not_repairing":
+        if runner_dead:
+            _add_action(
+                "no_action",
+                "runner is unavailable; repair dispatch is deferred",
+                ",".join(sorted(source_paths)) or custody_source,
+            )
+            diagnostics.append(
+                RecoveryDiagnostic(
+                    "repair_blocked_by_runner",
+                    "repair is indicated but the runner is not live",
+                    ",".join(runner_view.source_paths) if runner_view else custody_source,
+                )
+            )
+        elif publication_blocked:
+            _add_action(
+                "no_action",
+                "publication is blocked; repair dispatch is deferred",
+                ",".join(sorted(source_paths)) or custody_source,
+            )
+            diagnostics.append(
+                RecoveryDiagnostic(
+                    "repair_blocked_by_publication",
+                    "repair is indicated but publication is blocked",
+                    ",".join(publication_view.source_paths) if publication_view else custody_source,
+                )
+            )
+        elif human_blocked:
+            _add_action(
+                "human_escalation",
+                "human gate is blocked; repair requires human attention first",
+                ",".join(sorted(source_paths)) or custody_source,
+            )
+        else:
+            _add_action(
+                "repair_dispatch",
+                "repair is indicated and no blockers are present",
+                ",".join(sorted(source_paths)) or custody_source,
+            )
+            _add_action(
+                "retry",
+                "retry may also be considered as an alternative recovery path",
+                ",".join(sorted(source_paths)) or custody_source,
+            )
+    elif custody_bucket == "human_required":
+        _add_action(
+            "human_escalation",
+            "repair custody requires human intervention",
+            ",".join(sorted(source_paths)) or custody_source,
+        )
+    elif custody_bucket == "broken_superfixer":
+        _add_action(
+            "investigate_superfixer",
+            "superfixer is broken; automated repair cannot proceed",
+            ",".join(sorted(source_paths)) or custody_source,
+        )
+        _add_action(
+            "human_escalation",
+            "human investigation of the superfixer is recommended",
+            ",".join(sorted(source_paths)) or custody_source,
+        )
+    else:
+        _add_action(
+            "no_action",
+            f"unrecognized custody bucket {custody_bucket!r}; no action determined",
+            ",".join(sorted(source_paths)) or custody_source,
+        )
+
+    # --- status determination ------------------------------------------------
+    # Priority order (highest first):
+    #   blocked (runner dead / publication blocked / human gate active)
+    #   human_required
+    #   broken_superfixer
+    #   repairing
+    #   repairable
+    #   healthy
+    #   unknown
+
+    if custody_bucket is None:
+        status = "unknown"
+        recovery_needed = False
+    elif human_blocked or runner_dead or publication_blocked:
+        status = "blocked"
+        recovery_needed = True
+    elif custody_bucket == "human_required":
+        status = "human_required"
+        recovery_needed = True
+    elif custody_bucket == "broken_superfixer":
+        status = "broken_superfixer"
+        recovery_needed = True
+    elif custody_bucket == "repairing":
+        status = "repairing"
+        recovery_needed = True
+    elif custody_bucket == "repairable_not_repairing":
+        status = "repairable"
+        recovery_needed = True
+    else:
+        # No blockers and no custody evidence of distress
+        status = "healthy"
+        recovery_needed = False
+
+    values = {
+        "schema_version": 1,
+        "status": status,
+        "recovery_needed": recovery_needed,
+        "custody_bucket": custody_bucket,
+        "observations": tuple(sorted(observations, key=lambda item: item.observation_id)),
+        "permitted_actions": tuple(sorted(permitted_actions, key=lambda item: item.action_id)),
+        "source_paths": tuple(sorted(source_paths)),
+        "diagnostics": tuple(sorted(set(diagnostics))),
+    }
+    unsigned = MegaplanRecoveryView(**values, view_hash="pending")
+    digest = hashlib.sha256(
+        canonical_json(unsigned._payload()).encode("utf-8")
+    ).hexdigest()
+    return MegaplanRecoveryView(**values, view_hash=digest)
+
+
+# ---------------------------------------------------------------------------
+# MegaplanPlanView — thin composition facade over all five sibling views
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MegaplanPlanView:
+    """Thin composition facade packaging all five sibling authority views.
+
+    This is deliberately a packaging convenience — operators and orchestrators
+    can render a single aggregate, but internal consumers should use the
+    smallest relevant sibling view.  Each sub-view retains its own hash;
+    the facade hash is computed from the composition, not from re-deriving
+    the sibling views.
+
+    The facade adds no new policy.  Execution, runner, publication,
+    human-gate, and recovery payloads remain separable — consumers that
+    only need runner liveness should read ``runner``, not the full facade.
+    """
+
+    schema_version: int
+    run_id: str
+    run_revision: str
+    execution: dict[str, Any]
+    runner: dict[str, Any]
+    publication: dict[str, Any]
+    human_gate: dict[str, Any]
+    recovery: dict[str, Any]
+    source_paths: tuple[str, ...]
+    view_hash: str
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "run_revision": self.run_revision,
+            "execution": self.execution,
+            "runner": self.runner,
+            "publication": self.publication,
+            "human_gate": self.human_gate,
+            "recovery": self.recovery,
+            "source_paths": list(self.source_paths),
+            "shadow": True,
+            "read_only": True,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._payload(), "view_hash": self.view_hash}
+
+    def to_json(self) -> str:
+        return canonical_json(self.to_dict())
+
+
+def derive_megaplan_plan_view(
+    execution_view: PlanExecutionView,
+    *,
+    runner_view: RunnerView | None = None,
+    publication_view: PublicationView | None = None,
+    human_gate_view: HumanGateView | None = None,
+    recovery_view: MegaplanRecoveryView | None = None,
+) -> MegaplanPlanView:
+    """Compose all five sibling authority views into a single packaging facade.
+
+    Each sub-view retains its own hash and diagnostics.  The facade adds no
+    new policy — it is a read-only packaging convenience for operators and
+    orchestrators.  Internal consumers should use the smallest relevant
+    sibling view rather than the full facade.
+
+    Parameters
+    ----------
+    execution_view:
+        Required — the plan execution view with task authority, run identity,
+        and run revision.
+    runner_view:
+        Optional runner liveness view.
+    publication_view:
+        Optional publication readiness view.
+    human_gate_view:
+        Optional human-gate observation view.
+    recovery_view:
+        Optional recovery/repair custody view.
+    """
+
+    run_id = execution_view.run_id
+    run_revision = execution_view.run_revision
+
+    source_paths: set[str] = set()
+    for task in execution_view.tasks:
+        source_paths.update(task.source_paths)
+
+    empty_view: dict[str, Any] = {}
+
+    runner_dict = runner_view.to_dict() if runner_view is not None else empty_view
+    publication_dict = publication_view.to_dict() if publication_view is not None else empty_view
+    human_gate_dict = human_gate_view.to_dict() if human_gate_view is not None else empty_view
+    recovery_dict = recovery_view.to_dict() if recovery_view is not None else empty_view
+
+    for view in (runner_view, publication_view, human_gate_view, recovery_view):
+        if view is not None:
+            source_paths.update(view.source_paths)
+
+    values = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "run_revision": run_revision,
+        "execution": execution_view.to_dict(),
+        "runner": runner_dict,
+        "publication": publication_dict,
+        "human_gate": human_gate_dict,
+        "recovery": recovery_dict,
+        "source_paths": tuple(sorted(source_paths)),
+    }
+    unsigned = MegaplanPlanView(**values, view_hash="pending")
+    digest = hashlib.sha256(
+        canonical_json(unsigned._payload()).encode("utf-8")
+    ).hexdigest()
+    return MegaplanPlanView(**values, view_hash=digest)
+
+
 __all__ = [
     "AcceptedTaskAttempt",
+    "HumanGateDiagnostic",
+    "HumanGateObservation",
+    "HumanGateView",
     "LegacyTaskLabel",
+    "MegaplanPlanView",
+    "MegaplanRecoveryView",
+    "PermittedAction",
     "PlanExecutionDiagnostic",
     "PlanExecutionView",
     "PublicationDiagnostic",
     "PublicationObservation",
     "PublicationView",
+    "RecoveryCustodyObservation",
+    "RecoveryDiagnostic",
     "RunnerDiagnostic",
     "RunnerObservation",
     "RunnerView",
     "TaskExecutionState",
+    "derive_human_gate_view",
+    "derive_megaplan_plan_view",
+    "derive_megaplan_recovery_view",
     "derive_plan_execution_view",
     "derive_publication_view",
     "derive_runner_view",

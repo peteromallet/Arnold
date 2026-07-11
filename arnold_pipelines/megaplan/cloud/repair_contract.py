@@ -628,8 +628,14 @@ def classify_repair_dispatch(
     lock_evidence: Any = None,
     process_evidence: Mapping[str, Any] | None = None,
     custody_projection: Mapping[str, Any] | None = None,
+    recovery_view: Mapping[str, Any] | None = None,
 ) -> RepairDispatchDecision:
     """Classify one repair dispatch decision from shared custody evidence.
+
+    When *recovery_view* is provided (as a ``MegaplanRecoveryView`` dict or
+    compatible mapping), its custody-bucket and permitted-action classification
+    is preferred.  Legacy *custody_projection* remains a fallback and drift
+    diagnostics are emitted when the two disagree.
 
     Conservative defaults apply: unknown or ambiguous blocker shapes never
     auto-dispatch. L1 dispatch is reserved for blocked/manual_review states
@@ -640,6 +646,7 @@ def classify_repair_dispatch(
     failure_payload = _as_mapping(latest_failure or plan_payload.get("latest_failure"))
     target_payload = _as_mapping(current_target)
     custody = _as_mapping(custody_projection)
+    recovery = _as_mapping(recovery_view)
 
     normalized_retry_strategy = _first_non_empty(
         _as_text(retry_strategy),
@@ -663,6 +670,49 @@ def classify_repair_dispatch(
     terminal_outcomes = [
         value for value in (_as_list(custody.get("terminal_outcomes")) if custody else []) if _as_text(value)
     ]
+
+    # --- recovery-view preferred path -----------------------------------------
+    if recovery:
+        recovery_decision = _classify_from_recovery_view(
+            recovery=recovery,
+            custody=custody,
+            custody_bucket=custody_bucket,
+            blocker_id=blocker_id,
+            request_id=request_id,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+            event_plan_dir=event_plan_dir,
+            target_payload=target_payload,
+            human_blocker_classification=human_blocker_classification,
+            lock_evidence=lock_evidence,
+            process_evidence=process_evidence,
+            terminal_outcomes=terminal_outcomes,
+        )
+        # cross-check: if canonical_run_state is also present and disagrees,
+        # emit a drift diagnostic capturing recovery-vs-canonical divergence.
+        if canonical_run_state is not None and event_plan_dir is not None:
+            canonical_decision = _classify_repair_dispatch_canonical(
+                canonical_run_state=canonical_run_state,
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=normalized_retry_strategy,
+                failure_kind=failure_kind,
+                lock_evidence=lock_evidence,
+                process_evidence=process_evidence,
+                custody=custody,
+                current_target=target_payload,
+            )
+            _emit_dispatch_drift_detected(
+                event_plan_dir=event_plan_dir,
+                canonical_run_state=canonical_run_state,
+                canonical_decision=canonical_decision,
+                legacy_decision=recovery_decision,
+            )
+        return recovery_decision
+
     if canonical_run_state is not None:
         canonical_decision = _classify_repair_dispatch_canonical(
             canonical_run_state=canonical_run_state,
@@ -1087,6 +1137,191 @@ def _emit_dispatch_drift_detected(
         "canonical_dispatch_intent": canonical_decision.dispatch_intent,
         "legacy_dispatch_intent": legacy_decision.dispatch_intent,
         "stale_sources": list(canonical_run_state.stale_sources),
+    }
+    try:
+        emit(EventKind.DRIFT_DETECTED, event_plan_dir, payload=payload)
+    except Exception:
+        return
+
+
+def _classify_from_recovery_view(
+    *,
+    recovery: Mapping[str, Any],
+    custody: Mapping[str, Any],
+    custody_bucket: str,
+    blocker_id: str,
+    request_id: str,
+    current_state: str,
+    retry_strategy: str,
+    failure_kind: str,
+    event_plan_dir: Path | None,
+    target_payload: Mapping[str, Any],
+    human_blocker_classification: Any,
+    lock_evidence: Any,
+    process_evidence: Mapping[str, Any] | None,
+    terminal_outcomes: list[Any],
+) -> RepairDispatchDecision:
+    """Derive dispatch from a recovery-view dict, preferring its custody and
+    permitted actions over raw legacy projection fields.
+
+    Recovery-view custody and permitted-action classification is the preferred
+    input.  Legacy custody is consulted only for drift diagnostics and field
+    fallback when the recovery view omits a value.
+    """
+
+    recovery_custody_bucket = _as_text(recovery.get("custody_bucket")) or custody_bucket
+    recovery_status = _as_text(recovery.get("status")) or "unknown"
+    recovery_needed = bool(recovery.get("recovery_needed", True))
+    permitted_actions_raw = recovery.get("permitted_actions")
+    if not isinstance(permitted_actions_raw, (list, tuple)):
+        permitted_actions_raw = ()
+    permitted_actions: list[dict[str, Any]] = [
+        _as_mapping(item) for item in permitted_actions_raw if isinstance(item, Mapping)
+    ]
+    recovery_diagnostics_raw = recovery.get("diagnostics")
+    if not isinstance(recovery_diagnostics_raw, (list, tuple)):
+        recovery_diagnostics_raw = ()
+
+    # --- drift diagnostic: legacy custody bucket vs recovery-view custody -----
+    if custody and custody_bucket and recovery_custody_bucket != custody_bucket:
+        if event_plan_dir is not None:
+            _emit_recovery_legacy_custody_drift(
+                event_plan_dir=event_plan_dir,
+                legacy_custody_bucket=custody_bucket,
+                recovery_custody_bucket=recovery_custody_bucket,
+                recovery_status=recovery_status,
+            )
+
+    # --- map recovery-view custody to dispatch decision -----------------------
+    rationale: list[str] = []
+    # Prefer recovery-view custody bucket for dispatch derivation.
+    if recovery_custody_bucket == "repairing":
+        decision = DISPATCH_DECISION_REPAIRING
+        dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
+        rationale.append("recovery view: repair already in progress")
+    elif recovery_custody_bucket == "repairable" or recovery_custody_bucket == "repairable_not_repairing":
+        # Check active repair using lock/process evidence only (NOT legacy custody,
+        # which may disagree with the recovery view).  The recovery view already
+        # classified this as repairable; do not let a stale legacy custody bucket
+        # override that classification.
+        if lock_evidence is not None or process_evidence is not None:
+            if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody={}):
+                decision = DISPATCH_DECISION_REPAIRING
+                dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
+                rationale.append("recovery view: repairable but active repair ownership exists")
+            elif request_id:
+                decision = DISPATCH_DECISION_L1
+                dispatch_intent = DISPATCH_INTENT_L1
+                rationale.append("recovery view: repairable custody with active request")
+            else:
+                decision = DISPATCH_DECISION_NO_ACTION
+                dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
+                rationale.append("recovery view: repairable but no active repair request")
+        elif request_id:
+            decision = DISPATCH_DECISION_L1
+            dispatch_intent = DISPATCH_INTENT_L1
+            rationale.append("recovery view: repairable custody with active request")
+        else:
+            decision = DISPATCH_DECISION_NO_ACTION
+            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
+            rationale.append("recovery view: repairable but no active repair request")
+    elif recovery_custody_bucket == "human_required":
+        decision = DISPATCH_DECISION_HUMAN_REQUIRED
+        dispatch_intent = DISPATCH_INTENT_HUMAN_REQUIRED
+        rationale.append("recovery view: human intervention required")
+    elif recovery_custody_bucket == "broken_superfixer":
+        decision = DISPATCH_DECISION_BROKEN_SUPERFIXER
+        dispatch_intent = DISPATCH_INTENT_BROKEN_SUPERFIXER
+        rationale.append("recovery view: superfixer is broken")
+    elif recovery_custody_bucket == "healthy":
+        if _is_terminal_dispatch_state(current_state, terminal_outcomes):
+            decision = DISPATCH_DECISION_TERMINAL
+            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
+            rationale.append("recovery view: healthy and terminal")
+        else:
+            decision = DISPATCH_DECISION_NO_ACTION
+            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
+            rationale.append("recovery view: healthy; no recovery needed")
+    elif recovery_custody_bucket == "blocked":
+        if recovery_needed:
+            # Blocked by runner, publication, or human gate — escalate
+            decision = DISPATCH_DECISION_HUMAN_REQUIRED
+            dispatch_intent = DISPATCH_INTENT_HUMAN_REQUIRED
+            rationale.append("recovery view: blocked by operational gate; human escalation")
+        else:
+            decision = DISPATCH_DECISION_NO_ACTION
+            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
+            rationale.append("recovery view: blocked but recovery not needed")
+    else:
+        # unknown or unrecognized — fall back conservatively
+        decision = DISPATCH_DECISION_BROKEN_SUPERFIXER
+        dispatch_intent = DISPATCH_INTENT_BROKEN_SUPERFIXER
+        rationale.append(
+            f"recovery view: unrecognized custody bucket {recovery_custody_bucket!r}; "
+            "escalating to superfixer"
+        )
+
+    # --- incorporate permitted-action hints from the recovery view ------------
+    if permitted_actions:
+        action_types = {_as_text(item.get("action_type")) for item in permitted_actions}
+        # If recovery view explicitly permits repair_dispatch, upgrade
+        # queue_only → dispatch_l1 when we have a request_id.
+        if "repair_dispatch" in action_types and decision == DISPATCH_DECISION_NO_ACTION and request_id:
+            decision = DISPATCH_DECISION_L1
+            dispatch_intent = DISPATCH_INTENT_L1
+            rationale.append("recovery view: permitted repair_dispatch overrides no_action")
+        if "human_escalation" in action_types and decision not in {
+            DISPATCH_DECISION_HUMAN_REQUIRED,
+            DISPATCH_DECISION_BROKEN_SUPERFIXER,
+        }:
+            # human_escalation permitted but not yet the decision: keep as
+            # diagnostic but do not downgrade an L1 dispatch.
+            if decision != DISPATCH_DECISION_L1:
+                rationale.append("recovery view: human_escalation also permitted")
+        if "investigate_superfixer" in action_types:
+            if decision not in {
+                DISPATCH_DECISION_BROKEN_SUPERFIXER,
+                DISPATCH_DECISION_HUMAN_REQUIRED,
+            }:
+                rationale.append("recovery view: superfixer investigation recommended")
+
+    # --- append recovery diagnostics to rationale when informative ------------
+    recovery_diag_codes = {
+        _as_text(_as_mapping(item).get("code"))
+        for item in recovery_diagnostics_raw
+        if isinstance(item, Mapping)
+    }
+    if recovery_diag_codes:
+        rationale.append(
+            "recovery view diagnostics: " + ", ".join(sorted(recovery_diag_codes))
+        )
+
+    return _make_dispatch_decision(
+        decision=decision,
+        dispatch_intent=dispatch_intent,
+        rationale=tuple(rationale),
+        blocker_id=blocker_id,
+        request_id=request_id,
+        custody_bucket=recovery_custody_bucket,
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
+    )
+
+
+def _emit_recovery_legacy_custody_drift(
+    *,
+    event_plan_dir: Path,
+    legacy_custody_bucket: str,
+    recovery_custody_bucket: str,
+    recovery_status: str,
+) -> None:
+    """Emit a drift event when legacy custody disagrees with recovery view."""
+    payload = {
+        "what": "repair_contract.recovery_vs_legacy_custody_drift",
+        "legacy_custody_bucket": legacy_custody_bucket,
+        "recovery_custody_bucket": recovery_custody_bucket,
+        "recovery_status": recovery_status,
     }
     try:
         emit(EventKind.DRIFT_DETECTED, event_plan_dir, payload=payload)
