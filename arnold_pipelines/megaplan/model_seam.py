@@ -420,6 +420,12 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
                 "files_changed",
                 "commands_run",
                 "auto_attributed_files",
+                "sections_written",
+                "stance",
+                "stop_signal",
+                "stance_violations",
+                "head_sha",
+                "code_hash",
             )
             if key in item
         }

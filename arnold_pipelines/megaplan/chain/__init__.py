@@ -80,6 +80,7 @@ from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     _is_explained_noop_completion,
     AuthorityDecision,
+    accepted_attempt_execution_projection,
     effective_execute_completed_task_ids,
     load_evidence_nucleus,
 )
@@ -1738,7 +1739,12 @@ def _run_full_suite_backstop_gate(
         }
 
 
-def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
+def _latest_execution_batch_all_tasks_done(
+    plan_dir: Path,
+    *,
+    chain_state: ChainState | None = None,
+    completion_record: Mapping[str, Any] | None = None,
+) -> tuple[bool, str]:
     try:
         state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -1765,8 +1771,9 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     execution_window_available = actual_git_head is not None
     evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
 
-    def _authoritative_batch_task_overrides() -> dict[str, dict[str, Any]]:
+    def _authoritative_batch_task_overrides() -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
         overrides: dict[str, dict[str, Any]] = {}
+        sources: dict[str, str] = {}
         for batch_path in sorted(
             list_batch_artifacts(plan_dir),
             key=_execution_batch_sort_key,
@@ -1800,9 +1807,12 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                     if not _task_record_can_override_finalize(record):
                         continue
                     overrides[task_id] = dict(record)
-        return overrides
+                    sources[task_id] = _plan_relative_source(plan_dir, batch_path)
+        return overrides, sources
 
-    authoritative_batch_overrides = _authoritative_batch_task_overrides()
+    authoritative_batch_overrides, authoritative_batch_override_sources = (
+        _authoritative_batch_task_overrides()
+    )
     batches = sorted(
         list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
@@ -1911,6 +1921,20 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             authoritative_finalize_records,
             finalize_completed,
             finalize_decisions,
+            source_by_task=authoritative_batch_override_sources,
+        )
+        pending.extend(
+            _chain_completion_shadow_disagreements(
+                authoritative_finalize_records,
+                finalize_completed,
+                finalize_decisions,
+                source_by_task=authoritative_batch_override_sources,
+                plan_dir=plan_dir,
+                chain_state=chain_state,
+                completion_record=completion_record,
+                default_source="finalize.json",
+                default_source_kind="finalize data",
+            )
         )
         pending.extend(
             _finalize_records_missing_authority_fields(
@@ -1953,6 +1977,19 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             return False, f"{latest.name} has no corroborated completed task IDs"
         incomplete = _non_authoritative_task_reasons(
             authoritative_task_records, completed, batch_decisions
+        )
+        incomplete.extend(
+            _chain_completion_shadow_disagreements(
+                authoritative_task_records,
+                completed,
+                batch_decisions,
+                source_by_task={},
+                plan_dir=plan_dir,
+                chain_state=chain_state,
+                completion_record=completion_record,
+                default_source=_plan_relative_source(plan_dir, latest),
+                default_source_kind="execution batch",
+            )
         )
         if incomplete:
             return (
@@ -2568,7 +2605,9 @@ def _chain_completion_guard(
             and local_raw_diff_ok is False
         ):
             authoritative, authority_reason = _latest_execution_batch_all_tasks_done(
-                plan_dir
+                plan_dir,
+                chain_state=chain_state,
+                completion_record=record,
             )
             empty_finalize_tasks, finalize_reason = _finalize_payload_has_empty_tasks(
                 plan_dir
@@ -2595,7 +2634,11 @@ def _chain_completion_guard(
             return True, f"typed no-op waiver accepted: {waiver_reason}"
         return True, f"completion guard passed: {published_diff_reason}"
 
-    authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    authoritative, reason = _latest_execution_batch_all_tasks_done(
+        plan_dir,
+        chain_state=chain_state,
+        completion_record=record,
+    )
     if not authoritative and not waiver_ok:
         return (
             False,
@@ -3196,22 +3239,153 @@ def _task_record_can_override_finalize(task: dict[str, Any]) -> bool:
     return _task_record_has_authority_payload(task)
 
 
+_CHAIN_SHADOW_TERMINAL_STATUSES = frozenset(
+    {"done", "completed", "skipped", "waived", "not_applicable"}
+)
+
+
+def _plan_relative_source(plan_dir: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(plan_dir))
+    except ValueError:
+        return str(path)
+
+
+def _decision_shadow_reason(decision: AuthorityDecision | None) -> str:
+    if decision is None:
+        return "no compatibility-adapter decision"
+    reason = next(iter(decision.would_block_reasons), "")
+    if reason:
+        return reason
+    raw = decision.diagnostics.get("reason")
+    if isinstance(raw, str) and raw:
+        return raw
+    return decision.status.value
+
+
+def _decision_shadow_sources(
+    decision: AuthorityDecision | None,
+    *,
+    projection_sources: tuple[str, ...],
+) -> str:
+    sources: set[str] = set(projection_sources)
+    if decision is not None:
+        diagnostics = decision.diagnostics
+        for key in ("source_path", "source"):
+            value = diagnostics.get(key)
+            if isinstance(value, str) and value:
+                sources.add(value)
+        raw_source_paths = diagnostics.get("source_paths")
+        if isinstance(raw_source_paths, list):
+            sources.update(str(item) for item in raw_source_paths if str(item))
+        validation = diagnostics.get("authority_validation")
+        if isinstance(validation, Mapping):
+            value = validation.get("source_path")
+            if isinstance(value, str) and value:
+                sources.add(value)
+        raw_projection_diagnostics = diagnostics.get("projection_diagnostics")
+        if isinstance(raw_projection_diagnostics, list):
+            for item in raw_projection_diagnostics:
+                if not isinstance(item, Mapping):
+                    continue
+                value = item.get("source")
+                if isinstance(value, str) and value:
+                    sources.add(value)
+    return ", ".join(sorted(sources)) or "accepted-attempt projection unavailable"
+
+
+def _chain_completion_shadow_disagreements(
+    task_records: list[dict[str, Any]],
+    completed: set[str],
+    decisions: Mapping[str, AuthorityDecision],
+    *,
+    source_by_task: Mapping[str, str],
+    plan_dir: Path,
+    chain_state: ChainState | None,
+    completion_record: Mapping[str, Any] | None,
+    default_source: str,
+    default_source_kind: str,
+) -> list[str]:
+    """Name legacy/projection disagreement sources without granting authority."""
+
+    projection = accepted_attempt_execution_projection(task_records, plan_dir=plan_dir)
+    projection_sources = projection.source_paths if projection is not None else ()
+    diagnostics: list[str] = []
+    incomplete_task_sources: list[str] = []
+    for task in task_records:
+        task_id = str(task.get("task_id") or task.get("id") or "")
+        if not task_id:
+            continue
+        status = _optional_finalize_status(task)
+        if not status:
+            continue
+        label_source = source_by_task.get(task_id, default_source)
+        label_kind = "batch overlay" if task_id in source_by_task else default_source_kind
+        accepted = task_id in completed
+        if not accepted:
+            incomplete_task_sources.append(f"{task_id} from {label_source}")
+        decision = decisions.get(task_id)
+        authority_sources = _decision_shadow_sources(
+            decision,
+            projection_sources=projection_sources,
+        )
+        reason = _decision_shadow_reason(decision)
+        if status in _CHAIN_SHADOW_TERMINAL_STATUSES and not accepted:
+            diagnostics.append(
+                f"chain_authority_shadow[{task_id}]: {label_kind} source "
+                f"{label_source} status={status!r} disagrees with "
+                "dispatch-grant/accepted-attempt authority "
+                f"({authority_sources}): {reason}"
+            )
+        elif status not in _CHAIN_SHADOW_TERMINAL_STATUSES and accepted:
+            diagnostics.append(
+                f"chain_authority_shadow[{task_id}]: {label_kind} source "
+                f"{label_source} status={status!r} disagrees with "
+                "dispatch-grant/accepted-attempt authority "
+                f"({authority_sources}): accepted dependency-closed attempt"
+            )
+
+    if completion_record is not None and incomplete_task_sources:
+        label = str(completion_record.get("label") or "unknown")
+        record_status = str(completion_record.get("status") or "").strip().lower()
+        if record_status in _CHAIN_SHADOW_TERMINAL_STATUSES:
+            source = f"chain_state.completed[{label}]"
+            if chain_state is not None:
+                source = f"{source}@current_milestone_index={chain_state.current_milestone_index}"
+            diagnostics.append(
+                f"chain_authority_shadow[{label}]: chain state source {source} "
+                f"status={record_status!r} disagrees with task authority; "
+                f"incomplete sources: {', '.join(sorted(incomplete_task_sources))}"
+            )
+
+    return sorted(set(diagnostics))
+
+
 def _non_authoritative_task_reasons(
     task_records: list[dict[str, Any]],
     completed: set[str],
     decisions: dict[str, AuthorityDecision],
+    *,
+    source_by_task: Mapping[str, str] | None = None,
 ) -> list[str]:
     incomplete: list[str] = []
     for task in task_records:
         task_id = str(task.get("task_id") or task.get("id") or "?")
         if task_id in completed:
             continue
+        source = (
+            source_by_task.get(task_id, "finalize.json")
+            if source_by_task is not None
+            else None
+        )
         decision = decisions.get(task_id)
         if decision is None:
-            incomplete.append(f"{task_id}={task.get('status')!r}")
+            suffix = f":source={source}" if source else ""
+            incomplete.append(f"{task_id}={task.get('status')!r}{suffix}")
             continue
         reason = next(iter(decision.would_block_reasons), decision.status.value)
-        incomplete.append(f"{task_id}={decision.status.value!r}:{reason}")
+        suffix = f":source={source}" if source else ""
+        incomplete.append(f"{task_id}={decision.status.value!r}:{reason}{suffix}")
     return incomplete
 
 

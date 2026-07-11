@@ -9,11 +9,25 @@ import pytest
 from arnold_pipelines.megaplan.authority.batch_scope import (
     BATCH_SCOPE_KEY,
     BatchScope,
+    resolve_batch_authority_metadata,
     resolve_batch_scope,
 )
+from arnold_pipelines.megaplan.authority.binding import (
+    DispatchIdentity,
+    EvidenceEnvelope,
+    ResultEnvelope,
+    SENSE_CHECK_RESULT_CAPABILITY,
+    TASK_COMPLETION_CLAIM,
+    TASK_RESULT_CAPABILITY,
+    TaskAttempt,
+    TaskClaim,
+)
 from arnold_pipelines.megaplan.execute.batch import (
+    DISPATCH_IDENTITY_KEY,
+    RESULT_ENVELOPES_KEY,
     _prepare_scoped_batch_checkpoint,
     _replay_proven_batch_artifacts,
+    _stamp_result_envelopes,
 )
 
 
@@ -235,6 +249,162 @@ def test_checkpoint_is_scope_stamped_before_worker_updates(tmp_path: Path) -> No
     )
 
 
+def test_checkpoint_persists_dispatch_identity_separate_from_batch_scope(
+    tmp_path: Path,
+) -> None:
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-07-10T00:00:00Z",
+        "current_state": "finalized",
+        "iteration": 3,
+        "config": {"mode": "code"},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "depends_on": []},
+            {"id": "T2", "depends_on": ["T1"]},
+        ],
+        "sense_checks": [{"id": "SC1", "task_id": "T2"}],
+        "user_actions": [],
+    }
+
+    artifact_path = _prepare_scoped_batch_checkpoint(
+        tmp_path,
+        batch_number=2,
+        task_ids=["T2", "T1"],
+        sense_check_ids=["SC1"],
+        state=state,
+        finalize_data=finalize_data,
+    )
+
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    scope = BatchScope.create(
+        batch_number=2,
+        task_ids=["T1", "T2"],
+        sense_check_ids=["SC1"],
+    )
+    identity = DispatchIdentity.from_dict(payload[DISPATCH_IDENTITY_KEY])
+    resolution = resolve_batch_scope(
+        payload,
+        artifact_path,
+        known_task_ids=KNOWN_TASKS,
+        known_sense_check_ids=KNOWN_CHECKS,
+        expected_batch_number=2,
+    )
+
+    assert payload[BATCH_SCOPE_KEY] == scope.to_dict()
+    assert resolution.scope == scope
+    assert payload[RESULT_ENVELOPES_KEY] == []
+    assert DISPATCH_IDENTITY_KEY not in payload[BATCH_SCOPE_KEY]
+    assert RESULT_ENVELOPES_KEY not in payload[BATCH_SCOPE_KEY]
+    assert identity.dispatch_id == f"megaplan-run:execute:batch:2:{scope.task_set_digest}"
+    assert identity.run_id == "megaplan-run"
+    assert identity.run_revision == "sha256:plan-revision"
+    assert identity.coordinator_attempt_id == "coordinator-attempt"
+    assert identity.fence_token == 2
+    assert identity.subject_ids == ("SC1", "T1", "T2")
+    assert identity.capabilities == (
+        SENSE_CHECK_RESULT_CAPABILITY,
+        TASK_RESULT_CAPABILITY,
+    )
+    assert identity.worker_id == f"megaplan-execute-batch-2-{scope.task_set_digest}"
+    assert identity.prerequisite_digest
+    assert identity.prerequisite_digest != scope.task_set_digest
+
+
+def test_worker_result_envelopes_echo_dispatch_identity_and_attempts(
+    tmp_path: Path,
+) -> None:
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-07-10T00:00:00Z",
+        "current_state": "finalized",
+        "iteration": 3,
+        "config": {"mode": "code"},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "depends_on": []},
+            {"id": "T2", "depends_on": ["T1"]},
+        ],
+        "sense_checks": [{"id": "SC1", "task_id": "T2"}],
+        "user_actions": [],
+    }
+    artifact_path = _prepare_scoped_batch_checkpoint(
+        tmp_path,
+        batch_number=2,
+        task_ids=["T2", "T1"],
+        sense_check_ids=["SC1"],
+        state=state,
+        finalize_data=finalize_data,
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = DispatchIdentity.from_dict(payload[DISPATCH_IDENTITY_KEY])
+    payload["task_updates"] = [
+        {
+            "task_id": "T1",
+            "status": "done",
+            "executor_notes": "implemented",
+            "files_changed": ["pkg.py"],
+            "commands_run": ["pytest tests/pkg.py"],
+        }
+    ]
+    payload["sense_check_acknowledgments"] = [
+        {"sense_check_id": "SC1", "executor_note": "covered"}
+    ]
+
+    envelopes = _stamp_result_envelopes(
+        payload,
+        identity=identity,
+        artifact_path=artifact_path,
+    )
+    authority_resolution = resolve_batch_authority_metadata(payload, artifact_path)
+    payload[BATCH_SCOPE_KEY]["task_ids"] = ["T999"]
+    payload[BATCH_SCOPE_KEY]["task_set_digest"] = "000000000000"
+    tampered_authority_resolution = resolve_batch_authority_metadata(
+        payload, artifact_path
+    )
+    tampered_scope_resolution = resolve_batch_scope(
+        payload,
+        artifact_path,
+        known_task_ids=KNOWN_TASKS,
+        known_sense_check_ids=KNOWN_CHECKS,
+        expected_batch_number=2,
+    )
+
+    assert len(envelopes) == 2
+    assert all(isinstance(envelope, ResultEnvelope) for envelope in envelopes)
+    assert authority_resolution.is_proven
+    assert authority_resolution.metadata is not None
+    assert len(authority_resolution.metadata.result_envelopes) == 2
+    assert tampered_authority_resolution.is_proven
+    assert tampered_scope_resolution.quarantine is not None
+    task_echo = payload["task_updates"][0]["authority"]
+    check_echo = payload["sense_check_acknowledgments"][0]["authority"]
+    assert task_echo["dispatch_id"] == identity.dispatch_id
+    assert task_echo["run_revision"] == "sha256:plan-revision"
+    assert task_echo["fence"]["coordinator_attempt_id"] == "coordinator-attempt"
+    assert task_echo["fence"]["token"] == 2
+    assert task_echo["scope"]["subject_ids"] == list(identity.subject_ids)
+    assert task_echo["prerequisite_digest"] == identity.prerequisite_digest
+    assert task_echo["worker_id"] == identity.worker_id
+    assert task_echo["attempt"]["subject_id"] == "T1"
+    assert task_echo["attempt"]["grant_id"] == identity.dispatch_id
+    assert check_echo["attempt"]["subject_id"] == "SC1"
+    assert check_echo["attempt"]["grant_id"] == identity.dispatch_id
+    assert payload[RESULT_ENVELOPES_KEY][0]["dispatch"] == identity.to_dict()
+
+
 def test_no_pending_replay_uses_each_proven_scope_and_quarantines_legacy(
     tmp_path: Path,
 ) -> None:
@@ -359,3 +529,129 @@ def test_no_pending_replay_uses_each_proven_scope_and_quarantines_legacy(
     assert "authority_divergence" in events
     assert "batch_scope_missing_batch_scope" in events
     assert str(legacy_path) in events
+
+
+def test_no_pending_replay_routes_off_scope_enveloped_rows_to_validator(
+    tmp_path: Path,
+) -> None:
+    state = {
+        "name": "megaplan-run",
+        "created_at": "2026-07-10T00:00:00Z",
+        "current_state": "finalized",
+        "iteration": 3,
+        "config": {"mode": "code"},
+        "sessions": {},
+        "history": [],
+        "meta": {},
+        "plan_versions": [{"hash": "sha256:plan-revision"}],
+        "active_step": {"run_id": "coordinator-attempt", "attempt": 2},
+    }
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "pending", "executor_notes": ""},
+            {"id": "T2", "status": "pending", "executor_notes": ""},
+        ],
+        "sense_checks": [],
+        "user_actions": [],
+    }
+    artifact_path = _prepare_scoped_batch_checkpoint(
+        tmp_path,
+        batch_number=1,
+        task_ids=["T2"],
+        sense_check_ids=[],
+        state=state,
+        finalize_data=finalize_data,
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = DispatchIdentity.create(
+        dispatch_id="megaplan-run:execute:batch:old-t1",
+        run_id="megaplan-run",
+        run_revision="sha256:plan-revision",
+        coordinator_attempt_id="coordinator-attempt",
+        fence_token=2,
+        subject_ids=("T1",),
+        capabilities=(TASK_RESULT_CAPABILITY,),
+        prerequisite_digest="old-t1-prerequisite-digest",
+        worker_id="megaplan-execute-batch-old-t1",
+    )
+    entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "off-scope enveloped result",
+        "files_changed": [],
+        "commands_run": [],
+    }
+    evidence = EvidenceEnvelope(
+        evidence_id="old-t1:evidence",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        evidence_type="megaplan.task_update",
+        source="test",
+        payload={"entry": entry},
+    )
+    attempt = TaskAttempt(
+        attempt_id="old-t1:attempt",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id="T1",
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        ordinal=1,
+    )
+    claim = TaskClaim(
+        claim_id="old-t1:claim",
+        run_id=identity.run_id,
+        run_revision=identity.run_revision,
+        subject_id="T1",
+        attempt_id=attempt.attempt_id,
+        grant_id=identity.dispatch_id,
+        coordinator_attempt_id=identity.coordinator_attempt_id,
+        fence_token=identity.fence_token,
+        claim_type=TASK_COMPLETION_CLAIM,
+        evidence_ids=(evidence.evidence_id,),
+        idempotency_key="old-t1:claim",
+        payload={"entry": entry},
+    )
+    envelope = ResultEnvelope(
+        dispatch=identity,
+        attempt=attempt,
+        claim=claim,
+        evidence=(evidence,),
+    )
+    entry["authority"] = {
+        "envelope_digest": envelope.digest(),
+        "dispatch_id": envelope.dispatch_id,
+        "run_revision": envelope.run_revision,
+        "plan_revision": envelope.plan_revision,
+        "fence": envelope.dispatch.fence.to_dict(),
+        "scope": {
+            "subject_ids": list(envelope.dispatch.subject_ids),
+            "capabilities": list(envelope.dispatch.capabilities),
+        },
+        "prerequisite_digest": envelope.prerequisite_digest,
+        "worker_id": envelope.worker_id,
+        "attempt": envelope.attempt.to_dict(),
+    }
+    payload[DISPATCH_IDENTITY_KEY] = identity.to_dict()
+    payload[RESULT_ENVELOPES_KEY] = [envelope.to_dict()]
+    payload["task_updates"] = [entry]
+    payload["sense_check_acknowledgments"] = []
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    replayed = _replay_proven_batch_artifacts(
+        plan_dir=tmp_path,
+        finalize_data=finalize_data,
+        known_task_ids=["T1", "T2"],
+        known_sense_check_ids=[],
+        mode="code",
+        state=state,
+    )
+
+    tasks = {task["id"]: task for task in finalize_data["tasks"]}
+    validation = replayed[0]["task_updates"][0]["authority_validation"]
+    assert tasks["T1"]["status"] == "pending"
+    assert tasks["T2"]["status"] == "pending"
+    assert validation["outcome"] == "rejected"
+    assert validation["reason"] == "subject_outside_dispatched_batch"
+    assert validation["source_path"] == str(artifact_path)

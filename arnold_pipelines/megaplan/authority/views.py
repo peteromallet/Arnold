@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 from typing import Any, Iterable, Mapping
 
+from arnold_pipelines.megaplan._core.scheduler.topo import schedule_batches
 from arnold_pipelines.run_authority import ObservationEnvelope, RunAuthorityView, canonical_json
 
 from .binding import TASK_COMPLETION_CLAIM
@@ -219,13 +220,38 @@ class PublicationView:
 
 
 @dataclass(frozen=True)
+class AcceptedTaskAttempt:
+    task_id: str
+    attempt_id: str
+    claim_id: str
+    decision_id: str
+    grant_id: str
+    evidence_ids: tuple[str, ...]
+    source_paths: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "attempt_id": self.attempt_id,
+            "claim_id": self.claim_id,
+            "decision_id": self.decision_id,
+            "grant_id": self.grant_id,
+            "evidence_ids": list(self.evidence_ids),
+            "source_paths": list(self.source_paths),
+        }
+
+
+@dataclass(frozen=True)
 class TaskExecutionState:
     task_id: str
     depends_on: tuple[str, ...]
     accepted: bool
+    dependency_closed: bool
     authority_status: str
+    accepted_attempt_ids: tuple[str, ...]
     accepted_decision_ids: tuple[str, ...]
     unresolved_claim_ids: tuple[str, ...]
+    unresolved_dependency_ids: tuple[str, ...]
     legacy_labels: tuple[LegacyTaskLabel, ...]
     source_paths: tuple[str, ...]
 
@@ -234,9 +260,12 @@ class TaskExecutionState:
             "task_id": self.task_id,
             "depends_on": list(self.depends_on),
             "accepted": self.accepted,
+            "dependency_closed": self.dependency_closed,
             "authority_status": self.authority_status,
+            "accepted_attempt_ids": list(self.accepted_attempt_ids),
             "accepted_decision_ids": list(self.accepted_decision_ids),
             "unresolved_claim_ids": list(self.unresolved_claim_ids),
+            "unresolved_dependency_ids": list(self.unresolved_dependency_ids),
             "legacy_labels": [item.to_dict() for item in self.legacy_labels],
             "source_paths": list(self.source_paths),
         }
@@ -252,6 +281,9 @@ class PlanExecutionView:
     authority_view_hash: str
     tasks: tuple[TaskExecutionState, ...]
     accepted_task_ids: tuple[str, ...]
+    accepted_task_attempts: tuple[AcceptedTaskAttempt, ...]
+    dependency_closed_completed_task_ids: tuple[str, ...]
+    next_ready_wave: tuple[str, ...]
     unresolved_claim_ids: tuple[str, ...]
     quarantine_ids: tuple[str, ...]
     diagnostics: tuple[PlanExecutionDiagnostic, ...]
@@ -265,6 +297,9 @@ class PlanExecutionView:
             "authority_view_hash": self.authority_view_hash,
             "tasks": [item.to_dict() for item in self.tasks],
             "accepted_task_ids": list(self.accepted_task_ids),
+            "accepted_task_attempts": [item.to_dict() for item in self.accepted_task_attempts],
+            "dependency_closed_completed_task_ids": list(self.dependency_closed_completed_task_ids),
+            "next_ready_wave": list(self.next_ready_wave),
             "unresolved_claim_ids": list(self.unresolved_claim_ids),
             "quarantine_ids": list(self.quarantine_ids),
             "diagnostics": [item.to_dict() for item in self.diagnostics],
@@ -629,6 +664,58 @@ def _decision_authoritative(decision: Any) -> bool:
     return bool(getattr(decision, "authoritative", False))
 
 
+def _task_dependencies(task: Mapping[str, Any]) -> tuple[str, ...]:
+    depends_on = task.get("depends_on", ())
+    if not isinstance(depends_on, (list, tuple)):
+        depends_on = ()
+    return tuple(sorted({str(item) for item in depends_on if str(item)}))
+
+
+def _dependency_closed_ids(
+    *,
+    task_by_id: Mapping[str, Mapping[str, Any]],
+    accepted_task_ids: set[str],
+) -> set[str]:
+    closed: set[str] = set()
+    progress = True
+    while progress:
+        progress = False
+        for task_id in sorted(accepted_task_ids - closed):
+            deps = _task_dependencies(task_by_id[task_id])
+            if all(dep in closed for dep in deps if dep in task_by_id) and all(dep in task_by_id for dep in deps):
+                closed.add(task_id)
+                progress = True
+    return closed
+
+
+def _dependency_unresolved_ids(
+    task_id: str,
+    *,
+    task_by_id: Mapping[str, Mapping[str, Any]],
+    dependency_closed_completed_ids: set[str],
+) -> tuple[str, ...]:
+    deps = _task_dependencies(task_by_id[task_id])
+    return tuple(dep for dep in deps if dep not in dependency_closed_completed_ids)
+
+
+def _next_ready_wave(
+    *,
+    task_by_id: Mapping[str, Mapping[str, Any]],
+    dependency_closed_completed_ids: set[str],
+    max_ready_wave_size: int,
+) -> tuple[str, ...]:
+    work_list = [
+        {"id": task_id, "depends_on": list(_task_dependencies(task_by_id[task_id]))}
+        for task_id in sorted(task_by_id)
+    ]
+    batches = schedule_batches(
+        work_list,
+        max_batch_size=max_ready_wave_size,
+        completed_ids=set(dependency_closed_completed_ids),
+    )
+    return tuple(batches[0]) if batches else ()
+
+
 def derive_plan_execution_view(
     authority: RunAuthorityView,
     plan: Mapping[str, Any] | Iterable[Mapping[str, Any]],
@@ -636,6 +723,7 @@ def derive_plan_execution_view(
     evidence_decisions: Mapping[str, Any],
     legacy_labels: Iterable[LegacyTaskLabel] = (),
     plan_source: str = "finalize.json",
+    max_ready_wave_size: int = 5,
 ) -> PlanExecutionView:
     """Bind generic accepted decisions to Megaplan tasks without external reads.
 
@@ -667,6 +755,8 @@ def derive_plan_execution_view(
             continue
         labels_by_task[label.task_id].append(label)
 
+    evidence_by_id = {evidence.evidence_id: evidence for evidence in authority.evidence}
+    attempts_by_id = {attempt.attempt_id: attempt for attempt in authority.attempts}
     claims_by_id = {claim.claim_id: claim for claim in authority.claims}
     completion_claims = {
         claim.claim_id: claim
@@ -674,6 +764,7 @@ def derive_plan_execution_view(
         if claim.claim_type == TASK_COMPLETION_CLAIM and claim.subject_id in task_by_id
     }
     accepted_by_task: dict[str, list[Any]] = {task_id: [] for task_id in task_by_id}
+    accepted_attempts_by_task: dict[str, list[AcceptedTaskAttempt]] = {task_id: [] for task_id in task_by_id}
     resolved_claim_ids: set[str] = set()
     for decision in authority.decisions:
         claim = claims_by_id.get(decision.claim_id)
@@ -683,6 +774,28 @@ def derive_plan_execution_view(
         policy_decision = evidence_decisions.get(claim.subject_id)
         if decision.outcome == "accepted" and _decision_authoritative(policy_decision):
             accepted_by_task[claim.subject_id].append(decision)
+            attempt = attempts_by_id.get(decision.attempt_id)
+            if attempt is None:
+                diagnostics.append(PlanExecutionDiagnostic(
+                    "accepted_decision_missing_attempt", claim.subject_id,
+                    "accepted task decision does not reference a retained attempt",
+                    f"contract://decision/{decision.decision_id}",
+                ))
+                continue
+            evidence_sources = tuple(sorted(
+                evidence_by_id[evidence_id].source
+                for evidence_id in decision.evidence_ids
+                if evidence_id in evidence_by_id
+            ))
+            accepted_attempts_by_task[claim.subject_id].append(AcceptedTaskAttempt(
+                task_id=claim.subject_id,
+                attempt_id=attempt.attempt_id,
+                claim_id=claim.claim_id,
+                decision_id=decision.decision_id,
+                grant_id=decision.grant_id,
+                evidence_ids=tuple(sorted(decision.evidence_ids)),
+                source_paths=evidence_sources,
+            ))
         elif decision.outcome == "accepted":
             diagnostics.append(PlanExecutionDiagnostic(
                 "kernel_policy_disagreement", claim.subject_id,
@@ -691,14 +804,82 @@ def derive_plan_execution_view(
             ))
 
     unresolved = sorted(set(completion_claims) - resolved_claim_ids)
+    accepted_task_id_set = {task_id for task_id, decisions in accepted_by_task.items() if decisions}
+    dependency_closed_completed_ids = _dependency_closed_ids(
+        task_by_id=task_by_id,
+        accepted_task_ids=accepted_task_id_set,
+    )
+    for task_id in sorted(accepted_task_id_set - dependency_closed_completed_ids):
+        unresolved_dependencies = _dependency_unresolved_ids(
+            task_id,
+            task_by_id=task_by_id,
+            dependency_closed_completed_ids=dependency_closed_completed_ids,
+        )
+        source = ",".join(sorted({item.source for item in labels_by_task[task_id]})) or plan_source
+        diagnostics.append(PlanExecutionDiagnostic(
+            "accepted_task_dependency_unresolved",
+            task_id,
+            "accepted task attempt is not dependency-closed; unresolved dependencies: "
+            + ", ".join(unresolved_dependencies),
+            source,
+        ))
+
+    for task_id in sorted(task_by_id):
+        unknown_dependencies = tuple(dep for dep in _task_dependencies(task_by_id[task_id]) if dep not in task_by_id)
+        for dep_id in unknown_dependencies:
+            diagnostics.append(PlanExecutionDiagnostic(
+                "unknown_dependency",
+                task_id,
+                f"task depends on unknown task {dep_id!r}",
+                plan_source,
+            ))
+
+    try:
+        next_ready_wave = _next_ready_wave(
+            task_by_id=task_by_id,
+            dependency_closed_completed_ids=dependency_closed_completed_ids,
+            max_ready_wave_size=max_ready_wave_size,
+        )
+    except ValueError as exc:
+        diagnostics.append(PlanExecutionDiagnostic(
+            "dag_policy_unresolved",
+            "plan",
+            str(exc),
+            plan_source,
+        ))
+        next_ready_wave = ()
+
+    for task_id in sorted(set(task_by_id) - dependency_closed_completed_ids - set(next_ready_wave)):
+        unresolved_dependencies = _dependency_unresolved_ids(
+            task_id,
+            task_by_id=task_by_id,
+            dependency_closed_completed_ids=dependency_closed_completed_ids,
+        )
+        if not unresolved_dependencies:
+            continue
+        source = ",".join(sorted({item.source for item in labels_by_task[task_id]})) or plan_source
+        diagnostics.append(PlanExecutionDiagnostic(
+            "unresolved_dependency",
+            task_id,
+            "task dependencies are not dependency-closed: " + ", ".join(unresolved_dependencies),
+            source,
+        ))
+
     task_states: list[TaskExecutionState] = []
     for task_id, task in sorted(task_by_id.items()):
         accepted_decisions = sorted(item.decision_id for item in accepted_by_task[task_id])
+        accepted_attempt_ids = sorted(item.attempt_id for item in accepted_attempts_by_task[task_id])
         task_unresolved = sorted(
             claim_id for claim_id in unresolved if completion_claims[claim_id].subject_id == task_id
         )
         task_labels = tuple(labels_by_task[task_id])
         accepted = bool(accepted_decisions)
+        dependency_closed = task_id in dependency_closed_completed_ids
+        unresolved_dependency_ids = _dependency_unresolved_ids(
+            task_id,
+            task_by_id=task_by_id,
+            dependency_closed_completed_ids=dependency_closed_completed_ids,
+        )
         legacy_terminal = any(item.label in _LEGACY_TERMINAL for item in task_labels)
         if legacy_terminal and not accepted:
             for item in task_labels:
@@ -721,14 +902,17 @@ def derive_plan_execution_view(
             if evidence.evidence_id in decision.evidence_ids
         }
         sources = tuple(sorted(evidence_sources | {item.source for item in task_labels}))
-        depends_on = tuple(sorted({str(item) for item in task.get("depends_on", ()) if str(item)}))
+        depends_on = _task_dependencies(task)
         task_states.append(TaskExecutionState(
             task_id=task_id,
             depends_on=depends_on,
             accepted=accepted,
+            dependency_closed=dependency_closed,
             authority_status="accepted" if accepted else "unaccepted",
+            accepted_attempt_ids=tuple(accepted_attempt_ids),
             accepted_decision_ids=tuple(accepted_decisions),
             unresolved_claim_ids=tuple(task_unresolved),
+            unresolved_dependency_ids=unresolved_dependency_ids,
             legacy_labels=task_labels,
             source_paths=sources,
         ))
@@ -749,6 +933,18 @@ def derive_plan_execution_view(
         "authority_view_hash": authority.view_hash,
         "tasks": tuple(task_states),
         "accepted_task_ids": tuple(item.task_id for item in task_states if item.accepted),
+        "accepted_task_attempts": tuple(sorted(
+            (
+                item
+                for attempts in accepted_attempts_by_task.values()
+                for item in attempts
+            ),
+            key=lambda item: (item.task_id, item.attempt_id, item.decision_id),
+        )),
+        "dependency_closed_completed_task_ids": tuple(
+            task_id for task_id in sorted(dependency_closed_completed_ids)
+        ),
+        "next_ready_wave": next_ready_wave,
         "unresolved_claim_ids": tuple(unresolved),
         "quarantine_ids": tuple(sorted(item.quarantine_id for item in authority.quarantines)),
         "diagnostics": tuple(sorted(set(diagnostics))),
@@ -759,6 +955,7 @@ def derive_plan_execution_view(
 
 
 __all__ = [
+    "AcceptedTaskAttempt",
     "LegacyTaskLabel",
     "PlanExecutionDiagnostic",
     "PlanExecutionView",
