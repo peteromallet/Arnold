@@ -560,6 +560,33 @@ def test_repair_index_load_missing_returns_default_shape(tmp_path: Path) -> None
     assert loaded == {"sessions": {}, "incidents": {}}
 
 
+def test_repair_index_preserves_resident_delegation_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "index.json"
+    path.write_text(
+        json.dumps(
+            {
+                "sessions": {},
+                "incidents": {},
+                "resident_delegation": {
+                    "schema_version": "arnold-resident-delegation-provenance-v1",
+                    "custody_id": "custody-1",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    repair_contract.update_session_index(
+        path,
+        "wbc",
+        {"status": "repairing"},
+    )
+
+    loaded = repair_contract.read_repair_index(path)
+    assert loaded["resident_delegation"]["custody_id"] == "custody-1"
+    assert loaded["sessions"]["wbc"]["status"] == "repairing"
+
+
 def test_repair_index_updates_create_and_merge_nested_refs_idempotently(tmp_path: Path) -> None:
     path = tmp_path / "repair-data" / "index.json"
 

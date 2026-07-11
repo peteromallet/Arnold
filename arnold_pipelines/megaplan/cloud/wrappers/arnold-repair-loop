@@ -4913,12 +4913,13 @@ mechanical_launch_step() {
   local run_kind="$5"
   local plan_name="$6"
   local relaunch_command="$7"
-  local quoted_command launch_script safe detail health
+  local quoted_command quoted_command_shell launch_script safe detail health
 
   quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
     echo "failed:missing_relaunch_command"
     return 1
   }
+  printf -v quoted_command_shell '%q' "$quoted_command"
   kill_tmux_session_if_present "$session"
   kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"
   safe="$(safe_name "$session")"
@@ -4931,7 +4932,7 @@ set -euo pipefail
 # turn a valid canonical relaunch into a false `failed:stopped` result.
 rm -f -- "\${BASH_SOURCE[0]}"
 cd $(printf '%q' "$workspace")
-exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
+exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $quoted_command_shell
 EOF
   chmod +x "$launch_script"
   if ! tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'"; then
