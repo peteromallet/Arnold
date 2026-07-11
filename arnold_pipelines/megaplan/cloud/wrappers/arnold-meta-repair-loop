@@ -709,6 +709,7 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     derive_meta_repair_effective_outcome,
+    extract_reported_repair_custody,
     MetaRepairRecord,
     MetaRepairTrigger,
     persist_meta_repair_record,
@@ -765,6 +766,7 @@ effective_outcome = derive_meta_repair_effective_outcome(
     install_sync_status=str(install_sync_info.get("status") or ""),
     post_retrigger_verification=post_retrigger_verification,
 )
+reported_changes, reported_tests = extract_reported_repair_custody(resp_text)
 
 record = MetaRepairRecord(
     meta_repair_id=meta_repair_id,
@@ -772,8 +774,8 @@ record = MetaRepairRecord(
     trigger=trigger,
     diagnosis=redact_text(resp_text[:4000]),
     subagent_results={"codex_response": redact_text(resp_text[:4000])},
-    changes=[],
-    tests=[],
+    changes=reported_changes,
+    tests=reported_tests,
     retrigger_command=redact_text(str(post_retrigger_verification.get("retrigger_command") or "")),
     post_retrigger_verification=post_retrigger_verification,
     outcome=effective_outcome,
