@@ -4296,6 +4296,25 @@ def _append_reconciliation_audit(
     }
 
 
+def _clear_impossible_terminal_last_state(
+    state: ChainState,
+    *,
+    writer,
+    reason: str,
+) -> None:
+    """Clear a terminal-looking chain state when an active plan still exists."""
+
+    if state.last_state not in {"done", "complete"}:
+        return
+    if not state.current_plan_name:
+        return
+    writer(
+        f"[chain] cleared stale terminal last_state for {state.current_plan_name}: "
+        f"{state.last_state} -> unknown ({reason})\n"
+    )
+    state.last_state = "unknown"
+
+
 def _mark_chain_after_milestone_advance(
     spec: ChainSpec,
     state: ChainState,
@@ -4429,6 +4448,12 @@ def _reconcile_chain_from_ground_truth(
                 f"{state.last_state or 'unknown'} -> {current_state}\n"
             )
             state.last_state = current_state
+    elif plan_name:
+        _clear_impossible_terminal_last_state(
+            state,
+            writer=writer,
+            reason="active plan state unavailable during ground-truth reconciliation",
+        )
 
     active_index = state.current_milestone_index
     active_milestone = (
@@ -4595,7 +4620,17 @@ def _sync_chain_last_state_from_plan(
     if not plan_name:
         return state
     plan_state = _plan_current_state_from_payload(root, plan_name)
-    if not plan_state or plan_state == state.last_state:
+    if not plan_state:
+        previous = state.last_state
+        _clear_impossible_terminal_last_state(
+            state,
+            writer=writer,
+            reason="active plan state unavailable while syncing chain last_state",
+        )
+        if state.last_state != previous:
+            chain_spec.save_chain_state(spec_path, state)
+        return state
+    if plan_state == state.last_state:
         return state
     previous = state.last_state
     state.last_state = plan_state
