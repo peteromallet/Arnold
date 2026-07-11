@@ -8227,9 +8227,16 @@ def _prepare_meta_repair_launch_chain_tick_fixture(
     }
 
 
-def _run_launch_chain_tick_meta_repair_script(paths: dict[str, Path]) -> subprocess.CompletedProcess[str]:
+def _run_launch_chain_tick_meta_repair_script(
+    paths: dict[str, Path],
+    *,
+    health: str = "dead",
+    meta_dispatch_result: str = "dispatched",
+) -> subprocess.CompletedProcess[str]:
     script = "\n\n".join(
         [
+            f"WATCHDOG_TEST_HEALTH={shlex.quote(health)}",
+            f"WATCHDOG_TEST_META_DISPATCH_RESULT={shlex.quote(meta_dispatch_result)}",
             _extract_wrapper_function("json_field"),
             _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
             _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
@@ -8260,7 +8267,7 @@ chain_health_status() {
 }
 repair_loop_busy_state() { echo none; }
 repair_unhealthy_session() { echo REPAIR >&2; return 1; }
-dispatch_meta_repair() { echo META_DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+dispatch_meta_repair() { echo META_DISPATCH >&2; REPAIR_DISPATCH_RESULT="$WATCHDOG_TEST_META_DISPATCH_RESULT"; return 0; }
 dispatch_kimi_repair() { echo SHOULD_NOT_DISPATCH_KIMI >&2; return 0; }
 mechanical_relaunch_attempted_previously() { return 0; }
 kimi_dispatch_failed_previously() { return 1; }
@@ -8314,6 +8321,37 @@ def test_launch_chain_tick_dispatches_meta_repair_on_recurring_retry_trigger(tmp
     assert "META_DISPATCH" in result.stderr
     assert "TMUX" not in result.stderr
     assert "trigger=persistent_recurring_retry" in paths["log_path"].read_text(encoding="utf-8")
+
+
+def test_launch_chain_tick_preserves_human_custody_when_meta_repair_recursion_is_blocked(
+    tmp_path: Path,
+) -> None:
+    paths = _prepare_meta_repair_launch_chain_tick_fixture(
+        tmp_path,
+        payload_overrides={
+            "attempts": [
+                {"attempt_id": 1, "failure_classification": "phase_failed"},
+                {"attempt_id": 2, "failure_classification": "phase_failed"},
+                {"attempt_id": 3, "failure_classification": "phase_failed"},
+            ],
+        },
+    )
+
+    result = _run_launch_chain_tick_meta_repair_script(
+        paths,
+        health="stopped",
+        meta_dispatch_result="recursive",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "SHOULD_NOT_DISPATCH_KIMI" not in result.stderr
+    report_text = paths["report_path"].read_text(encoding="utf-8") if paths["report_path"].exists() else ""
+    assert "\trestart\trestarted\t" not in report_text
+    log_text = paths["log_path"].read_text(encoding="utf-8")
+    assert "meta-repair recursion requires human custody, suppressing direct relaunch" in log_text
+    assert "fell through to direct relaunch" not in log_text
 
 
 def test_launch_chain_tick_dispatches_meta_repair_on_recurring_retry_when_stopped(tmp_path: Path) -> None:
