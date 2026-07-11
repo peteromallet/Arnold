@@ -1660,7 +1660,7 @@ PY
 }
 
 ensure_editable_source_checkout() {
-  if [[ -d "$SRC_DIR/.git" ]]; then
+  if git -C "$SRC_DIR" rev-parse --git-dir >/dev/null 2>&1; then
     return 0
   fi
 
@@ -1754,7 +1754,7 @@ sync_editable_source_branch() {
     return 1
   }
 
-  if [[ ! -d "$SRC_DIR/.git" ]]; then
+  if ! git -C "$SRC_DIR" rev-parse --git-dir >/dev/null 2>&1; then
     report_item "$report_items" "editable-install" "sync" "sync_failed" "source checkout missing git metadata" "$SRC_DIR" "$SYNC_BRANCH"
     return 1
   fi
@@ -1825,7 +1825,7 @@ codex_repair_editable_install() {
     log "editable install check failed; repair disabled (set ARNOLD_REPAIR_TRIGGER_ENABLED=1): $reason"
     return 1
   fi
-  if [[ ! -d "$SRC_DIR/.git" ]]; then
+  if ! git -C "$SRC_DIR" rev-parse --git-dir >/dev/null 2>&1; then
     log "Codex repair skipped; source checkout missing at $SRC_DIR"
     return 1
   fi
