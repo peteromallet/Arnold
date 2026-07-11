@@ -6473,6 +6473,17 @@ def is_complete_state(payload: object) -> bool:
         str(item.get("msg") or item.get("message") or item)
         for item in event_items
     )
+    if (
+        SPEC_MILESTONE_COUNT is None
+        and not (isinstance(milestones, list) and milestones)
+        and payload.get("chain_complete") is not True
+        and "all milestones complete" not in event_text.lower()
+    ):
+        # A milestone-local ``done`` state is not whole-chain completion.  If
+        # the spec is unavailable, fail closed unless the persisted state has
+        # an explicit terminal proof; otherwise watchdog suppresses the repair
+        # path precisely when spec custody has failed between milestones.
+        return False
     if current_plan and "all milestones complete" not in event_text:
         return False
     return True
