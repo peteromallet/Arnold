@@ -926,6 +926,37 @@ def test_reconcile_rewinds_branch_completion_missing_pr_context(
     assert any("missing PR context" in message for message in messages)
 
 
+def test_reconcile_clears_terminal_last_state_when_active_plan_state_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="done",
+        completed=[],
+    )
+
+    messages: list[str] = []
+    reconciled = _reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        spec,
+        state,
+        writer=messages.append,
+        push_enabled=False,
+    )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.last_state == "unknown"
+    assert saved.last_state == "unknown"
+    assert saved.metadata["ground_truth_reconciliation"]["current_state"] is None
+    assert any("cleared stale terminal last_state" in message for message in messages)
+
+
 def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     tmp_path: Path,
 ) -> None:
