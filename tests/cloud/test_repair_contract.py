@@ -1666,8 +1666,8 @@ def test_recovery_view_dispatches_healthy_as_no_action() -> None:
     assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_QUEUE_ONLY
 
 
-def test_recovery_view_blocked_escalates_to_human() -> None:
-    """When recovery_view is blocked and recovery_needed, escalate to human."""
+def test_recovery_view_untyped_blocked_is_broken_superfixer() -> None:
+    """A generic blocked view cannot invent a human decision."""
     recovery = _make_recovery_view_dict(
         custody_bucket="blocked",
         status="blocked",
@@ -1687,8 +1687,8 @@ def test_recovery_view_blocked_escalates_to_human() -> None:
         plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
         current_target={"current_refs": {"current_plan_name": "test-plan"}},
     )
-    assert decision.decision == repair_contract.DISPATCH_DECISION_HUMAN_REQUIRED
-    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_HUMAN_REQUIRED
+    assert decision.decision == repair_contract.DISPATCH_DECISION_BROKEN_SUPERFIXER
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_BROKEN_SUPERFIXER
     assert any("blocked" in r.lower() for r in decision.rationale)
 
 

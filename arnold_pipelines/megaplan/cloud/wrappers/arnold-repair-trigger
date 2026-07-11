@@ -310,22 +310,34 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
         _emit({"event": "repair_trigger_decision", "request_id": request_id, "decision": decision})
         return 0
     if not repair_bin.exists():
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="repair executable unavailable",
+        )
         _emit(
             {
                 "event": "repair_trigger",
                 "status": "repair_unavailable",
                 "request_id": request_id,
                 "repair_bin": str(repair_bin),
+                "custody_retry": retry,
             }
         )
         return 0
     if not blocker_id:
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="canonical blocker_id missing",
+        )
         _emit(
             {
                 "event": "repair_trigger_claim",
                 "status": "missing_blocker_id",
                 "request_id": request_id,
                 "session": session,
+                "custody_retry": retry,
             }
         )
         return 0
@@ -334,6 +346,11 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
     # classify and observe freely, but must not create a claim or child process
     # unless the shared master-plus-L1 predicate still authorizes mutation.
     if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="L1 mutation authorization changed before claim",
+        )
         _emit(
             {
                 "event": "repair_trigger",
@@ -341,6 +358,7 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
                 "request_id": request_id,
                 "authorized": False,
                 "reason": "L1 mutation authorization changed before claim",
+                "custody_retry": retry,
             }
         )
         return 0
@@ -359,6 +377,13 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
         extra={"workspace": workspace, "remote_spec": remote_spec},
     )
     if not claim.claimed:
+        retry = None
+        if claim.status == "stale":
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="active claim evidence was stale",
+            )
         _emit(
             {
                 "event": "repair_trigger_claim",
@@ -366,6 +391,7 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
                 "request_id": request_id,
                 "blocker_id": blocker_id,
                 "evidence": claim.evidence or {},
+                "custody_retry": retry,
             }
         )
         return 0
@@ -391,6 +417,11 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
             blocker_id=blocker_id,
             owner=claim.owner,
             expected_pid=os.getpid(),
+        )
+        repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="repair subprocess launch failed",
         )
         raise
     decision = repair_requests.write_decision(

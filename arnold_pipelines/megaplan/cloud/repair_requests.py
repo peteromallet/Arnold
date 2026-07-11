@@ -28,7 +28,16 @@ DECISIONS_DIR_NAME = "decisions"
 ACTIVE_CLAIMS_DIR_NAME = "active-claims"
 CURRENT_SCHEMA_VERSION = 1
 
-DecisionKind = Literal["accepted", "coalesced", "stale", "superseded", "malformed", "dispatched"]
+DecisionKind = Literal[
+    "accepted",
+    "coalesced",
+    "stale",
+    "superseded",
+    "malformed",
+    "dispatched",
+    "claim_retry",
+    "claim_alert",
+]
 ActiveRepairClaimStatus = Literal["claimed", "already_claimed", "busy", "stale"]
 
 
@@ -397,6 +406,64 @@ def write_decision(
     return {**record, "_path": str(path)}
 
 
+def record_unclaimed_request_failure(
+    queue_dir: str | Path,
+    *,
+    request_id: str,
+    reason: str,
+    max_retries: int = 3,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Durably bound failed claim handoffs and alert once at exhaustion."""
+
+    if max_retries < 1:
+        raise ValueError("max_retries must be positive")
+    history = [
+        item
+        for item in iter_repair_decisions(queue_dir)
+        if item.get("request_id") == request_id
+    ]
+    existing_alert = next(
+        (item for item in history if item.get("decision") == "claim_alert"),
+        None,
+    )
+    retry_count = sum(item.get("decision") == "claim_retry" for item in history)
+    if existing_alert is not None:
+        return {
+            "status": "alerted",
+            "retry_count": retry_count,
+            "max_retries": max_retries,
+            "alert": existing_alert,
+        }
+
+    attempt_number = retry_count + 1
+    retry = write_decision(
+        queue_dir,
+        request_id=request_id,
+        decision="claim_retry",
+        reason=f"claim handoff {attempt_number}/{max_retries}: {reason}",
+        created_at=created_at,
+    )
+    alert = None
+    if attempt_number >= max_retries:
+        alert = write_decision(
+            queue_dir,
+            request_id=request_id,
+            decision="claim_alert",
+            reason=(
+                f"accepted request remained unclaimed after {max_retries} bounded handoffs: {reason}"
+            ),
+            created_at=created_at,
+        )
+    return {
+        "status": "alerted" if alert is not None else "retryable",
+        "retry_count": attempt_number,
+        "max_retries": max_retries,
+        "retry": retry,
+        "alert": alert,
+    }
+
+
 def claim_active_repair_request(
     queue_dir: str | Path,
     *,
@@ -706,6 +773,7 @@ __all__ = [
     "problem_signature_key",
     "record_malformed_file",
     "redacted_hint_hash",
+    "record_unclaimed_request_failure",
     "release_active_repair_request_claim",
     "request_id_for",
     "validate_queue_root",

@@ -42,7 +42,12 @@ from arnold_pipelines.megaplan.authority.views import (
 )
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
-from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    classify_repair_dispatch,
+    is_success_outcome,
+    project_repair_custody,
+)
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
@@ -981,7 +986,72 @@ def _build_session_entry(
             now=now,
         )
     )
+    entry.update(
+        _compose_repair_decision_projection(
+            workspace=workspace,
+            queue_root=marker_dir.parent / "repair-queue",
+            repair_data_dir=repair_data_dir,
+            plan_state=plan_state_doc,
+            current_target=current_target_record,
+        )
+    )
     return entry
+
+
+def _compose_repair_decision_projection(
+    *,
+    workspace: Path | None,
+    queue_root: Path | None = None,
+    repair_data_dir: Path,
+    plan_state: Mapping[str, Any] | None,
+    current_target: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Use the same custody/dispatch contract consumed by watchdog dispatch."""
+
+    if workspace is None or not isinstance(plan_state, Mapping):
+        return {"repair_custody": None, "repair_dispatch": None}
+    effective_queue_root = queue_root or (workspace / ".megaplan" / "repair-queue")
+    try:
+        canonical = resolve_run_state(current_target or {})
+        custody = project_repair_custody(
+            plan_state=plan_state,
+            current_target=current_target,
+            canonical_run_state=canonical,
+            queue_root=effective_queue_root,
+            repair_data_dir=repair_data_dir,
+        )
+        dispatch = classify_repair_dispatch(
+            canonical_run_state=canonical,
+            plan_state=plan_state,
+            current_target=current_target,
+            custody_projection=custody,
+        )
+        return {
+            "repair_custody": custody,
+            "repair_dispatch": {
+                "decision": dispatch.decision,
+                "dispatch_intent": dispatch.dispatch_intent,
+                "request_id": dispatch.request_id,
+                "blocker_id": dispatch.blocker_id,
+                "failure_kind": dispatch.failure_kind,
+                "custody_bucket": dispatch.custody_bucket,
+                "rationale": list(dispatch.rationale),
+                "evidence_cursor": custody.get("evidence_cursor", {}),
+                "request_count": custody.get("request_count", 0),
+                "claim_count": custody.get("claim_count", 0),
+                "attempt_count": custody.get("attempt_count", 0),
+                "retry_budget": custody.get("retry_budget", {}),
+            },
+        }
+    except Exception as exc:
+        return {
+            "repair_custody": None,
+            "repair_dispatch": {
+                "decision": "broken_superfixer",
+                "dispatch_intent": "broken_superfixer",
+                "rationale": [f"canonical repair projection failed: {type(exc).__name__}"],
+            },
+        }
 
 
 def _compose_shadow_views(
@@ -1063,9 +1133,15 @@ def _compose_shadow_views(
 
     # --- human-gate projection -------------------------------------------------
     human_gate_signals: list[dict[str, Any]] = []
-    if needs_human and isinstance(needs_human, Mapping):
+    from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
+
+    if needs_human and isinstance(needs_human, Mapping) and typed_human_gate(needs_human) is not None:
         human_gate_signals.append({
-            "gate_type": "needs_human",
+            "gate_type": str(
+                needs_human.get("human_gate")
+                or needs_human.get("gate_type")
+                or needs_human.get("gate_kind")
+            ),
             "source": str(needs_human_path or "observation://needs-human"),
             "plan_ref": needs_human.get("plan_ref"),
             "stale_token": needs_human.get("stale_token"),
@@ -1392,6 +1468,12 @@ def _classify_session(
     ):
         return "running", "live runner activity supersedes older needs-human marker"
 
+    if _needs_human_superseded_by_authoritative_recovery(
+        needs_human=needs_human,
+        plan_state=plan_state,
+    ):
+        return "attention", "newer authoritative recovery evidence supersedes needs-human marker"
+
     # A current needs-human sidecar is ground truth for non-repairing active
     # work. A complete chain with no active plan has no live repair target, so
     # stale repair exhaustion markers from earlier ticks must not keep it
@@ -1406,6 +1488,12 @@ def _classify_session(
         latest_activity_dt=latest_activity_dt,
     ):
         return "blocked", _needs_human_reason(needs_human)
+
+    if _is_needs_human(needs_human) and not (chain_complete and not current_plan):
+        return (
+            "attention",
+            "needs-human marker lacks current typed decision proof; control-plane evidence needs repair",
+        )
 
     # The watchdog report is the authority on runner truth: it reads the
     # authoritative chain state every tick. The chain-health sidecar can freeze
@@ -1599,6 +1687,28 @@ def _needs_human_superseded_by_live_activity(
     recorded_at = _parse_iso(str(needs_human.get("recorded_at") or ""))
     return recorded_at is not None and latest_activity_dt > recorded_at
 
+
+def _needs_human_superseded_by_authoritative_recovery(
+    *,
+    needs_human: Mapping[str, Any] | None,
+    plan_state: Mapping[str, Any] | None,
+) -> bool:
+    """Prevent a compatibility marker from overriding a newer typed cursor."""
+
+    if not _is_needs_human(needs_human) or not isinstance(plan_state, Mapping):
+        return False
+    marker_at = _parse_iso(str(needs_human.get("recorded_at") or ""))
+    failure = plan_state.get("latest_failure")
+    failure = failure if isinstance(failure, Mapping) else {}
+    failure_at = _parse_iso(str(failure.get("recorded_at") or ""))
+    if marker_at is None or failure_at is None or failure_at <= marker_at:
+        return False
+    from arnold_pipelines.megaplan.run_state.decision_contract import (
+        is_machine_repairable_failure_kind,
+    )
+
+    return is_machine_repairable_failure_kind(failure.get("kind"))
+
 def _is_current_needs_human(
     *,
     session: str,
@@ -1629,8 +1739,23 @@ def _is_current_needs_human(
             needs_human_payload=needs_human,
         )
     except Exception:
+        classification = None
+    if classification is not None and classification.is_true_blocker:
         return True
-    return classification.should_block
+
+    from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
+
+    marker_plan = str(
+        needs_human.get("current_plan_name")
+        or needs_human.get("plan_name")
+        or needs_human.get("plan_ref")
+        or ""
+    ).strip()
+    return bool(
+        typed_human_gate(needs_human) is not None
+        and marker_plan
+        and marker_plan == current_plan
+    )
 
 def _is_needs_human(needs_human: Mapping[str, Any] | None) -> bool:
     return bool(needs_human)

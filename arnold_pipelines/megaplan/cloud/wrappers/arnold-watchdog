@@ -4278,6 +4278,12 @@ if result.status == "stale":
             is_pid_live=_pid_is_live,
             extra={"workspace": workspace, "remote_spec": remote_spec},
         )
+if result.status == "stale":
+    repair_requests.record_unclaimed_request_failure(
+        queue_root,
+        request_id=request_id,
+        reason="watchdog could not reclaim stale repair custody",
+    )
 print(result.status)
 PY
 }
@@ -7162,7 +7168,10 @@ PY
       route_resolver_machine_repair "$report_items" "$session" "$workspace" "$remote_spec" "${resolver_human_verdict#suppress:}" "$human_summary"
       return 0
     fi
-    if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "blocked_recovery_not_resolved" ]]; then
+    if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "blocked_recovery_not_resolved" \
+       || "${PLAN_STATUS_FAILURE_KIND:-}" == "quality_gate_blocked" \
+       || "${PLAN_STATUS_FAILURE_KIND:-}" == "deterministic_quality_blocked" \
+       || "${PLAN_STATUS_FAILURE_KIND:-}" == "execution_blocked" ]]; then
       repair_busy="$(repair_loop_busy_state "$session")"
       if [[ "$repair_busy" == "same_session" ]]; then
         log "session manual_review has unresolved quality blockers; repair already running session=$session summary=$human_summary"
@@ -7188,7 +7197,9 @@ PY
         fi
         return 0
       fi
-      log "session manual_review has unresolved quality blockers but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+      log "session manual_review has machine-repairable blockers but repair loop is unavailable; broken superfixer session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+      report_item "$report_items" "$session" "repair" "broken_superfixer" "accepted repair could not be claimed or launched" "$workspace" "$remote_spec"
+      return 0
     fi
     manual_review_dispatch_env="$(manual_review_dispatch_status_env "$session" "$workspace" "$remote_spec_path" "$run_kind" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" 2>>"$LOG" || true)"
     if [[ -n "$manual_review_dispatch_env" ]]; then

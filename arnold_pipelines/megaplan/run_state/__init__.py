@@ -31,6 +31,10 @@ from arnold_pipelines.megaplan.run_state.model import (
     TypedHumanGate,
 )
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+from arnold_pipelines.megaplan.run_state.decision_contract import (
+    is_machine_repairable_failure_kind,
+    typed_human_gate,
+)
 
 __all__ = [
     "CanonicalRunState",
@@ -39,4 +43,6 @@ __all__ = [
     "TypedHumanGate",
     "normalize_evidence",
     "resolve_run_state",
+    "is_machine_repairable_failure_kind",
+    "typed_human_gate",
 ]

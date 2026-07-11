@@ -125,9 +125,19 @@ class Fixture:
         (plan_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
 
     def add_needs_human(self, name: str, *, summary: str = "awaiting human action") -> None:
+        marker = json.loads((self.marker_dir / f"{name}.json").read_text(encoding="utf-8"))
+        plan_name = str(marker.get("plan_name") or "")
         (self.repair_dir / f"{name}.needs-human.json").write_text(
             json.dumps(
-                {"session": name, "summary": summary, "recorded_at": NOW.isoformat()},
+                {
+                    "session": name,
+                    "summary": summary,
+                    "recorded_at": NOW.isoformat(),
+                    "human_gate": "explicit_approval",
+                    "decision_required": "approve or reject the pending action",
+                    "plan_name": plan_name,
+                    "current_plan_name": plan_name,
+                },
             ),
             encoding="utf-8",
         )
@@ -755,7 +765,7 @@ def test_summary_counts_partition_all_sessions(fx):
     summary = snap["summary"]
     total = sum(summary.values())
     assert total == 6, summary
-    assert summary == {"running": 2, "repairing": 1, "blocked": 1, "complete": 1, "attention": 1}
+    assert summary == {"running": 2, "repairing": 1, "blocked": 0, "complete": 1, "attention": 2}
 
 
 # --- degraded mode + freshness -------------------------------------------
