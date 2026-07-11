@@ -34,12 +34,20 @@ real editable venv + `python -P` cwd-shadow integration test. `455b25920`
 accepts a pinned Git worktree as valid source metadata without treating it as a
 missing checkout.
 
+The first bounded live attempt also exposed two compatibility defects in the
+new runtime: the pre-existing repair index carries resident delegation custody
+metadata, and the repair-loop launch script embedded a canonical command without
+shell quoting. `24cb22c48` preserves that metadata through index updates and
+uses the same `%q` relaunch fencing as the watchdog.
+
 ## Verification
 
 - 318 focused recovery/status/human-gate/liveness tests passed.
 - 12 editable provenance/install tests passed, including the isolated venv
   subprocess and Git-worktree source test.
 - Wrapper shell syntax and `git diff --check` passed.
+- 113 focused repair-index/recovery/provenance tests passed after the live
+  compatibility fixes.
 - The broader historical wrapper sweep was stopped after 91 passes and 12 known
   branch-drift failures (obsolete wrapper-string and removed queue-helper
   expectations); it is not represented as globally green.
@@ -48,6 +56,8 @@ missing checkout.
   and recorded bounded `claim_retry`; no `needs_human` marker or Discord
   notification was created. One canonical relaunch fallback ran and immediately
   preserved the blocked state; no duplicate WBC worker remained.
+- The one bounded live repair exhausted as `broken_superfixer` on the legacy
+  untyped artifact. It did not mint a human decision or bypass the blocked gate.
 
 ## Current state and residual risk
 
