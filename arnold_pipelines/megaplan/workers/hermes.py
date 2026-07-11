@@ -9,6 +9,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TextIO
@@ -713,8 +714,9 @@ def _emit_llm_start(
     model: str | None,
     prompt_hash: str | None,
     is_streaming: bool,
-) -> None:
+) -> str:
     """Emit an llm_call_start event."""
+    call_transaction_id = uuid.uuid4().hex
     try:
         from arnold_pipelines.megaplan.observability.events import emit, EventKind
 
@@ -729,10 +731,12 @@ def _emit_llm_start(
                 "prompt_hash": prompt_hash,
                 "streaming": is_streaming,
                 "request_id": None,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
         pass
+    return call_transaction_id
 
 
 def _emit_llm_end(
@@ -742,6 +746,7 @@ def _emit_llm_end(
     tokens_out: int,
     request_id: str | None,
     model: str | None = None,
+    call_transaction_id: str | None = None,
 ) -> None:
     """Emit an llm_call_end event."""
     try:
@@ -756,6 +761,7 @@ def _emit_llm_end(
                 "tokens_out": tokens_out,
                 "request_id": request_id,
                 "model": model,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
@@ -2229,7 +2235,13 @@ def run_hermes_step(
             # Emit llm_call_start
             prompt_text = rendered_prompt or prompt_override or ""
             prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16] if prompt_text else None
-            _emit_llm_start(plan_dir, step, effective_resolved_model or resolved_model, prompt_hash, is_streaming)
+            call_transaction_id = _emit_llm_start(
+                plan_dir,
+                step,
+                effective_resolved_model or resolved_model,
+                prompt_hash,
+                is_streaming,
+            )
 
             # Heartbeat thread for streaming calls
             heartbeat_stop = threading.Event()
@@ -2384,6 +2396,7 @@ def run_hermes_step(
                 tokens_out,
                 request_id,
                 model=effective_resolved_model or resolved_model,
+                call_transaction_id=call_transaction_id,
             )
 
             try:

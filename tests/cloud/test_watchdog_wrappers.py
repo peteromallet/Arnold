@@ -101,6 +101,51 @@ def _extract_wrapper_function_until(name: str, next_name: str) -> str:
     return text[start:end]
 
 
+def test_repair_unintended_stop_executes_direct_relaunch_fallback(tmp_path: Path) -> None:
+    report = tmp_path / "report.tsv"
+    called = tmp_path / "relaunch.called"
+    script = "\n".join(
+        [
+            _extract_wrapper_function("repair_unintended_stop"),
+            f"REPORT={shlex.quote(str(report))}",
+            f"CALLED={shlex.quote(str(called))}",
+            "repair_loop_busy_state() { echo none; }",
+            "repair_unhealthy_session() { REPAIR_UNHEALTHY_RESULT=direct_relaunch_required; return 1; }",
+            "report_item() { printf '%s\\t%s\\t%s\\n' \"$3\" \"$4\" \"$5\" >> \"$1\"; }",
+            "canonical_direct_relaunch() { : > \"$CALLED\"; return 0; }",
+            "repair_unintended_stop \"$REPORT\" demo /workspace/demo spec 'dead finalize worker'",
+        ]
+    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert called.exists()
+    assert "direct_relaunch_required" in report.read_text(encoding="utf-8")
+    assert "repair_unavailable" not in report.read_text(encoding="utf-8")
+
+
+def test_capability_missing_reason_does_not_swallow_direct_fallback(tmp_path: Path) -> None:
+    report = tmp_path / "report.tsv"
+    called = tmp_path / "relaunch.called"
+    script = "\n".join(
+        [
+            _extract_wrapper_function("repair_unintended_stop"),
+            f"REPORT={shlex.quote(str(report))}",
+            f"CALLED={shlex.quote(str(called))}",
+            "repair_loop_busy_state() { echo none; }",
+            "repair_unhealthy_session() { REPAIR_UNHEALTHY_RESULT=capability_missing; return 1; }",
+            "report_item() { printf '%s\\t%s\\t%s\\n' \"$3\" \"$4\" \"$5\" >> \"$1\"; }",
+            "canonical_direct_relaunch() { : > \"$CALLED\"; return 0; }",
+            "repair_unintended_stop \"$REPORT\" demo /workspace/demo spec 'stale active step'",
+        ]
+    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert called.exists()
+    text = report.read_text(encoding="utf-8")
+    assert "repair_unavailable" in text
+    assert "capability_missing" in text
+
+
 def _extract_reap_program() -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index("reap_stale_repair_candidates() {")

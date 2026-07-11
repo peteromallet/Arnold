@@ -186,3 +186,19 @@ def test_gate_audit_strips_unknown_top_level_fields_from_inline_payload() -> Non
     }
 
     audit_step_payload("gate", payload)
+
+
+def test_legacy_gate_field_cannot_reenter_identical_schema_retry_loop() -> None:
+    """The C1 attempt-34 payload must normalize successfully every time."""
+    payload = {
+        "recommendation": "PROCEED",
+        "rationale": "The plan is ready.",
+        "signals_assessment": "No blocking flags remain.",
+        "warnings": [],
+        "settled_decisions": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+        "north_star_actions": [{"id": "NSA-legacy", "action": "advisory"}],
+    }
+    for _attempt in range(40):
+        audit_step_payload("gate", payload)
