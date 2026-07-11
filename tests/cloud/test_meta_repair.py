@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     MetaRepairClassification,
     MetaRepairRecord,
     extract_reported_repair_custody,
+    verify_meta_repair_commit_custody,
     MetaRepairTrigger,
     RetriggerExecutionResult,
     build_meta_repair_prompt,
@@ -61,6 +63,106 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def _commit_file(repo: Path, name: str, content: str, message: str) -> str:
+    (repo / name).write_text(content, encoding="utf-8")
+    _git(repo, "add", name)
+    _git(repo, "commit", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+class TestMetaRepairCommitCustody:
+    def _repo(self, tmp_path: Path) -> tuple[Path, Path, str]:
+        remote = tmp_path / "remote.git"
+        subprocess.run(["git", "init", "--bare", str(remote)], check=True)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-b", "editible-install")
+        _git(repo, "config", "user.email", "test@example.invalid")
+        _git(repo, "config", "user.name", "Test")
+        _git(repo, "remote", "add", "origin", str(remote))
+        baseline = _commit_file(repo, "repair.py", "old\n", "baseline")
+        _git(repo, "push", "-u", "origin", "editible-install")
+        return repo, remote, baseline
+
+    def test_fixed_requires_the_new_commit_to_be_published(self, tmp_path: Path) -> None:
+        repo, _, baseline = self._repo(tmp_path)
+        current = _commit_file(repo, "repair.py", "fixed\n", "fix repair")
+
+        rejected = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=baseline,
+            verdict="FIXED",
+            push_required=True,
+        )
+        assert rejected["accepted"] is False
+        assert rejected["current_head"] == current
+        assert rejected["local_reachable"] is True
+        assert rejected["remote_reachable"] is False
+
+        _git(repo, "push", "origin", "editible-install")
+        accepted = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=baseline,
+            verdict="FIXED",
+            push_required=True,
+        )
+        assert accepted["accepted"] is True
+        assert accepted["outcome"] == "commit_custody_verified"
+        assert accepted["remote_reachable"] is True
+
+    def test_rejects_detached_or_nonfixed_source_changes(self, tmp_path: Path) -> None:
+        repo, _, baseline = self._repo(tmp_path)
+        current = _commit_file(repo, "repair.py", "changed\n", "unexpected change")
+
+        nonfixed = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=baseline,
+            verdict="ESCALATE",
+            push_required=False,
+        )
+        assert nonfixed["accepted"] is False
+        assert nonfixed["reason"] == "non-FIXED verdict moved source HEAD"
+
+        _git(repo, "checkout", "--detach", current)
+        detached_nonfixed = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=current,
+            verdict="ESCALATE",
+            push_required=False,
+        )
+        assert detached_nonfixed["accepted"] is False
+        assert detached_nonfixed["reason"] == "source commit is on detached HEAD"
+
+        detached = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=baseline,
+            verdict="FIXED",
+            push_required=False,
+        )
+        assert detached["accepted"] is False
+        assert detached["reason"] == "source commit is on detached HEAD"
+
+    def test_custody_rejection_controls_the_effective_outcome(self) -> None:
+        outcome = meta_repair_module.derive_meta_repair_effective_outcome(
+            verdict="ESCALATE",
+            post_retrigger_verification={
+                "commit_custody": {"accepted": False},
+            },
+        )
+        assert outcome == "commit_custody_failed"
 
 
 def _make_session_dir(tmp_path: Path, session: str) -> Path:

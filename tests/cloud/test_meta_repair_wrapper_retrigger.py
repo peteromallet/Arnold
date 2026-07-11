@@ -74,6 +74,16 @@ def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
     assert 'runpy.run_path(launcher, run_name="__main__")' in text
 
 
+def test_meta_repair_wrapper_fails_closed_on_commit_custody() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'SOURCE_BASELINE_HEAD="$(git -C "$ARNOLD_SRC" rev-parse HEAD' in text
+    assert "verify_meta_repair_commit_custody" in text
+    assert 'INSTALL_SYNC_STATUS="commit_custody_failed"' in text
+    assert "will NOT install sync or retrigger ordinary repair" in text
+    assert 'post_retrigger_verification["commit_custody"]' in text
+
+
 def test_recordable_verdict_check_rejects_arbitrary_output(tmp_path: Path) -> None:
     text = _meta_repair_wrapper()
     start = text.index("has_recordable_verdict() {")
