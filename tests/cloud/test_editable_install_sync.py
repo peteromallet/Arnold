@@ -61,6 +61,9 @@ def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
     assert 'git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"' in command
     assert 'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"' in command
     assert 'pip install -e "$MEGAPLAN_RUNTIME_SRC"' in command
+    assert "arnold_pipelines.megaplan.cloud.runtime_provenance" in command
+    assert '--expected-root "$MEGAPLAN_RUNTIME_SRC"' in command
+    assert '--expected-revision "$RUNTIME_REVISION"' in command
 
 
 def test_cloud_refresh_force_clean_resets_only_editable_source() -> None:
