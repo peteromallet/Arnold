@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
 from arnold_pipelines.megaplan.orchestration.transition_policy import (
     TRANSITION_DECISION_REVIEW_DONE_FILENAME,
     TransitionPolicy,
+    TransitionPolicyDecision,
     TransitionWriter,
 )
 from arnold_pipelines.megaplan.execute.merge import _validate_and_merge_batch
@@ -66,6 +67,7 @@ from arnold_pipelines.megaplan._core import (
     get_effective,
     is_prose_mode,
     is_creative_mode,
+    latest_plan_meta_path,
     load_plan_locked,
     make_history_entry,
     now_utc,
@@ -1385,6 +1387,74 @@ def _review_done_evidence_refs(review_evidence: dict[str, Any]) -> tuple[Evidenc
     )
 
 
+def _review_north_star_closeout_blockers(
+    plan_dir: Path,
+    state: PlanState,
+) -> list[str]:
+    """Return hard denial reasons for unresolved carried blocking North Star actions.
+
+    This is the review→done closeout pre-check (SD3). It runs BEFORE
+    ``TransitionPolicy.evaluate_review_done`` so a milestone cannot be marked
+    complete while a carried blocking North Star action remains unresolved.
+    It is intentionally a *separate* pre-check: the transition policy keeps
+    its existing concerns (evidence freshness, completion status) and this
+    gate stays focused on North Star closeout. Denials are routed through the
+    existing denial path via :meth:`TransitionPolicyDecision.merge_denial_reasons`.
+
+    Fail-closed (SD1): absent, malformed, or incomplete
+    ``north_star_actions_addressed[]`` metadata in the latest revise step is
+    treated as every carried blocker being unresolved.
+    """
+    from arnold_pipelines.megaplan.north_star_actions import (
+        blocking_north_star_actions,
+        find_unresolved_blocking_actions,
+        read_carried_north_star_actions,
+    )
+
+    carried = read_carried_north_star_actions(plan_dir)
+    carried_blocking = blocking_north_star_actions(carried)
+    if not carried_blocking:
+        return []
+
+    # Read the latest revise metadata for north_star_actions_addressed[].
+    # When the plan has never been revised the metadata is absent → fail-closed
+    # (every carried blocker is reported as unresolved), mirroring the finalize
+    # guard and _post_revise_gate_allowed.
+    meta_path = latest_plan_meta_path(plan_dir, state)
+    meta: dict[str, Any] | None = None
+    if meta_path.exists():
+        try:
+            meta = read_json(meta_path)
+        except Exception:
+            meta = None
+
+    addressed: list[dict[str, Any]] | None = None
+    if isinstance(meta, dict):
+        raw_addressed = meta.get("north_star_actions_addressed")
+        if isinstance(raw_addressed, list):
+            addressed = raw_addressed
+
+    unresolved = find_unresolved_blocking_actions(
+        carried_blocking=carried_blocking,
+        addressed=addressed,
+    )
+    if not unresolved:
+        return []
+
+    reasons: list[str] = []
+    for action in unresolved:
+        aid = action.get("id")
+        action_type = action.get("action_type")
+        reason = action.get("reason")
+        reasons.append(
+            f"unresolved blocking North Star action {aid} "
+            f"(type={action_type}, reason={reason}): milestone cannot be "
+            "marked complete until this action is concretely addressed in a "
+            "revise pass with concrete plan_refs and the matching action_type marker"
+        )
+    return reasons
+
+
 def _persist_review_done_transition_decision(
     *,
     plan_dir: Path,
@@ -1401,6 +1471,15 @@ def _persist_review_done_transition_decision(
     if not isinstance(review_evidence, dict):
         review_evidence = {}
     project_dir = Path(str(state.get("config", {}).get("project_dir", "")))
+
+    # ── T9: North Star closeout blocker pre-check (SD3) ──────────────────
+    # Fail-closed: unresolved carried blocking North Star actions MUST deny
+    # the review→done transition ahead of the normal policy. This is a
+    # separate pre-check (not a TransitionPolicy concern); the denial is
+    # merged into the policy decision so it routes through the existing
+    # denial path with no TransitionPolicy signature change.
+    north_star_denial_reasons = _review_north_star_closeout_blockers(plan_dir, state)
+
     policy_decision = TransitionPolicy.evaluate_review_done(
         result=result,
         next_state=next_state,
@@ -1408,6 +1487,12 @@ def _persist_review_done_transition_decision(
         review_evidence=review_evidence,
         project_dir=project_dir if str(project_dir) else None,
     )
+    if north_star_denial_reasons:
+        # Force the transition denied via the existing denial path. The merged
+        # decision carries the North Star reasons on top of the policy's own
+        # reasons so the written transition decision and downstream denial
+        # routing both surface the unresolved blockers.
+        policy_decision = policy_decision.merge_denial_reasons(north_star_denial_reasons)
     meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
     invocation_id = meta.get("current_invocation_id")
     if not isinstance(invocation_id, str) or not invocation_id:

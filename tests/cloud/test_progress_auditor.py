@@ -17,6 +17,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
+from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -36,7 +39,11 @@ def _extract_report_assembler() -> str:
     """Extract the final report-assembly Python program from the auditor wrapper."""
     text = _wrapper("arnold-progress-auditor")
     # The report assembler is the last python3 - ... <<'PY' block
-    marker = 'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" <<\'PY\''
+    marker = (
+        'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" '
+        '"$REPORT_LOG" "$TS" "$AUDIT_MUTATION_AUTHORIZED_FLAG" '
+        '"$AUDIT_LAUNCH_ATTEMPTED" <<\'PY\''
+    )
     py_start = text.index(marker)
     py_start = text.index("\n", py_start) + 1
     py_end = text.index("\nPY\n", py_start)
@@ -118,7 +125,12 @@ def _run_gather_program(
 
 
 def _run_report_assembler(
-    findings_data: dict, tmp_path: Path, ts: str = "20260702T220000Z"
+    findings_data: dict,
+    tmp_path: Path,
+    ts: str = "20260702T220000Z",
+    *,
+    autofix_authorized: bool = False,
+    launch_attempted: bool = False,
 ) -> tuple[dict, str]:
     """Run the report assembler with synthetic findings data and return (json_payload, markdown_text)."""
     program = _extract_report_assembler()
@@ -141,6 +153,8 @@ def _run_report_assembler(
             str(md_out),
             str(log_path),
             ts,
+            "1" if autofix_authorized else "0",
+            "1" if launch_attempted else "0",
         ],
         capture_output=True,
         text=True,
@@ -172,6 +186,7 @@ def _run_dispatch_one(
     codex = tmp_path / "codex"
     codex.write_text(
         "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(tmp_path / 'codex.argv'))}\n"
         f"printf '%s' {shlex.quote(codex_stdout)}\n"
         + (
             f"printf '%s' {shlex.quote(codex_stderr)} >&2\n"
@@ -190,20 +205,29 @@ def _run_dispatch_one(
             _extract_auditor_function("audit_flag_enabled"),
             _extract_auditor_function("autofix_allowed_targets_markdown"),
             _extract_auditor_function("autofix_policy_markdown"),
+            _extract_auditor_function("audit_dispatch_receipt_root"),
+            _extract_auditor_function("initialize_audit_dispatch_receipt"),
+            _extract_auditor_function("record_audit_dispatch_started"),
+            _extract_auditor_function("finalize_audit_dispatch_receipt"),
             _extract_auditor_function("dispatch_one"),
             f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
             f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             f"GATHER_DIR={shlex.quote(str(gather_dir))}",
+            f"REPORT_DIR={shlex.quote(str(tmp_path / 'reports'))}",
             "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
+            "AUDIT_CODEX_MODEL=gpt-5.6-sol",
             "SUBAGENT_PROFILE=partnered-5",
             "CODEX_TIMEOUT=30",
             'AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"',
+            'AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"',
             'AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"',
             "dispatch_one " + shlex.quote(str(gather_file)),
         ]
     )
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
+    env.setdefault("ARNOLD_AUTONOMY", "1")
+    env.setdefault("ARNOLD_AUDIT_AUTOFIX_ENABLED", "1")
     if extra_env:
         env.update(extra_env)
     result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, env=env, check=False)
@@ -215,6 +239,8 @@ def _run_dispatch_one(
     err_path = gather_dir / f"resp-{plan}.err"
     err = err_path.read_text(encoding="utf-8") if err_path.exists() else ""
     updated = json.loads(gather_file.read_text(encoding="utf-8"))
+    argv_path = tmp_path / "codex.argv"
+    updated["_codex_argv"] = argv_path.read_text(encoding="utf-8").splitlines() if argv_path.exists() else []
     return brief, resp, err, updated
 
 
@@ -478,6 +504,10 @@ def audit_projection_input(audit_input, *, live_process_snapshot, now):
         }}
     )
     return AUDIT_RESULT
+
+
+def enqueue_audit_repair_request(item, *, queue_root):
+    return None
 """,
         "arnold_pipelines/megaplan/incident/summaries.py": """
 def write_projection_summaries(*, projections, root):
@@ -1139,6 +1169,34 @@ class TestAuditorWrapperSyntax:
 
 
 class TestAuditorAutofixPromptGates:
+    def test_dispatch_pins_exact_codex_model_and_persists_read_only_receipt(
+        self, tmp_path: Path
+    ) -> None:
+        _brief, _resp, _err, updated = _run_dispatch_one(
+            tmp_path,
+            gather_payload={
+                "plan": "audit-model-pin",
+                "reasons": ["watchdog_report_stale"],
+                "session_header": {"kind": "chain"},
+            },
+        )
+
+        assert updated["_codex_argv"] == [
+            "exec", "--sandbox", "read-only", "-c", "model=gpt-5.6-sol", "-"
+        ]
+        receipt_path = (
+            Path(updated["dispatch_receipt_root"])
+            / "dispatch_receipts"
+            / f"{updated['dispatch_id']}.json"
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt["configured_model"] == "gpt-5.6-sol"
+        assert receipt["resolved_runtime_model"] == "gpt-5.6-sol"
+        assert receipt["subprocess_started"] is True
+        assert receipt["mutation_facts"] == {
+            "state": False, "source": False, "commit": False, "push": False
+        }
+
     def test_disabled_mode_is_report_only(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
             tmp_path,
@@ -1153,10 +1211,8 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPORT-ONLY." in brief
-        assert "Do not edit files, apply patches, or run `git commit` / `git push`." in brief
-        assert "Repair-SYSTEM PATCH-ONLY" not in brief
-        assert "commit and push" not in brief.lower()
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "Do not apply patches, create claims, launch repair agents, commit, or push." in brief
 
     def test_enabled_without_commit_gate_is_patch_only_and_bounded(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
@@ -1172,12 +1228,9 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPAIR-SYSTEM PATCH-ONLY." in brief
-        assert "Leave changes uncommitted; do not run `git commit` or `git push`." in brief
-        assert "`arnold_pipelines/megaplan/cloud/**`" in brief
-        assert "`tests/cloud/**`" in brief
-        assert "Never modify the audited run workspace" in brief
-        assert "git push to `origin/editible-install`" not in brief
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "No mutation targets." in brief
+        assert "validated central repair-request authority" in brief
 
     def test_commit_push_language_requires_explicit_commit_gate(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
@@ -1193,9 +1246,9 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPAIR-SYSTEM PATCH + COMMIT/PUSH (explicitly gated)." in brief
-        assert "git commit` and `git push` to `origin/editible-install`." in brief
-        assert "Leave changes uncommitted" not in brief
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "Do not edit source, run state, plan state, repair data, or project files." in brief
+        assert "REPAIR-SYSTEM PATCH + COMMIT/PUSH" not in brief
 
     def test_prompt_and_response_artifacts_are_redacted(self, tmp_path: Path) -> None:
         secret = "Authorization: Bearer bearer-secret-token-value"
@@ -1885,25 +1938,17 @@ class TestAuditorWrapperBoundary:
         assert events[1]["payload"]["next_expected_event"] is None
         assert events[1]["payload"]["decision"]["reconciler_next_expected_event"] == "auditor_escalate_to_human"
         assert all(event["payload"].get("next_expected_event") != "meta_repair.repair_attempt" for event in events)
+        queue_root = workspace / ".megaplan" / "repair-queue"
+        requests = [json.loads(path.read_text(encoding="utf-8")) for path in (queue_root / "requests").glob("*.json")]
+        assert len(requests) == 1
+        assert requests[0]["source"] == "six_hour_auditor"
+        assert requests[0]["session"] == "demo-session"
+        assert requests[0]["target"]["incident_id"] == "inc-124"
         repair_data_dir = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data"
-        marker_path = repair_data_dir / "demo-session.needs-human.json"
-        assert marker_path.exists()
-        marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        assert marker["session"] == "demo-session"
-        assert marker["plan_name"] == "demo-plan"
-        assert marker["discord_status"] == "pending"
-        index_payload = json.loads((repair_data_dir / "index.json").read_text(encoding="utf-8"))
-        session_ref = index_payload["sessions"]["demo-session"]["refs"]["unresolved-escalation"]
-        assert session_ref["incident_id"] == "inc-124"
-        assert session_ref["path"] == str(marker_path)
-        escalation_path = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data.d" / "escalations" / "escalations.jsonl"
-        escalation_records = [
-            json.loads(line)
-            for line in escalation_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        assert escalation_records[-1]["event"] == "opened"
-        assert escalation_records[-1]["incident_id"] == "inc-124"
+        marker = json.loads(
+            (repair_data_dir / "demo-session.needs-human.json").read_text(encoding="utf-8")
+        )
+        assert marker["escalation_label"] == "auditor_human_escalation"
 
 
 class TestLiveSignalFiltering:
@@ -3385,12 +3430,12 @@ class TestAutonomousFixAttemptsJsonSchema:
             "green_checks": [],
         }
         payload, _md = _run_report_assembler(findings_data, tmp_path)
-        assert len(payload["autonomous_fix_attempts"]) == 1
-        af = payload["autonomous_fix_attempts"][0]
-        assert set(af.keys()) == {"plan", "session", "commit", "summary"}
+        assert payload["autonomous_fix_attempts"] == []
+        af = payload["risky_or_deferred_fixes"][0]
+        assert set(af.keys()) == {"plan", "session", "verdict", "summary"}
         assert af["plan"] == "fixed-plan"
         assert af["session"] == "fixed-sess"
-        assert af["commit"] == "abc123def"
+        assert af["verdict"] == "INVALID_MUTATION_CLAIM"
         assert "null-pointer" in af["summary"]
 
     def test_field_ignores_non_fixed_hypotheses(self, tmp_path: Path) -> None:
@@ -3629,7 +3674,8 @@ class TestAutonomousFixAttemptsMarkdown:
         assert "## 🔧 Autonomous fix attempts" in md
         assert "**fixed-plan**" in md
         assert "deadbeef" in md
-        assert "_No autonomous fixes were attempted" not in md
+        assert "_No autonomous fixes were attempted" in md
+        assert "INVALID_MUTATION_CLAIM" in md
 
     def test_shows_multiple_fixed_attempts(self, tmp_path: Path) -> None:
         findings_data = {
@@ -3878,8 +3924,8 @@ class TestRiskyOrDeferredFixesMarkdown:
             "green_checks": [],
         }
         payload, md = _run_report_assembler(findings_data, tmp_path)
-        assert len(payload["autonomous_fix_attempts"]) == 1
-        assert len(payload["risky_or_deferred_fixes"]) == 1
+        assert payload["autonomous_fix_attempts"] == []
+        assert len(payload["risky_or_deferred_fixes"]) == 2
         assert "## 🔧 Autonomous fix attempts" in md
         assert "## ⚠️ Risky or deferred fixes" in md
         assert "**fixed-plan**" in md
@@ -4310,6 +4356,7 @@ class TestStageMetrics:
             "mode", "autofix_enabled", "repair_dispatched", "model_dispatched",
             "deepseek_dispatched", "meta_repair_dispatched", "codex_dispatched",
             "git_commit_performed", "file_edit_performed", "rationale",
+            "resolved_runtime_model", "dispatch_receipt_count",
         }
         assert set(ds.keys()) == expected_keys
 
@@ -4333,6 +4380,93 @@ class TestStageMetrics:
         assert ds["file_edit_performed"] is False
         assert "report-only" in ds["rationale"].lower()
         assert "no repair" in ds["rationale"].lower()
+
+    def test_dispatch_summary_launch_attempt_permanently_falsifies_report_only(
+        self, tmp_path: Path
+    ) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "one finding",
+            "findings": [{"plan": "p", "codex_launch_attempted": True}],
+            "green_checks": [],
+        }
+
+        payload, _md = _run_report_assembler(
+            findings_data,
+            tmp_path,
+            autofix_authorized=True,
+        )
+
+        ds = payload["dispatch_summary"]
+        assert ds["mode"] == "autofix_attempted"
+        assert ds["autofix_enabled"] is True
+        assert ds["model_dispatched"] is True
+        assert ds["codex_dispatched"] is True
+        assert "regardless of launch outcome" in ds["rationale"]
+
+    def test_dispatch_summary_uses_durable_receipt_as_model_authority(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.receipts.writer import (
+            finalize_dispatch_receipt,
+            initialize_dispatch_receipt,
+            prepare_dispatch_receipt,
+            record_dispatch_started,
+        )
+
+        receipt_root = tmp_path / "receipt-root"
+        receipt = initialize_dispatch_receipt(
+            receipt_root,
+            prepare_dispatch_receipt(action="six_hour_audit", configured_model="stale-config"),
+        )
+        receipt = record_dispatch_started(
+            receipt_root, receipt, resolved_runtime_model="gpt-5.6-sol"
+        )
+        final = finalize_dispatch_receipt(
+            receipt_root,
+            receipt,
+            outcome="failed",
+            resolved_runtime_model="gpt-5.6-sol",
+            mutation_facts={"state": False, "source": False, "commit": False, "push": False},
+        )
+        payload, _md = _run_report_assembler(
+            {
+                "findings": [{
+                    "plan": "p",
+                    "dispatch_receipt_root": str(receipt_root),
+                    "dispatch_id": final["dispatch_id"],
+                    "configured_model": "wrong-report-value",
+                }],
+                "green_checks": [],
+            },
+            tmp_path,
+        )
+
+        assert payload["dispatch_summary"]["resolved_runtime_model"] == "gpt-5.6-sol"
+        assert payload["dispatch_summary"]["mode"] == "autofix_attempted"
+        assert payload["dispatch_receipts"][0]["outcome"] == "failed"
+
+    @pytest.mark.parametrize(
+        ("master", "path", "authorized"),
+        [("0", "0", False), ("0", "1", False), ("1", "0", False), ("1", "1", True)],
+    )
+    def test_auditor_wrapper_dispatch_matrix_requires_master_and_l3_path(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        master: str,
+        path: str,
+        authorized: bool,
+    ) -> None:
+        monkeypatch.setenv("ARNOLD_AUTONOMY", master)
+        monkeypatch.setenv("ARNOLD_AUDIT_AUTOFIX_ENABLED", path)
+
+        assert feature_flags.audit_autofix_mutation_authorized() is authorized
+        wrapper = _wrapper("arnold-progress-auditor")
+        assert 'if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" ]]' in wrapper
+        assert 'AUDIT_LAUNCH_ATTEMPTED=1' in wrapper
+        assert wrapper.index("AUDIT_LAUNCH_ATTEMPTED=1") < wrapper.index(
+            'timeout "$CODEX_TIMEOUT" codex exec'
+        )
 
     # ── Multiple nonzero stages in markdown ───────────────────────────
 

@@ -37,6 +37,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     load_redacted_evidence,
     persist_meta_repair_record,
     remaining_meta_budget_secs,
+    retrigger_ordinary_repair,
     trigger_priority,
     verify_retrigger_success,
 )
@@ -1851,7 +1852,18 @@ class TestMetaRepairTimeout:
 
 
 class TestRetriggerVerification:
-    def test_live_with_fresh_activity_is_accepted_success(self) -> None:
+    @pytest.mark.parametrize(
+        "verification",
+        [
+            {"outcome": COMPLETE, "kind": "pid", "pid_alive": True},
+            {"outcome": COMPLETE, "kind": "heartbeat", "heartbeat_active": True},
+            {"outcome": PARTIAL_LIVENESS, "kind": "partial_liveness", "is_live": True},
+            {"outcome": COMPLETE, "kind": "subprocess_success"},
+        ],
+    )
+    def test_process_and_liveness_only_are_never_accepted(
+        self, verification: dict[str, object]
+    ) -> None:
         result = verify_retrigger_success(
             retriggered=True,
             retrigger_result=RetriggerExecutionResult(
@@ -1861,12 +1873,12 @@ class TestRetriggerVerification:
                 stderr="",
                 lock_released=True,
             ),
-            post_retrigger_verification={"outcome": LIVE_WITH_FRESH_ACTIVITY},
+            post_retrigger_verification=verification,
         )
 
-        assert result["accepted"] is True
-        assert result["outcome"] == LIVE_WITH_FRESH_ACTIVITY
-        assert result["rejection_reason"] == ""
+        assert result["accepted"] is False
+        assert result["recovery_status"] == "provisional"
+        assert result["recovery_verification"]["authorizes_verified_recovered"] is False
 
     def test_partial_liveness_remains_rejected(self) -> None:
         result = verify_retrigger_success(
@@ -1883,7 +1895,103 @@ class TestRetriggerVerification:
 
         assert result["accepted"] is False
         assert result["outcome"] == PARTIAL_LIVENESS
-        assert "not a terminal success" in result["rejection_reason"]
+        assert result["recovery_status"] == "provisional"
+
+    @pytest.mark.parametrize("unknown_type", ["missing", "stale", "partial", "contradictory"])
+    def test_typed_unknown_verification_fails_closed(self, unknown_type: str) -> None:
+        result = verify_retrigger_success(
+            retriggered=True,
+            retrigger_result=RetriggerExecutionResult(
+                command=("arnold-repair-loop", "demo-session"), returncode=0
+            ),
+            post_retrigger_verification={
+                "outcome": COMPLETE,
+                "original_blocker": {"blocker_id": "blocker-42"},
+                "observation": {
+                    "evidence_state": {
+                        "status": "unknown",
+                        "unknown_type": unknown_type,
+                    }
+                },
+                "repair_completed_at": "2026-07-09T07:53:00+00:00",
+            },
+        )
+
+        assert result["accepted"] is False
+        assert result["recovery_status"] == "unknown"
+        assert result["unknown_type"] == unknown_type
+
+    def test_later_independent_blocker_specific_observation_is_accepted(self) -> None:
+        result = verify_retrigger_success(
+            retriggered=True,
+            retrigger_result=RetriggerExecutionResult(
+                command=("arnold-repair-loop", "demo-session"), returncode=0
+            ),
+            post_retrigger_verification={
+                "outcome": COMPLETE,
+                "repair_completed_at": "2026-07-09T07:53:00+00:00",
+                "post_snapshot": _terminal_post_snapshot(),
+                "original_blocker": {"blocker_id": "blocker-42"},
+                "observation": {
+                    "kind": "plan_state",
+                    "blocker_id": "blocker-42",
+                    "blocker_cleared": True,
+                    "directly_observed": True,
+                    "independent": True,
+                    "observed_at": "2026-07-09T07:54:00+00:00",
+                },
+            },
+        )
+
+        assert result["accepted"] is True
+        assert result["recovery_status"] == "verified_recovered"
+        assert result["recovery_verification"]["blocker_identity"] == "blocker-42"
+
+
+@pytest.mark.parametrize(
+    ("master", "path", "authorized"),
+    [("0", "0", False), ("0", "1", False), ("1", "0", False), ("1", "1", True)],
+)
+def test_retrigger_effect_boundary_requires_master_and_l2_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    master: str,
+    path: str,
+    authorized: bool,
+) -> None:
+    monkeypatch.setenv("ARNOLD_AUTONOMY", master)
+    monkeypatch.setenv("ARNOLD_META_REPAIR_ENABLED", path)
+    calls: list[str] = []
+
+    def release(_path: object, *, expected_pid: int | None = None) -> bool:
+        calls.append(f"release:{expected_pid}")
+        return True
+
+    def runner(*_args: object, **_kwargs: object) -> object:
+        calls.append("launch")
+        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    if not authorized:
+        with pytest.raises(PermissionError, match="L2 mutation requires"):
+            retrigger_ordinary_repair(
+                command=("arnold-repair-loop", "session"),
+                repair_lock_dir=tmp_path / "lock",
+                expected_lock_pid=42,
+                runner=runner,
+                release_lock=release,
+            )
+        assert calls == []
+        return
+
+    result = retrigger_ordinary_repair(
+        command=("arnold-repair-loop", "session"),
+        repair_lock_dir=tmp_path / "lock",
+        expected_lock_pid=42,
+        runner=runner,
+        release_lock=release,
+    )
+    assert result.returncode == 0
+    assert calls == ["release:42", "launch"]
 
 
 # ---------------------------------------------------------------------------
@@ -2199,12 +2307,29 @@ class TestCanCommitChanges:
         assert result.flag_name == "ARNOLD_META_REPAIR_COMMIT_ENABLED"
 
     def test_commit_allowed_when_flag_on(self) -> None:
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
         try:
             result = can_commit_changes()
             assert result.allowed is True
             assert "on" in result.reason.lower() or "permitted" in result.reason.lower()
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
+            os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+
+    def test_commit_blocked_when_commit_on_but_master_off(self) -> None:
+        os.environ["ARNOLD_AUTONOMY"] = "0"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
+        os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
+        try:
+            result = can_commit_changes()
+            assert result.allowed is False
+            assert "master" in result.reason.lower()
+        finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_commit_blocked_with_falsey_values(self) -> None:
@@ -2237,12 +2362,16 @@ class TestCanPushChanges:
         assert "push" in result.reason.lower()
 
     def test_push_allowed_when_flag_on(self) -> None:
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
         try:
             result = can_push_changes()
             assert result.allowed is True
             assert "push" in result.reason.lower()
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_push_blocked_with_falsey_values(self) -> None:
@@ -2262,11 +2391,15 @@ class TestCanPushChanges:
         assert push_result.allowed == commit_result.allowed
 
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         try:
             commit_result = can_commit_changes()
             push_result = can_push_changes()
             assert push_result.allowed == commit_result.allowed
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_push_includes_session_in_reason(self) -> None:
@@ -2310,6 +2443,8 @@ class TestPolicyEndToEnd:
         """
         # Set commit flag ON
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         try:
             commit_result = can_commit_changes(session="any")
             assert commit_result.allowed is True
@@ -2325,6 +2460,8 @@ class TestPolicyEndToEnd:
             assert recursion.should_escalate is True
             # Both gates must be checked independently by the caller
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_commit_gate_independent_of_recursion(self) -> None:
@@ -2437,6 +2574,16 @@ def test_meta_retrigger_accepts_only_complete_with_authoritative_terminal_snapsh
         post_retrigger_verification={
             "outcome": COMPLETE,
             "post_snapshot": _terminal_post_snapshot(),
+            "repair_completed_at": "2026-07-10T00:59:00+00:00",
+            "original_blocker": {"blocker_id": "blocker-terminal"},
+            "observation": {
+                "kind": "plan_state",
+                "blocker_id": "blocker-terminal",
+                "blocker_cleared": True,
+                "directly_observed": True,
+                "independent": True,
+                "observed_at": "2026-07-10T01:00:00+00:00",
+            },
         },
     )
 

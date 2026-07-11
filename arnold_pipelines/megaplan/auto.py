@@ -2051,8 +2051,10 @@ def _record_lifecycle_failure(
         )
     except (OSError, RuntimeError, ValueError):
         return
+    workspace_path = _workspace_path_for_plan_dir(plan_dir)
     _enqueue_lifecycle_failure_request(
         plan_dir=plan_dir,
+        queue_root=workspace_path / ".megaplan" / "repair-queue",
         kind=kind,
         message=message,
         current_state=current_state,
@@ -2070,6 +2072,7 @@ def _record_lifecycle_failure(
 def _enqueue_lifecycle_failure_request(
     *,
     plan_dir: Path,
+    queue_root: Path,
     kind: str,
     message: str,
     current_state: str | None,
@@ -2085,6 +2088,7 @@ def _enqueue_lifecycle_failure_request(
             return
         workspace_path = _workspace_path_for_plan_dir(plan_dir)
         enqueue_repair_request(
+            queue_root=queue_root,
             marker_dir=plan_dir,
             session=plan_dir.name,
             source="lifecycle_failure",

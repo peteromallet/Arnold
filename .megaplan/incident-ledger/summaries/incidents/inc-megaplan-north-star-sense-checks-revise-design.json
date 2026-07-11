@@ -1,0 +1,31 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 1,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-11T13:41:18.492761+00:00",
+  "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
+  "kind": "incident_summary",
+  "latest_actor": "immediate_repair",
+  "next_expected_event": "repair_attempt.verification",
+  "outcome": "partial_liveness",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-72f87afd3954"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
+    "last_seq": 346,
+    "projection": "incidents"
+  },
+  "state": "repair_attempt",
+  "summary_text": "inc-megaplan-north-star-sense-checks-revise-design: repair-data outcome=partial_liveness kind=chain workspace=/workspace/megaplan-north-star-sense-checks-revise-design/arnold"
+}

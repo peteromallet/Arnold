@@ -251,6 +251,11 @@ def test_resolve_current_target_reports_missing_state_deterministically(tmp_path
 
     assert first == second
     assert first["authoritative_source"] == "marker"
+    assert first["evidence_state"]["status"] == "unknown"
+    assert first["evidence_state"]["unknown_type"] == "partial"
+    assert first["evidence_state"]["green"] is False
+    assert first["evidence_state"]["mutation_eligible"] is False
+    assert first["evidence_state"]["authorizes_mutation"] is False
     assert first["tmux_process"]["live_status"] == "stopped"
     assert first["stale_evidence"] == [
         {
@@ -397,6 +402,7 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
     record = resolve_current_target("partial-session", marker_dir=marker_dir, repair_data_dir=repair_data_dir)
 
     assert record["authoritative_source"] == "marker"
+    assert record["evidence_state"]["unknown_type"] == "partial"
     assert record["current_refs"] == {
         "workspace": "",
         "run_kind": "unknown",
@@ -432,6 +438,121 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
         "marker did not provide a usable remote spec",
         "marker did not provide a usable workspace",
     ]
+
+
+def test_resolve_current_target_types_wholly_missing_evidence(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+
+    record = resolve_current_target("absent", marker_dir=marker_dir)
+
+    assert record["evidence_state"] == {
+        "status": "unknown",
+        "unknown_type": "missing",
+        "issue_kinds": ["missing_marker_json", "spec_missing", "workspace_missing"],
+        "mutation_eligible": False,
+        "authorizes_mutation": False,
+        "green": False,
+    }
+
+
+def test_resolve_current_target_accepts_explicit_wrapper_workspace_hint(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "hinted-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"name": plan_name, "current_state": "blocked"},
+    )
+    _write_marker(
+        marker_dir / "hinted.json",
+        {"session": "hinted", "run_kind": "plan", "plan_name": plan_name},
+    )
+
+    record = resolve_current_target(
+        "hinted",
+        marker_dir=marker_dir,
+        workspace_hint=workspace,
+    )
+
+    assert record["current_refs"]["workspace"] == str(workspace)
+    assert record["plan_state"]["present"] is True
+    assert record["evidence_state"]["status"] == "resolved"
+    assert record["evidence_state"]["mutation_eligible"] is True
+    assert "wrapper workspace argument supplied the missing marker workspace" in record["rationale"]
+
+
+def test_resolve_current_target_types_stale_evidence(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "stale-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "name": plan_name,
+            "current_state": "executing",
+            "active_step": {"phase": "execute", "worker_pid": 999999},
+        },
+    )
+    _write_marker(
+        marker_dir / "stale.json",
+        {
+            "session": "stale",
+            "workspace": str(workspace),
+            "run_kind": "plan",
+            "plan_name": plan_name,
+        },
+    )
+
+    record = resolve_current_target(
+        "stale",
+        marker_dir=marker_dir,
+        pid_is_live=lambda _pid: False,
+    )
+
+    assert record["evidence_state"]["status"] == "unknown"
+    assert record["evidence_state"]["unknown_type"] == "stale"
+    assert record["evidence_state"]["mutation_eligible"] is False
+    assert record["evidence_state"]["green"] is False
+
+
+def test_resolve_current_target_types_contradictory_plan_identity(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_marker(
+        marker_dir / "contradictory.json",
+        {
+            "session": "contradictory",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+    _write_chain_state(
+        _chain_state_path(workspace, spec_path),
+        {"current_plan_name": "chain-plan", "last_state": "executing"},
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "chain-plan",
+        {"name": "different-plan", "current_state": "executing"},
+    )
+
+    record = resolve_current_target("contradictory", marker_dir=marker_dir)
+
+    assert record["evidence_state"]["status"] == "unknown"
+    assert record["evidence_state"]["unknown_type"] == "contradictory"
+    assert record["evidence_state"]["issue_kinds"] == ["contradictory_plan_identity"]
+    assert record["evidence_state"]["mutation_eligible"] is False
+    assert record["evidence_state"]["green"] is False
 
 
 def _write_marker(path: Path, payload: dict[str, object]) -> None:

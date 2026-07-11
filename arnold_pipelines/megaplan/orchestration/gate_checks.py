@@ -110,9 +110,13 @@ def build_gate_artifact(
     override_forced: bool,
     orchestrator_guidance: str = "",
 ) -> GateArtifact:
+    from arnold_pipelines.megaplan.north_star_actions import normalize_north_star_actions
+
     preflight = signals["preflight_results"]
     recommendation = gate_payload["recommendation"]
     warnings = list(signals.get("warnings", [])) + list(gate_payload.get("warnings", []))
+    raw_north_star = gate_payload.get("north_star_actions")
+    north_star_actions = normalize_north_star_actions(raw_north_star)
     return {
         "passed": recommendation == "PROCEED" and all(preflight.values()),
         "criteria_check": signals["criteria_check"],
@@ -131,6 +135,7 @@ def build_gate_artifact(
         "flag_resolutions": list(gate_payload.get("flag_resolutions", [])),
         "resolved_flag_ids": list(gate_payload.get("resolved_flag_ids", [])),
         "resolution_summary": gate_payload.get("resolution_summary", ""),
+        "north_star_actions": north_star_actions,
     }
 
 

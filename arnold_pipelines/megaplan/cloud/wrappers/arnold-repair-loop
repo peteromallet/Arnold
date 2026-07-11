@@ -31,9 +31,9 @@ FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-pro
 ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
-HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
+AUTOMATIC_REPAIR_MODEL="gpt-5.6-sol"
 DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
 DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-3600}"
 KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"
@@ -106,6 +106,36 @@ log() {
   local message
   message="$(redact_inline_text "$*")"
   echo "[repair-loop $(date -Iseconds)] $message" | tee -a "$LOG"
+}
+
+l1_mutation_authorized() {
+  if [[ "${CURRENT_TARGET_MUTATION_ELIGIBLE:-1}" != "1" ]]; then
+    return 1
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -c \
+    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
+}
+
+resolve_current_target_evidence() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$MARKER_DIR" "$DATA_DIR" "${WORKSPACE:-}" <<'PY'
+import json
+import sys
+
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
+session, marker_dir, repair_data_dir, workspace = sys.argv[1:]
+record = resolve_current_target(
+    session,
+    marker_dir=marker_dir,
+    repair_data_dir=repair_data_dir,
+    workspace_hint=workspace,
+)
+print(json.dumps(record, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+current_target_mutation_eligible() {
+  python3 -c 'import json, sys; state=json.load(sys.stdin).get("evidence_state", {}); raise SystemExit(0 if state.get("status") == "resolved" and state.get("mutation_eligible") is True else 1)'
 }
 
 redact_inline_text() {
@@ -395,19 +425,19 @@ release_active_repair_claim() {
   if [[ -z "$blocker_id" || ! "$owner_pid" =~ ^[0-9]+$ ]]; then
     return
   fi
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_DIR" "$blocker_id" "$owner_pid" "$request_id" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}" "$blocker_id" "$owner_pid" "$request_id" <<'PY'
 import sys
 
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_lock import inspect_repair_lock
 
-marker_dir, blocker_id, owner_pid_text, request_id = sys.argv[1:]
+queue_root, blocker_id, owner_pid_text, request_id = sys.argv[1:]
 try:
     owner_pid = int(owner_pid_text)
 except ValueError:
     raise SystemExit(0)
 
-queue_dir = repair_requests.repair_queue_dir(marker_dir)
+queue_dir = repair_requests.validate_queue_root(queue_root)
 lock_dir = repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
 owner = inspect_repair_lock(lock_dir).owner
 if request_id and isinstance(owner, dict):
@@ -5295,8 +5325,107 @@ repair_agent_workdir() {
   fi
 }
 
+reject_conflicting_automatic_repair_model_pins() {
+  local name value
+  for name in CODEX_MODEL CLOUD_WATCHDOG_CODEX_MODEL CLOUD_WATCHDOG_DEV_FIX_MODEL; do
+    value="${!name:-}"
+    if [[ -n "$value" && "$value" != "$AUTOMATIC_REPAIR_MODEL" ]]; then
+      log "automatic repair model pin conflict: $name=$value required=$AUTOMATIC_REPAIR_MODEL"
+      return 1
+    fi
+  done
+  if [[ "${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0}" != "0" ]]; then
+    log "automatic repair model pin conflict: CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM=${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM} required=0 model=$AUTOMATIC_REPAIR_MODEL"
+    return 1
+  fi
+}
+
+automatic_repair_receipt_root() {
+  if [[ -n "${CLOUD_WATCHDOG_DISPATCH_RECEIPT_ROOT:-}" ]]; then
+    printf '%s\n' "$CLOUD_WATCHDOG_DISPATCH_RECEIPT_ROOT"
+  elif [[ -n "${PLAN_NAME:-}" && -d "$WORKSPACE/.megaplan/plans/$PLAN_NAME" ]]; then
+    printf '%s\n' "$WORKSPACE/.megaplan/plans/$PLAN_NAME"
+  else
+    printf '%s\n' "$DATA_DIR/dispatch-plans/$SAFE_SESSION"
+  fi
+}
+
+initialize_automatic_repair_receipt() {
+  local iteration="$1"
+  local receipt_root
+  receipt_root="$(automatic_repair_receipt_root)"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$AUTOMATIC_REPAIR_MODEL" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.receipts.writer import (
+    initialize_dispatch_receipt,
+    prepare_dispatch_receipt,
+)
+
+root, model = sys.argv[1:]
+receipt = prepare_dispatch_receipt(
+    action="automatic_repair",
+    configured_model=model,
+)
+initialized = initialize_dispatch_receipt(pathlib.Path(root), receipt)
+print(initialized["dispatch_id"])
+PY
+}
+
+record_automatic_repair_started() {
+  local dispatch_id="$1"
+  local receipt_root
+  receipt_root="$(automatic_repair_receipt_root)"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$dispatch_id" "$AUTOMATIC_REPAIR_MODEL" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.receipts.writer import dispatch_receipt_path, record_dispatch_started
+
+root, dispatch_id, model = sys.argv[1:]
+root_path = pathlib.Path(root)
+receipt = json.loads(dispatch_receipt_path(root_path, dispatch_id).read_text(encoding="utf-8"))
+record_dispatch_started(root_path, receipt, resolved_runtime_model=model)
+PY
+}
+
+finalize_automatic_repair_receipt() {
+  local dispatch_id="$1"
+  local turn_rc="$2"
+  local before_sha="$3"
+  local after_sha="$4"
+  local receipt_root
+  receipt_root="$(automatic_repair_receipt_root)"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$dispatch_id" "$AUTOMATIC_REPAIR_MODEL" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.receipts.writer import dispatch_receipt_path, finalize_dispatch_receipt
+
+root, dispatch_id, model, turn_rc, before_sha, after_sha = sys.argv[1:]
+root_path = pathlib.Path(root)
+receipt = json.loads(dispatch_receipt_path(root_path, dispatch_id).read_text(encoding="utf-8"))
+committed = bool(before_sha and after_sha and before_sha != after_sha)
+finalize_dispatch_receipt(
+    root_path,
+    receipt,
+    outcome="succeeded" if int(turn_rc) == 0 else "failed",
+    resolved_runtime_model=model,
+    mutation_facts={"state": None, "source": None, "commit": committed, "push": None},
+    detail=f"automatic repair subprocess exited {turn_rc}",
+)
+PY
+}
+
 run_dev_fix_turn() {
   require_repair_lock_held
+  if ! l1_mutation_authorized; then
+    log "observed: dev-fix launch blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
+    return 1
+  fi
   local iteration="$1"
   local attempt_id="$2"
   local recurring="$3"
@@ -5304,7 +5433,11 @@ run_dev_fix_turn() {
   local dispatch_model="$5"
   local dispatch_kind="$6"
   local fallback_reason="$7"
-  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort repair_workdir
+  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort repair_workdir dispatch_id child_pid
+  if [[ "$requested_model" != "$AUTOMATIC_REPAIR_MODEL" || "$dispatch_model" != "$AUTOMATIC_REPAIR_MODEL" || "$dispatch_kind" != "codex" || -n "$fallback_reason" ]]; then
+    log "automatic repair model selection rejected: requested=$requested_model dispatch=$dispatch_model kind=$dispatch_kind fallback=${fallback_reason:-none} required=$AUTOMATIC_REPAIR_MODEL"
+    return 78
+  fi
   prompt_path="$RUN_DIR/iter${iteration}-dev-fix-prompt.md"
   report_path="$RUN_DIR/iter${iteration}-dev-fix-report.json"
   write_dev_prompt "$prompt_path" "$requested_model" "$dispatch_model" "$report_path" "$recurring"
@@ -5319,33 +5452,36 @@ run_dev_fix_turn() {
   dev_timeout="$(cap_timeout_to_repair_budget "$dev_timeout" "dev-dispatch-$iteration")"
   log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort workdir=$repair_workdir"
   prepare_repair_agent_exec_env
-  if [[ "$dispatch_kind" == "hermes" ]]; then
-    (
-      cd "$repair_workdir" &&
-      timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" \
-        --model="$dispatch_model" \
-        --toolsets="file,web,terminal" \
-        --query_file="$prompt_path" \
-        --project_dir="$repair_workdir"
-    ) >> "$LOG" 2>&1 &
-  else
-    (
-      cd "$repair_workdir" &&
-      timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec \
-        --sandbox danger-full-access \
-        -c model="$dispatch_model" \
-        -c model_reasoning_effort="$reasoning_effort" \
-        - < "$prompt_path"
-    ) >> "$LOG" 2>&1 &
-  fi
-  local child_pid=$!
+  dispatch_id="$(initialize_automatic_repair_receipt "$iteration")" || {
+    log "automatic repair dispatch blocked: durable receipt initialization failed iteration=$iteration"
+    return 78
+  }
+  (
+    cd "$repair_workdir" &&
+    timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec \
+      --sandbox danger-full-access \
+      -c model="$AUTOMATIC_REPAIR_MODEL" \
+      -c model_reasoning_effort="$reasoning_effort" \
+      - < "$prompt_path"
+  ) >> "$LOG" 2>&1 &
+  child_pid=$!
   CHILD_PIDS+=("$child_pid")
+  if ! record_automatic_repair_started "$dispatch_id"; then
+    log "automatic repair dispatch indeterminate: subprocess started but receipt transition failed iteration=$iteration pid=$child_pid"
+    kill "$child_pid" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+    return 78
+  fi
   if wait "$child_pid"; then
     rc=0
   else
     rc=$?
   fi
   after_sha="$(cd "$repair_workdir" && git rev-parse HEAD 2>/dev/null || true)"
+  if ! finalize_automatic_repair_receipt "$dispatch_id" "$rc" "$before_sha" "$after_sha"; then
+    log "automatic repair dispatch indeterminate: receipt finalization failed iteration=$iteration"
+    return 78
+  fi
   repair_data_record_dev "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
   append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"
 }
@@ -5353,6 +5489,10 @@ run_dev_fix_turn() {
 run_kimi_launch_turn() {
   require_repair_lock_held
   ensure_repair_budget_available "kimi-launch-$1"
+  if ! l1_mutation_authorized; then
+    log "observed: kimi launch blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
+    return 1
+  fi
   local iteration="$1"
   local run_kind="$2"
   local plan_name="$3"
@@ -5390,17 +5530,6 @@ run_kimi_launch_turn() {
   }
   repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running" "$report_path" "$rc"
   return 0
-}
-
-glm_dispatch_model() {
-  python3 - <<'PY'
-from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
-try:
-    resolve_model("zhipu:glm-5.2")
-except Exception:
-    raise SystemExit(1)
-print("zhipu:glm-5.2")
-PY
 }
 
 write_needs_human_marker() {
@@ -5649,6 +5778,17 @@ if [[ -z "$RUN_KIND" ]]; then
     RUN_KIND="chain"
   fi
 fi
+
+# Resolve through the production adapter once at entry and retain its typed
+# evidence state across the Python/shell boundary. Unknown evidence remains
+# observable, but cannot make a later repair-agent mutation predicate pass.
+CURRENT_TARGET_RECORD="$(resolve_current_target_evidence 2>>"$LOG" || true)"
+CURRENT_TARGET_MUTATION_ELIGIBLE=0
+if [[ -n "$CURRENT_TARGET_RECORD" ]] && printf '%s' "$CURRENT_TARGET_RECORD" | current_target_mutation_eligible; then
+  CURRENT_TARGET_MUTATION_ELIGIBLE=1
+fi
+export CURRENT_TARGET_RECORD CURRENT_TARGET_MUTATION_ELIGIBLE
+log "current-target evidence session=$SESSION record=${CURRENT_TARGET_RECORD:-{\"evidence_state\":{\"status\":\"unknown\",\"unknown_type\":\"missing\"}}}"
 
 # Environment-gone backstop: if the workspace dir is gone the repair loop has
 # nothing to repair (it is a code-fixer, not a provisioner — it cannot recreate
@@ -6103,17 +6243,9 @@ if [[ "${mechanical_status:-}" == "running" ]]; then
   exit 0
 fi
 
-GLM_MODEL=""
-GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"
-if [[ "${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0}" == "1" ]]; then
-  if GLM_MODEL="$(glm_dispatch_model 2>/dev/null)"; then
-    GLM_FALLBACK=""
-  else
-    GLM_MODEL="gpt-5.4"
-    GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
-  fi
-else
-  GLM_MODEL="gpt-5.4"
+if ! reject_conflicting_automatic_repair_model_pins; then
+  repair_data_set_outcome "repair_exhausted"
+  exit 78
 fi
 
 for iteration in 1 2 3; do
@@ -6124,26 +6256,9 @@ for iteration in 1 2 3; do
   exit_if_repair_target_complete "iteration-$iteration-start"
   exit_if_repair_target_recovered "iteration-$iteration-start"
   case "$iteration" in
-    1)
-      DEV_REQUESTED_MODEL="glm-5.2"
-      if [[ "$GLM_MODEL" == "gpt-5.4" ]]; then
-        DEV_DISPATCH_MODEL="gpt-5.4"
-        DEV_DISPATCH_KIND="codex"
-      else
-        DEV_DISPATCH_MODEL="$GLM_MODEL"
-        DEV_DISPATCH_KIND="hermes"
-      fi
-      DEV_FALLBACK_REASON="$GLM_FALLBACK"
-      ;;
-    2)
-      DEV_REQUESTED_MODEL="codex:gpt-5.4"
-      DEV_DISPATCH_MODEL="gpt-5.4"
-      DEV_DISPATCH_KIND="codex"
-      DEV_FALLBACK_REASON=""
-      ;;
-    3)
-      DEV_REQUESTED_MODEL="codex:gpt-5.5"
-      DEV_DISPATCH_MODEL="gpt-5.5"
+    1|2|3)
+      DEV_REQUESTED_MODEL="$AUTOMATIC_REPAIR_MODEL"
+      DEV_DISPATCH_MODEL="$AUTOMATIC_REPAIR_MODEL"
       DEV_DISPATCH_KIND="codex"
       DEV_FALLBACK_REASON=""
       ;;

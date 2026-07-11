@@ -304,6 +304,7 @@ class ObservedChildEpic:
     chain_state: ChainState
     plan_status: dict[str, Any]
     classification: dict[str, Any]
+    authority_drift: dict[str, Any] | None = None
 
 
 def _state_path_for(spec_path: Path) -> Path:
@@ -477,6 +478,43 @@ def _observe_child_epic(epic: EpicSpec, *, parent_spec_path: Path) -> ObservedCh
     else:
         effective_status = classification.effective_status
         reason = classification.reason
+
+    # ── authority-view drift check ──────────────────────────────────────
+    # When the legacy classification says "complete" and the child has a
+    # project root and a current plan, cross-check against the authority-view
+    # backed completion check (_plan_terminal_completion_is_authoritative).
+    # If the views disagree, capture the drift as a diagnostic — the legacy
+    # effective_status is preserved (fail-safe), but the drift is observable.
+    authority_drift: dict[str, Any] | None = None
+    if effective_status == "complete" and project_root is not None and chain_state.current_plan_name:
+        try:
+            from arnold_pipelines.megaplan.chain import (
+                _plan_terminal_completion_is_authoritative,
+            )
+
+            authoritative, auth_reason = _plan_terminal_completion_is_authoritative(
+                project_root, chain_state.current_plan_name
+            )
+            if not authoritative:
+                authority_drift = {
+                    "kind": "legacy_complete_authority_disagrees",
+                    "legacy_effective_status": effective_status,
+                    "legacy_reason": reason,
+                    "authority_verdict": authoritative,
+                    "authority_reason": auth_reason,
+                    "child_plan": chain_state.current_plan_name,
+                    "child_project_root": str(project_root),
+                }
+        except Exception:
+            # Authority check is best-effort — never block the parent
+            # observation on a cross-check failure.
+            pass
+
+    classification_dict = classification.to_dict()
+    if authority_drift is not None:
+        classification_dict.setdefault("metadata", {})
+        if isinstance(classification_dict.get("metadata"), dict):
+            classification_dict["metadata"]["epic_chain_authority_drift"] = authority_drift
     return ObservedChildEpic(
         effective_status=effective_status,
         reason=reason,
@@ -487,7 +525,8 @@ def _observe_child_epic(epic: EpicSpec, *, parent_spec_path: Path) -> ObservedCh
         chain_spec=chain_spec,
         chain_state=chain_state,
         plan_status=plan_status,
-        classification=classification.to_dict(),
+        classification=classification_dict,
+        authority_drift=authority_drift,
     )
 
 
