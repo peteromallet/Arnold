@@ -1180,6 +1180,28 @@ def _next_expected_event(
     return candidate if isinstance(candidate, str) and candidate else None
 
 
+def github_sync_publication_due(incident_audit: dict[str, Any]) -> bool:
+    """Return whether an audit requires GitHub publication as an independent action."""
+    audit_complete = (
+        incident_audit.get("audit_complete")
+        if isinstance(incident_audit.get("audit_complete"), dict)
+        else {}
+    )
+    raw_handoff = audit_complete.get("next_expected_event") or incident_audit.get(
+        "next_expected_event"
+    )
+    if raw_handoff == "github_sync.publish":
+        return True
+    findings = incident_audit.get("findings")
+    if not isinstance(findings, list):
+        return False
+    return any(
+        isinstance(finding, dict)
+        and finding.get("recommendation") == "github_sync.publish"
+        for finding in findings
+    )
+
+
 def _requires_human_escalation(findings: list[dict[str, Any]]) -> bool:
     return any(finding.get("recommendation") == "auditor_escalate_to_human" for finding in findings)
 

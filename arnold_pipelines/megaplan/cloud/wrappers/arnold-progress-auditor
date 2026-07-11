@@ -3757,6 +3757,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     update_incident_index,
     update_session_index,
 )
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import github_sync_publication_due
 
 findings_path = Path(sys.argv[1])
 gather_dir = Path(sys.argv[2])
@@ -4040,7 +4041,7 @@ for item in findings + green_checks:
     )
     if audit_complete.get("outcome") == "auditor_human_escalation":
         _record_auditor_human_escalation(item, incident_id, session_id, problem_id)
-    if raw_handoff == "github_sync.publish":
+    if github_sync_publication_due(incident_audit):
         workspaces_for_sync[workspace] = True
 
 for workspace in sorted(workspaces_for_sync):
