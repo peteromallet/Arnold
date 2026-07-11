@@ -4578,6 +4578,24 @@ else:
 PY
 }
 
+durable_operator_pause_active() {
+  local remote_spec="${1:-}"
+  [[ -n "$remote_spec" && -f "$remote_spec" ]] || return 1
+  PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$remote_spec" <<'PY'
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.chain.spec import load_chain_state
+
+try:
+    state = load_chain_state(Path(sys.argv[1]))
+    pause = state.metadata.get("operator_pause")
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if isinstance(pause, dict) and pause.get("active") is True else 1)
+PY
+}
+
 dispatch_meta_repair() {
   local session="$1"
   local workspace="$2"
@@ -4599,6 +4617,18 @@ dispatch_meta_repair() {
     return 0
     ;;
   esac
+
+  # Durable operator pause is authoritative.  Do not claim a repair dispatch
+  # when the child wrapper would immediately refuse to run under that pause.
+  if durable_operator_pause_active "$remote_spec"; then
+    log "meta-repair skipped; durable operator pause active session=$session"
+    REPAIR_DISPATCH_RESULT="paused"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair skipped; durable operator pause active" "paused" "meta_repair"
+    if [[ -n "$report_items" ]]; then
+      report_item "$report_items" "$session" "observe" "paused" "durable operator pause active; meta-repair not dispatched" "$workspace" "$remote_spec"
+    fi
+    return 0
+  fi
 
   # Binary must exist and be executable
   if [[ ! -x "$META_REPAIR_BIN" ]]; then
