@@ -1427,6 +1427,9 @@ resolve_relaunch_command() {
     default_plan_relaunch_command "$plan_name" "$workspace"
     return 0
   fi
+  if chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name"; then
+    return 0
+  fi
   default_chain_relaunch_command "$session" "$workspace" "$remote_spec"
 }
 
