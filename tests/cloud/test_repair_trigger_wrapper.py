@@ -224,7 +224,7 @@ def test_trigger_observes_without_dispatch_when_disabled(tmp_path: Path) -> None
     assert "dispatched" not in {item["decision"] for item in _decisions(marker_dir)}
     assert str(spec) in result.stdout
     observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
-    assert observe["dispatch_decision"] == "human_required"
+    assert observe["dispatch_decision"] == "broken_superfixer"
     assert observe["custody_bucket"] == "repairable_not_repairing"
     assert any(
         event["status"] == "no_actionable_requests"

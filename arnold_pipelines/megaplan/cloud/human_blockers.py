@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.observability.events import (
     event_signature_summary,
     format_signature_line,
 )
+from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +103,9 @@ def dispatch_gate_for_human_blocker(
 
     if classification is None:
         return "clear"
-    if classification.is_true_blocker or classification.is_ambiguous:
+    if classification.is_true_blocker:
         return "human_required"
-    if classification.is_mechanical:
+    if classification.is_mechanical or classification.is_ambiguous:
         return "broken_superfixer"
     return "clear"
 
@@ -361,10 +362,28 @@ def classify_needs_human_blocker(
             human_gate_view=human_gate_view,
         )
 
-    # --- genuine TRUE_BLOCKER: current-target proof + current plan match ------------
+    # --- human-required is an allowlist, never an ambiguity fallback ----------------
+    gate = typed_human_gate(payload)
+    if gate is None:
+        rationale.append(
+            "current marker has no allowlisted typed human decision; preserving it as "
+            "ambiguous control-plane evidence rather than claiming human action is required"
+        )
+        return HumanBlockerClassification(
+            verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
+            session=session,
+            current_plan=current_plan,
+            needs_human_path=needs_human_path_str,
+            rationale=tuple(rationale),
+            resolver_record=record,
+            needs_human_payload=payload,
+            human_gate_view=human_gate_view,
+        )
+
+    # --- genuine TRUE_BLOCKER: typed gate + current-target proof + plan match --------
     rationale.append(
         f"needs-human sidecar references current plan {current_plan!r} "
-        f"with current-target proof (source={authoritative_source})"
+        f"with typed gate {gate.name} and current-target proof (source={authoritative_source})"
     )
     return HumanBlockerClassification(
         verdict=BlockerVerdict.TRUE_BLOCKER,
@@ -464,6 +483,12 @@ def build_needs_human_marker(
         "authoritative_source": current_pointer.get("authoritative_source", ""),
         "current": current_pointer,
     }
+    gate = typed_human_gate(repair_payload)
+    if gate is not None:
+        marker["human_gate"] = gate.name.lower()
+        marker["decision_required"] = _safe_marker_text(
+            repair_payload.get("decision_required")
+        )
     return redact_payload(marker)
 
 

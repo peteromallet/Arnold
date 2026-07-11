@@ -4,6 +4,8 @@ import argparse
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -990,6 +992,93 @@ def _force_proceed_blockers(
     return blockers
 
 
+def _deterministic_review_block_evidence(
+    rework_items: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return structured failing checks that a repair worker can reproduce."""
+
+    evidence: list[dict[str, Any]] = []
+    for item in rework_items or []:
+        if not isinstance(item, dict) or not _rework_item_is_blocker(item):
+            continue
+        raw_checks: list[Mapping[str, Any]] = []
+        check = item.get("deterministic_check")
+        if isinstance(check, Mapping):
+            raw_checks.append(check)
+        checks = item.get("deterministic_checks")
+        if isinstance(checks, list):
+            raw_checks.extend(value for value in checks if isinstance(value, Mapping))
+        for raw in raw_checks:
+            command = str(raw.get("command") or "").strip()
+            baseline = str(raw.get("baseline_status") or "").strip().lower()
+            post = str(raw.get("post_status") or "").strip().lower()
+            if not command or not ({baseline, post} & {"fail", "failed", "error"}):
+                continue
+            evidence.append(
+                {
+                    "command": command,
+                    "baseline_status": baseline or "unknown",
+                    "post_status": post or "unknown",
+                    "task_id": str(item.get("task_id") or ""),
+                    "issue": str(item.get("issue") or item.get("flag_id") or ""),
+                }
+            )
+    return evidence
+
+
+def _review_quality_block_failure(
+    *,
+    state: PlanState,
+    blockers: list[str],
+    rework_items: list[dict[str, Any]] | None,
+    review_artifact_hash: str,
+) -> dict[str, Any]:
+    deterministic_evidence = _deterministic_review_block_evidence(rework_items)
+    fingerprint_payload = {
+        "blockers": sorted(blockers),
+        "deterministic_evidence": deterministic_evidence,
+        "review_artifact_hash": review_artifact_hash,
+    }
+    digest = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    cursor = {
+        "history_index": len(state.get("history", [])),
+        "review_artifact_hash": review_artifact_hash,
+    }
+    deterministic = bool(deterministic_evidence)
+    blocked_task_ids = sorted(
+        {
+            str(item.get("task_id") or "").strip()
+            for item in deterministic_evidence
+            if str(item.get("task_id") or "").strip()
+        }
+    )
+    return {
+        "kind": "quality_gate_blocked" if deterministic else "review_quality_blocked_unknown",
+        "message": "review rework budget exhausted with unresolved quality blockers",
+        "phase": "review",
+        "state": STATE_BLOCKED,
+        "recorded_at": now_utc(),
+        "last_artifact": "review.json",
+        "suggested_action": (
+            "Dispatch one bounded automatic repair using the recorded deterministic checks."
+            if deterministic
+            else "Collect structured deterministic evidence before selecting a recovery action."
+        ),
+        "blocker_ids": [f"quality:review:{digest}"],
+        "evidence_cursor": cursor,
+        "metadata": {
+            "repairability": "deterministic_machine" if deterministic else "unknown",
+            "deterministic": deterministic,
+            "deterministic_evidence": deterministic_evidence,
+            "blocking_reasons": list(blockers),
+            "blocked_task_ids": blocked_task_ids,
+            "evidence_cursor": cursor,
+        },
+    }
+
+
 @dataclass(frozen=True)
 class ReviewRouteDecision:
     result: ReviewDecisionResult
@@ -1751,9 +1840,27 @@ def _finalize_review_outcome(
         result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED
     )
     if force_proceed_blocked:
+        raw_rework_items = worker.payload.get("rework_items")
+        blocked_rework_items = (
+            [item for item in raw_rework_items if isinstance(item, dict)]
+            if isinstance(raw_rework_items, list)
+            else []
+        )
+        blocker_reasons = _force_proceed_blockers(
+            criteria if isinstance(criteria, list) else None,
+            blocked_rework_items,
+        )
+        review_artifact_hash = sha256_file(plan_dir / "review.json")
+        state["latest_failure"] = _review_quality_block_failure(
+            state=state,
+            blockers=blocker_reasons,
+            rework_items=blocked_rework_items,
+            review_artifact_hash=review_artifact_hash,
+        )
         state["resume_cursor"] = {
             "phase": "review",
             "retry_strategy": "manual_review",
+            "evidence_cursor": dict(state["latest_failure"]["evidence_cursor"]),
         }
     state["current_state"] = next_state
     if result != ReviewDecisionResult.BLOCKED and next_state != STATE_BLOCKED:

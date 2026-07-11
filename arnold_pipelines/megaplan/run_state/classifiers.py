@@ -44,6 +44,7 @@ from arnold_pipelines.megaplan.run_state.model import (
     CanonicalState,
     TypedHumanGate,
 )
+from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +84,9 @@ _IMPLEMENTATION_BLOCK_TOKENS = (
     "missing_fallthrough_route",
     "stale_assertion",
     "fixture_refresh",
+    "quality_gate_blocked",
+    "deterministic_quality_blocked",
+    "blocked_recovery_not_resolved",
 )
 
 # Tokens that indicate a retryable *execution* block (transient / budget).
@@ -98,16 +102,6 @@ _RETRYABLE_EXECUTION_TOKENS = (
 # that escalates a run to ``BROKEN_STATE_MACHINE``.
 _BROKEN_REPEAT_THRESHOLD = 3
 
-# Structured needs-human field names that may carry a typed gate category.
-_GATE_CATEGORY_FIELDS = (
-    "gate_type",
-    "human_gate",
-    "gate",
-    "category",
-    "gate_kind",
-    "kind",
-)
-
 # Structured numeric fields that may report repeated blocker attempts.
 _BROKEN_COUNT_FIELDS = (
     "attempt_count",
@@ -117,30 +111,6 @@ _BROKEN_COUNT_FIELDS = (
     "repeat_count",
     "repeated_blocker_count",
 )
-
-# Mapping from canonical gate-category tokens to :class:`TypedHumanGate`.
-_GATE_CATEGORY_MAP = {
-    "explicit_approval": TypedHumanGate.EXPLICIT_APPROVAL,
-    "approval": TypedHumanGate.EXPLICIT_APPROVAL,
-    "approve": TypedHumanGate.EXPLICIT_APPROVAL,
-    "credential": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "credentials": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "credential_account": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "account": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "missing_credential": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "quota": TypedHumanGate.QUOTA,
-    "rate_limit": TypedHumanGate.QUOTA,
-    "ratelimit": TypedHumanGate.QUOTA,
-    "rate-limit": TypedHumanGate.QUOTA,
-    "verification": TypedHumanGate.VERIFICATION,
-    "verify": TypedHumanGate.VERIFICATION,
-    "review": TypedHumanGate.VERIFICATION,
-    "policy": TypedHumanGate.POLICY,
-    "user_action": TypedHumanGate.USER_ACTION,
-    "user-action": TypedHumanGate.USER_ACTION,
-    "action": TypedHumanGate.USER_ACTION,
-}
-
 
 # ---------------------------------------------------------------------------
 # small helpers
@@ -189,16 +159,7 @@ def _infer_typed_gate(needs_human: Mapping[str, Any]) -> "TypedHumanGate | None"
     ``category`` / ``gate_kind`` / ``kind``) are consulted — never the
     free-text ``summary``, so this is not keyword scanning of prose.
     """
-    for field_name in _GATE_CATEGORY_FIELDS:
-        raw = needs_human.get(field_name)
-        if not isinstance(raw, str):
-            continue
-        token = raw.strip().lower()
-        if not token:
-            continue
-        if token in _GATE_CATEGORY_MAP:
-            return _GATE_CATEGORY_MAP[token]
-    return None
+    return typed_human_gate(needs_human)
 
 
 def _iter_containers(obj: object, _depth: int = 0):

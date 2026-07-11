@@ -97,6 +97,9 @@ def format_cloud_status_short(
         line = f"{emoji} `{entry.get('session', '?')}` — {status}: {plan}"
         if entry.get("operator_next") and status in {"repairing", "blocked", "attention"}:
             line += f" ({entry['operator_next']})"
+        repair_summary = _repair_dispatch_summary(entry)
+        if repair_summary:
+            line += f" [{repair_summary}]"
         lines.append(line)
 
     return _chunk_lines(lines, max_chars=max_chars)
@@ -150,6 +153,9 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
             out.append(f"      latest_activity: {entry['latest_activity']}")
         if entry.get("operator_next"):
             out.append(f"      operator_next: {entry['operator_next']}")
+        repair_summary = _repair_dispatch_summary(entry)
+        if repair_summary:
+            out.append(f"      repair_dispatch: {repair_summary}")
         evidence = entry.get("evidence") or {}
         if isinstance(evidence, Mapping) and evidence.get("marker"):
             out.append(f"      evidence: {evidence['marker']}")
@@ -290,6 +296,24 @@ def _sorted_mapping_items(value: Any, field: str) -> list[Mapping[str, Any]]:
 
     items = [item for item in (value or ()) if isinstance(item, Mapping)]
     return sorted(items, key=lambda item: (str(item.get(field) or ""), str(item.get("source") or "")))
+
+
+def _repair_dispatch_summary(entry: Mapping[str, Any]) -> str:
+    dispatch = entry.get("repair_dispatch")
+    if not isinstance(dispatch, Mapping):
+        return ""
+    budget = dispatch.get("retry_budget")
+    budget = budget if isinstance(budget, Mapping) else {}
+    cursor = dispatch.get("evidence_cursor")
+    cursor = cursor if isinstance(cursor, Mapping) else {}
+    cursor_value = cursor.get("history_index") or cursor.get("event_seq") or "?"
+    return (
+        f"decision={dispatch.get('decision') or 'unknown'} "
+        f"request/claim/attempt={dispatch.get('request_count', 0)}/"
+        f"{dispatch.get('claim_count', 0)}/{dispatch.get('attempt_count', 0)} "
+        f"budget={budget.get('remaining_attempts', '?')}/{budget.get('max_attempts', '?')} "
+        f"cursor={cursor_value}"
+    )
 
 
 def format_attention_only(snapshot: Mapping[str, Any] | None) -> str:

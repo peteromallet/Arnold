@@ -6370,11 +6370,8 @@ exit_if_repair_target_complete "post-iterations"
 exit_if_repair_target_recovered "post-iterations"
 
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
-  discord_status="$(send_discord_escalation)"
-  if [[ "$discord_status" == "delivered" ]]; then
-    write_needs_human_marker "$discord_status" "deterministic_failure - breaker tripped before another iteration (same unresolved signature)"
-  fi
-  log "deterministic-failure breaker session=$SESSION discord=$discord_status data=$DATA_FILE"
+  repair_data_set_outcome "repair_exhausted"
+  log "deterministic-failure breaker session=$SESSION classification=broken_superfixer data=$DATA_FILE"
   exit 1
 fi
 
@@ -6384,10 +6381,6 @@ if [[ "$(repair_exhausted_should_retry_without_human)" == "1" ]]; then
   exit 1
 fi
 
-repair_data_set_outcome "discord_escalated"
-discord_status="$(send_discord_escalation)"
-if [[ "$discord_status" == "delivered" ]]; then
-  write_needs_human_marker "$discord_status"
-fi
-log "repair loop exhausted; needs human session=$SESSION discord=$discord_status data=$DATA_FILE"
+repair_data_set_outcome "repair_exhausted"
+log "repair loop exhausted; classification=broken_superfixer session=$SESSION data=$DATA_FILE"
 exit 1

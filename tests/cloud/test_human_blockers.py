@@ -140,6 +140,7 @@ def test_classify_true_blocker_when_needs_human_refs_current_plan(
             "summary": "repair exhausted — awaiting human",
             "plan_name": current_plan,
             "current_plan_name": current_plan,
+            "human_gate": "explicit_approval",
         },
     )
 
@@ -389,6 +390,7 @@ def test_classify_with_preloaded_payload_and_resolver(
         "summary": "manual intervention needed",
         "plan_name": current_plan,
         "current_plan_name": current_plan,
+        "human_gate": "product_decision",
     }
 
     preloaded_resolver = _current_target_proof_resolver(
@@ -435,7 +437,10 @@ def test_classify_with_explicit_needs_human_path(
         current_plan,
         {"name": current_plan, "current_state": "running"},
     )
-    _write_needs_human(custom_path, {"summary": "custom", "plan_name": current_plan})
+    _write_needs_human(
+        custom_path,
+        {"summary": "custom", "plan_name": current_plan, "human_gate": "credential_account"},
+    )
 
     classification = classify_needs_human_blocker(
         session,
@@ -554,7 +559,7 @@ def test_classify_mechanical_blocker_ignores_auditor_escalation_label(
 def test_classify_true_blocker_overrides_mechanical_when_human_gate_present(
     marker_fixture: dict[str, Path],
 ) -> None:
-    """Human-gate keywords in summary override mechanical indicators → TRUE_BLOCKER."""
+    """A typed human gate overrides mechanical prose indicators."""
     session = "mixed-session"
     current_plan = "m2-current-plan"
 
@@ -563,6 +568,7 @@ def test_classify_true_blocker_overrides_mechanical_when_human_gate_present(
         "summary": "mechanical failure — needs review by human operator",
         "plan_name": current_plan,
         "current_plan_name": current_plan,
+        "human_gate": "explicit_approval",
     }
 
     preloaded_resolver = _current_target_proof_resolver(session, current_plan)
@@ -1506,6 +1512,7 @@ def test_classification_includes_human_gate_view_dict_when_payload_present(
             "summary": "test human gate",
             "plan_name": current_plan,
             "current_plan_name": current_plan,
+            "human_gate": "human_verification",
         },
     )
 
@@ -1614,6 +1621,7 @@ def test_classification_human_gate_view_with_preloaded_payload(
             "summary": "manual intervention needed",
             "plan_name": current_plan,
             "current_plan_name": current_plan,
+            "human_gate": "product_decision",
         },
         resolver_record=preloaded_resolver,
     )

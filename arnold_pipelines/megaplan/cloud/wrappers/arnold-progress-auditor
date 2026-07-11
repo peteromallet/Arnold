@@ -4143,8 +4143,8 @@ for item in findings + green_checks:
         links=links,
         root=workspace,
     )
-    if audit_complete.get("outcome") == "auditor_human_escalation":
-        _record_auditor_human_escalation(item, incident_id, session_id, problem_id)
+    # L3 is observational.  It may recommend human review in its append-only
+    # audit event, but it must not mint a needs-human authority marker.
     if github_sync_publication_due(incident_audit):
         workspaces_for_sync[workspace] = True
     enqueue_audit_repair_request(

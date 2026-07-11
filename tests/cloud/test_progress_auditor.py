@@ -1945,10 +1945,7 @@ class TestAuditorWrapperBoundary:
         assert requests[0]["session"] == "demo-session"
         assert requests[0]["target"]["incident_id"] == "inc-124"
         repair_data_dir = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data"
-        marker = json.loads(
-            (repair_data_dir / "demo-session.needs-human.json").read_text(encoding="utf-8")
-        )
-        assert marker["escalation_label"] == "auditor_human_escalation"
+        assert not (repair_data_dir / "demo-session.needs-human.json").exists()
 
 
 class TestLiveSignalFiltering:

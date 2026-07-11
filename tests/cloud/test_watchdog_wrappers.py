@@ -7396,8 +7396,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert text.index('record_automatic_repair_started "$dispatch_id"') < text.index('wait "$child_pid"')
     assert 'repair_data_set_outcome "live_with_fresh_activity"' in text
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
-    assert 'repair_data_set_outcome "discord_escalated"' in text
-    assert text.index('exit_if_repair_target_complete "post-iterations"') < text.index('repair_data_set_outcome "discord_escalated"')
+    assert 'repair_data_set_outcome "repair_exhausted"' in text
+    assert text.index('exit_if_repair_target_complete "post-iterations"') < text.rindex('repair_data_set_outcome "repair_exhausted"')
     assert "write_needs_human_marker" in text
     assert "send_discord_escalation" in text
     assert "## Incident Snapshot" in text
