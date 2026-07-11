@@ -60,6 +60,87 @@ def test_validate_queue_root_rejects_ambiguous_relative_root() -> None:
         raise AssertionError("accepted relative repair queue root")
 
 
+def test_migrate_stranded_split_queue_copies_requests_and_preserves_originals(tmp_path: Path) -> None:
+    queue_root = _queue_root(tmp_path)
+    split_queue = tmp_path / ".megaplan" / "cloud-sessions" / repair_requests.QUEUE_DIR_NAME
+    legacy_request = split_queue / "requests" / "req-1.json"
+    payload = {
+        "schema_version": repair_requests.CURRENT_SCHEMA_VERSION,
+        "kind": "repair_request",
+        "request_id": "req-1",
+        "problem_signature": _signature(),
+    }
+    legacy_request.parent.mkdir(parents=True)
+    legacy_request.write_text(json.dumps(payload), encoding="utf-8")
+
+    migrated = repair_requests.migrate_stranded_split_queue(
+        queue_root,
+        created_at="2026-07-11T02:00:00Z",
+    )
+
+    assert migrated["processed"] == 1
+    assert migrated["migrated"] == 1
+    assert migrated["coalesced"] == 0
+    assert migrated["malformed"] == 0
+    assert migrated["truncated"] is False
+    assert json.loads((queue_root / "requests" / "req-1.json").read_text(encoding="utf-8")) == payload
+    assert json.loads(legacy_request.read_text(encoding="utf-8")) == payload
+    decisions = repair_requests.iter_repair_decisions(queue_root)
+    assert [item["decision"] for item in decisions] == ["migrated"]
+
+
+def test_migrate_stranded_split_queue_is_bounded_and_marks_duplicates(tmp_path: Path) -> None:
+    queue_root = _queue_root(tmp_path)
+    split_queue = tmp_path / ".megaplan" / "cloud-sessions" / repair_requests.QUEUE_DIR_NAME
+    request_dir = split_queue / "requests"
+    request_dir.mkdir(parents=True)
+    first = {
+        "schema_version": repair_requests.CURRENT_SCHEMA_VERSION,
+        "kind": "repair_request",
+        "request_id": "req-a",
+        "problem_signature": _signature(blocked_task_id="T1"),
+    }
+    second = {
+        "schema_version": repair_requests.CURRENT_SCHEMA_VERSION,
+        "kind": "repair_request",
+        "request_id": "req-b",
+        "problem_signature": _signature(blocked_task_id="T2"),
+    }
+    (request_dir / "a.json").write_text(json.dumps(first), encoding="utf-8")
+    (request_dir / "b.json").write_text(json.dumps(second), encoding="utf-8")
+    (queue_root / "requests").mkdir(parents=True)
+    (queue_root / "requests" / "req-a.json").write_text(json.dumps(first), encoding="utf-8")
+
+    migrated = repair_requests.migrate_stranded_split_queue(
+        queue_root,
+        max_requests=1,
+        created_at="2026-07-11T02:00:00Z",
+    )
+
+    assert migrated["processed"] == 1
+    assert migrated["migrated"] == 0
+    assert migrated["coalesced"] == 1
+    assert migrated["truncated"] is True
+    decisions = repair_requests.iter_repair_decisions(queue_root)
+    assert [item["decision"] for item in decisions] == ["coalesced"]
+    assert not (queue_root / "requests" / "req-b.json").exists()
+
+
+def test_migrate_stranded_split_queue_records_malformed_legacy_request(tmp_path: Path) -> None:
+    queue_root = _queue_root(tmp_path)
+    split_queue = tmp_path / ".megaplan" / "cloud-sessions" / repair_requests.QUEUE_DIR_NAME
+    legacy_request = split_queue / "requests" / "bad.json"
+    legacy_request.parent.mkdir(parents=True)
+    legacy_request.write_text("{not-json", encoding="utf-8")
+
+    migrated = repair_requests.migrate_stranded_split_queue(queue_root)
+
+    assert migrated["processed"] == 1
+    assert migrated["malformed"] == 1
+    decisions = repair_requests.iter_repair_decisions(queue_root)
+    assert [item["decision"] for item in decisions] == ["malformed"]
+
+
 def test_public_read_api_does_not_infer_queue_from_marker_parent(tmp_path: Path) -> None:
     marker_dir = tmp_path / ".megaplan" / "chain-markers"
 

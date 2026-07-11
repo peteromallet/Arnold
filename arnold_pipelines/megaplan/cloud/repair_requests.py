@@ -28,7 +28,7 @@ DECISIONS_DIR_NAME = "decisions"
 ACTIVE_CLAIMS_DIR_NAME = "active-claims"
 CURRENT_SCHEMA_VERSION = 1
 
-DecisionKind = Literal["accepted", "coalesced", "stale", "superseded", "malformed", "dispatched"]
+DecisionKind = Literal["accepted", "coalesced", "stale", "superseded", "malformed", "dispatched", "migrated"]
 ActiveRepairClaimStatus = Literal["claimed", "already_claimed", "busy", "stale"]
 
 
@@ -96,6 +96,84 @@ def decisions_dir(queue_dir: str | Path) -> Path:
 
 def active_claims_dir(queue_dir: str | Path) -> Path:
     return validate_queue_root(queue_dir) / ACTIVE_CLAIMS_DIR_NAME
+
+
+def migrate_stranded_split_queue(
+    queue_root: str | Path,
+    *,
+    max_requests: int = 100,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Copy stranded split-queue request markers into the central queue.
+
+    The legacy split queue lives under ``<workspace>/.megaplan/cloud-sessions``.
+    Migration is intentionally bounded, preserves the original files in place,
+    and writes a central decision record for every examined request marker.
+    """
+
+    if max_requests <= 0:
+        raise ValueError("max_requests must be positive")
+
+    queue_root = validate_queue_root(queue_root)
+    legacy_root = queue_root.parent / "cloud-sessions" / QUEUE_DIR_NAME
+    legacy_request_dir = legacy_root / REQUESTS_DIR_NAME
+    result = {
+        "legacy_root": str(legacy_root),
+        "processed": 0,
+        "migrated": 0,
+        "coalesced": 0,
+        "malformed": 0,
+        "truncated": False,
+        "decisions": [],
+    }
+    if not legacy_request_dir.exists():
+        return result
+
+    request_paths = sorted(legacy_request_dir.glob("*.json"), key=lambda item: item.name)
+    for path in request_paths[:max_requests]:
+        result["processed"] += 1
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            result["malformed"] += 1
+            result["decisions"].append(record_malformed_file(queue_root, path, str(exc)))
+            continue
+        if not isinstance(payload, dict):
+            result["malformed"] += 1
+            result["decisions"].append(
+                record_malformed_file(queue_root, path, "request marker is not a JSON object")
+            )
+            continue
+        request_id = str(payload.get("request_id") or "").strip()
+        if payload.get("kind") != "repair_request" or not request_id:
+            result["malformed"] += 1
+            result["decisions"].append(
+                record_malformed_file(queue_root, path, "request marker has invalid shape")
+            )
+            continue
+
+        central_request_path = requests_dir(queue_root) / f"{request_id}.json"
+        copied = _write_once_json(central_request_path, payload)
+        decision = write_decision(
+            queue_root,
+            request_id=request_id,
+            decision="migrated" if copied else "coalesced",
+            reason=(
+                f"migrated stranded split-queue request from {path}"
+                if copied
+                else f"stranded split-queue request already present in central queue: {path}"
+            ),
+            related_request_id=request_id if not copied else "",
+            created_at=created_at,
+        )
+        result["decisions"].append(decision)
+        if copied:
+            result["migrated"] += 1
+        else:
+            result["coalesced"] += 1
+
+    result["truncated"] = len(request_paths) > max_requests
+    return result
 
 
 def active_repair_claim_lock_dir(queue_dir: str | Path, blocker_id: str) -> Path:
@@ -702,6 +780,7 @@ __all__ = [
     "find_pending_by_signature",
     "iter_repair_decisions",
     "iter_repair_requests",
+    "migrate_stranded_split_queue",
     "normalize_problem_signature",
     "problem_signature_key",
     "record_malformed_file",
