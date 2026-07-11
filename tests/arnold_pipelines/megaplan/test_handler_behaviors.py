@@ -1217,6 +1217,112 @@ class TestOverrideFallbackChains:
         assert state["config"]["tier_models"]["execute"]["4"]
         assert state["config"]["tier_models"]["critique"]["4"]
 
+    def test_set_profile_clears_stale_vendor_for_non_premium_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.profiles as profiles_module
+
+        monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(profiles_module, "load_profile_metadata", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(
+            profiles_module,
+            "resolve_profile",
+            lambda profile_name, profiles: {
+                "plan": "hermes:deepseek:deepseek-v4-pro",
+                "execute": "hermes:deepseek:deepseek-v4-pro",
+            },
+        )
+        monkeypatch.setattr(
+            profiles_module,
+            "_resolve_tier_models_with_inheritance",
+            lambda *args, **kwargs: {},
+        )
+
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {"project_dir": str(tmp_path), "profile": "old", "vendor": "claude"},
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+        }
+        args = argparse.Namespace(profile="demo", reason="switch")
+
+        response = _override_set_profile(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        assert state["config"]["phase_model"] == [
+            "plan=hermes:deepseek:deepseek-v4-pro",
+            "execute=hermes:deepseek:deepseek-v4-pro",
+        ]
+        assert "vendor" not in state["config"]
+
+    def test_set_profile_rewrites_stale_prep_metadata_for_non_premium_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.profiles as profiles_module
+
+        monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(profiles_module, "load_profile_metadata", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(
+            profiles_module,
+            "resolve_profile",
+            lambda profile_name, profiles: {
+                "plan": "hermes:deepseek:deepseek-v4-pro",
+                "execute": "hermes:deepseek:deepseek-v4-pro",
+            },
+        )
+        monkeypatch.setattr(
+            profiles_module,
+            "_resolve_tier_models_with_inheritance",
+            lambda *args, **kwargs: {},
+        )
+        monkeypatch.setattr(
+            profiles_module,
+            "_resolve_prep_models_with_inheritance",
+            lambda *args, **kwargs: {},
+        )
+
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {
+                "project_dir": str(tmp_path),
+                "profile": "old",
+                "vendor": "claude",
+                "prep_models": {
+                    "triage": "claude:claude-sonnet-4-6",
+                    "fanout": "claude:claude-sonnet-4-6",
+                    "distill": "claude:claude-sonnet-4-6",
+                },
+                "prep_model_resolver_trace": {
+                    "flat_prep_input": "claude",
+                    "explicit_prep_models": {
+                        "triage": "claude:claude-sonnet-4-6",
+                    },
+                    "resolved_stage_models": {
+                        "triage": "claude:claude-sonnet-4-6",
+                    },
+                    "canonical_fallback_used": {"triage": False},
+                },
+            },
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+        }
+        args = argparse.Namespace(profile="demo", reason="switch")
+
+        response = _override_set_profile(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        assert state["config"]["prep_models"] == {
+            "triage": "hermes:deepseek:deepseek-v4-pro",
+            "fanout": "hermes:deepseek:deepseek-v4-pro",
+            "distill": "hermes:deepseek:deepseek-v4-pro",
+        }
+        assert state["config"]["prep_model_resolver_trace"]["flat_prep_input"] is None
+        assert state["config"]["prep_model_resolver_trace"]["explicit_prep_models"] == {}
+
     def test_set_model_replaces_encoded_chain_with_scalar_spec(self, tmp_path: Path) -> None:
         state = {
             "name": "demo",
