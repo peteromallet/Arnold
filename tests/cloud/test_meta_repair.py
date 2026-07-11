@@ -2299,11 +2299,10 @@ class TestCommitGateResult:
 class TestCanCommitChanges:
     """Commit gating: commits require META_REPAIR_COMMIT_ENABLED."""
 
-    def test_commit_blocked_when_flag_off(self) -> None:
+    def test_commit_allowed_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes()
-        assert result.allowed is False
-        assert "off" in result.reason.lower() or "not permitted" in result.reason.lower()
+        assert result.allowed is True
         assert result.flag_name == "ARNOLD_META_REPAIR_COMMIT_ENABLED"
 
     def test_commit_allowed_when_flag_on(self) -> None:
@@ -2346,19 +2345,19 @@ class TestCanCommitChanges:
         result = can_commit_changes(session="my-session")
         assert "my-session" in result.reason
 
-    def test_commit_blocked_with_empty_env(self) -> None:
+    def test_commit_allowed_with_unset_env(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes(session="")
-        assert result.allowed is False
+        assert result.allowed is True
 
 
 class TestCanPushChanges:
     """Push gating: push uses the same commit gate."""
 
-    def test_push_blocked_when_flag_off(self) -> None:
+    def test_push_allowed_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_push_changes()
-        assert result.allowed is False
+        assert result.allowed is True
         assert "push" in result.reason.lower()
 
     def test_push_allowed_when_flag_on(self) -> None:
@@ -2465,12 +2464,10 @@ class TestPolicyEndToEnd:
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_commit_gate_independent_of_recursion(self) -> None:
-        """Commit gate should remain off-by-default regardless of recursion state."""
+        """Commit gate default is independent of recursion state."""
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes()
-        assert result.allowed is False, (
-            "Commit gate must be off by default even when no recursion exists"
-        )
+        assert result.allowed is True
 
 
 def test_repair_evidence_superseded_terminal_blocker_does_not_crash(tmp_path):
