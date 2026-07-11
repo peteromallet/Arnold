@@ -10,6 +10,7 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     audit_incident,
     audit_projection_input,
     build_audit_input,
+    github_sync_publication_due,
 )
 from arnold_pipelines.megaplan.incident import IncidentLedger
 
@@ -97,6 +98,43 @@ def _problem(**overrides: object) -> dict[str, object]:
         },
         **overrides,
     )
+
+
+def test_github_sync_publication_due_survives_primary_human_escalation() -> None:
+    incident_audit = {
+        "next_expected_event": "auditor_escalate_to_human",
+        "audit_complete": {
+            "outcome": "auditor_human_escalation",
+            "next_expected_event": "auditor_escalate_to_human",
+        },
+        "findings": [
+            {
+                "layer": "resolver_confidence",
+                "recommendation": "auditor_escalate_to_human",
+            },
+            {
+                "layer": "github_sync",
+                "code": "github_sync_publish_due",
+                "recommendation": "github_sync.publish",
+            },
+        ],
+    }
+
+    assert github_sync_publication_due(incident_audit) is True
+
+
+def test_github_sync_publication_due_is_false_without_publish_action() -> None:
+    assert github_sync_publication_due(
+        {
+            "next_expected_event": "auditor_escalate_to_human",
+            "findings": [
+                {
+                    "layer": "resolver_confidence",
+                    "recommendation": "auditor_escalate_to_human",
+                }
+            ],
+        }
+    ) is False
 
 
 def _resolver_state(**overrides: object) -> dict[str, object]:
