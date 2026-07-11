@@ -166,3 +166,23 @@ def test_plan_structure_error_valid_next_retries_plan(monkeypatch, tmp_path) -> 
         )
 
     assert exc.value.valid_next == ["plan"]
+
+
+def test_gate_audit_strips_unknown_top_level_fields_from_inline_payload() -> None:
+    payload = {
+        "recommendation": "PROCEED",
+        "rationale": "The plan is ready.",
+        "signals_assessment": "Score is stable and no blocking flags remain.",
+        "warnings": [],
+        "settled_decisions": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+        "north_star_actions": [
+            {
+                "id": "NSA-1",
+                "action": "This model-added field should not break gate validation.",
+            }
+        ],
+    }
+
+    audit_step_payload("gate", payload)
