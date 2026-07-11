@@ -3564,6 +3564,34 @@ resume_plan_relaunch_command() {
 chain_resume_plan_relaunch_command_if_needed() {
   local workspace="$1"
   local plan_name="$2"
+  local remote_spec="${3:-}"
+  if [[ -z "$plan_name" && -n "$remote_spec" ]]; then
+    plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || true
+import hashlib
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+spec_path = pathlib.Path(sys.argv[2])
+if not spec_path.is_absolute():
+    spec_path = workspace / spec_path
+try:
+    spec_path = spec_path.resolve()
+except OSError:
+    pass
+digest = hashlib.sha1(str(spec_path).encode("utf-8")).hexdigest()[:12]
+state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+try:
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+plan_name = payload.get("current_plan_name") if isinstance(payload, dict) else ""
+if isinstance(plan_name, str) and plan_name and "/" not in plan_name:
+    print(plan_name)
+PY
+)"
+  fi
   [[ -n "$plan_name" ]] || return 1
   local plan_state_file="$workspace/.megaplan/plans/$plan_name/state.json"
   [[ -f "$plan_state_file" ]] || return 1
@@ -3687,6 +3715,12 @@ resolve_relaunch_command() {
   local plan_name="${5:-}"
   local relaunch_command="${6:-}"
 
+  # A chain marker commonly preserves its original `chain start` command and
+  # omits plan_name.  Once the active plan records explicit resume authority,
+  # that current state must outrank the stale launch-time marker command.
+  if [[ "$run_kind" != "plan" ]] && chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name" "$remote_spec"; then
+    return 0
+  fi
   if [[ -n "$relaunch_command" ]] && ! stale_marker_relaunch_command "$relaunch_command"; then
     printf '%s' "$relaunch_command"
     return 0
@@ -3696,10 +3730,6 @@ resolve_relaunch_command() {
     default_plan_relaunch_command "$plan_name" "$workspace"
     return 0
   fi
-  if chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name"; then
-    return 0
-  fi
-
   default_chain_relaunch_command "$session" "$workspace" "$remote_spec"
 }
 
