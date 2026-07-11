@@ -701,7 +701,20 @@ def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_gate_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(payload)
+    allowed = {
+        "recommendation",
+        "rationale",
+        "signals_assessment",
+        "warnings",
+        "settled_decisions",
+        "flag_resolutions",
+        "accepted_tradeoffs",
+        "tiebreaker_question",
+        "tiebreaker_flag_ids",
+        "tiebreaker_fuzzy_group_id",
+        "known_flag_ids",
+    }
+    normalized = {key: value for key, value in payload.items() if key in allowed}
     normalized.pop("known_flag_ids", None)
 
     resolutions = [
