@@ -28,6 +28,19 @@ from typing import Any
 
 from arnold_pipelines.megaplan.observability.events import EventKind, emit
 from arnold_pipelines.megaplan._core import list_batch_artifacts
+from arnold_pipelines.megaplan.authority.batch_scope import (
+    resolve_batch_authority_metadata,
+)
+from arnold_pipelines.megaplan.authority.binding import (
+    ResultEnvelope,
+    TaskClaim,
+    TaskValidationDecision,
+)
+from arnold_pipelines.megaplan.authority.views import (
+    LegacyTaskLabel,
+    PlanExecutionView,
+    derive_plan_execution_view,
+)
 from arnold_pipelines.megaplan.orchestration.completion_io import (
     read_typed_completion_verdict,
 )
@@ -43,6 +56,7 @@ from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
     TaskSatisfactionResult,
     is_task_satisfied,
 )
+from arnold_pipelines.run_authority import ContractError, reduce_run_authority
 
 # ── Route disposition vocabulary ──────────────────────────────────────────
 
@@ -151,6 +165,14 @@ class AuthorityDecision:
         )
 
 
+@dataclass(frozen=True)
+class AcceptedAttemptProjection:
+    """Read-only execute projection built from accepted dispatch envelopes."""
+
+    view: PlanExecutionView
+    source_paths: tuple[str, ...]
+
+
 def authority_decision_for_task(
     task: Mapping[str, Any],
     evidence_nucleus: Any,
@@ -194,10 +216,11 @@ def corroborated_completed_task_ids(
     execution_window: EvidenceExecutionWindow | None = None,
     decisions: dict[str, AuthorityDecision] | None = None,
 ) -> set[str]:
-    """Return task IDs with authoritative satisfied/waived/not-applicable evidence.
+    """Compatibility/shadow adapter for evidence-corroborated completion IDs.
 
     The only success path is an ``is_task_satisfied`` decision. Per-task errors
     degrade to ``unknown`` and do not stop other tasks from being evaluated.
+    Raw legacy terminal labels are retained only as drift diagnostics.
     """
 
     task_records = tuple(tasks)
@@ -226,6 +249,8 @@ def corroborated_completed_task_ids(
                 result,
                 diagnostics={
                     **diagnostics,
+                    "authority_adapter": "corroborated_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
                     "raw_terminal_status": _optional_str(task.get("status")),
                 },
             )
@@ -233,7 +258,12 @@ def corroborated_completed_task_ids(
             decision = AuthorityDecision.unknown(
                 task_id,
                 reason="is_task_satisfied_error",
-                diagnostics={"exception_type": type(exc).__name__, **diagnostics},
+                diagnostics={
+                    "exception_type": type(exc).__name__,
+                    **diagnostics,
+                    "authority_adapter": "corroborated_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
+                },
                 error=str(exc),
             )
         if plan_dir is not None:
@@ -255,7 +285,7 @@ def scheduler_completed_ids(
     execution_window: EvidenceExecutionWindow | None = None,
     decisions: dict[str, AuthorityDecision] | None = None,
 ) -> set[str]:
-    """Return the production ``completed_ids`` set for the pure topo scheduler.
+    """Compatibility/shadow adapter for scheduler ``completed_ids``.
 
     Scheduler ``completed_ids`` must be corroborated authority decisions, not
     raw ``status="done"`` / ``"skipped"`` claims. This wrapper makes that
@@ -270,7 +300,7 @@ def scheduler_completed_ids(
     if resolved_current_head is None and resolved_plan_dir is not None:
         resolved_current_head = _best_effort_git_head(resolved_plan_dir)
 
-    return corroborated_completed_task_ids(
+    completed = corroborated_completed_task_ids(
         tasks,
         plan_dir=resolved_plan_dir,
         evidence_nucleus=evidence_nucleus,
@@ -279,6 +309,12 @@ def scheduler_completed_ids(
         execution_window=execution_window,
         decisions=decisions,
     )
+    if decisions is not None:
+        for decision in decisions.values():
+            decision.diagnostics["authority_adapter"] = "scheduler_completed_ids"
+            decision.diagnostics["adapter_mode"] = "compatibility_shadow"
+            decision.diagnostics["shadow_delegate"] = "corroborated_completed_task_ids"
+    return completed
 
 
 def execute_execution_window(
@@ -323,7 +359,7 @@ def effective_execute_completed_task_ids(
     current_code_hash: str | None = None,
     decisions: dict[str, AuthorityDecision] | None = None,
 ) -> set[str]:
-    """Return execute completion IDs with execution-window freshness and explained skips.
+    """Compatibility/shadow adapter for execute completion IDs.
 
     Execute scheduling and end-of-run accounting need one shared notion of
     "effectively complete": corroborated task evidence may come from an earlier
@@ -334,6 +370,7 @@ def effective_execute_completed_task_ids(
     the same execute run.
     """
 
+    task_records = tuple(tasks)
     resolved_plan_dir = Path(plan_dir) if plan_dir is not None else None
     resolved_project_dir = Path(project_dir) if project_dir is not None else None
     if resolved_project_dir is None and isinstance(state, Mapping):
@@ -348,6 +385,23 @@ def effective_execute_completed_task_ids(
             project_dir=resolved_project_dir,
             baseline_head=baseline_head,
         )
+    projection = accepted_attempt_execution_projection(
+        task_records,
+        plan_dir=resolved_plan_dir,
+    )
+    if projection is not None:
+        projection_decisions = decisions if decisions is not None else {}
+        _populate_projection_decisions(
+            projection.view,
+            decisions=projection_decisions,
+        )
+        if resolved_plan_dir is not None:
+            _emit_projection_drift_diagnostics(
+                resolved_plan_dir,
+                task_records,
+                decisions=projection_decisions,
+            )
+        return set(projection.view.dependency_closed_completed_task_ids)
     execution_window = (
         execute_execution_window(
             state,
@@ -358,7 +412,7 @@ def effective_execute_completed_task_ids(
         else None
     )
     completed = corroborated_completed_task_ids(
-        tasks,
+        task_records,
         plan_dir=resolved_plan_dir,
         evidence_nucleus=evidence_nucleus,
         current_head=current_head,
@@ -366,9 +420,14 @@ def effective_execute_completed_task_ids(
         execution_window=execution_window,
         decisions=decisions,
     )
+    if decisions is not None:
+        for decision in decisions.values():
+            decision.diagnostics["authority_adapter"] = "effective_execute_completed_task_ids"
+            decision.diagnostics["adapter_mode"] = "compatibility_shadow"
+            decision.diagnostics["shadow_delegate"] = "corroborated_completed_task_ids"
     explained_skips = {
         task_id
-        for task in tasks
+        for task in task_records
         if isinstance(task, Mapping)
         and isinstance(task_id := _task_id(task), str)
         and _is_explained_skip(task)
@@ -376,14 +435,14 @@ def effective_execute_completed_task_ids(
     completed |= explained_skips
     explained_noops = {
         task_id
-        for task in tasks
+        for task in task_records
         if isinstance(task, Mapping)
         and isinstance(task_id := _task_id(task), str)
         and _is_explained_noop_completion(task)
     }
     completed |= explained_noops
     if decisions is not None:
-        for task in tasks:
+        for task in task_records:
             if not isinstance(task, Mapping):
                 continue
             task_id = _task_id(task)
@@ -394,12 +453,12 @@ def effective_execute_completed_task_ids(
 
     authoritative_commands = {
         command
-        for task in tasks
+        for task in task_records
         if isinstance(task, Mapping)
         and _task_id(task) in completed
         for command in _string_values(task.get("commands_run"))
     }
-    for task in tasks:
+    for task in task_records:
         if not isinstance(task, Mapping):
             continue
         task_id = _task_id(task)
@@ -414,11 +473,303 @@ def effective_execute_completed_task_ids(
                     status=EvidenceStatus.satisfied,
                     satisfied=True,
                     diagnostics={
+                        "authority_adapter": "effective_execute_completed_task_ids",
+                        "adapter_mode": "compatibility_shadow",
                         "raw_terminal_status": _optional_str(task.get("status")),
                         "execute_completion": "shared_authoritative_commands",
                     },
                 )
     return completed
+
+
+def accepted_attempt_execution_projection(
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    plan_dir: Path | str | None,
+) -> AcceptedAttemptProjection | None:
+    """Build the accepted-attempt execute projection when durable metadata exists.
+
+    The projection is intentionally derived only from result envelopes whose
+    merge-time ``authority_validation`` outcome was accepted.  ``batch_scope``
+    and legacy task statuses are carried as diagnostics through
+    ``derive_plan_execution_view``; they never mint accepted attempts.
+    """
+
+    if plan_dir is None:
+        return None
+    root = Path(plan_dir)
+    task_records = tuple(task for task in tasks if isinstance(task, Mapping))
+    if not task_records:
+        return None
+    collected = _collect_accepted_attempt_authority(root)
+    if collected is None:
+        return None
+    records, evidence_decisions, legacy_labels, run_id, run_revision, source_paths = collected
+    try:
+        authority = reduce_run_authority(
+            records,
+            run_id=run_id,
+            run_revision=run_revision,
+        )
+        view = derive_plan_execution_view(
+            authority,
+            {"tasks": task_records},
+            evidence_decisions=evidence_decisions,
+            legacy_labels=legacy_labels,
+        )
+    except (ContractError, ValueError):
+        return None
+    return AcceptedAttemptProjection(
+        view=view,
+        source_paths=source_paths,
+    )
+
+
+def _collect_accepted_attempt_authority(
+    plan_dir: Path,
+) -> tuple[
+    tuple[Any, ...],
+    dict[str, AuthorityDecision],
+    tuple[LegacyTaskLabel, ...],
+    str,
+    str,
+    tuple[str, ...],
+] | None:
+    authority_records: list[Any] = []
+    evidence_decisions: dict[str, AuthorityDecision] = {}
+    legacy_labels: list[LegacyTaskLabel] = []
+    source_paths: set[str] = set()
+    run_identity: tuple[str, str] | None = None
+    saw_validation_projection = False
+
+    for artifact_path in list_batch_artifacts(plan_dir):
+        try:
+            payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        source = _relative_artifact_path(artifact_path, plan_dir)
+        source_paths.add(source)
+        for label in _legacy_task_labels_from_payload(payload, source):
+            legacy_labels.append(label)
+
+        resolution = resolve_batch_authority_metadata(payload, source)
+        if resolution.quarantine is not None or resolution.metadata is None:
+            continue
+        identity = resolution.metadata.dispatch_identity
+        run_identity = run_identity or (identity.run_id, identity.run_revision)
+        envelopes = resolution.metadata.result_envelopes
+        by_digest = {envelope.digest(): envelope for envelope in envelopes}
+        by_subject: dict[str, list[ResultEnvelope]] = {}
+        for envelope in envelopes:
+            by_subject.setdefault(envelope.subject_id, []).append(envelope)
+        for entry in _task_entries(payload):
+            validation = entry.get("authority_validation")
+            if not isinstance(validation, Mapping):
+                continue
+            outcome = _optional_str(validation.get("outcome"))
+            if outcome:
+                saw_validation_projection = True
+            if outcome != "accepted":
+                continue
+            envelope = _entry_envelope(entry, validation, by_digest, by_subject)
+            if envelope is None or not isinstance(envelope.claim, TaskClaim):
+                continue
+            if (envelope.run_id, envelope.run_revision) != run_identity:
+                continue
+            try:
+                decision = _accepted_projection_decision(envelope, validation, source)
+            except ContractError:
+                continue
+            authority_records.extend(envelope.authority_records())
+            authority_records.extend((decision.idempotency, decision))
+            evidence_decisions[envelope.subject_id] = AuthorityDecision(
+                task_id=envelope.subject_id,
+                status=EvidenceStatus.satisfied,
+                satisfied=True,
+                diagnostics={
+                    "execute_completion": "accepted_attempt_projection",
+                    "source_path": source,
+                    "envelope_digest": envelope.digest(),
+                    "authority_validation": dict(validation),
+                },
+            )
+
+    if not saw_validation_projection or run_identity is None:
+        return None
+    run_id, run_revision = run_identity
+    return (
+        tuple(authority_records),
+        evidence_decisions,
+        tuple(legacy_labels),
+        run_id,
+        run_revision,
+        tuple(sorted(source_paths)),
+    )
+
+
+def _task_entries(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    entries = payload.get("task_updates")
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        return ()
+    return tuple(entry for entry in entries if isinstance(entry, Mapping))
+
+
+def _legacy_task_labels_from_payload(
+    payload: Mapping[str, Any],
+    source: str,
+) -> tuple[LegacyTaskLabel, ...]:
+    labels: list[LegacyTaskLabel] = []
+    for entry in _task_entries(payload):
+        task_id = _optional_str(entry.get("task_id") or entry.get("id"))
+        status = _optional_str(entry.get("status"))
+        if task_id is not None and status is not None:
+            try:
+                labels.append(LegacyTaskLabel(task_id, status, source, "observation"))
+            except ValueError:
+                continue
+    return tuple(labels)
+
+
+def _entry_envelope(
+    entry: Mapping[str, Any],
+    validation: Mapping[str, Any],
+    by_digest: Mapping[str, ResultEnvelope],
+    by_subject: Mapping[str, list[ResultEnvelope]],
+) -> ResultEnvelope | None:
+    digest = _optional_str(validation.get("envelope_digest"))
+    if digest is None:
+        authority = entry.get("authority")
+        if isinstance(authority, Mapping):
+            digest = _optional_str(authority.get("envelope_digest"))
+    if digest is not None and digest in by_digest:
+        return by_digest[digest]
+    subject_id = _optional_str(
+        validation.get("subject_id") or entry.get("task_id") or entry.get("id")
+    )
+    if subject_id is None:
+        return None
+    candidates = by_subject.get(subject_id, ())
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _accepted_projection_decision(
+    envelope: ResultEnvelope,
+    validation: Mapping[str, Any],
+    source: str,
+) -> TaskValidationDecision:
+    if envelope.decision is not None:
+        return (
+            envelope.decision
+            if isinstance(envelope.decision, TaskValidationDecision)
+            else TaskValidationDecision.from_dict(envelope.decision.to_dict())
+        )
+    payload = {
+        "reason": _optional_str(validation.get("reason")) or "accepted_attempt_projection",
+        "source_path": source,
+        "envelope_digest": envelope.digest(),
+        "validation": _json_safe_mapping(validation),
+    }
+    decision_id = f"{envelope.claim.claim_id}:accepted"
+    return TaskValidationDecision(
+        decision_id=decision_id,
+        run_id=envelope.run_id,
+        run_revision=envelope.run_revision,
+        subject_id=envelope.subject_id,
+        attempt_id=envelope.attempt.attempt_id,
+        grant_id=envelope.dispatch_id,
+        coordinator_attempt_id=envelope.dispatch.coordinator_attempt_id,
+        fence_token=envelope.dispatch.fence_token,
+        claim_id=envelope.claim.claim_id,
+        outcome="accepted",
+        evidence_ids=envelope.evidence_ids,
+        idempotency_key=decision_id,
+        payload=payload,
+    )
+
+
+def _json_safe_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, item in value.items():
+        key_str = str(key)
+        if item is None or isinstance(item, (bool, int, float, str)):
+            safe[key_str] = item
+        elif isinstance(item, Mapping):
+            safe[key_str] = _json_safe_mapping(item)
+        elif isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
+            safe[key_str] = [
+                element
+                if element is None or isinstance(element, (bool, int, float, str))
+                else str(element)
+                for element in item
+            ]
+        else:
+            safe[key_str] = str(item)
+    return safe
+
+
+def _populate_projection_decisions(
+    view: PlanExecutionView,
+    *,
+    decisions: dict[str, AuthorityDecision],
+) -> None:
+    diagnostics_by_task: dict[str, list[dict[str, str]]] = {}
+    for diagnostic in view.diagnostics:
+        diagnostics_by_task.setdefault(diagnostic.subject_id, []).append(
+            diagnostic.to_dict()
+        )
+    for task in view.tasks:
+        if task.dependency_closed:
+            decisions[task.task_id] = AuthorityDecision(
+                task_id=task.task_id,
+                status=EvidenceStatus.satisfied,
+                satisfied=True,
+                diagnostics={
+                    "authority_adapter": "effective_execute_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
+                    "execute_completion": "accepted_attempt_projection",
+                    "accepted_attempt_ids": list(task.accepted_attempt_ids),
+                    "accepted_decision_ids": list(task.accepted_decision_ids),
+                    "source_paths": list(task.source_paths),
+                },
+            )
+            continue
+        reason = (
+            "accepted_attempt_dependency_unresolved"
+            if task.accepted
+            else "no_accepted_attempt"
+        )
+        decisions[task.task_id] = AuthorityDecision.unknown(
+            task.task_id,
+            reason=reason,
+            diagnostics={
+                "authority_adapter": "effective_execute_completed_task_ids",
+                "adapter_mode": "compatibility_shadow",
+                "execute_completion": "accepted_attempt_projection",
+                "accepted": task.accepted,
+                "dependency_closed": task.dependency_closed,
+                "accepted_attempt_ids": list(task.accepted_attempt_ids),
+                "unresolved_claim_ids": list(task.unresolved_claim_ids),
+                "unresolved_dependency_ids": list(task.unresolved_dependency_ids),
+                "projection_diagnostics": diagnostics_by_task.get(task.task_id, []),
+            },
+        )
+
+
+def _emit_projection_drift_diagnostics(
+    plan_dir: Path,
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    decisions: Mapping[str, AuthorityDecision],
+) -> None:
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        decision = decisions.get(_task_id(task))
+        if decision is None:
+            continue
+        _emit_authority_divergence_diagnostics(plan_dir, task, decision)
 
 
 def _is_explained_skip(task: Mapping[str, Any]) -> bool:
@@ -452,6 +803,8 @@ def _explained_skip_decision(task_id: str, task: Mapping[str, Any]) -> Authority
         status=EvidenceStatus.not_applicable,
         satisfied=False,
         diagnostics={
+            "authority_adapter": "effective_execute_completed_task_ids",
+            "adapter_mode": "compatibility_shadow",
             "raw_terminal_status": _optional_str(task.get("status")),
             "execute_completion": "explained_skip",
         },
@@ -464,6 +817,8 @@ def _explained_noop_decision(task_id: str, task: Mapping[str, Any]) -> Authority
         status=EvidenceStatus.satisfied,
         satisfied=True,
         diagnostics={
+            "authority_adapter": "effective_execute_completed_task_ids",
+            "adapter_mode": "compatibility_shadow",
             "raw_terminal_status": _optional_str(task.get("status")),
             "execute_completion": "explained_noop_completion",
         },

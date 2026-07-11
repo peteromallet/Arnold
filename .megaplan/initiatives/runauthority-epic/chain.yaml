@@ -5,7 +5,7 @@ milestones:
 - label: m1-foundation
   idea: .megaplan/initiatives/runauthority-epic/briefs/m1.md
   branch: megaplan/runauthority-epic/m1-foundation
-  profile: all-codex
+  profile: partnered-5
   robustness: full
   depth: high
   with_prep: true
@@ -15,7 +15,7 @@ milestones:
 - label: m2-enforcement
   idea: .megaplan/initiatives/runauthority-epic/briefs/m2.md
   branch: megaplan/runauthority-epic/m2-enforcement
-  profile: all-codex
+  profile: partnered-5
   robustness: full
   depth: high
   with_prep: true
@@ -24,7 +24,7 @@ milestones:
 - label: m3-consumers
   idea: .megaplan/initiatives/runauthority-epic/briefs/m3.md
   branch: megaplan/runauthority-epic/m3-consumers
-  profile: all-codex
+  profile: partnered-5
   robustness: full
   depth: high
   with_prep: true

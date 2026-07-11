@@ -964,7 +964,13 @@ def _build_session_entry(
             session=session,
             marker=marker,
             marker_path=marker_path,
+            watchdog_report_path=watchdog_report_path,
+            watchdog_item=watchdog_item,
             chain_health=chain_health,
+            needs_human=needs_human,
+            needs_human_path=repair_data_dir / f"{session}.needs-human.json",
+            repair_progress=repair_progress,
+            repair_progress_path=marker_dir / f"{session}.repair-progress.json",
             plan_state=plan_state_doc,
             current_target=current_target_record,
             liveness=liveness,
@@ -986,6 +992,12 @@ def _compose_shadow_views(
     liveness: Mapping[str, bool],
     latest_activity: str | None,
     now: datetime,
+    watchdog_report_path: Path | None = None,
+    watchdog_item: Mapping[str, Any] | None = None,
+    needs_human: Mapping[str, Any] | None = None,
+    needs_human_path: Path | None = None,
+    repair_progress: Mapping[str, Any] | None = None,
+    repair_progress_path: Path | None = None,
 ) -> dict[str, Any]:
     """Compose sibling diagnostic views from values already collected above.
 
@@ -1050,7 +1062,132 @@ def _compose_shadow_views(
         "execution_authority": execution.to_dict(),
         "runner": runner.to_dict(),
         "publication": publication.to_dict(),
+        "status_authority_shadow": _status_authority_shadow(
+            session=session,
+            marker=marker,
+            marker_path=marker_path,
+            watchdog_report_path=watchdog_report_path,
+            watchdog_item=watchdog_item or {},
+            chain_health=chain_health,
+            health_source=health_source,
+            needs_human=needs_human,
+            needs_human_path=needs_human_path,
+            repair_progress=repair_progress,
+            repair_progress_path=repair_progress_path,
+            plan_record=plan_record,
+            chain_record=chain_record,
+            runner=runner.to_dict(),
+            publication=publication.to_dict(),
+        ),
     }
+
+
+def _status_authority_shadow(
+    *,
+    session: str,
+    marker: Mapping[str, Any],
+    marker_path: Path,
+    watchdog_report_path: Path | None,
+    watchdog_item: Mapping[str, Any],
+    chain_health: Mapping[str, Any] | None,
+    health_source: str,
+    needs_human: Mapping[str, Any] | None,
+    needs_human_path: Path | None,
+    repair_progress: Mapping[str, Any] | None,
+    repair_progress_path: Path | None,
+    plan_record: Mapping[str, Any],
+    chain_record: Mapping[str, Any],
+    runner: Mapping[str, Any],
+    publication: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Name status drift sources without feeding them back into classification."""
+
+    marker_source = str(marker_path)
+    diagnostics: list[dict[str, str]] = []
+    source_paths: set[str] = {marker_source}
+    plan_source = str(plan_record.get("path") or "observation://plan-state-unavailable")
+    chain_source = str(chain_record.get("path") or health_source)
+    source_paths.update({plan_source, chain_source})
+
+    plan_state = str(plan_record.get("current_state") or "").strip().lower()
+    chain_state = str(
+        chain_record.get("last_state")
+        or chain_record.get("current_state")
+        or (chain_health.get("last_state") if isinstance(chain_health, Mapping) else "")
+        or ""
+    ).strip().lower()
+    if plan_state and chain_state and plan_state != chain_state:
+        diagnostics.append({
+            "code": "legacy_status_execution_authority_drift",
+            "domain": "execution_authority",
+            "reason": (
+                f"plan state {plan_state!r} and chain/status state {chain_state!r} "
+                "are observations only; execution authority remains the shadow projection"
+            ),
+            "source": f"{plan_source},{chain_source}",
+        })
+
+    runner_source = (
+        str(watchdog_report_path)
+        if watchdog_report_path is not None and watchdog_item
+        else marker_source
+    )
+    source_paths.add(runner_source)
+    diagnostics.append({
+        "code": "runner_liveness_separate_from_execution_authority",
+        "domain": "runner",
+        "reason": (
+            f"runner status {runner.get('status')!r} is process liveness and grants no task authority"
+        ),
+        "source": runner_source,
+    })
+
+    publication_sources = set()
+    raw_publication_sources = publication.get("source_paths")
+    if isinstance(raw_publication_sources, list):
+        publication_sources.update(str(item) for item in raw_publication_sources if str(item))
+    publication_sources.update({marker_source, health_source})
+    source_paths.update(publication_sources)
+    diagnostics.append({
+        "code": "publication_separate_from_execution_authority",
+        "domain": "publication",
+        "reason": (
+            f"publication status {publication.get('status')!r} is publish readiness and grants no task authority"
+        ),
+        "source": ",".join(sorted(publication_sources)),
+    })
+
+    if needs_human:
+        human_source = str(needs_human_path or "observation://needs-human")
+        source_paths.add(human_source)
+        diagnostics.append({
+            "code": "human_gate_separate_from_execution_authority",
+            "domain": "human_gate",
+            "reason": "human-gate custody is an operator blocker, not execution authority",
+            "source": human_source,
+        })
+
+    if repair_progress:
+        repair_source = str(repair_progress_path or "observation://repair-progress")
+        source_paths.add(repair_source)
+        diagnostics.append({
+            "code": "recovery_custody_separate_from_execution_authority",
+            "domain": "recovery",
+            "reason": "recovery custody is tracked separately from accepted task attempts",
+            "source": repair_source,
+        })
+
+    values = {
+        "schema_version": 1,
+        "session": session or "unknown-session",
+        "shadow": True,
+        "read_only": True,
+        "status_consumers_unchanged": True,
+        "source_paths": sorted(source_paths),
+        "diagnostics": sorted(diagnostics, key=lambda item: canonical_json(item)),
+    }
+    digest = hashlib.sha256(canonical_json(values).encode("utf-8")).hexdigest()
+    return {**values, "view_hash": digest}
 
 
 def _add_collector_diagnostics(
@@ -1090,6 +1227,9 @@ def _add_collector_diagnostics(
         "authority_view_hash": view.authority_view_hash,
         "tasks": view.tasks,
         "accepted_task_ids": view.accepted_task_ids,
+        "accepted_task_attempts": view.accepted_task_attempts,
+        "dependency_closed_completed_task_ids": view.dependency_closed_completed_task_ids,
+        "next_ready_wave": view.next_ready_wave,
         "unresolved_claim_ids": view.unresolved_claim_ids,
         "quarantine_ids": view.quarantine_ids,
         "diagnostics": tuple(sorted(set(diagnostics))),
