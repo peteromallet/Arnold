@@ -489,7 +489,31 @@ EOF
     # contain a product-local `megaplan` package that shadows Hermes runtime
     # discovery before the agent starts.
     cd /workspace || exit 1
-    timeout "$SUBAGENT_TIMEOUT" python3 "$LAUNCHER" \
+    timeout "$SUBAGENT_TIMEOUT" python3 -c '
+import runpy
+import sys
+import types
+
+# Some source checkouts contain a product-local ``megaplan`` namespace but
+# not the legacy ``megaplan.agent`` package.  Older installed launchers treat
+# that partial namespace as a fatal import instead of falling through to the
+# current Arnold runtime.  Preload only the missing probe module so the
+# launcher reaches its supported Arnold fallback without patching the
+# separately installed skill in place.
+try:
+    import megaplan
+except ModuleNotFoundError:
+    megaplan = types.ModuleType("megaplan")
+    megaplan.__path__ = []
+    sys.modules["megaplan"] = megaplan
+agent_probe = types.ModuleType("megaplan.agent")
+sys.modules["megaplan.agent"] = agent_probe
+setattr(megaplan, "agent", agent_probe)
+
+launcher = sys.argv[1]
+sys.argv = [launcher, *sys.argv[2:]]
+runpy.run_path(launcher, run_name="__main__")
+' "$LAUNCHER" \
       --model "$DEEPSEEK_MODEL" \
       --toolsets "file,web,terminal" \
       --query-file "$FALLBACK_BRIEF_PATH" \

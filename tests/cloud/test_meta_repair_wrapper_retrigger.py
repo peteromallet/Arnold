@@ -70,6 +70,8 @@ def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
     assert '--query-file "$FALLBACK_BRIEF_PATH"' in text
     assert '--project-dir /workspace' in text
     assert 'cd /workspace || exit 1' in text
+    assert 'sys.modules["megaplan.agent"] = agent_probe' in text
+    assert 'runpy.run_path(launcher, run_name="__main__")' in text
 
 
 def test_recordable_verdict_check_rejects_arbitrary_output(tmp_path: Path) -> None:
