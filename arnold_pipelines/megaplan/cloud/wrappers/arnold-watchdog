@@ -7216,6 +7216,10 @@ PY
           log "session unhealthy after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
           return 0
         fi
+        if [[ "$meta_dispatch_result" == "recursive" ]]; then
+          log "session unhealthy after repair failure; meta-repair recursion requires human custody, suppressing direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+          return 0
+        fi
         log "session unhealthy after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
       else
         log "session unhealthy after repair failure; meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
@@ -7229,6 +7233,10 @@ PY
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
         if [[ "$meta_dispatch_result" == "dispatched" ]]; then
           log "session stopped after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+          return 0
+        fi
+        if [[ "$meta_dispatch_result" == "recursive" ]]; then
+          log "session stopped after repair failure; meta-repair recursion requires human custody, suppressing direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
           return 0
         fi
         log "session stopped after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
