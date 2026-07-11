@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Callable, Mapping, Sequence
 
@@ -89,6 +90,45 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
 _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES | frozenset(
     {LIVE_WITH_FRESH_ACTIVITY}
 )
+
+
+def extract_reported_repair_custody(
+    response: str,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Extract structured change/test claims from a meta-repair response.
+
+    The meta-repair agent returns concise Markdown rather than a schema.  Keep
+    its claims explicitly labelled as reported evidence; downstream consumers
+    can then distinguish them from install-sync and retrigger verification.
+    """
+
+    changes: list[dict[str, str]] = []
+    tests: list[dict[str, str]] = []
+    seen_changes: set[str] = set()
+    seen_tests: set[str] = set()
+
+    for line in response.splitlines():
+        lowered = line.lower()
+        if any(token in lowered for token in ("change made", "changed", "patched", "fixed")):
+            for match in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", line):
+                path = match.group(1).split(":", 1)[0].strip()
+                if path and path not in seen_changes:
+                    seen_changes.add(path)
+                    changes.append({"file": path, "status": "reported"})
+
+        if any(token in lowered for token in ("pytest", "py_compile")):
+            commands = re.findall(r"`([^`]*(?:pytest|py_compile)[^`]*)`", line)
+            for command in commands:
+                command = command.strip()
+                if not command or command in seen_tests:
+                    continue
+                seen_tests.add(command)
+                result = "reported_pass" if any(
+                    token in lowered for token in ("passed", "passes", "validation passed", "tests passed")
+                ) else "reported"
+                tests.append({"command": command, "result": result})
+
+    return changes, tests
 
 
 def authoritative_terminal_snapshot_reason(snapshot: Mapping[str, Any] | None) -> str:

@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     META_REPAIR_BUDGET_SECS,
     MetaRepairClassification,
     MetaRepairRecord,
+    extract_reported_repair_custody,
     MetaRepairTrigger,
     RetriggerExecutionResult,
     build_meta_repair_prompt,
@@ -1455,6 +1456,33 @@ class TestMetaRepairRecordShape:
             "created_at",
         }
         assert set(d.keys()) == required_keys
+
+    def test_extracts_reported_change_and_test_custody(self) -> None:
+        response = """ESCALATE
+
+Change made: [meta_repair.py](/workspace/arnold/arnold_pipelines/megaplan/cloud/meta_repair.py:250) now scopes history.
+Focused validation passed: `python3 -m py_compile arnold_pipelines/megaplan/cloud/meta_repair.py`.
+Focused tests passed: `python3 -m pytest tests/cloud/test_meta_repair.py -q` -> `5 passed`.
+"""
+
+        changes, tests = extract_reported_repair_custody(response)
+
+        assert changes == [
+            {
+                "file": "/workspace/arnold/arnold_pipelines/megaplan/cloud/meta_repair.py",
+                "status": "reported",
+            }
+        ]
+        assert tests == [
+            {
+                "command": "python3 -m py_compile arnold_pipelines/megaplan/cloud/meta_repair.py",
+                "result": "reported_pass",
+            },
+            {
+                "command": "python3 -m pytest tests/cloud/test_meta_repair.py -q",
+                "result": "reported_pass",
+            },
+        ]
 
     def test_record_defaults_are_empty(self) -> None:
         record = MetaRepairRecord(
