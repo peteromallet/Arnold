@@ -38,6 +38,7 @@ if [[ ! -d /workspace/arnold ]]; then
     exit 1
   fi
   exec docker exec \
+    -e ARNOLD_AUTONOMY="${ARNOLD_AUTONOMY:-}" \
     -e ARNOLD_AUDIT_AUTOFIX_ENABLED="${ARNOLD_AUDIT_AUTOFIX_ENABLED:-}" \
     -e ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="${ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED:-}" \
     -e MEGAPLAN_AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-}" \
@@ -69,6 +70,7 @@ SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
 SUBAGENT_MAX_TOKENS="${MEGAPLAN_AUDIT_SUBAGENT_MAX_TOKENS:-8192}"
 SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
 DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"
+AUDIT_CODEX_MODEL="gpt-5.6-sol"
 CODEX_TIMEOUT="${MEGAPLAN_AUDIT_CODEX_TIMEOUT_SECS:-1800}"
 SUBAGENT_SKILL="${MEGAPLAN_AUDIT_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 AUDIT_GITHUB_REPO="${MEGAPLAN_AUDIT_GITHUB_REPO:-}"
@@ -146,47 +148,42 @@ PY
 
 autofix_allowed_targets_markdown() {
   cat <<'EOF'
-- `arnold_pipelines/megaplan/cloud/**`
-- `tests/cloud/**`
-- Never modify the audited run workspace, plan state, repair-data artifacts, user project trees, or files outside those Arnold repair-system paths.
+- No mutation targets. The six-hour auditor is an evaluator only.
+- Findings must be handed to the validated central repair-request queue.
 EOF
 }
 
 autofix_policy_markdown() {
-  local autofix_enabled="${1:-0}"
-  local commit_enabled="${2:-0}"
-  if [[ "$autofix_enabled" != "1" ]]; then
-    cat <<'EOF'
-Autofix mode: REPORT-ONLY.
-- Do not edit files, apply patches, or run `git commit` / `git push`.
-- Diagnose the repair-system issue, cite evidence, and recommend the smallest safe operator follow-up.
-EOF
-    return 0
-  fi
-  if [[ "$commit_enabled" == "1" ]]; then
-    cat <<'EOF'
-Autofix mode: REPAIR-SYSTEM PATCH + COMMIT/PUSH (explicitly gated).
-- You are trusted to ship the repair-system fix when evidence supports it.
-- You may change only the allowed Arnold repair-system files listed below.
-- Keep the fix narrow, validate with `python3 -m py_compile` and one focused test module, then `git commit` and `git push` to `origin/editible-install`.
-- Do not stop at a recommendation for repair-system bugs; patch, validate, commit, push, and return `FIXED <commit-sha>`.
-- Do not touch run-state artifacts, project workspaces, or non-repair-system files.
-EOF
-    return 0
-  fi
   cat <<'EOF'
-Autofix mode: REPAIR-SYSTEM PATCH-ONLY.
-- You may change only the allowed Arnold repair-system files listed below.
-- Validate with `python3 -m py_compile` and one focused test module.
-- Leave changes uncommitted; do not run `git commit` or `git push`.
-- Do not touch run-state artifacts, project workspaces, or non-repair-system files.
+Auditor authority: READ-ONLY EVALUATOR.
+- Do not edit source, run state, plan state, repair data, or project files.
+- Do not apply patches, create claims, launch repair agents, commit, or push.
+- Return evidence and a recommendation. The wrapper routes unhealthy findings
+  through the validated central repair-request authority.
 EOF
 }
 
 AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"
+AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"
 AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"
+AUDIT_LAUNCH_ATTEMPTED=0
 export ARNOLD_META_REPAIR_ENABLED="${ARNOLD_META_REPAIR_ENABLED:-1}"
 export ARNOLD_META_REPAIR_COMMIT_ENABLED="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
+
+reject_conflicting_audit_model_pins() {
+  local name value
+  for name in CODEX_MODEL MEGAPLAN_AUDIT_CODEX_MODEL CLOUD_WATCHDOG_CODEX_MODEL; do
+    value="${!name:-}"
+    if [[ -n "$value" && "$value" != "$AUDIT_CODEX_MODEL" ]]; then
+      log "six-hour auditor model pin conflict: $name=$value required=$AUDIT_CODEX_MODEL"
+      return 1
+    fi
+  done
+}
+
+if ! reject_conflicting_audit_model_pins; then
+  exit 78
+fi
 
 # Build the plan worklist from marker, tmux, and workspace-activity discovery.
 python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "/workspace" "$ARNOLD_SRC" <<'PY'
@@ -3502,9 +3499,74 @@ log "suspicious_plans=$FINDING_COUNT stall_flags=$stall_summary"
 # subagent (partnered-5, provider=deepseek, model=deepseek:deepseek-v4-pro),
 # and return concise evidence-based findings. Codex stdout is what feeds the
 # existing report-writer path below.
+audit_dispatch_receipt_root() {
+  local workspace="$1"
+  local plan="$2"
+  local candidate="$workspace/.megaplan/plans/$plan"
+  if [[ -d "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+  else
+    printf '%s\n' "$REPORT_DIR/dispatch-plans/$plan"
+  fi
+}
+
+initialize_audit_dispatch_receipt() {
+  local receipt_root="$1"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$AUDIT_CODEX_MODEL" <<'PY'
+import pathlib
+import sys
+from arnold_pipelines.megaplan.receipts.writer import initialize_dispatch_receipt, prepare_dispatch_receipt
+
+root, model = sys.argv[1:]
+receipt = prepare_dispatch_receipt(action="six_hour_audit", configured_model=model)
+initialized = initialize_dispatch_receipt(pathlib.Path(root), receipt)
+print(initialized["dispatch_id"])
+PY
+}
+
+record_audit_dispatch_started() {
+  local receipt_root="$1"
+  local dispatch_id="$2"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$dispatch_id" "$AUDIT_CODEX_MODEL" <<'PY'
+import json
+import pathlib
+import sys
+from arnold_pipelines.megaplan.receipts.writer import dispatch_receipt_path, record_dispatch_started
+
+root, dispatch_id, model = sys.argv[1:]
+root_path = pathlib.Path(root)
+receipt = json.loads(dispatch_receipt_path(root_path, dispatch_id).read_text(encoding="utf-8"))
+record_dispatch_started(root_path, receipt, resolved_runtime_model=model)
+PY
+}
+
+finalize_audit_dispatch_receipt() {
+  local receipt_root="$1"
+  local dispatch_id="$2"
+  local rc="$3"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$dispatch_id" "$AUDIT_CODEX_MODEL" "$rc" <<'PY'
+import json
+import pathlib
+import sys
+from arnold_pipelines.megaplan.receipts.writer import dispatch_receipt_path, finalize_dispatch_receipt
+
+root, dispatch_id, model, rc = sys.argv[1:]
+root_path = pathlib.Path(root)
+receipt = json.loads(dispatch_receipt_path(root_path, dispatch_id).read_text(encoding="utf-8"))
+finalize_dispatch_receipt(
+    root_path,
+    receipt,
+    outcome="succeeded" if int(rc) == 0 else "failed",
+    resolved_runtime_model=model,
+    mutation_facts={"state": False, "source": False, "commit": False, "push": False},
+    detail=f"six-hour audit subprocess exited {rc}",
+)
+PY
+}
+
 dispatch_one() {
   local gather_file="$1"
-  local plan workspace reasons kind
+  local plan workspace reasons kind receipt_root dispatch_id child_pid rc
   plan="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plan'])" "$gather_file")"
   workspace="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'])" "$gather_file")"
   reasons="$(python3 -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['reasons']))" "$gather_file")"
@@ -3546,8 +3608,8 @@ Missing chain log, chain state, chain.yaml, milestones, and base-ref evidence is
 expected for kind=plan and is not itself a failure.
 
 Return one of:
-- STALE: stale latest_failure or stale block replay detected; clear stale state and re-drive.
-- FIXED <commit-sha>: you found and fixed an Arnold source bug.
+- STALE: stale latest_failure or stale block replay detected; request repair-system handling.
+- REPAIR_REQUEST: you found an Arnold source or run-state bug that the repair authority should handle.
 - ESCALATE: no code change made, but operator action or ledger reconciliation is required.
 - INEFFICIENT: the chain is progressing but wasting cycles or requiring repeated watchdog relaunches.
 - PASSIVE: no action; the evidence shows legitimate progress, completed work, or a genuinely non-operative issue.
@@ -3648,16 +3710,9 @@ Evaluate these questions in order:
 - Does stderr reveal a specific source bug?
 - Did repair-data already fix or exhaust this signature?
 
-If stale state is the right fix: you MAY update the running workspace plan state
-for the audited session. Keep it narrow: set state.json latest_failure to null
-or remove it, clear/quarantine only stale block artifacts identified by the
-evidence, preserve unrelated chain/project state, validate the JSON, and return
-STALE with the exact files/keys cleared. Do not make an Arnold source commit for
-a stale failure unless you also find a live source bug.
-
-If you identify a source bug in the Arnold repair system: root-cause it from
-the evidence + workspace, operate only in $ARNOLD_SRC, and never touch the
-running run's project tree.
+If stale state or a source bug is the right diagnosis, describe the exact
+repair request. Do not update the running workspace or Arnold source; the
+wrapper submits the finding to the central repair-request authority.
 
 EOF
     autofix_policy_markdown "$AUDIT_AUTOFIX_ENABLED_FLAG" "$AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG"
@@ -3676,8 +3731,8 @@ If no source fix is appropriate: do NOT fix. Return a hypothesis (likely cause
 of the lack of convergence/inefficiency/gate stop) + a recommendation
 (highest-leverage next action for the operator).
 
-Start with your verdict on its own line — FIXED <commit-sha>, ESCALATE,
-STALE, INEFFICIENT, or PASSIVE — then cite SPECIFIC evidence (plan state/events/logs,
+Start with your verdict on its own line — REPAIR_REQUEST, ESCALATE, STALE,
+INEFFICIENT, or PASSIVE — then cite SPECIFIC evidence (plan state/events/logs,
 stale_state_evidence flags, repair-data iterations, user_action IDs, exact stderr,
 iteration/attempt counts, gate verdicts, plan_v churn, and chain log/state evidence
 only when kind=chain). Under 350 words.
@@ -3687,8 +3742,40 @@ EOF
   redact_file_in_place "$brief"
 
   local resp_path="$GATHER_DIR/resp-${plan}.txt"
+  local launch_attempted=0
+  if [[ "${AUDIT_MUTATION_AUTHORIZED_FLAG:-0}" != "1" ]]; then
+    log "observed: L3 Codex dispatch blocked (requires ARNOLD_AUTONOMY and ARNOLD_AUDIT_AUTOFIX_ENABLED)"
+    printf '%s\n' \
+      "PASSIVE" \
+      "Audit finding observed; model dispatch blocked by the master-plus-path authorization gate." \
+      > "$resp_path"
+    : > "$GATHER_DIR/resp-${plan}.err"
+    return 0
+  fi
   if command -v codex >/dev/null 2>&1; then
-    log "dispatching Codex audit plan=$plan deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
+    receipt_root="$(audit_dispatch_receipt_root "$workspace" "$plan")"
+    dispatch_id="$(initialize_audit_dispatch_receipt "$receipt_root")" || {
+      log "six-hour audit dispatch blocked: durable receipt initialization failed plan=$plan"
+      echo "Codex audit dispatch blocked: durable receipt initialization failed." > "$resp_path"
+      return 0
+    }
+    log "dispatching Codex audit plan=$plan codex_model=$AUDIT_CODEX_MODEL deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
+    # Truth is based on the attempt, not on whether the shell managed to exec
+    # Codex or whether Codex eventually returned output.
+    AUDIT_LAUNCH_ATTEMPTED=1
+    launch_attempted=1
+    python3 - "$gather_file" "$receipt_root" "$dispatch_id" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["codex_launch_attempted"] = True
+payload["dispatch_receipt_root"] = sys.argv[2]
+payload["dispatch_id"] = sys.argv[3]
+path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+PY
     (
       cd "$workspace" &&
       if [[ -f /workspace/.cloud-hot-env ]]; then
@@ -3700,8 +3787,22 @@ EOF
       export PYENV_VERSION=3.11.11
       export MEGAPLAN_DEFAULT_PROFILE="$SUBAGENT_PROFILE"
       export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
-      timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$brief"
-    ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" || true
+      timeout "$CODEX_TIMEOUT" codex exec \
+        --sandbox read-only \
+        -c model="$AUDIT_CODEX_MODEL" \
+        - < "$brief"
+    ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" &
+    child_pid=$!
+    if ! record_audit_dispatch_started "$receipt_root" "$dispatch_id"; then
+      log "six-hour audit dispatch indeterminate: subprocess started but receipt transition failed plan=$plan pid=$child_pid"
+      kill "$child_pid" 2>/dev/null || true
+      wait "$child_pid" 2>/dev/null || true
+      return 0
+    fi
+    if wait "$child_pid"; then rc=0; else rc=$?; fi
+    if ! finalize_audit_dispatch_receipt "$receipt_root" "$dispatch_id" "$rc"; then
+      log "six-hour audit dispatch indeterminate: receipt finalization failed plan=$plan"
+    fi
     redact_file_in_place "$resp_path"
     redact_file_in_place "$GATHER_DIR/resp-${plan}.err"
     if [[ ! -s "$resp_path" ]]; then
@@ -3712,13 +3813,14 @@ EOF
     echo "codex CLI missing; no automated hypothesis." > "$resp_path"
   fi
 
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$gather_file" "$resp_path" "$DEEPSEEK_MODEL" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$gather_file" "$resp_path" "$DEEPSEEK_MODEL" "$launch_attempted" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 
-gather, resp, model = sys.argv[1], sys.argv[2], sys.argv[3]
+gather, resp, model, launch_attempted = sys.argv[1:5]
 data = json.load(open(gather))
 text = redact_text(open(resp, encoding="utf-8").read().strip())
+data["codex_launch_attempted"] = launch_attempted == "1"
 data["deepseek_model"] = model
 data["deepseek_response"] = text
 data["hypothesis"] = text
@@ -3736,6 +3838,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import enqueue_audit_repair_request
 from arnold_pipelines.megaplan.cloud.github_sync import (
     GitHubSyncConfig,
     sync_persistent_problems,
@@ -3957,6 +4060,7 @@ def _issue_repo_for_workspace(workspace):
         return None, repo_path
     return raw, repo_path
 
+
 def _event_evidence(item):
     source_refs = item.get("source_refs") if isinstance(item.get("source_refs"), dict) else {}
     incident_brief = item.get("incident_brief") if isinstance(item.get("incident_brief"), dict) else {}
@@ -4043,6 +4147,10 @@ for item in findings + green_checks:
         _record_auditor_human_escalation(item, incident_id, session_id, problem_id)
     if github_sync_publication_due(incident_audit):
         workspaces_for_sync[workspace] = True
+    enqueue_audit_repair_request(
+        item,
+        queue_root=Path(workspace) / ".megaplan" / "repair-queue",
+    )
 
 for workspace in sorted(workspaces_for_sync):
     repo, repo_path = _issue_repo_for_workspace(workspace)
@@ -4071,18 +4179,18 @@ print(len(data.get("findings", [])))
 PY
 N_FINDINGS="$FINDING_COUNT"
 
-if [[ "$AUDIT_AUTOFIX_ENABLED_FLAG" == "1" ]]; then
+if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" ]]; then
   for ((i=0; i<N_FINDINGS; i++)); do
     dispatch_one "$GATHER_DIR/finding-$i.json"
   done
 else
-  log "autofix disabled; skipping Codex dispatch for findings=$N_FINDINGS"
+  log "autofix observed but mutation blocked; skipping Codex dispatch for findings=$N_FINDINGS"
 fi
 
 record_incident_audits "$GATHER_DIR/findings.json"
 
 # Final report assembly: JSON + Markdown + one-line log append.
-python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" <<'PY'
+python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" "$AUDIT_MUTATION_AUTHORIZED_FLAG" "$AUDIT_LAUNCH_ATTEMPTED" <<'PY'
 import datetime as dt
 import glob
 import json
@@ -4091,6 +4199,8 @@ import pathlib
 import sys
 
 findings_path, json_out, md_out, log_path, ts = sys.argv[1:6]
+autofix_authorized = len(sys.argv) > 6 and sys.argv[6] == "1"
+launch_attempted = len(sys.argv) > 7 and sys.argv[7] == "1"
 data = json.load(open(findings_path, encoding="utf-8"))
 
 # Merge the per-finding subagent responses back in.
@@ -4099,6 +4209,30 @@ for i, f in enumerate(findings):
     resp_path = os.path.join(os.path.dirname(findings_path), f"finding-{i}.json")
     if os.path.exists(resp_path):
         f.update(json.load(open(resp_path, encoding="utf-8")))
+launch_attempted = launch_attempted or any(
+    bool(f.get("codex_launch_attempted")) for f in findings if isinstance(f, dict)
+)
+dispatch_receipts = []
+for finding in findings:
+    if not isinstance(finding, dict):
+        continue
+    receipt_root = finding.get("dispatch_receipt_root")
+    dispatch_id = finding.get("dispatch_id")
+    if not receipt_root or not dispatch_id:
+        continue
+    receipt_path = pathlib.Path(receipt_root) / "dispatch_receipts" / f"{dispatch_id}.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    dispatch_receipts.append(receipt)
+    launch_attempted = launch_attempted or receipt.get("subprocess_started") is True
+resolved_models = sorted({
+    str(receipt.get("resolved_runtime_model"))
+    for receipt in dispatch_receipts
+    if receipt.get("subprocess_started") is True and receipt.get("resolved_runtime_model")
+})
+resolved_runtime_model = resolved_models[0] if len(resolved_models) == 1 else None
 
 now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
 green_checks = data.get("green_checks") or []
@@ -4145,13 +4279,11 @@ for f in findings:
     plan = f.get("plan")
     session = f.get("session")
     if first_line.startswith("FIXED"):
-        parts = first_line.split(None, 1)
-        commit_sha = parts[1].strip() if len(parts) > 1 else ""
-        autonomous_fix_attempts.append(
+        risky_or_deferred_fixes.append(
             {
                 "plan": plan,
                 "session": session,
-                "commit": commit_sha,
+                "verdict": "INVALID_MUTATION_CLAIM",
                 "summary": hypothesis[:200],
             }
         )
@@ -4219,19 +4351,24 @@ for stage in STAGE_NAMES:
             {"stage": stage, "status": "not_checked", "reason": "stage bucket not present in stage_metrics"}
         )
 
-# dispatch_summary block ── explicitly confirms report-only non-agentic mode
+# A launch attempt permanently falsifies report-only, even when exec/timeout
+# failed and no response was produced.
 dispatch_summary = {
-    "mode": "report_only",
-    "autofix_enabled": False,
+    "mode": "autofix_attempted" if launch_attempted else "report_only",
+    "autofix_enabled": autofix_authorized,
     "repair_dispatched": False,
-    "model_dispatched": False,
+    "model_dispatched": launch_attempted,
     "deepseek_dispatched": False,
     "meta_repair_dispatched": False,
-    "codex_dispatched": False,
+    "codex_dispatched": launch_attempted,
+    "resolved_runtime_model": resolved_runtime_model,
+    "dispatch_receipt_count": len(dispatch_receipts),
     "git_commit_performed": False,
     "file_edit_performed": False,
     "rationale": (
-        "Autofix disabled; report-only mode confirmed. No repair, model, "
+        "A Codex launch was attempted; report-only is false regardless of launch outcome."
+        if launch_attempted
+        else "Autofix mutation blocked; report-only mode confirmed. No repair, model, "
         "meta-repair, git commit, or file-edit dispatch occurred."
     ),
 }
@@ -4251,6 +4388,7 @@ payload = {
     "coverage": coverage,
     "data_quality": data_quality,
     "dispatch_summary": dispatch_summary,
+    "dispatch_receipts": dispatch_receipts,
     "root_cause_patterns": data.get("root_cause_patterns") or {
         "repeated_failure_signatures": [],
         "chain_log_repetitions": [],

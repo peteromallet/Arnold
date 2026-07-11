@@ -37,7 +37,7 @@ def test_watchdog_dispatch_exports_claim_owner_pid() -> None:
     text = (WRAPPER_DIR / "arnold-watchdog").read_text(encoding="utf-8")
 
     assert (
-        'export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; exec "$2" "$3" "$4" "$5"'
+        'export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; export ARNOLD_REPAIR_QUEUE_ROOT="$9"; exec "$2" "$3" "$4" "$5"'
         in text
     )
 
@@ -78,8 +78,9 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
 
     blocker_id = "blocker:v1:test"
     request_id = "req-test"
+    queue_root = workspace / ".megaplan" / "repair-queue"
     claim = repair_requests.claim_active_repair_request(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_root,
         blocker_id=blocker_id,
         request_id=request_id,
         actor="test-dispatcher",
@@ -89,12 +90,25 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
         cwd=str(workspace),
     )
     assert claim.claimed
+    decoy_queue_root = tmp_path / "decoy-workspace" / ".megaplan" / "repair-queue"
+    decoy_claim = repair_requests.claim_active_repair_request(
+        decoy_queue_root,
+        blocker_id=blocker_id,
+        request_id="decoy-request",
+        actor="decoy-dispatcher",
+        session="demo-session",
+        pid=os.getpid(),
+        command="decoy",
+        cwd=str(workspace),
+    )
+    assert decoy_claim.claimed
 
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(queue_root)
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
     env["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"] = request_id
     env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = blocker_id
@@ -111,7 +125,8 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
     assert proc.returncode == 0, stderr
 
     claim_lock_dir = repair_requests.active_repair_claim_lock_dir(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_root,
         blocker_id,
     )
     assert not claim_lock_dir.exists()
+    assert repair_requests.active_repair_claim_lock_dir(decoy_queue_root, blocker_id).exists()

@@ -20,6 +20,7 @@ Design rules (see ``docs/ops/elegant-cloud-status-resident-plan.md``):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -29,6 +30,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from arnold_pipelines.megaplan.authority.views import (
+    PlanExecutionDiagnostic,
+    PlanExecutionView,
+    derive_human_gate_view,
+    derive_megaplan_plan_view,
+    derive_megaplan_recovery_view,
+    derive_plan_execution_view,
+    derive_publication_view,
+    derive_runner_view,
+)
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
@@ -36,6 +47,7 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
 from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
+from arnold_pipelines.run_authority import canonical_json, reduce_run_authority
 
 # --- canonical paths -------------------------------------------------------
 
@@ -912,7 +924,7 @@ def _build_session_entry(
         now=now,
     )
 
-    return {
+    entry = {
         "session": session,
         "display_name": session,
         "workspace": str(workspace) if workspace else "",
@@ -950,6 +962,372 @@ def _build_session_entry(
             "superseded_by": superseding_sibling,
         },
     }
+    entry.update(
+        _compose_shadow_views(
+            session=session,
+            marker=marker,
+            marker_path=marker_path,
+            watchdog_report_path=watchdog_report_path,
+            watchdog_item=watchdog_item,
+            chain_health=chain_health,
+            needs_human=needs_human,
+            needs_human_path=repair_data_dir / f"{session}.needs-human.json",
+            repair_progress=repair_progress,
+            repair_progress_path=marker_dir / f"{session}.repair-progress.json",
+            plan_state=plan_state_doc,
+            current_target=current_target_record,
+            liveness=liveness,
+            latest_activity=latest_activity,
+            now=now,
+        )
+    )
+    return entry
+
+
+def _compose_shadow_views(
+    *,
+    session: str,
+    marker: Mapping[str, Any],
+    marker_path: Path,
+    chain_health: Mapping[str, Any] | None,
+    plan_state: Mapping[str, Any] | None,
+    current_target: Mapping[str, Any],
+    liveness: Mapping[str, bool],
+    latest_activity: str | None,
+    now: datetime,
+    watchdog_report_path: Path | None = None,
+    watchdog_item: Mapping[str, Any] | None = None,
+    needs_human: Mapping[str, Any] | None = None,
+    needs_human_path: Path | None = None,
+    repair_progress: Mapping[str, Any] | None = None,
+    repair_progress_path: Path | None = None,
+) -> dict[str, Any]:
+    """Compose sibling diagnostic views from values already collected above.
+
+    These projections are deliberately appended after legacy classification has
+    completed.  They perform no reads and are not inputs to ``status``,
+    ``operator_next``, or any repair decision.
+    """
+
+    plan_record = current_target.get("plan_state")
+    plan_record = plan_record if isinstance(plan_record, Mapping) else {}
+    chain_record = current_target.get("chain_state")
+    chain_record = chain_record if isinstance(chain_record, Mapping) else {}
+    run_revision = str(plan_record.get("fingerprint") or chain_record.get("fingerprint") or "unobserved")
+    authority = reduce_run_authority((), run_id=session or "unknown-session", run_revision=run_revision)
+    execution = derive_plan_execution_view(
+        authority,
+        plan_state if isinstance(plan_state, Mapping) else (),
+        evidence_decisions={},
+        plan_source=str(plan_record.get("path") or "observation://plan-state-unavailable"),
+    )
+    execution = _add_collector_diagnostics(execution, current_target, plan_record)
+
+    marker_source = str(marker_path)
+    runner_observations: list[dict[str, Any]] = [{
+        "observation_type": "process",
+        "source": marker_source,
+        "state": "live" if liveness.get("tmux") or liveness.get("process") else "stopped",
+        "identity": session or None,
+        "expected_identity": session or None,
+    }]
+    activity_dt = _parse_iso(latest_activity)
+    if activity_dt is not None:
+        age = max(0, int((now - activity_dt).total_seconds()))
+        runner_observations.append({
+            "observation_type": "heartbeat",
+            "source": str(plan_record.get("path") or chain_record.get("path") or marker_source),
+            "state": "live" if age <= STALE_ACTIVITY_S else "unknown",
+            "identity": session or None,
+            "expected_identity": session or None,
+            "heartbeat_age_seconds": age,
+            "stale": age > STALE_ACTIVITY_S,
+        })
+    runner = derive_runner_view(
+        runner_observations,
+        expected_identity=session or None,
+        stale_after_seconds=STALE_ACTIVITY_S,
+    )
+
+    marker_publication: dict[str, Any] = {"source": marker_source}
+    health_source = str(marker_path.with_name(f"{session}.chain-health.progress.json"))
+    health_publication: dict[str, Any] = {"source": health_source}
+    for field in ("branch", "dirty_workspace", "pushed_sha", "auth", "no_push"):
+        if isinstance(chain_health, Mapping) and field in chain_health:
+            health_publication[field] = chain_health[field]
+        if field in marker:
+            marker_publication[field] = marker[field]
+    if isinstance(chain_health, Mapping) and chain_health.get("pr_number") is not None:
+        health_publication["pull_request"] = str(chain_health["pr_number"])
+    publication = derive_publication_view((marker_publication, health_publication))
+
+    # --- human-gate projection -------------------------------------------------
+    human_gate_signals: list[dict[str, Any]] = []
+    if needs_human and isinstance(needs_human, Mapping):
+        human_gate_signals.append({
+            "gate_type": "needs_human",
+            "source": str(needs_human_path or "observation://needs-human"),
+            "plan_ref": needs_human.get("plan_ref"),
+            "stale_token": needs_human.get("stale_token"),
+            "superseded": needs_human.get("superseded"),
+            "summary": needs_human.get("summary"),
+            "reason": needs_human.get("reason") or needs_human.get("summary"),
+        })
+    human_gate = derive_human_gate_view(
+        human_gate_signals,
+        current_plan_revision=run_revision,
+    )
+
+    # --- recovery custody projection -------------------------------------------
+    repair_custody: dict[str, Any] | None = None
+    if repair_progress and isinstance(repair_progress, Mapping):
+        repair_custody = dict(repair_progress)
+    recovery = derive_megaplan_recovery_view(
+        repair_custody=repair_custody,
+        runner_view=runner,
+        execution_view=execution,
+        publication_view=publication,
+        human_gate_view=human_gate,
+        custody_source=str(repair_progress_path or "observation://repair-progress"),
+    )
+
+    # --- composition facade ----------------------------------------------------
+    megaplan_plan_view = derive_megaplan_plan_view(
+        execution_view=execution,
+        runner_view=runner,
+        publication_view=publication,
+        human_gate_view=human_gate,
+        recovery_view=recovery,
+    )
+
+    return {
+        "execution_authority": execution.to_dict(),
+        "runner": runner.to_dict(),
+        "publication": publication.to_dict(),
+        "human_gate": human_gate.to_dict(),
+        "recovery": recovery.to_dict(),
+        "megaplan_plan_view": megaplan_plan_view.to_dict(),
+        "status_authority_shadow": _status_authority_shadow(
+            session=session,
+            marker=marker,
+            marker_path=marker_path,
+            watchdog_report_path=watchdog_report_path,
+            watchdog_item=watchdog_item or {},
+            chain_health=chain_health,
+            health_source=health_source,
+            needs_human=needs_human,
+            needs_human_path=needs_human_path,
+            repair_progress=repair_progress,
+            repair_progress_path=repair_progress_path,
+            plan_record=plan_record,
+            chain_record=chain_record,
+            runner=runner.to_dict(),
+            publication=publication.to_dict(),
+            human_gate=human_gate.to_dict(),
+            recovery=recovery.to_dict(),
+        ),
+    }
+
+
+def _status_authority_shadow(
+    *,
+    session: str,
+    marker: Mapping[str, Any],
+    marker_path: Path,
+    watchdog_report_path: Path | None,
+    watchdog_item: Mapping[str, Any],
+    chain_health: Mapping[str, Any] | None,
+    health_source: str,
+    needs_human: Mapping[str, Any] | None,
+    needs_human_path: Path | None,
+    repair_progress: Mapping[str, Any] | None,
+    repair_progress_path: Path | None,
+    plan_record: Mapping[str, Any],
+    chain_record: Mapping[str, Any],
+    runner: Mapping[str, Any],
+    publication: Mapping[str, Any],
+    human_gate: Mapping[str, Any] | None = None,
+    recovery: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Name status drift sources without feeding them back into classification."""
+
+    marker_source = str(marker_path)
+    diagnostics: list[dict[str, str]] = []
+    source_paths: set[str] = {marker_source}
+    plan_source = str(plan_record.get("path") or "observation://plan-state-unavailable")
+    chain_source = str(chain_record.get("path") or health_source)
+    source_paths.update({plan_source, chain_source})
+
+    plan_state = str(plan_record.get("current_state") or "").strip().lower()
+    chain_state = str(
+        chain_record.get("last_state")
+        or chain_record.get("current_state")
+        or (chain_health.get("last_state") if isinstance(chain_health, Mapping) else "")
+        or ""
+    ).strip().lower()
+    if plan_state and chain_state and plan_state != chain_state:
+        diagnostics.append({
+            "code": "legacy_status_execution_authority_drift",
+            "domain": "execution_authority",
+            "reason": (
+                f"plan state {plan_state!r} and chain/status state {chain_state!r} "
+                "are observations only; execution authority remains the shadow projection"
+            ),
+            "source": f"{plan_source},{chain_source}",
+        })
+
+    runner_source = (
+        str(watchdog_report_path)
+        if watchdog_report_path is not None and watchdog_item
+        else marker_source
+    )
+    source_paths.add(runner_source)
+    diagnostics.append({
+        "code": "runner_liveness_separate_from_execution_authority",
+        "domain": "runner",
+        "reason": (
+            f"runner status {runner.get('status')!r} is process liveness and grants no task authority"
+        ),
+        "source": runner_source,
+    })
+
+    publication_sources = set()
+    raw_publication_sources = publication.get("source_paths")
+    if isinstance(raw_publication_sources, list):
+        publication_sources.update(str(item) for item in raw_publication_sources if str(item))
+    publication_sources.update({marker_source, health_source})
+    source_paths.update(publication_sources)
+    diagnostics.append({
+        "code": "publication_separate_from_execution_authority",
+        "domain": "publication",
+        "reason": (
+            f"publication status {publication.get('status')!r} is publish readiness and grants no task authority"
+        ),
+        "source": ",".join(sorted(publication_sources)),
+    })
+
+    # --- human-gate diagnostics (read-only shadow) --------------------------
+    human_gate_sources: set[str] = set()
+    if needs_human:
+        human_source = str(needs_human_path or "observation://needs-human")
+        human_gate_sources.add(human_source)
+    if isinstance(human_gate, Mapping):
+        raw_hg_sources = human_gate.get("source_paths")
+        if isinstance(raw_hg_sources, (list, tuple)):
+            human_gate_sources.update(str(item) for item in raw_hg_sources if str(item))
+    if human_gate_sources:
+        source_paths.update(human_gate_sources)
+        diagnostics.append({
+            "code": "human_gate_separate_from_execution_authority",
+            "domain": "human_gate",
+            "reason": (
+                f"human-gate status {human_gate.get('status', 'unknown')!r} "
+                "is an observation only and grants no task authority"
+            ),
+            "source": ",".join(sorted(human_gate_sources)),
+        })
+    if isinstance(human_gate, Mapping):
+        for diag in human_gate.get("diagnostics") or ():
+            if isinstance(diag, Mapping) and diag.get("code") and diag.get("source"):
+                source_paths.add(str(diag["source"]))
+                diagnostics.append({
+                    "code": str(diag["code"]),
+                    "domain": "human_gate",
+                    "reason": str(diag.get("reason") or "no reason provided"),
+                    "source": str(diag["source"]),
+                })
+
+    # --- recovery diagnostics (read-only shadow) ----------------------------
+    recovery_sources: set[str] = set()
+    if repair_progress:
+        repair_source = str(repair_progress_path or "observation://repair-progress")
+        recovery_sources.add(repair_source)
+    if isinstance(recovery, Mapping):
+        raw_rec_sources = recovery.get("source_paths")
+        if isinstance(raw_rec_sources, (list, tuple)):
+            recovery_sources.update(str(item) for item in raw_rec_sources if str(item))
+    if recovery_sources:
+        source_paths.update(recovery_sources)
+        diagnostics.append({
+            "code": "recovery_custody_separate_from_execution_authority",
+            "domain": "recovery",
+            "reason": (
+                f"recovery status {recovery.get('status', 'unknown')!r} "
+                "is read-only custody projection and grants no task authority"
+            ),
+            "source": ",".join(sorted(recovery_sources)),
+        })
+    if isinstance(recovery, Mapping):
+        for diag in recovery.get("diagnostics") or ():
+            if isinstance(diag, Mapping) and diag.get("code") and diag.get("source"):
+                source_paths.add(str(diag["source"]))
+                diagnostics.append({
+                    "code": str(diag["code"]),
+                    "domain": "recovery",
+                    "reason": str(diag.get("reason") or "no reason provided"),
+                    "source": str(diag["source"]),
+                })
+
+    values = {
+        "schema_version": 1,
+        "session": session or "unknown-session",
+        "shadow": True,
+        "read_only": True,
+        "status_consumers_unchanged": True,
+        "source_paths": sorted(source_paths),
+        "diagnostics": sorted(diagnostics, key=lambda item: canonical_json(item)),
+    }
+    digest = hashlib.sha256(canonical_json(values).encode("utf-8")).hexdigest()
+    return {**values, "view_hash": digest}
+
+
+def _add_collector_diagnostics(
+    view: PlanExecutionView,
+    current_target: Mapping[str, Any],
+    plan_record: Mapping[str, Any],
+) -> PlanExecutionView:
+    """Retain source-addressable legacy contradictions without promoting them."""
+
+    diagnostics = list(view.diagnostics)
+    plan_state = str(plan_record.get("current_state") or "").strip()
+    plan_source = str(plan_record.get("path") or "observation://plan-state-unavailable")
+    if plan_state:
+        diagnostics.append(PlanExecutionDiagnostic(
+            "legacy_plan_state_observation",
+            str(plan_record.get("name") or "plan"),
+            f"legacy plan state {plan_state!r} is diagnostic only and grants no task authority",
+            plan_source,
+        ))
+    stale_evidence = current_target.get("stale_evidence")
+    if isinstance(stale_evidence, list):
+        for index, item in enumerate(stale_evidence):
+            if not isinstance(item, Mapping):
+                continue
+            code = str(item.get("kind") or "stale_collector_evidence")
+            source = str(item.get("path") or "observation://current-target")
+            diagnostics.append(PlanExecutionDiagnostic(
+                code,
+                str(item.get("plan_name") or item.get("session") or f"collector-{index}"),
+                f"current-target collector reported {code.replace('_', ' ')}",
+                source,
+            ))
+    values = {
+        "schema_version": view.schema_version,
+        "run_id": view.run_id,
+        "run_revision": view.run_revision,
+        "authority_view_hash": view.authority_view_hash,
+        "tasks": view.tasks,
+        "accepted_task_ids": view.accepted_task_ids,
+        "accepted_task_attempts": view.accepted_task_attempts,
+        "dependency_closed_completed_task_ids": view.dependency_closed_completed_task_ids,
+        "next_ready_wave": view.next_ready_wave,
+        "unresolved_claim_ids": view.unresolved_claim_ids,
+        "quarantine_ids": view.quarantine_ids,
+        "diagnostics": tuple(sorted(set(diagnostics))),
+    }
+    unsigned = PlanExecutionView(**values, view_hash="pending")
+    digest = hashlib.sha256(canonical_json(unsigned._payload()).encode("utf-8")).hexdigest()
+    return PlanExecutionView(**values, view_hash=digest)
 
 
 def _classify_session(

@@ -27,6 +27,7 @@ import re
 import subprocess
 from typing import Any, Callable, Mapping, Sequence
 
+from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
@@ -44,6 +45,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     TRUE_HUMAN_BLOCKER,
     atomic_write_json,
     build_verification_record,
+    classify_recovery_verification,
     classify_verification_outcome,
     compute_deadline,
     is_budget_exhausted,
@@ -87,6 +89,8 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.DISCORD_DELIVERY_FAILURE: 6,
 }
 
+# Outcomes that suppress another meta-repair dispatch.  Fresh activity remains
+# provisional recovery evidence, but it is not itself a repair-system failure.
 _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES | frozenset(
     {LIVE_WITH_FRESH_ACTIVITY}
 )
@@ -1546,6 +1550,14 @@ def retrigger_ordinary_repair(
     if not command:
         raise ValueError("command must not be empty")
 
+    # Releasing the L1 lock and starting another repair process are both L2
+    # effects.  Keep the check adjacent to those effects so direct and fallback
+    # callers cannot bypass the master autonomy gate.
+    if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L2):
+        raise PermissionError(
+            "L2 mutation requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED"
+        )
+
     effective_release = release_repair_lock if release_lock is None else release_lock
     lock_released = False
     if repair_lock_dir is not None:
@@ -1612,16 +1624,28 @@ def verify_retrigger_success(
     snapshot_reason = authoritative_terminal_snapshot_reason(
         verification.get("post_snapshot")
     )
-    # L2 can hand a genuinely live target back to ordinary supervision.  Only
-    # a COMPLETE outcome *closes* custody, and only that terminal claim needs
-    # the all-milestones/no-worker authoritative snapshot.
+    observation = verification.get("observation")
+    if not isinstance(observation, Mapping):
+        observation = verification
+    observation = dict(observation)
+    if retrigger_result is not None:
+        observation.setdefault("returncode", retrigger_result.returncode)
+        observation.setdefault("subprocess_succeeded", retrigger_result.returncode == 0)
+    original_blocker = verification.get("original_blocker")
+    recovery = classify_recovery_verification(
+        original_blocker=(
+            original_blocker if isinstance(original_blocker, Mapping) else None
+        ),
+        observation=observation,
+        repair_completed_at=verification.get("repair_completed_at"),
+    )
+
     accepted = (
         retriggered
         and (retrigger_result is None or retrigger_result.returncode == 0)
-        and (
-            normalized_outcome == LIVE_WITH_FRESH_ACTIVITY
-            or (normalized_outcome == COMPLETE and not snapshot_reason)
-        )
+        and normalized_outcome == COMPLETE
+        and not snapshot_reason
+        and recovery["authorizes_verified_recovered"] is True
     )
 
     rejection_reason = ""
@@ -1634,17 +1658,24 @@ def verify_retrigger_success(
         )
     elif normalized_outcome == COMPLETE and snapshot_reason:
         rejection_reason = snapshot_reason
+    elif recovery["authorizes_verified_recovered"] is not True:
+        rejection_reason = str(recovery["reason"])
     elif normalized_outcome == PARTIAL_LIVENESS:
         rejection_reason = "partial_liveness is not a terminal success"
     elif normalized_outcome == REPAIRING:
         rejection_reason = "repairing is not a verified terminal success"
-    elif normalized_outcome not in {COMPLETE, LIVE_WITH_FRESH_ACTIVITY}:
+    elif normalized_outcome != COMPLETE:
         rejection_reason = f"outcome {normalized_outcome!r} cannot close repair custody"
 
     verification_record = build_verification_record(
         normalized_outcome,
         pre_snapshot=verification.get("pre_snapshot"),
         post_snapshot=verification.get("post_snapshot"),
+        original_blocker=(
+            original_blocker if isinstance(original_blocker, Mapping) else None
+        ),
+        observation=observation,
+        repair_completed_at=verification.get("repair_completed_at"),
         delta_summary=str(verification.get("delta_summary", "")),
     )
     verification_record.update(
@@ -1653,6 +1684,9 @@ def verify_retrigger_success(
             "accepted": accepted,
             "retriggered": retriggered,
             "rejection_reason": rejection_reason,
+            "recovery_verification": recovery,
+            "recovery_status": recovery["status"],
+            "unknown_type": recovery["unknown_type"],
         }
     )
     if raw_outcome == "running":

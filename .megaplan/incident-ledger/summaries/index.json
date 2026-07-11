@@ -1,14 +1,26 @@
 {
-  "generated_at": "2026-07-07T13:29:44.809034+00:00",
-  "incident_count": 4,
+  "generated_at": "2026-07-11T13:41:18.498880+00:00",
+  "incident_count": 7,
   "incidents": [
     {
       "incident_id": "inc-canonical-run-state-control-plane",
       "path": ".megaplan/incident-ledger/summaries/incidents/inc-canonical-run-state-control-plane.json"
     },
     {
+      "incident_id": "inc-custody-control-plane",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane.json"
+    },
+    {
       "incident_id": "inc-demo-session",
       "path": ".megaplan/incident-ledger/summaries/incidents/inc-demo-session.json"
+    },
+    {
+      "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-megaplan-north-star-sense-checks-revise-design.json"
+    },
+    {
+      "incident_id": "inc-runauthority-epic-cloud",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-runauthority-epic-cloud.json"
     },
     {
       "incident_id": "inc-superfixer-alive-but-failed-recovery",

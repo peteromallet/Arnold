@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan._core.io import atomic_write_json
 from arnold_pipelines.megaplan.orchestration.evidence_contract import (
@@ -21,9 +21,39 @@ TRANSITION_DECISION_REVIEW_DONE_FILENAME = "transition_decision_review_done.json
 
 @dataclass(frozen=True)
 class TransitionPolicyDecision:
+    """The verdict returned by ``TransitionPolicy.evaluate_review_done``.
+
+    ``allowed`` is the authoritative gate flag consumed by the review
+    handler when it writes the transition decision. ``reasons`` are the
+    hard denial reasons (empty when allowed). ``advisory`` are non-blocking
+    notes that surface in the written decision but never flip ``allowed``.
+    """
+
     allowed: bool
     reasons: tuple[str, ...] = ()
     advisory: tuple[str, ...] = ()
+
+    def merge_denial_reasons(self, extra_reasons: Sequence[str]) -> "TransitionPolicyDecision":
+        """Return a copy forced denied with the extra hard denial reasons appended.
+
+        Used by review-side pre-checks (e.g. the North Star closeout blocker
+        gate) that must deny the review→done transition *independently* of the
+        normal policy evaluation, while still routing through the existing
+        denial path. The decision becomes denied whenever any extra reason is
+        present; with no extra reasons the decision is returned unchanged.
+
+        This intentionally does not change the ``TransitionPolicy`` API: the
+        North Star check stays a separate pre-check and the policy keeps its
+        existing concerns (evidence freshness, completion status).
+        """
+        extras = tuple(str(reason) for reason in extra_reasons if str(reason).strip())
+        if not extras:
+            return self
+        return TransitionPolicyDecision(
+            allowed=False,
+            reasons=self.reasons + extras,
+            advisory=self.advisory,
+        )
 
 
 class TransitionWriter:
