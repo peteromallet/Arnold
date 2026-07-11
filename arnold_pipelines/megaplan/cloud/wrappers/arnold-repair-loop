@@ -6094,7 +6094,7 @@ repair_source_workspace_if_possible() {
   ensure_repair_budget_available "source-workspace-repair"
   local result_path="" tmp_root="" tmp_clone="" status=1 entry base source_origin="" workspace_origin="" expected_origin=""
   result_path="$RUN_DIR/source-workspace-repair.json"
-  if [[ ! -d "$ARNOLD_SRC/.git" ]]; then
+  if ! git -C "$ARNOLD_SRC" rev-parse --git-dir >/dev/null 2>&1; then
     printf '%s\n' '{"repaired": false, "reason": "source_git_missing", "details": {}}' >"$result_path"
     log "source workspace repair not applicable status=2 result=$result_path"
     return 1

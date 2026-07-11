@@ -15,6 +15,18 @@ def test_runtime_provenance_rejects_wrong_expected_root(tmp_path: Path) -> None:
     assert "import_root_mismatch" in payload["errors"]
 
 
+def test_runtime_source_is_valid_when_git_metadata_is_a_worktree_file() -> None:
+    source = Path(__file__).parents[2].resolve()
+    assert (source / ".git").is_file()
+    result = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "--git-dir"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+
+
 def test_editable_subprocess_uses_pinned_source_despite_cwd_shadow(tmp_path: Path) -> None:
     source = Path(__file__).parents[2].resolve()
     revision = subprocess.check_output(
