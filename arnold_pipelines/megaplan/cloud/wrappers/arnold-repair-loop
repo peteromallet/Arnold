@@ -1150,6 +1150,61 @@ PY
     "$workspace" "$workspace" "$plan_name" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
 }
 
+resume_plan_relaunch_command() {
+  local plan_name="$1"
+  local workspace="$2"
+  local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan resume --plan %q --project-dir %q >> %q 2>&1' \
+    "$workspace" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
+}
+
+chain_resume_plan_relaunch_command_if_needed() {
+  local workspace="$1"
+  local plan_name="$2"
+  [[ -n "$plan_name" ]] || return 1
+  local plan_state_file="$workspace/.megaplan/plans/$plan_name/state.json"
+  [[ -f "$plan_state_file" ]] || return 1
+  if ! python3 - "$plan_state_file" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+if str(payload.get("current_state") or "").strip() != "blocked":
+    raise SystemExit(1)
+resume_cursor = payload.get("resume_cursor")
+if not isinstance(resume_cursor, dict):
+    raise SystemExit(1)
+phase = str(resume_cursor.get("phase") or "").strip()
+retry_strategy = str(resume_cursor.get("retry_strategy") or "").strip()
+latest_failure = payload.get("latest_failure")
+if not isinstance(latest_failure, dict):
+    raise SystemExit(1)
+failure_kind = str(latest_failure.get("kind") or "").strip()
+failure_phase = str(latest_failure.get("phase") or "").strip()
+
+raise SystemExit(
+    0
+    if (
+        phase
+        and phase != "recover-blocked"
+        and retry_strategy in {"check_provider_and_retry", "wait_and_retry"}
+        and failure_kind == "external_error_resume_required"
+        and failure_phase == "recover-blocked"
+    )
+    else 1
+)
+PY
+  then
+    return 1
+  fi
+  resume_plan_relaunch_command "$plan_name" "$workspace"
+}
+
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
   [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
@@ -1235,6 +1290,9 @@ resolve_relaunch_command() {
   if [[ "$run_kind" == "plan" ]]; then
     [[ -n "$plan_name" ]] || return 1
     default_plan_relaunch_command "$plan_name" "$workspace"
+    return 0
+  fi
+  if chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name"; then
     return 0
   fi
   default_chain_relaunch_command "$session" "$workspace" "$remote_spec"
