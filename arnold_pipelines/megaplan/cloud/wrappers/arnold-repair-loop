@@ -138,6 +138,77 @@ current_target_mutation_eligible() {
   python3 -c 'import json, sys; state=json.load(sys.stdin).get("evidence_state", {}); raise SystemExit(0 if state.get("status") == "resolved" and state.get("mutation_eligible") is True else 1)'
 }
 
+refresh_repair_target_evidence() {
+  local phase="$1"
+  local health="$2"
+  local before fresh verdict
+  before="${CURRENT_TARGET_RECORD:-{}}"
+  fresh="$(resolve_current_target_evidence 2>>"$LOG" || true)"
+  [[ -n "$fresh" ]] || fresh='{}'
+  verdict="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$before" "$fresh" "$health" <<'PY'
+import json
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_revalidation import revalidate_repair_target
+
+try:
+    before = json.loads(sys.argv[1])
+except Exception:
+    before = {}
+try:
+    after = json.loads(sys.argv[2])
+except Exception:
+    after = {}
+print(json.dumps(revalidate_repair_target(before, after, session_health=sys.argv[3]).as_json(), sort_keys=True))
+PY
+)"
+  CURRENT_TARGET_RECORD="$fresh"
+  CURRENT_TARGET_MUTATION_ELIGIBLE=0
+  if printf '%s' "$CURRENT_TARGET_RECORD" | current_target_mutation_eligible; then
+    CURRENT_TARGET_MUTATION_ELIGIBLE=1
+  fi
+  export CURRENT_TARGET_RECORD CURRENT_TARGET_MUTATION_ELIGIBLE
+  REPAIR_TARGET_REVALIDATION="$verdict"
+  export REPAIR_TARGET_REVALIDATION
+  if [[ -f "${DATA_FILE:-}" ]]; then
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+      "$DATA_FILE" "$phase" "$before" "$fresh" "$verdict" <<'PY' || true
+import datetime as dt
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
+
+path, phase, before_raw, after_raw, verdict_raw = sys.argv[1:]
+payload = load_json(pathlib.Path(path), default={})
+if not isinstance(payload, dict):
+    payload = {}
+def load(raw):
+    try:
+        value = json.loads(raw)
+    except Exception:
+        value = {}
+    return value if isinstance(value, dict) else {}
+payload.setdefault("target_revalidations", []).append({
+    "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "phase": phase,
+    "before": load(before_raw),
+    "after": load(after_raw),
+    "verdict": load(verdict_raw),
+})
+payload["current_target"] = load(after_raw)
+save_repair_data(pathlib.Path(path), payload)
+PY
+  fi
+  log "post-action target revalidation phase=$phase verdict=${verdict:-{}}"
+}
+
+repair_target_recovery_verified() {
+  printf '%s' "${REPAIR_TARGET_REVALIDATION:-{}}" | python3 -c \
+    'import json,sys; p=json.load(sys.stdin); raise SystemExit(0 if p.get("recovery_verified") is True else 1)'
+}
+
 redact_inline_text() {
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$1" <<'PY'
 import sys
@@ -4532,12 +4603,17 @@ exit_if_repair_target_recovered() {
   local phase="$1"
   local health forced_reason
   health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
+  refresh_repair_target_evidence "$phase" "$health"
   if [[ "$health" != "alive" ]]; then
     return 0
   fi
   forced_reason="$(marker_requires_repair_despite_alive || true)"
   if [[ -n "$forced_reason" ]]; then
     log "repair target alive at $phase but marker requires repair session=$SESSION reason=$forced_reason"
+    return 0
+  fi
+  if ! repair_target_recovery_verified; then
+    log "repair target runner exists but current custody is not verified at $phase session=$SESSION; continuing repair"
     return 0
   fi
   repair_data_set_outcome "live_with_fresh_activity"
@@ -5871,10 +5947,9 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
-    repair_data_set_outcome "partial_liveness"
-    log "repair target already running; no dev-fix needed session=$SESSION"
-    log "repair target already running; verified recovery session=$SESSION"
-    exit 0
+    log "repair target already running; no dev-fix needed only if current-target revalidation passes session=$SESSION"
+    exit_if_repair_target_recovered "initial-health"
+    log "repair target has tmux activity but failed current-target verification; continuing repair session=$SESSION"
   fi
 fi
 
@@ -6188,9 +6263,7 @@ if repair_source_initiative_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "source initiative restored; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity after source initiative repair"
-    exit 0
+    exit_if_repair_target_recovered "post-source-initiative-relaunch"
   fi
 fi
 
@@ -6201,9 +6274,7 @@ if repair_source_workspace_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "0" "0" "running" "source workspace restored; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity after source workspace repair"
-    exit 0
+    exit_if_repair_target_recovered "post-source-workspace-relaunch"
   fi
 fi
 
@@ -6213,9 +6284,7 @@ if repair_dependency_manifests_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity after dependency manifest repair"
-    exit 0
+    exit_if_repair_target_recovered "post-dependency-manifest-relaunch"
   fi
 fi
 
@@ -6227,9 +6296,7 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity after stale-state clear"
-    exit 0
+    exit_if_repair_target_recovered "post-stale-state-relaunch"
   fi
 fi
 
@@ -6238,9 +6305,7 @@ mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE
 }
 if [[ "${mechanical_status:-}" == "running" ]]; then
   repair_data_record_mechanical "0" "0" "running" "baseline mechanical relaunch came up and held"
-  repair_data_set_outcome "partial_liveness"
-  log "repair loop reached live_with_fresh_activity via baseline mechanical relaunch"
-  exit 0
+  exit_if_repair_target_recovered "post-baseline-relaunch"
 fi
 
 if ! reject_conflicting_automatic_repair_model_pins; then
@@ -6285,9 +6350,7 @@ for iteration in 1 2 3; do
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity mechanically iteration=$iteration"
-    exit 0
+    exit_if_repair_target_recovered "iteration-$iteration-post-mechanical"
   fi
 
   if [[ -z "${KIMI_API_KEY:-}" ]]; then
@@ -6298,9 +6361,7 @@ for iteration in 1 2 3; do
   exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
   resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
   if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity via Kimi iteration=$iteration"
-    exit 0
+    exit_if_repair_target_recovered "iteration-$iteration-post-kimi"
   fi
   exit_if_repair_target_complete "iteration-$iteration-post-kimi"
 done

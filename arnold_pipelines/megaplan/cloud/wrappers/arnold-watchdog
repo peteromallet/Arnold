@@ -4168,11 +4168,13 @@ dispatch_kimi_repair() {
       ;;
     stale)
       log "repair request claim is stale; refusing dispatch session=$session request=${request_id:-unknown}"
+      REPAIR_DISPATCH_RESULT="claim_denied"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim is stale" "busy" "immediate_repair"
       return 0
       ;;
     *)
       log "repair request claim failed; refusing dispatch session=$session request=${request_id:-unknown} status=$claim_status"
+      REPAIR_DISPATCH_RESULT="claim_denied"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim failed" "unavailable" "immediate_repair"
       return 1
       ;;
@@ -6168,6 +6170,7 @@ repair_unhealthy_session() {
   local remote_spec="$3"
   local reason="$4"
   local repair_busy
+  REPAIR_UNHEALTHY_RESULT="capability_missing"
 
   repair_busy="$(repair_loop_busy_state "$session")"
 
@@ -6177,24 +6180,29 @@ repair_unhealthy_session() {
   # returns 1 when the direct tmux relaunch fallback is needed (repair missing,
   # or already tried and exited without reviving the session).
   if [[ "$repair_busy" == "same_session" ]]; then
+    REPAIR_UNHEALTHY_RESULT="running"
     log "session unhealthy; repair already running session=$session reason=$reason"
     return 0
   fi
   if [[ "$repair_busy" == "other_session" ]]; then
+    REPAIR_UNHEALTHY_RESULT="busy"
     log "session unhealthy; another repair loop already running so waiting turn session=$session reason=$reason"
     return 0
   fi
   if mechanical_relaunch_attempted_previously "$session"; then
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
       if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+        REPAIR_UNHEALTHY_RESULT="busy"
         log "session unhealthy after mechanical relaunch; another repair loop already running so waiting turn session=$session reason=$reason"
         return 0
       fi
       log "session unhealthy after mechanical relaunch: background-dispatched repair loop session=$session reason=$reason"
+      REPAIR_UNHEALTHY_RESULT="dispatched"
       tmux kill-session -t "$session" 2>/dev/null || true
       return 0
     fi
     log "session unhealthy after mechanical relaunch; repair loop missing -> direct relaunch session=$session reason=$reason"
+    REPAIR_UNHEALTHY_RESULT="${REPAIR_DISPATCH_RESULT:-capability_missing}"
     return 1
   fi
   if kimi_dispatch_failed_previously "$session"; then
@@ -6204,31 +6212,75 @@ repair_unhealthy_session() {
       log "previous repair outcome requires another root-cause repair session=$session outcome=${previous_repair_outcome:-unknown} reason=$reason"
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+          REPAIR_UNHEALTHY_RESULT="busy"
           log "session unhealthy after retryable repair outcome; another repair loop already running so waiting turn session=$session reason=$reason outcome=${previous_repair_outcome:-unknown}"
           return 0
         fi
         log "session unhealthy after retryable repair outcome: background-dispatched repair loop session=$session reason=$reason outcome=${previous_repair_outcome:-unknown}"
+        REPAIR_UNHEALTHY_RESULT="dispatched"
         tmux kill-session -t "$session" 2>/dev/null || true
         return 0
       fi
       log "retryable repair outcome found but repair loop missing -> direct relaunch session=$session reason=$reason outcome=${previous_repair_outcome:-unknown}"
+      REPAIR_UNHEALTHY_RESULT="${REPAIR_DISPATCH_RESULT:-capability_missing}"
       return 1
     fi
     log "session unhealthy; repair loop tried and exited without recovery -> direct relaunch session=$session reason=$reason"
+    REPAIR_UNHEALTHY_RESULT="direct_relaunch_required"
     kimi_dispatch_marker_clear "$session"
     return 1
   fi
   if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
     if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+      REPAIR_UNHEALTHY_RESULT="busy"
       log "session unhealthy; another repair loop already running so waiting turn session=$session reason=$reason"
       return 0
     fi
     log "session unhealthy: background-dispatched repair loop session=$session reason=$reason"
+    REPAIR_UNHEALTHY_RESULT="dispatched"
     tmux kill-session -t "$session" 2>/dev/null || true
     return 0
   fi
   log "session unhealthy; repair loop missing -> direct relaunch session=$session reason=$reason"
+  REPAIR_UNHEALTHY_RESULT="${REPAIR_DISPATCH_RESULT:-capability_missing}"
   return 1
+}
+
+canonical_direct_relaunch() {
+  local report_items="$1" session="$2" workspace="$3" remote_spec="$4" reason="$5"
+  local marker run_kind plan_name relaunch_command quoted_command safe launch_script
+  marker="$(session_marker_path "$session")"
+  run_kind="$(json_field "$marker" run_kind 2>/dev/null || true)"
+  plan_name="$(json_field "$marker" plan_name 2>/dev/null || true)"
+  relaunch_command="$(json_field "$marker" relaunch_command 2>/dev/null || true)"
+  [[ -n "$run_kind" ]] || run_kind="chain"
+  ensure_install_or_repair || log "editable install still unhealthy; direct fallback relaunching anyway"
+  tmux kill-session -t "$session" 2>/dev/null || true
+  quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
+    report_item "$report_items" "$session" "restart" "restart_failed" "direct_relaunch_required; unable to resolve command; cause=$reason" "$workspace" "$remote_spec"
+    return 1
+  }
+  safe="$(safe_name "$session")"
+  launch_script="$(mktemp)"
+  cat > "$launch_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd $(printf '%q' "$workspace")
+export ARNOLD_SUPERVISE_SESSION=$(printf '%q' "$session")
+export ARNOLD_SUPERVISE_WORKSPACE=$(printf '%q' "$workspace")
+export ARNOLD_SUPERVISE_REMOTE_SPEC=$(printf '%q' "$remote_spec")
+export ARNOLD_SUPERVISE_RUN_KIND=$(printf '%q' "$run_kind")
+exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
+EOF
+  chmod +x "$launch_script"
+  if ! tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'"; then
+    rm -f "$launch_script"
+    report_item "$report_items" "$session" "restart" "restart_failed" "direct_relaunch_required; tmux launch failed; cause=$reason" "$workspace" "$remote_spec"
+    return 1
+  fi
+  report_item "$report_items" "$session" "restart" "restarted" "direct_relaunch_executed; cause=$reason" "$workspace" "$remote_spec"
+  log "canonical direct relaunch executed session=$session reason=$reason"
+  return 0
 }
 
 repair_unintended_stop() {
@@ -6251,8 +6303,24 @@ repair_unintended_stop() {
     return 0
   fi
 
-  report_item "$report_items" "$session" "repair" "repair_unavailable" "$reason" "$workspace" "$remote_spec"
-  return 1
+  case "${REPAIR_UNHEALTHY_RESULT:-capability_missing}" in
+    direct_relaunch_required)
+      report_item "$report_items" "$session" "repair" "direct_relaunch_required" "$reason" "$workspace" "$remote_spec"
+      canonical_direct_relaunch "$report_items" "$session" "$workspace" "$remote_spec" "$reason"
+      ;;
+    claim_denied)
+      report_item "$report_items" "$session" "repair" "claim_denied" "$reason" "$workspace" "$remote_spec"
+      return 1
+      ;;
+    capability_missing|unavailable|disabled)
+      report_item "$report_items" "$session" "repair" "repair_unavailable" "capability_missing: $reason" "$workspace" "$remote_spec"
+      canonical_direct_relaunch "$report_items" "$session" "$workspace" "$remote_spec" "$reason"
+      ;;
+    *)
+      report_item "$report_items" "$session" "repair" "${REPAIR_UNHEALTHY_RESULT}" "$reason" "$workspace" "$remote_spec"
+      return 1
+      ;;
+  esac
 }
 
 compare_needs_human_to_resolver() {

@@ -308,23 +308,15 @@ def _check_llm_liveness(plan_dir: Path, *, composition: object | None = None) ->
     now = time.time()
     events = list(read_events(plan_dir))
 
-    unmatched_starts: list[dict] = []
-    llm_ends: set[str] = set()  # by request_id if available
+    from arnold_pipelines.megaplan.observability.liveness import unmatched_llm_starts
 
-    for ev in events:
-        kind = ev.get("kind")
-        if kind == EventKind.LLM_CALL_END:
-            rid = ev.get("payload", {}).get("request_id")
-            if rid:
-                llm_ends.add(str(rid))
-        elif kind == EventKind.LLM_CALL_START:
-            unmatched_starts.append(ev)
+    unmatched_starts = unmatched_llm_starts(
+        events,
+        start_kind=EventKind.LLM_CALL_START,
+        end_kind=EventKind.LLM_CALL_END,
+    )
 
     for ev in unmatched_starts:
-        rid = ev.get("payload", {}).get("request_id")
-        if rid and str(rid) in llm_ends:
-            continue
-
         # Check for recent heartbeat
         ts = _parse_iso(ev.get("ts_utc", ""))
         if ts is None:
