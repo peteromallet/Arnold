@@ -4514,6 +4514,8 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
     script = "\n\n".join(
         [
             _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("resume_plan_relaunch_command"),
+            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
             _extract_wrapper_function("stale_marker_relaunch_command"),
             _extract_wrapper_function("default_chain_relaunch_command"),
             _extract_wrapper_function("resolve_relaunch_command"),
@@ -4542,6 +4544,8 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
     script = "\n\n".join(
         [
             _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("resume_plan_relaunch_command"),
+            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
             _extract_wrapper_function("stale_marker_relaunch_command"),
             _extract_wrapper_function("default_chain_relaunch_command"),
             _extract_wrapper_function("resolve_relaunch_command"),
@@ -4568,6 +4572,8 @@ def test_watchdog_nonstale_marker_relaunch_command_is_preserved() -> None:
     script = "\n\n".join(
         [
             _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("resume_plan_relaunch_command"),
+            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
             _extract_wrapper_function("stale_marker_relaunch_command"),
             _extract_wrapper_function("default_chain_relaunch_command"),
             _extract_wrapper_function("resolve_relaunch_command"),
@@ -4579,6 +4585,66 @@ def test_watchdog_nonstale_marker_relaunch_command_is_preserved() -> None:
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout == "echo marker-command"
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_chain_resume_authority_outranks_marker_command_and_discovers_plan(
+    tmp_path: Path,
+    wrapper_kind: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_name = "resume-required-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "plan",
+                    "retry_strategy": "check_provider_and_retry",
+                },
+                "latest_failure": {
+                    "kind": "external_error_resume_required",
+                    "phase": "recover-blocked",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    (chain_dir / f"chain-{digest}.json").write_text(
+        json.dumps({"current_plan_name": plan_name, "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+
+    extract = _extract_wrapper_function if wrapper_kind == "watchdog" else _extract_repair_function
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec_path)!r} chain '' 'echo marker-chain-start'"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert f"megaplan resume --plan {plan_name}" in result.stdout
+    assert "marker-chain-start" not in result.stdout
 
 
 def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command() -> None:
@@ -4595,6 +4661,8 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     script = "\n\n".join(
         [
             _extract_repair_function("default_plan_relaunch_command"),
+            _extract_repair_function("resume_plan_relaunch_command"),
+            _extract_repair_function("chain_resume_plan_relaunch_command_if_needed"),
             _extract_repair_function("stale_marker_relaunch_command"),
             _extract_repair_function("default_chain_relaunch_command"),
             _extract_repair_function("resolve_relaunch_command"),
