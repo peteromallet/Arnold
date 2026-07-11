@@ -247,6 +247,7 @@ def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(
     """Broad-status context carries the canonical snapshot, labeled degraded when absent."""
     import json
     from datetime import datetime, timezone
+    from arnold_pipelines.megaplan.cloud import status_snapshot
 
     project = tmp_path / "project"
     project.mkdir()
@@ -267,6 +268,10 @@ def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(
         "degraded": None,
     }
     snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    # Exercise the cache-reader path even when the suite itself runs on the
+    # shared agentbox, whose real marker directory intentionally triggers a
+    # fresh live snapshot.
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", tmp_path / "no-cloud-sessions")
     profile = MegaplanResidentProfile(
         store=FileStore(tmp_path / "store"),
         config=ResidentConfig(status_snapshot_path=snapshot_path),
@@ -288,8 +293,12 @@ def test_megaplan_resident_hot_context_labels_missing_snapshot_degraded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
     project = tmp_path / "project"
     project.mkdir()
+    # Exercise the missing-cache path independently of live agentbox markers.
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", tmp_path / "no-cloud-sessions")
     profile = MegaplanResidentProfile(
         store=FileStore(tmp_path / "store"),
         config=ResidentConfig(status_snapshot_path=tmp_path / "absent.json"),

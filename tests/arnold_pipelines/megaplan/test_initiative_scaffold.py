@@ -221,6 +221,11 @@ def test_cloud_chain_rejects_template_placeholders_before_remote_work(tmp_path: 
         _run_chain_wrapper(project, args, _cloud_spec(), provider=None)
     except CliError as exc:
         assert exc.code == "template_placeholders_present"
-        assert "TODO_REPO_URL" in exc.message
+        placeholders = {
+            finding["placeholder"]
+            for finding in exc.extra["template_placeholders"]
+        }
+        assert "TODO_REPO_URL" in placeholders
+        assert "TODO_NORTH_STAR_END_STATE" in placeholders
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("cloud chain unexpectedly accepted template placeholders")

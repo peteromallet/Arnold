@@ -85,7 +85,7 @@ class ResidentConfig(BaseModel):
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "ResidentConfig":
-        env = environ or os.environ
+        env = os.environ if environ is None else environ
         arnold_user_whitelist = env.get("DISCORD_USER_WHITELIST")
         return cls(
             mode=env.get("MEGAPLAN_RESIDENT_MODE", "dev"),
