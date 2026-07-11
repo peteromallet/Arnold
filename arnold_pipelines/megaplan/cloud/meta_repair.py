@@ -135,6 +135,116 @@ def extract_reported_repair_custody(
     return changes, tests
 
 
+def verify_meta_repair_commit_custody(
+    repo: str | Path,
+    *,
+    baseline_head: str,
+    verdict: str,
+    push_required: bool,
+    remote: str = "origin",
+) -> dict[str, Any]:
+    """Fail closed unless a meta-repair change has durable git custody.
+
+    ``FIXED`` requires a new, clean commit on a named local branch.  When push
+    policy is enabled, the same commit must already be published at the
+    corresponding remote branch.  Non-fix verdicts must not leave tracked
+    source changes or move HEAD.
+    """
+
+    root = Path(repo)
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    baseline = str(baseline_head or "").strip()
+    normalized_verdict = str(verdict or "").strip()
+    result: dict[str, Any] = {
+        "accepted": False,
+        "outcome": "commit_custody_failed",
+        "reason": "",
+        "baseline_head": baseline,
+        "current_head": "",
+        "branch": "",
+        "local_reachable": False,
+        "remote_reachable": False,
+        "push_required": bool(push_required),
+    }
+
+    current_proc = git("rev-parse", "HEAD")
+    if current_proc.returncode != 0 or not current_proc.stdout.strip():
+        result["reason"] = "meta-repair source HEAD is unavailable"
+        return result
+    current = current_proc.stdout.strip()
+    result["current_head"] = current
+
+    status_proc = git("status", "--porcelain", "--untracked-files=no")
+    if status_proc.returncode != 0 or status_proc.stdout.strip():
+        result["reason"] = "meta-repair left tracked source changes uncommitted"
+        return result
+
+    if not baseline:
+        result["reason"] = "pre-dispatch source HEAD was not captured"
+        return result
+
+    changed = bool(baseline) and current != baseline
+    if not normalized_verdict.startswith("FIXED"):
+        if changed:
+            result["reason"] = "non-FIXED verdict moved source HEAD"
+            return result
+    elif not changed:
+        result["reason"] = "FIXED verdict produced no new source commit"
+        return result
+
+    branch_proc = git("symbolic-ref", "--quiet", "--short", "HEAD")
+    branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+    result["branch"] = branch
+    if not branch:
+        result["reason"] = "source commit is on detached HEAD"
+        return result
+
+    branch_proc = git("rev-parse", f"refs/heads/{branch}")
+    local_reachable = (
+        branch_proc.returncode == 0 and branch_proc.stdout.strip() == current
+    )
+    result["local_reachable"] = local_reachable
+    if not local_reachable:
+        result["reason"] = "new source commit is not the named branch tip"
+        return result
+
+    if push_required:
+        remote_proc = git("ls-remote", "--heads", remote, f"refs/heads/{branch}")
+        remote_head = ""
+        if remote_proc.returncode == 0 and remote_proc.stdout.strip():
+            remote_head = remote_proc.stdout.split()[0]
+        result["remote_reachable"] = remote_head == current
+        if not result["remote_reachable"]:
+            result["reason"] = "new source commit is not published at the remote branch tip"
+            return result
+    else:
+        result["remote_reachable"] = False
+
+    if not normalized_verdict.startswith("FIXED"):
+        result.update(
+            accepted=True,
+            outcome="no_source_change",
+            reason="non-FIXED verdict preserved source custody",
+        )
+        return result
+
+    result.update(
+        accepted=True,
+        outcome="commit_custody_verified",
+        reason="new source commit has durable branch custody",
+    )
+    return result
+
+
 def authoritative_terminal_snapshot_reason(snapshot: Mapping[str, Any] | None) -> str:
     """Explain why a post-retrigger snapshot cannot close repair custody.
 
@@ -1715,13 +1825,16 @@ def derive_meta_repair_effective_outcome(
     """
 
     normalized_verdict = str(verdict or "").strip()
+    verification = dict(post_retrigger_verification or {})
+    commit_custody = verification.get("commit_custody")
+    if isinstance(commit_custody, Mapping) and commit_custody.get("accepted") is False:
+        return "commit_custody_failed"
     if not normalized_verdict.startswith("FIXED"):
         return normalized_verdict or "UNKNOWN"
 
     if str(install_sync_status or "").strip().lower() == "failed":
         return "install_sync_failed"
 
-    verification = dict(post_retrigger_verification or {})
     accepted = bool(verification.get("accepted"))
     outcome = str(verification.get("outcome") or "").strip().lower()
 

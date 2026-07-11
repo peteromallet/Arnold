@@ -432,6 +432,8 @@ COMMIT_GATE="$(commit_gate_check 2>&1)" || true
 COMMIT_ALLOWED="$(echo "$COMMIT_GATE" | sed -n 's/^COMMIT_ALLOWED=//p')"
 PUSH_ALLOWED="$(echo "$COMMIT_GATE" | sed -n 's/^PUSH_ALLOWED=//p')"
 log "commit_allowed=$COMMIT_ALLOWED push_allowed=$PUSH_ALLOWED"
+SOURCE_BASELINE_HEAD="$(git -C "$ARNOLD_SRC" rev-parse HEAD 2>/dev/null || true)"
+log "captured pre-dispatch source HEAD=${SOURCE_BASELINE_HEAD:-unavailable}"
 
 # ---- Codex dispatch ---------------------------------------------------------
 RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.txt"
@@ -633,6 +635,28 @@ else
   log "verdict=UNKNOWN (first line: ${VERDICT:0:80})"
 fi
 
+# Prove that model-authored source changes have durable branch custody before
+# install sync, retrigger, or a successful meta-repair record can proceed.
+COMMIT_CUSTODY_JSON="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$ARNOLD_SRC" "$SOURCE_BASELINE_HEAD" "$VERDICT" "$PUSH_ALLOWED" <<'PY'
+import json, sys
+
+from arnold_pipelines.megaplan.cloud.meta_repair import verify_meta_repair_commit_custody
+
+repo, baseline, verdict, push_allowed = sys.argv[1:5]
+result = verify_meta_repair_commit_custody(
+    repo,
+    baseline_head=baseline,
+    verdict=verdict,
+    push_required=push_allowed.strip().lower() == "true",
+)
+print(json.dumps(result, sort_keys=True))
+PY
+)" || COMMIT_CUSTODY_JSON='{"accepted":false,"outcome":"commit_custody_failed","reason":"commit custody verifier failed"}'
+export COMMIT_CUSTODY_JSON
+COMMIT_CUSTODY_ACCEPTED="$(python3 -c 'import json,os; print(str(bool(json.loads(os.environ["COMMIT_CUSTODY_JSON"]).get("accepted"))).lower())' 2>/dev/null || echo false)"
+COMMIT_CUSTODY_REASON="$(python3 -c 'import json,os; print(json.loads(os.environ["COMMIT_CUSTODY_JSON"]).get("reason", ""))' 2>/dev/null || true)"
+log "commit custody accepted=$COMMIT_CUSTODY_ACCEPTED reason=$COMMIT_CUSTODY_REASON"
+
 # ---- install sync after FIXED verdict with source commit --------------------
 INSTALL_SYNC_STATUS=""
 INSTALL_SYNC_EVENT_ID=""
@@ -642,8 +666,14 @@ export INSTALL_SYNC_JSON="{}"
 if [[ "$VERDICT" == FIXED* ]]; then
   log "verdict=FIXED; checking for source commits before install sync"
 
-  INSTALL_SYNC_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$ARNOLD_SRC" "$WRAPPER_REPO_ROOT" <<'PY'
-import json, subprocess, sys
+  if [[ "$COMMIT_CUSTODY_ACCEPTED" != "true" ]]; then
+    INSTALL_SYNC_STATUS="commit_custody_failed"
+    export INSTALL_SYNC_JSON="$(python3 -c 'import json,os; print(json.dumps({"status":"commit_custody_failed","verification":json.loads(os.environ["COMMIT_CUSTODY_JSON"])}))')"
+    log "commit custody FAILED; will NOT install sync or retrigger ordinary repair"
+  else
+
+    INSTALL_SYNC_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$ARNOLD_SRC" "$WRAPPER_REPO_ROOT" <<'PY'
+import json, sys
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.install_sync import apply_install_sync
@@ -653,22 +683,6 @@ arnold_src = Path(sys.argv[2])
 workspace_root = Path(sys.argv[3])
 
 incident_id = f"inc-{session}"
-
-# Check for recent commits (verify Codex actually made changes)
-has_commits = False
-try:
-    git_log = subprocess.run(
-        ["git", "log", "--oneline", "-1"],
-        cwd=str(arnold_src),
-        capture_output=True, text=True, check=False,
-    )
-    has_commits = git_log.returncode == 0 and bool(git_log.stdout.strip())
-except Exception:
-    pass
-
-if not has_commits:
-    print("NO_SOURCE_COMMIT")
-    sys.exit(0)
 
 result = apply_install_sync(
     source_root=arnold_src,
@@ -693,11 +707,6 @@ print("INSTALL_SYNC_JSON=" + json.dumps({
 PY
 )" || true
 
-  if [[ "$INSTALL_SYNC_RESULT" == NO_SOURCE_COMMIT* ]]; then
-    log "no source commit detected; skipping install sync"
-    INSTALL_SYNC_STATUS="no_source_commit"
-    export INSTALL_SYNC_JSON="{}"
-  else
     INSTALL_SYNC_STATUS="$(echo "$INSTALL_SYNC_RESULT" | sed -n 's/^STATUS=//p')"
     INSTALL_SYNC_EVENT_ID="$(echo "$INSTALL_SYNC_RESULT" | sed -n 's/^EVENT_ID=//p')"
     INSTALL_SYNC_EVENT_TYPE="$(echo "$INSTALL_SYNC_RESULT" | sed -n 's/^EVENT_TYPE=//p')"
@@ -768,6 +777,15 @@ except Exception:
     pass
 
 post_retrigger_verification = {"verdict": verdict}
+commit_custody_raw = os.environ.get("COMMIT_CUSTODY_JSON", "{}")
+try:
+    post_retrigger_verification["commit_custody"] = json.loads(commit_custody_raw)
+except Exception:
+    post_retrigger_verification["commit_custody"] = {
+        "accepted": False,
+        "outcome": "commit_custody_failed",
+        "reason": "commit custody evidence was invalid",
+    }
 if install_sync_info:
     post_retrigger_verification["install_sync"] = install_sync_info
 if isinstance(verification_info, dict) and verification_info:
@@ -801,8 +819,8 @@ export META_REPAIR_VERIFICATION_JSON='{}'
 
 # ---- retrigger ordinary repair after successful install sync ----------------
 if [[ "$VERDICT" == FIXED* ]]; then
-  if [[ "$INSTALL_SYNC_STATUS" == "failed" ]]; then
-    log "skipping retrigger: install sync failed"
+  if [[ "$INSTALL_SYNC_STATUS" == "failed" || "$INSTALL_SYNC_STATUS" == "commit_custody_failed" ]]; then
+    log "skipping retrigger: install sync or commit custody failed"
   else
     log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
 
