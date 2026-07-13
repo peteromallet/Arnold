@@ -120,9 +120,23 @@ def enqueue_audit_repair_request(
         for finding in incident_audit.get("findings") or []
         if isinstance(finding, dict) and finding.get("status") != "ok"
     ]
-    if not findings:
+    deterministic = (
+        audit_item.get("deterministic_superfixer_evidence")
+        if isinstance(audit_item.get("deterministic_superfixer_evidence"), dict)
+        else {}
+    )
+    deterministic_actionable = deterministic.get("actionable") is True
+    if not findings and not deterministic_actionable:
         return None
-    primary = findings[0]
+    primary = findings[0] if findings else {
+        "code": "stale_l1_l2_cycle",
+        "layer": "superfixer_custody",
+        "recommendation": "meta_repair.repair_attempt",
+        "message": (
+            "Accepted-unclaimed/exhausted L1 custody, a dead runner, an incomplete "
+            "chain, and absent or stale L2 evidence require control-plane repair."
+        ),
+    }
     session = str(audit_item.get("session") or "").strip()
     if not session:
         raise ValueError("six-hour audit repair request requires a session")
@@ -155,6 +169,8 @@ def enqueue_audit_repair_request(
             "plan": plan,
             "incident_id": incident_audit.get("incident_id"),
             "problem_id": incident_audit.get("problem_id"),
+            "workspace": workspace,
+            "deterministic_superfixer_evidence": deterministic if deterministic_actionable else {},
         },
         workspace=workspace,
         run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
