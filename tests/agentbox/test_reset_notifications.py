@@ -416,7 +416,7 @@ def test_prepared_record_with_unchanged_identity_fails_safe_and_releases_fence(
     assert failed["delivery"]["status"] == "pending"
 
 
-def test_duplicate_restart_is_fenced_and_initiator_is_diagnostic(
+def test_duplicate_restart_from_same_discord_source_reuses_durable_receipt(
     tmp_path, monkeypatch
 ) -> None:
     provenance = _discord_provenance()
@@ -429,18 +429,39 @@ def test_duplicate_restart_is_fenced_and_initiator_is_diagnostic(
             "old_identity": {"backend": "systemd", "main_pid": 1001},
         },
     )
+    mark_reset_succeeded(
+        first,
+        restart_evidence={"backend": "systemd", "health": {"main_pid": 1002}},
+    )
 
-    with pytest.raises(ResetNotificationError, match="already active"):
-        prepare_reset_notification(
-            notification_root=tmp_path,
-            restart_request={
-                "backend": "systemd",
-                "old_identity": {"backend": "systemd", "main_pid": 1001},
-            },
-        )
+    duplicate = prepare_reset_notification(
+        notification_root=tmp_path,
+        restart_request={
+            "backend": "systemd",
+            "old_identity": {"backend": "systemd", "main_pid": 1001},
+        },
+    )
 
     record = list_reset_notifications(notification_root=tmp_path)["records"][0]
+    assert duplicate.notification_id == first.notification_id
+    assert duplicate.reused is True
+    assert len(list(tmp_path.glob("reset-*.json"))) == 1
     assert record["notification_id"] == first.notification_id
     assert record["initiator"]["resident_turn_id"] == "turn-restarting"
     assert record["initiator"]["reply_to_message_id"] == "1525445255711952977"
     assert record["restart"]["request"]["old_identity"]["main_pid"] == 1001
+
+
+def test_different_discord_source_cannot_queue_behind_active_restart(
+    tmp_path, monkeypatch
+) -> None:
+    provenance = _discord_provenance()
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(provenance))
+    prepare_reset_notification(notification_root=tmp_path)
+    provenance["source_record_id"] = "msg-other"
+    provenance["discord_message_id"] = "1525445255711952978"
+    provenance["reply_to_message_id"] = "1525445255711952978"
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(provenance))
+
+    with pytest.raises(ResetNotificationError, match="already active"):
+        prepare_reset_notification(notification_root=tmp_path)

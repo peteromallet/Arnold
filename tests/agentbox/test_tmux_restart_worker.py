@@ -65,5 +65,5 @@ def test_detached_worker_finalizes_failed_respawn(monkeypatch, tmp_path) -> None
 
     assert result["ok"] is False
     state = list_reset_notifications(notification_root=tmp_path)
-    assert state["delivery_status_counts"] == {"restart_failed": 1}
+    assert state["delivery_status_counts"] == {"pending": 1}
     assert state["records"][0]["restart"]["status"] == "failed"
