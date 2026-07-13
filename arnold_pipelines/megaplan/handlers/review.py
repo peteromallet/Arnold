@@ -1595,6 +1595,8 @@ def _persist_review_done_transition_decision(
     )
     # Gather execution authority decisions for authority_record_refs
     authority_record_refs: tuple[str, ...] = ()
+    has_waiver: bool = False
+    provider_errors: bool = False
     if project_dir and str(project_dir):
         try:
             from arnold_pipelines.megaplan.orchestration.authority_readers import (
@@ -1622,8 +1624,35 @@ def _persist_review_done_transition_decision(
                                 f"authority:execute:{tid}"
                                 for tid in sorted(decisions.keys())
                             )
+                        # ── S2 T12: Detect waiver / degraded signals ─────
+                        for t in tasks:
+                            raw_status = str(t.get("status") or "").lower()
+                            if raw_status == "waived":
+                                has_waiver = True
+                        # ──────────────────────────────────────────────────
         except Exception:
             pass
+    # Detect provider errors from review evidence
+    provider_diagnostics = review_evidence.get("provider_diagnostics")
+    if isinstance(provider_diagnostics, dict):
+        for _provider, diagnostic in provider_diagnostics.items():
+            if isinstance(diagnostic, dict) and diagnostic.get("ok") is False:
+                provider_errors = True
+                break
+    # ──────────────────────────────────────────────────────────────────────
+
+    # ── S2 T12: Classify authority state for structured provenance ─────────
+    from arnold.workflow.boundary_evidence import classify_authority_state
+
+    authority_state = classify_authority_state(
+        allowed=policy_decision.allowed,
+        authority_record_refs=authority_record_refs,
+        checked_evidence_refs=checked_evidence_refs,
+        advisory=policy_decision.advisory,
+        has_waiver=has_waiver,
+        provider_errors=provider_errors,
+        denial_reasons=policy_decision.reasons,
+    )
     # ──────────────────────────────────────────────────────────────────────
 
     decision = TransitionDecision(
@@ -1661,6 +1690,7 @@ def _persist_review_done_transition_decision(
             if policy_decision.allowed
             else "Review-to-done transition denied by policy."
         ),
+        authority_state=authority_state,
     )
     return policy_decision
 
