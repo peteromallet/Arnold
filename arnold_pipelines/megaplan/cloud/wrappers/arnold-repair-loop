@@ -2645,7 +2645,7 @@ def _state_mismatch_analysis(
         or str(plan_latest_failure.get("message") or "").strip()
         or str(plan_latest_failure.get("state") or "").strip()
     )
-    ready_plan_states = {"planned", "finalized"}
+    ready_plan_states = {"planned", "finalized", "executed"}
     detected = (
         bool(plan_state_path)
         and bool(chain_state_path)
@@ -2666,8 +2666,8 @@ def _state_mismatch_analysis(
         "chain_state_path": chain_state_path,
         "classification": "PLAN_CHAIN_STATE_MISMATCH",
         "summary": (
-            f"state mismatch detected: plan={plan_state} is ready to execute, "
-            f"but chain last_state={chain_last_state} is stale"
+            f"state mismatch detected: plan current_state={plan_state} is ahead of "
+            f"stale chain last_state={chain_last_state}"
         ),
         "recommended_action": (
             "sync chain last_state from plan current_state and mechanically re-drive"
@@ -4108,6 +4108,7 @@ repair_data_init() {
   printf '%s' "$failure_context" > "$payload_dir/failure_context"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$payload_dir" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
@@ -4219,6 +4220,25 @@ payload = {
     "request_id": dispatch_request_id,
     "blocker_id": dispatch_blocker_id,
 }
+managed_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip()
+managed_manifest = str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or "").strip()
+if managed_run_id:
+    payload["managed_agent_run_id"] = managed_run_id
+    payload["managed_agent_manifest_path"] = managed_manifest
+    managed_runs = [
+        item for item in existing.get("managed_agent_runs", []) if isinstance(item, dict)
+    ]
+    if not any(item.get("run_id") == managed_run_id for item in managed_runs):
+        managed_runs.append(
+            {
+                "run_id": managed_run_id,
+                "run_kind": "automatic_repair",
+                "manifest_path": managed_manifest,
+                "repair_request_id": dispatch_request_id,
+                "blocker_id": dispatch_blocker_id,
+            }
+        )
+    payload["managed_agent_runs"] = managed_runs
 resolver_output = failure_context_payload.get("resolver_output")
 payload["initial_facts"]["resolver_output"] = resolver_output or {}
 payload = merge_additive_fields(payload, target=resolver_output or {}, incident_id=incident_id)
@@ -4242,6 +4262,7 @@ repair_data_record_dev() {
   local after_sha="$9"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
@@ -4300,6 +4321,11 @@ entry["dev_summary"] = (
 )
 entry["dev_validation"] = report.get("validation") or []
 entry["dev_report"] = report
+managed_agent_run_id = str(
+    os.environ.get("CURRENT_MANAGED_REPAIR_WORKER_RUN_ID") or ""
+)
+if managed_agent_run_id:
+    entry["managed_agent_run_id"] = managed_agent_run_id
 entry["structural_pattern"] = report.get("structural_pattern") or ""
 entry["other_instantiations"] = report.get("other_instantiations") or []
 entry["human_review_recommendation"] = report.get("human_review_recommendation") or ""
@@ -4357,6 +4383,8 @@ attempt["dev_hypothesis"] = entry["dev_hypothesis"]
 attempt["dev_summary"] = entry["dev_summary"]
 attempt["dev_validation"] = entry["dev_validation"]
 attempt["dev_report"] = report
+if managed_agent_run_id:
+    attempt["managed_agent_run_id"] = managed_agent_run_id
 attempt["structural_pattern"] = entry["structural_pattern"]
 attempt["other_instantiations"] = entry["other_instantiations"]
 attempt["human_review_recommendation"] = entry["human_review_recommendation"]
@@ -4544,6 +4572,7 @@ repair_data_record_kimi() {
   printf '%s' "$failure_context" > "$failure_context_file"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context_file" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
@@ -4602,6 +4631,11 @@ entry["user_action_context"] = failure_context_payload.get("user_action_context"
 entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", entry.get("execute_attempt_context", {}))
 entry["resolver_output"] = failure_context_payload.get("resolver_output", entry.get("resolver_output", {}))
 entry["kimi_report"] = report
+managed_agent_run_id = str(
+    os.environ.get("CURRENT_MANAGED_REPAIR_WORKER_RUN_ID") or ""
+)
+if managed_agent_run_id:
+    entry["managed_agent_run_id"] = managed_agent_run_id
 attempts = payload.setdefault("attempts", [])
 for item in attempts:
     if not isinstance(item, dict) or int(item.get("attempt_id") or 0) != attempt_id:
@@ -4614,6 +4648,8 @@ for item in attempts:
     item["post_kimi_failure_context"] = failure_context_payload
     item["resolver_output"] = failure_context_payload.get("resolver_output", {})
     item["kimi_report"] = report
+    if managed_agent_run_id:
+        item["kimi_managed_agent_run_id"] = managed_agent_run_id
     break
 
 save_repair_data(pathlib.Path(path), payload)
@@ -4678,7 +4714,19 @@ if not isinstance(stale_state, dict):
 state_mismatch = failure_context.get("state_mismatch") if isinstance(failure_context, dict) else {}
 if not isinstance(state_mismatch, dict):
     state_mismatch = {}
-has_stale_state = stale_state.get("classification") == "STALE STATE"
+resolver_output = failure_context.get("resolver_output") if isinstance(failure_context, dict) else {}
+if not isinstance(resolver_output, dict):
+    resolver_output = {}
+stale_kinds = {
+    str(item.get("kind") or "").strip()
+    for item in resolver_output.get("stale_evidence", [])
+    if isinstance(item, dict)
+}
+has_dead_active_step = (
+    stale_state.get("classification") == "NO LATEST FAILURE"
+    and "stale_active_step_dead_pid" in stale_kinds
+)
+has_stale_state = stale_state.get("classification") == "STALE STATE" or has_dead_active_step
 has_state_mismatch = bool(state_mismatch.get("detected"))
 if not has_stale_state and not has_state_mismatch:
     print("none")
@@ -4703,6 +4751,14 @@ if not isinstance(state, dict):
 
 actions: list[str] = []
 stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+if has_dead_active_step:
+    active_step = state.get("active_step")
+    if isinstance(active_step, dict) and any(
+        active_step.get(key) not in (None, "")
+        for key in ("phase", "step", "worker_pid", "pid", "session_id")
+    ):
+        state.pop("active_step", None)
+        actions.append("cleared orphaned active_step for dead worker PID")
 if has_stale_state and stale_state.get("latest_failure_stale") and state.get("latest_failure") is not None:
     state["latest_failure"] = None
     success = stale_state.get("latest_success_after_failure")
@@ -5711,7 +5767,8 @@ run_dev_fix_turn() {
   local dispatch_model="$5"
   local dispatch_kind="$6"
   local fallback_reason="$7"
-  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort repair_workdir
+  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort repair_workdir run_id_file managed_run_id
+  local -a managed_cmd worker_cmd
   prompt_path="$RUN_DIR/iter${iteration}-dev-fix-prompt.md"
   report_path="$RUN_DIR/iter${iteration}-dev-fix-report.json"
   write_dev_prompt "$prompt_path" "$requested_model" "$dispatch_model" "$report_path" "$recurring"
@@ -5726,25 +5783,42 @@ run_dev_fix_turn() {
   dev_timeout="$(cap_timeout_to_repair_budget "$dev_timeout" "dev-dispatch-$iteration")"
   log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort workdir=$repair_workdir"
   prepare_repair_agent_exec_env
+  run_id_file="$RUN_DIR/iter${iteration}-dev-fix-managed-run-id"
   if [[ "$dispatch_kind" == "hermes" ]]; then
-    (
-      cd "$repair_workdir" &&
-      timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" \
-        --model="$dispatch_model" \
-        --toolsets="file,web,terminal" \
-        --query_file="$prompt_path" \
-        --project_dir="$repair_workdir"
-    ) >> "$LOG" 2>&1 &
+    worker_cmd=(timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file="$prompt_path" --project_dir="$repair_workdir")
   else
-    (
-      cd "$repair_workdir" &&
-      timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec \
-        --sandbox danger-full-access \
-        -c model="$dispatch_model" \
-        -c model_reasoning_effort="$reasoning_effort" \
-        - < "$prompt_path"
-    ) >> "$LOG" 2>&1 &
+    worker_cmd=(timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec --sandbox danger-full-access -c model="$dispatch_model" -c model_reasoning_effort="$reasoning_effort" -)
   fi
+  managed_cmd=(
+    python3 -m arnold_pipelines.megaplan.managed_agent run
+    --run-kind automatic_repair_retry
+    --identity-key "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:dev:$attempt_id:$iteration:$dispatch_model"
+    --project-dir "$repair_workdir"
+    --task-kind root_cause
+    --difficulty "$([[ "$recurring" == "1" ]] && printf 9 || printf 7)"
+    --model "$dispatch_model"
+    --reasoning-effort "$reasoning_effort"
+    --route-class "repair_${dispatch_kind}${fallback_reason:+_fallback}"
+    --backend "$dispatch_kind"
+    --command-display "automatic repair dev-fix iteration $iteration"
+    --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:dev"
+    --run-id-file "$run_id_file"
+    --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+    --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+    --link "cloud_session=$SESSION"
+    --link "chain=$REMOTE_SPEC"
+    --link "plan=$PLAN_NAME"
+    --link "phase=dev_fix"
+    --link "attempt=$attempt_id"
+  )
+  if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
+    managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
+  fi
+  if [[ "$dispatch_kind" != "hermes" ]]; then
+    managed_cmd+=(--stdin-file "$prompt_path")
+  fi
+  managed_cmd+=(-- "${worker_cmd[@]}")
+  (cd "$repair_workdir" && "${managed_cmd[@]}") >> "$LOG" 2>&1 &
   local child_pid=$!
   CHILD_PIDS+=("$child_pid")
   if wait "$child_pid"; then
@@ -5752,6 +5826,8 @@ run_dev_fix_turn() {
   else
     rc=$?
   fi
+  managed_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
+  export CURRENT_MANAGED_REPAIR_WORKER_RUN_ID="$managed_run_id"
   after_sha="$(cd "$repair_workdir" && git rev-parse HEAD 2>/dev/null || true)"
   repair_data_record_dev "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
   append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"
@@ -5764,25 +5840,53 @@ run_kimi_launch_turn() {
   local run_kind="$2"
   local plan_name="$3"
   local relaunch_command="$4"
-  local prompt_path report_path rc health
+  local prompt_path report_path rc health run_id_file managed_run_id
+  local -a managed_cmd worker_cmd
   prompt_path="$RUN_DIR/iter${iteration}-kimi-prompt.md"
   report_path="$RUN_DIR/iter${iteration}-kimi-report.json"
   write_kimi_prompt "$prompt_path" "$relaunch_command" "$report_path"
   KIMI_TIMEOUT="$(cap_timeout_to_repair_budget "$KIMI_TIMEOUT" "kimi-dispatch-$iteration")"
   log "iteration=$iteration kimi-launch model=$KIMI_MODEL timeout=$KIMI_TIMEOUT"
   prepare_repair_agent_exec_env
-  (
-    cd "$ARNOLD_SRC" &&
-    PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
-    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \
-      --query_file="$prompt_path" \
-      --model="$KIMI_MODEL" \
-      --api_key="${KIMI_API_KEY:-}" \
-      --base_url="$KIMI_BASE_URL" \
-      --max_turns="$KIMI_MAX_TURNS" \
-      --enabled_toolsets='"terminal,file,code_execution,todo"' \
-      --save_sample=True
-  ) >> "$LOG" 2>&1 &
+  run_id_file="$RUN_DIR/iter${iteration}-kimi-managed-run-id"
+  worker_cmd=(
+    env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"
+    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent
+    --query_file="$prompt_path"
+    --model="$KIMI_MODEL"
+    --api_key="${KIMI_API_KEY:-}"
+    --base_url="$KIMI_BASE_URL"
+    --max_turns="$KIMI_MAX_TURNS"
+    --enabled_toolsets='"terminal,file,code_execution,todo"'
+    --save_sample=True
+  )
+  managed_cmd=(
+    python3 -m arnold_pipelines.megaplan.managed_agent run
+    --run-kind automatic_repair_retry
+    --identity-key "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:kimi:$CURRENT_ATTEMPT_ID:$iteration:$KIMI_MODEL"
+    --project-dir "$ARNOLD_SRC"
+    --task-kind debugging
+    --difficulty 6
+    --model "$KIMI_MODEL"
+    --reasoning-effort bounded
+    --route-class repair_kimi_recovery
+    --backend kimi
+    --command-display "automatic repair Kimi recovery iteration $iteration"
+    --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:kimi"
+    --run-id-file "$run_id_file"
+    --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+    --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+    --link "cloud_session=$SESSION"
+    --link "chain=$REMOTE_SPEC"
+    --link "plan=$plan_name"
+    --link "phase=kimi_recovery"
+    --link "attempt=$CURRENT_ATTEMPT_ID"
+  )
+  if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
+    managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
+  fi
+  managed_cmd+=(-- "${worker_cmd[@]}")
+  (cd "$ARNOLD_SRC" && "${managed_cmd[@]}") >> "$LOG" 2>&1 &
   local child_pid=$!
   CHILD_PIDS+=("$child_pid")
   if wait "$child_pid"; then
@@ -5790,6 +5894,8 @@ run_kimi_launch_turn() {
   else
     rc=$?
   fi
+  managed_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
+  export CURRENT_MANAGED_REPAIR_WORKER_RUN_ID="$managed_run_id"
   health="$(verify_started_and_holding "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$KIMI_VERIFY_INITIAL_SECS" "$KIMI_VERIFY_HOLD_SECS")" || {
     repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "failed:$health" "$report_path" "$rc"
     kill_tmux_session_if_present "$SESSION"

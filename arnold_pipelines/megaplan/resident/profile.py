@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
 import re
+import threading
+import time
 from typing import Any, Literal, Mapping
 from urllib.parse import urlparse
 
 from pydantic import Field
 
 from agentbox.redaction import redact_text
+from agentbox.reset_notifications import list_reset_notifications
 from agentbox.services import DISCORD_RESIDENT_RESTART_COMMAND
 from arnold_pipelines.megaplan.control import ControlTargetResolver
 from arnold_pipelines.megaplan.editorial import body as editorial_body
@@ -61,6 +65,7 @@ from .cloud import (
 from .config import ResidentConfig
 from .tool_registry import ToolRegistration, ToolRegistry
 from .tool_schemas import ToolInput, ToolResult
+from .timezone import TimezoneService, add_localized_timestamp_fields
 from . import vp_todo
 from .subagent import (
     DELEGATED_TASK_KINDS,
@@ -70,11 +75,18 @@ from .subagent import (
     list_managed_resident_agents,
 )
 from .provenance import normalize_delegation_provenance
+from .reply_chain import (
+    REPLY_TOOL_MAX_PAGE,
+    decode_reply_cursor,
+    reply_chain_page,
+)
 
-MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v4"
+MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v6"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
 # of staleness before treating broad status as degraded.
 _SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
+_HOT_CONTEXT_CLOUD_TIMEOUT_S = 2.0
+_SNAPSHOT_BACKGROUND_REFRESH_MIN_INTERVAL_S = 60.0
 _VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT = 3
 _VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS = 240
 _VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS = 160
@@ -377,6 +389,14 @@ class SearchMessagesInput(ActorToolInput):
     limit: int = Field(default=10, gt=0, le=50)
 
 
+class ReadReplyChainInput(ToolInput):
+    """Read a bounded page of exact Discord reply ancestry."""
+
+    source_message_id: str | None = None
+    cursor: str | None = None
+    limit: int = Field(default=5, gt=0, le=REPLY_TOOL_MAX_PAGE)
+
+
 class SearchEpicsInput(ActorToolInput):
     query: str = ""
     state: str | None = None
@@ -536,6 +556,14 @@ class AddTodoItemInput(ToolInput):
     when: str = ""
 
 
+class GetTimezonePreferenceInput(ToolInput):
+    """Read the current Discord user's canonical timezone preference."""
+
+
+class SetTimezonePreferenceInput(ToolInput):
+    timezone_name: str
+
+
 class LaunchSubagentInput(ToolInput):
     task: str
     task_kind: DelegatedTaskKind = "routine"
@@ -548,6 +576,14 @@ class LaunchSubagentInput(ToolInput):
     reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     request_id: str | None = None
     retry_of_run_id: str | None = None
+    continue_turn: bool = Field(
+        default=False,
+        description=(
+            "Keep the resident model turn open after a successful durable launch. Use only when "
+            "another launch or explicit same-turn work, human input, launch-error handling, or "
+            "concrete result combination/transformation is still required."
+        ),
+    )
 
 
 @dataclass
@@ -562,6 +598,10 @@ class MegaplanResidentProfile:
     actor_id: str = "resident-bot"
     tool_registry: ToolRegistry = field(default_factory=ToolRegistry)
     _registered_default_tools: bool = False
+    _snapshot_refresh_thread: threading.Thread | None = field(
+        default=None, init=False, repr=False
+    )
+    _snapshot_refresh_started_at: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.confirmation_manager is None:
@@ -611,6 +651,14 @@ class MegaplanResidentProfile:
             "in `resident_agents`; surface retry, failed, or unknown delivery states honestly. "
             "Default to `launch_subagent` for any user-requested execution work, and make that "
             "tool call before replying so the work is durably started rather than merely acknowledged. "
+            "A successful durable launch hands off the rest of the turn by default: the runtime sends "
+            "only a concise acknowledgement naming every launched run ID and stating that terminal "
+            "results will reply automatically, then ends the resident turn without another model step. "
+            "Never claim the delegated work is complete in that acknowledgement. Set `continue_turn=true` "
+            "only when another launch or explicit same-turn follow-up is still required, required human "
+            "input must be requested, a launch failed, or there is a concrete need to combine or transform "
+            "results in this turn. For sequential multiple launches, set it on each launch except the last; "
+            "parallel final launches may all leave it false. "
             "Do not babysit normal delegated work or Megaplan/cloud chains. Durable agents, chain "
             "runners, watchdogs, and bounded automatic repair own continued progress by default. "
             "Babysitting should be exceptionally rare: use it only when the user explicitly requests "
@@ -619,10 +667,21 @@ class MegaplanResidentProfile:
             "or 'finish the work'. Prefer a one-time durable operator launch or repair action instead. "
             "Only defer the launch when required human input, an approval gate, or material ambiguity "
             "makes execution unsafe or impossible; in that case, ask for the blocking input explicitly."
+            " Hot context's `user_timezone` is the presentation authority for this turn. Render absolute "
+            "user-visible times in that IANA timezone, prefer deterministic `*_local` fields, keep all "
+            "stored/control-plane timestamps in UTC, and do not convert relative durations. The current "
+            "Discord user can inspect or update the durable preference with `get_timezone_preference` "
+            "and `set_timezone_preference`."
             " For conversation-history questions, use `conversation_history` in hot context as the "
             "authority map. `recent_messages` and the model history window are bounded excerpts, not the "
             "full history; search the authoritative resident message store with `search_messages` and the "
             "current conversation id before concluding that a prior thread or delivery is absent."
+            " Every Discord user message explicitly preloads up to three exact reply ancestors from "
+            "immutable resident-store provenance. The current message is excluded from that ancestry, "
+            "and ancestors are ordered nearest parent first. Never infer reply relationships from "
+            "`recent_messages` or other nearby excerpts. When the prompt says older ancestors remain, "
+            "call `read_reply_chain` with the supplied cursor to page through older store-backed ancestry; "
+            "the tool is bounded, cycle-safe, and restricted to this DM/channel/thread conversation."
             " For broad status questions ('how's it going?', 'what is active?', 'is it cooking?', "
             "'why did it not reply?'), answer from `cloud_status_snapshot` / `plan_activity_summary` "
             "in hot context FIRST. That snapshot is the canonical shared-runner view produced by the "
@@ -664,9 +723,39 @@ class MegaplanResidentProfile:
         )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
-        local_epic_chain_state = self._load_local_epic_chain_state_context()
-        live_cloud_chain = await self._load_live_cloud_chain_context()
-        cloud_status_snapshot, snapshot_degraded = self._load_cloud_status_snapshot()
+        async def bounded_live_cloud() -> dict[str, Any] | None:
+            try:
+                return await asyncio.wait_for(
+                    self._load_live_cloud_chain_context(),
+                    timeout=_HOT_CONTEXT_CLOUD_TIMEOUT_S,
+                )
+            except TimeoutError:
+                return {
+                    "available": False,
+                    "cloud_yaml": str(self.config.cloud_yaml_path),
+                    "error": "cloud status lookup exceeded the hot-context timeout",
+                    "degraded": True,
+                }
+
+        (
+            local_epic_chain_state,
+            initiative_index,
+            resident_agents,
+            todo_context,
+            restart_lifecycle,
+            snapshot_result,
+            live_cloud_chain,
+        ) = await asyncio.gather(
+            asyncio.to_thread(self._load_local_epic_chain_state_context),
+            asyncio.to_thread(initiative_compact_index, Path.cwd(), limit=40),
+            asyncio.to_thread(list_managed_resident_agents, project_root=Path.cwd()),
+            asyncio.to_thread(_vp_todo_hot_context, self._todo_path()),
+            asyncio.to_thread(list_reset_notifications, limit=5),
+            asyncio.to_thread(self._load_cloud_status_snapshot),
+            bounded_live_cloud(),
+        )
+        cloud_status_snapshot, snapshot_degraded = snapshot_result
+        self._schedule_cloud_status_snapshot_refresh()
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
@@ -676,7 +765,7 @@ class MegaplanResidentProfile:
                 "allowed_doc_kinds": sorted(ALLOWED_INITIATIVE_SUBDIRS),
                 "legacy_briefs_root": ".megaplan/briefs",
             },
-            "initiative_index": initiative_compact_index(Path.cwd(), limit=40),
+            "initiative_index": initiative_index,
             "resident_runtime": {
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
@@ -717,6 +806,7 @@ class MegaplanResidentProfile:
                         "systemctl kill --kill-whom=all",
                         "tmux kill-server or session cleanup",
                     ],
+                    "lifecycle": restart_lifecycle,
                 },
                 "subagent_launch": {
                     "standard": MANAGED_RUN_SCHEMA,
@@ -779,14 +869,18 @@ class MegaplanResidentProfile:
             # Supplemental detail only; NOT the canonical shared-runner view.
             "local_epic_chain_state": local_epic_chain_state,
             "live_cloud_chain": live_cloud_chain,
-            "resident_agents": list_managed_resident_agents(project_root=Path.cwd()),
-            "vp_special_requests_todos": _vp_todo_hot_context(self._todo_path()),
+            "resident_agents": resident_agents,
+            "vp_special_requests_todos": todo_context,
         }
         if self.store is None:
-            return base
+            resolved = TimezoneService(self.store, self.config).resolve(user_id=None)
+            base["user_timezone"] = resolved.hot_context()
+            return add_localized_timestamp_fields(base, resolved.name)
         conversation = self.store.load_resident_conversation(conversation_id)
         if conversation is None:
-            return base
+            resolved = TimezoneService(self.store, self.config).resolve(user_id=None)
+            base["user_timezone"] = resolved.hot_context()
+            return add_localized_timestamp_fields(base, resolved.name)
         active_epic_id = conversation.active_epic_id
         active_initiative_slug = slugify_initiative(active_epic_id) if active_epic_id else None
         context = self.store.load_hot_context(active_epic_id) if active_epic_id else None
@@ -821,7 +915,18 @@ class MegaplanResidentProfile:
                 "pending_cloud_checks": [row.model_dump(mode="json") for row in pending_checks],
             }
         )
-        return base
+        subject_user_id = str(
+            conversation.metadata.get("last_subject_user_id")
+            or conversation.dm_user_id
+            or ""
+        ) or None
+        resolved = TimezoneService(self.store, self.config).resolve(
+            user_id=subject_user_id,
+            conversation=conversation,
+            guild_id=conversation.guild_id,
+        )
+        base["user_timezone"] = resolved.hot_context()
+        return add_localized_timestamp_fields(base, resolved.name)
 
     def _load_local_epic_chain_state_context(self) -> dict[str, Any]:
         roots: list[Path] = [Path.cwd()]
@@ -888,36 +993,11 @@ class MegaplanResidentProfile:
         degraded, not canonical). Never raises — a missing/unreadable snapshot
         is the degraded-mode signal, not an error.
 
-        Inside the trusted container the snapshot is built fresh from local
-        observation on every call, so hot context always reflects the current
-        running/stuck/done set (the on-disk file the watchdog writes hourly can
-        lag a newly-started session by up to a tick). Elsewhere the on-disk file
-        is read with a freshness window.
+        This read path never rebuilds projections.  The watchdog-owned file is
+        preferred and any refresh is scheduled in a daemon thread after the
+        request has its bounded fallback.  Expensive marker/repair projection
+        work therefore never runs on the Discord event-loop thread.
         """
-        # P0: build fresh whenever the canonical marker dir is present — the real
-        # "I'm on the box" signal — NOT gated on MEGAPLAN_TRUSTED_CONTAINER. A
-        # resident that lost the env var on a manual restart still serves live
-        # per-turn data instead of a stale cache. The env var now only gates the
-        # best-effort shared-file write (so an arbitrary on-box process doesn't
-        # clobber the watchdog's cache).
-        if status_snapshot.has_local_markers():
-            try:
-                snapshot = status_snapshot.build_cloud_status_snapshot()
-            except Exception as exc:  # pragma: no cover - defensive guard
-                return None, f"snapshot build failed: {exc.__class__.__name__}: {exc}"
-            if status_snapshot.is_trusted_container():
-                # Best-effort refresh of the shared on-disk file so CLI/laptop
-                # and later reads see the current view too. The watchdog still
-                # owns the hourly cadence; this just keeps the file fresh between
-                # sweeps while the resident is active. A write failure never
-                # degrades the answer.
-                try:
-                    status_snapshot.write_cloud_status_snapshot(
-                        snapshot, path=self.config.status_snapshot_path
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    pass
-            return snapshot, None
         path = self.config.status_snapshot_path
         try:
             snapshot, degraded_reason = status_snapshot.load_cloud_status_snapshot(
@@ -935,6 +1015,35 @@ class MegaplanResidentProfile:
             return _sanitize_stale_snapshot(snapshot, degraded_reason), degraded_reason
         return snapshot, None
 
+    def _schedule_cloud_status_snapshot_refresh(self) -> None:
+        if not status_snapshot.has_local_markers():
+            return
+        thread = self._snapshot_refresh_thread
+        now = time.monotonic()
+        if thread is not None and thread.is_alive():
+            return
+        if now - self._snapshot_refresh_started_at < _SNAPSHOT_BACKGROUND_REFRESH_MIN_INTERVAL_S:
+            return
+        self._snapshot_refresh_started_at = now
+
+        def refresh() -> None:
+            try:
+                snapshot = status_snapshot.build_cloud_status_snapshot()
+                status_snapshot.write_cloud_status_snapshot(
+                    snapshot, path=self.config.status_snapshot_path
+                )
+            except Exception:
+                # Hot context already carries the degraded cached fallback.  The
+                # watchdog remains the canonical periodic refresh owner.
+                return
+
+        self._snapshot_refresh_thread = threading.Thread(
+            target=refresh,
+            name="resident-cloud-status-refresh",
+            daemon=True,
+        )
+        self._snapshot_refresh_thread.start()
+
     def tools(self) -> ToolRegistry:
         return self.tool_registry
 
@@ -945,6 +1054,7 @@ class MegaplanResidentProfile:
             ToolRegistration("select_epic", "Select the active epic for a resident conversation.", "write", SelectEpicInput, ToolResult, self._select_epic),
             ToolRegistration("read_epic", "Read an epic body, checklist, and sprints.", "read", EpicInput, ToolResult, self._read_epic),
             ToolRegistration("search_messages", "Search resident messages using the Megaplan store.", "read", SearchMessagesInput, ToolResult, self._search_messages),
+            ToolRegistration("read_reply_chain", "Read a bounded page of immutable Discord reply ancestry for the current or another message in this conversation. Use the prompt-provided cursor for ancestors older than the three preloaded ones.", "read", ReadReplyChainInput, ToolResult, self._read_reply_chain),
             ToolRegistration("search_epics", "Search Megaplan epics using the Megaplan store.", "read", SearchEpicsInput, ToolResult, self._search_epics),
             ToolRegistration("search_plans", "Search Megaplan plans using the Megaplan store.", "read", SearchPlansInput, ToolResult, self._search_plans),
             ToolRegistration("search_code_artifacts", "Search stored code artifacts with bounded redacted results.", "read", SearchCodeArtifactsInput, ToolResult, self._search_code_artifacts),
@@ -984,6 +1094,8 @@ class MegaplanResidentProfile:
             ToolRegistration("cancel_cloud_check", "Cancel a durable cloud status check.", "control", CancelCloudCheckInput, ToolResult, self._cancel_cloud_check),
             ToolRegistration("list_cloud_checks", "List durable cloud status checks.", "cloud_read", ListCloudChecksInput, ToolResult, self._list_cloud_checks),
             ToolRegistration("read_todo_list", "Read the full VP special-requests to-do list, including pending, conditional, and retained failed items.", "read", ReadTodoListInput, ToolResult, self._read_todo_list),
+            ToolRegistration("get_timezone_preference", "Read the current Discord user's durable IANA timezone preference and effective presentation timezone.", "read", GetTimezonePreferenceInput, ToolResult, self._get_timezone_preference),
+            ToolRegistration("set_timezone_preference", "Set the current Discord user's durable IANA timezone preference. The update applies on the next message.", "write", SetTimezonePreferenceInput, ToolResult, self._set_timezone_preference),
             ToolRegistration("complete_todo_item", "Mark a to-do item done and clear it from the list; pass a short result summary.", "write", CompleteTodoItemInput, ToolResult, self._complete_todo_item),
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
@@ -992,6 +1104,65 @@ class MegaplanResidentProfile:
         for registration in registrations:
             self.tool_registry.register(registration)
 
+    def _timezone_tool_subject(self) -> AuthorizationSubject | None:
+        context = current_tool_runtime_context()
+        subject = context.subject if context is not None else None
+        return subject if isinstance(subject, AuthorizationSubject) else None
+
+    def _get_timezone_preference(self, payload: GetTimezonePreferenceInput) -> ToolResult:
+        subject = self._timezone_tool_subject()
+        if subject is None:
+            return _fail("timezone preference requires an authenticated Discord user")
+        if self.authorizer is not None:
+            decision = self.authorizer.authorize_action(subject, "read")
+            if not decision.allowed:
+                return _fail("authorization denied", reason=decision.reason)
+        context = current_tool_runtime_context()
+        conversation = (
+            self._store().load_resident_conversation(context.conversation_id)
+            if context is not None
+            else None
+        )
+        service = TimezoneService(self._store(), self.config)
+        preference = service.get_user_preference(subject.user_id)
+        resolved = service.resolve(
+            user_id=subject.user_id,
+            conversation=conversation,
+            guild_id=subject.guild_id,
+        )
+        return _ok(
+            "timezone preference read",
+            configured_timezone=(preference.timezone_name if preference is not None else None),
+            effective_timezone=resolved.hot_context(),
+        )
+
+    def _set_timezone_preference(self, payload: SetTimezonePreferenceInput) -> ToolResult:
+        subject = self._timezone_tool_subject()
+        if subject is None:
+            return _fail("timezone preference requires an authenticated Discord user")
+        if self.authorizer is not None:
+            decision = self.authorizer.authorize_action(subject, "write")
+            if not decision.allowed:
+                return _fail("authorization denied", reason=decision.reason)
+        try:
+            preference = TimezoneService(self._store(), self.config).set_user_timezone(
+                subject.user_id,
+                payload.timezone_name,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-user-timezone-tool",
+                    subject.user_id,
+                    (current_tool_runtime_context().tool_call_id if current_tool_runtime_context() else "direct"),
+                ),
+            )
+        except ValueError as exc:
+            return _fail(str(exc), timezone_name=payload.timezone_name)
+        return _ok(
+            "timezone preference updated; it applies to the next message",
+            timezone_name=preference.timezone_name,
+            transport=preference.transport,
+            user_id=preference.user_id,
+        )
+
     def _search_messages(self, payload: SearchMessagesInput) -> ToolResult:
         if denied := self._denied(payload, "read"):
             return denied
@@ -999,6 +1170,82 @@ class MegaplanResidentProfile:
         if payload.conversation_id is not None:
             rows = [row for row in rows if row.conversation_id == payload.conversation_id][: payload.limit]
         return _ok("messages searched", messages=[_message_result(row) for row in rows], count=len(rows), limit=payload.limit)
+
+    def _read_reply_chain(self, payload: ReadReplyChainInput) -> ToolResult:
+        context = current_tool_runtime_context()
+        if context is None or not context.conversation_id:
+            return _fail(
+                "reply-chain reads require an active resident conversation",
+                error="conversation_context_required",
+            )
+        if self.authorizer is not None:
+            origin_authorized = (
+                isinstance(context.launch_origin, Mapping)
+                and context.launch_origin.get("applicability") == "applicable"
+                and context.launch_origin.get("resident_conversation_id")
+                == context.conversation_id
+            )
+            if not isinstance(context.subject, AuthorizationSubject) and not origin_authorized:
+                return _fail(
+                    "reply-chain read lacks an authorized subject or immutable source envelope",
+                    error="authorization_context_required",
+                )
+            decision = (
+                self.authorizer.authorize_action(context.subject, "read")
+                if isinstance(context.subject, AuthorizationSubject)
+                else None
+            )
+            if decision is not None and not decision.allowed:
+                return _fail(
+                    f"authorization denied: {decision.reason}",
+                    authorization_denied=True,
+                    reason=decision.reason,
+                    audit=decision.audit,
+                )
+
+        cursor_source: str | None = None
+        offset = 0
+        if payload.cursor:
+            try:
+                cursor_source, offset = decode_reply_cursor(payload.cursor)
+            except ValueError as exc:
+                return _fail(str(exc), error="invalid_cursor")
+
+        requested = (payload.source_message_id or "").strip() or cursor_source
+        if requested is None and isinstance(context.launch_origin, Mapping):
+            requested = str(
+                context.launch_origin.get("source_record_id")
+                or context.launch_origin.get("discord_message_id")
+                or ""
+            ).strip() or None
+        if requested is None:
+            return _fail(
+                "source_message_id is required when the current source is ambiguous",
+                error="source_message_required",
+            )
+
+        message = self._store().load_message(requested)
+        if message is not None and message.conversation_id != context.conversation_id:
+            return _fail(
+                "reply-chain source is outside the active conversation",
+                error="cross_conversation_rejected",
+            )
+        if message is None:
+            message = self._store().find_conversation_message_by_discord_id(
+                context.conversation_id, requested
+            )
+        if message is None:
+            return _fail(
+                "reply-chain source was not found in the active conversation",
+                error="source_not_found",
+            )
+        if cursor_source is not None and cursor_source != message.id:
+            return _fail(
+                "cursor does not belong to the requested source message",
+                error="cursor_source_mismatch",
+            )
+        page = reply_chain_page(message, offset=offset, limit=payload.limit)
+        return _ok("reply ancestry read", **page)
 
     def _search_epics(self, payload: SearchEpicsInput) -> ToolResult:
         if denied := self._denied(payload, "read"):
@@ -1947,7 +2194,10 @@ class MegaplanResidentProfile:
                 payload.interval_seconds,
             ),
         )
-        return _ok("cloud check scheduled", scheduled_job=job.model_dump(mode="json"))
+        return _ok(
+            "cloud check scheduled",
+            scheduled_job=self._localized_tool_data(job.model_dump(mode="json")),
+        )
 
     def _cancel_cloud_check(self, payload: CancelCloudCheckInput) -> ToolResult:
         if denied := self._denied(payload, "admin"):
@@ -1964,7 +2214,10 @@ class MegaplanResidentProfile:
             cancelled_at=datetime.now(UTC),
             idempotency_key=deterministic_idempotency_key("resident-tool-cancel-cloud-check", job.id),
         )
-        return _ok("cloud check cancelled", scheduled_job=updated.model_dump(mode="json"))
+        return _ok(
+            "cloud check cancelled",
+            scheduled_job=self._localized_tool_data(updated.model_dump(mode="json")),
+        )
 
     def _list_cloud_checks(self, payload: ListCloudChecksInput) -> ToolResult:
         if denied := self._denied(payload, "cloud_read"):
@@ -1978,7 +2231,12 @@ class MegaplanResidentProfile:
         )
         if payload.epic_id is not None:
             rows = [row for row in rows if row.epic_id == payload.epic_id]
-        return _ok("cloud checks listed", scheduled_jobs=[row.model_dump(mode="json") for row in rows])
+        return _ok(
+            "cloud checks listed",
+            scheduled_jobs=self._localized_tool_data(
+                [row.model_dump(mode="json") for row in rows]
+            ),
+        )
 
     def _todo_path(self) -> Path:
         return Path(self.config.special_requests_todo_path)
@@ -2137,9 +2395,26 @@ class MegaplanResidentProfile:
         return _ok(
             result.summary,
             classification=result.classification,
-            cloud_run=updated.model_dump(mode="json"),
-            cloud_result={"summary": result.summary, "details": result.details},
+            cloud_run=self._localized_tool_data(updated.model_dump(mode="json")),
+            cloud_result=self._localized_tool_data(
+                {"summary": result.summary, "details": result.details}
+            ),
         )
+
+    def _localized_tool_data(self, value: Any) -> Any:
+        context = current_tool_runtime_context()
+        conversation = (
+            self._store().load_resident_conversation(context.conversation_id)
+            if context is not None
+            else None
+        )
+        subject = context.subject if context is not None else None
+        resolved = TimezoneService(self._store(), self.config).resolve(
+            user_id=(str(subject.user_id) if isinstance(subject, AuthorizationSubject) else None),
+            conversation=conversation,
+            guild_id=(subject.guild_id if isinstance(subject, AuthorizationSubject) else None),
+        )
+        return add_localized_timestamp_fields(value, resolved.name)
 
     def _repo_arguments_for_payload(self, payload: CloudToolInput) -> dict[str, str]:
         repo_url = payload.repo_url

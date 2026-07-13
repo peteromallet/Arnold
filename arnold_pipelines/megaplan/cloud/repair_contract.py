@@ -1392,13 +1392,20 @@ def _coerce_json_object(
 
 
 def _normalize_repair_index(payload: Mapping[str, Any]) -> dict[str, Any]:
-    extras = sorted(set(payload) - set(_INDEX_TOP_LEVEL_KEYS))
+    allowed_keys = set(_INDEX_TOP_LEVEL_KEYS) | {"resident_delegation"}
+    extras = sorted(set(payload) - allowed_keys)
     if extras:
         raise ValueError(
-            "repair index only supports top-level keys: sessions, incidents"
+            "repair index only supports top-level keys: "
+            "sessions, incidents, resident_delegation"
         )
 
     normalized = {bucket: {} for bucket in _INDEX_TOP_LEVEL_KEYS}
+    resident_delegation = payload.get("resident_delegation")
+    if resident_delegation is not None:
+        if not isinstance(resident_delegation, dict):
+            raise ValueError("repair index field 'resident_delegation' must be an object")
+        normalized["resident_delegation"] = deepcopy(resident_delegation)
     for bucket in _INDEX_TOP_LEVEL_KEYS:
         source = payload.get(bucket, {})
         if not isinstance(source, dict):
@@ -2555,8 +2562,15 @@ def _attempts_from_snapshot(
                 raw=record,
             )
         )
+    managed_attempts = _managed_attempts_from_snapshot(
+        path=path,
+        payload=payload,
+        session=session,
+        blocker_id=blocker_id,
+        fingerprint=fingerprint,
+    )
     if attempts:
-        return attempts
+        return attempts + managed_attempts
     current_attempt_id = _as_scalar_text(payload.get("current_attempt_id"))
     if current_attempt_id:
         snapshot_signature = (
@@ -2592,7 +2606,88 @@ def _attempts_from_snapshot(
                 raw=dict(payload),
             )
         )
-    return attempts
+    return attempts + managed_attempts
+
+
+def _managed_attempts_from_snapshot(
+    *,
+    path: Path,
+    payload: Mapping[str, Any],
+    session: str,
+    blocker_id: str,
+    fingerprint: BlockerFingerprintV1 | None,
+) -> list[RepairCustodyAttemptRecord]:
+    """Project real managed-run evidence without fabricating legacy attempts."""
+
+    from arnold_pipelines.megaplan.managed_agent import is_managed_manifest, observed_status
+
+    projected: list[RepairCustodyAttemptRecord] = []
+    for value in _as_list(payload.get("managed_agent_runs")):
+        reference = _as_mapping(value)
+        run_id = _as_scalar_text(reference.get("run_id"))
+        manifest_text = _as_scalar_text(reference.get("manifest_path"))
+        if not run_id or not manifest_text:
+            continue
+        reference_blocker_id = _as_scalar_text(reference.get("blocker_id"))
+        if blocker_id and reference_blocker_id and reference_blocker_id != blocker_id:
+            continue
+
+        manifest_path = Path(manifest_text)
+        try:
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest_payload = {}
+        manifest = _as_mapping(manifest_payload)
+        if not is_managed_manifest(manifest) or _as_scalar_text(manifest.get("run_id")) != run_id:
+            # A missing or invalid manifest is not execution evidence.  Keep the
+            # compatibility reference in the raw repair snapshot, but do not
+            # turn it into a formal claim or attempt.
+            continue
+
+        links = _as_mapping(manifest.get("links"))
+        manifest_blocker_id = _as_scalar_text(links.get("blocker_id"))
+        if blocker_id and manifest_blocker_id and manifest_blocker_id != blocker_id:
+            continue
+        status, live = observed_status(manifest, manifest_path)
+        if status in {"reserved", "launching"}:
+            state = ATTEMPT_STATE_CLAIMED
+        elif status in {"running", "adopting"}:
+            state = ATTEMPT_STATE_RUNNING
+        elif status == "completed":
+            state = ATTEMPT_STATE_SUCCEEDED
+        elif status in {"cancelled", "superseded"}:
+            state = ATTEMPT_STATE_CANCELLED
+        else:
+            state = ATTEMPT_STATE_FAILED
+        outcome = _as_text(manifest.get("terminal_outcome"))
+        if state in {ATTEMPT_STATE_CLAIMED, ATTEMPT_STATE_RUNNING}:
+            outcome = REPAIRING
+        elif not outcome:
+            outcome = status
+        raw = {
+            "managed_agent_reference": dict(reference),
+            "managed_agent_manifest": dict(manifest),
+            "observed_status": status,
+            "observed_live": live,
+        }
+        projected.append(
+            _build_attempt_record(
+                attempt_id=run_id,
+                session=session,
+                source="managed_agent_execution",
+                path=str(manifest_path),
+                blocker_id=manifest_blocker_id or reference_blocker_id or blocker_id,
+                fingerprint=fingerprint,
+                request_id=_as_scalar_text(links.get("repair_request_id"))
+                or _as_scalar_text(reference.get("repair_request_id")),
+                state=state,
+                outcome=outcome,
+                recorded_at=_as_text(manifest.get("updated_at"))
+                or _as_text(manifest.get("created_at")),
+                raw=raw,
+            )
+        )
+    return projected
 
 
 def _attempts_from_sidecar(

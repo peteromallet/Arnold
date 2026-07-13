@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from arnold_pipelines.megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
+from .timezone import TimezoneService, localize_text_timestamps
 from arnold_pipelines.megaplan.store import ProgressEventInput, ScheduledJobInput, Store, deterministic_idempotency_key
 
 from .auth import AuthorizationSubject, ConfirmationManager
@@ -415,7 +416,10 @@ class ResidentJobHandlers:
         classification: CloudClassification,
         summary: str,
     ) -> None:
-        content = _cloud_check_notification_text(job, run, classification, summary)
+        content = self._localized_notification_text(
+            conversation,
+            _cloud_check_notification_text(job, run, classification, summary),
+        )
         idempotency_key = deterministic_idempotency_key("resident-cloud-check-notification", job.id, job.attempt_count)
         message = self.store.create_message(
             epic_id=run.epic_id,
@@ -487,7 +491,10 @@ class ResidentJobHandlers:
         idempotency_key = deterministic_idempotency_key("resident-cloud-notification", run.id, classification)
         notifications = dict(run.metadata.get("notifications") or {})
         already_persisted = classification in notifications
-        content = _cloud_notification_text(run, classification, summary)
+        content = self._localized_notification_text(
+            conversation,
+            _cloud_notification_text(run, classification, summary),
+        )
         message = self.store.create_message(
             epic_id=run.epic_id,
             conversation_id=conversation.id,
@@ -553,6 +560,21 @@ class ResidentJobHandlers:
 
     def _emit_sink(self) -> EmitProtocol:
         return self.store
+
+    def _localized_notification_text(
+        self, conversation: ResidentConversation, content: str
+    ) -> str:
+        user_id = str(
+            conversation.metadata.get("last_subject_user_id")
+            or conversation.dm_user_id
+            or ""
+        ) or None
+        resolved = TimezoneService(self.store, self.config).resolve(
+            user_id=user_id,
+            conversation=conversation,
+            guild_id=conversation.guild_id,
+        )
+        return localize_text_timestamps(content, resolved.name)
 
 
 def make_store_scheduler(

@@ -70,10 +70,12 @@ def test_voice_transcript_is_the_exact_user_message_and_provenance_is_persisted(
         await runtime.coalescer.flush_all()
 
         assert len(runner.requests) == 1
-        assert runner.requests[0].messages[-1] == {
-            "role": "user",
-            "content": "please inspect the current chain",
-        }
+        prompt = runner.requests[0].messages[-1]
+        assert prompt["role"] == "user"
+        assert "No parent message" in prompt["content"]
+        assert prompt["content"].endswith(
+            "Content truncated: no\nplease inspect the current chain"
+        )
         assert "private-note.mp3" not in runner.requests[0].messages[-1]["content"]
         assert transcriber.calls[0]["data"] == b"fake-mp3-data"
         conversations = store.list_resident_conversations(transport="discord", limit=10)

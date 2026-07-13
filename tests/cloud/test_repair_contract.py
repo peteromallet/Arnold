@@ -54,8 +54,13 @@ def test_repair_contract_round_trips_legacy_payload_without_shape_changes(tmp_pa
 
     repair_contract.save_repair_data(path, payload)
 
-    assert json.loads(path.read_text(encoding="utf-8")) == payload
-    assert repair_contract.load_json(path) == payload
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    persisted.pop("resident_delegation", None)
+    loaded = repair_contract.load_json(path)
+    loaded.pop("resident_delegation", None)
+
+    assert persisted == payload
+    assert loaded == payload
 
 
 def test_repair_contract_additive_fields_are_explicit_and_redaction_is_recursive() -> None:
@@ -566,6 +571,7 @@ def test_repair_index_updates_create_and_merge_nested_refs_idempotently(tmp_path
     }
 
     loaded = repair_contract.read_repair_index(path)
+    resident_delegation = loaded.pop("resident_delegation", None)
     assert loaded == {
         "sessions": {
             "session-1": {
@@ -587,6 +593,37 @@ def test_repair_index_updates_create_and_merge_nested_refs_idempotently(tmp_path
                 },
             }
         },
+    }
+    if resident_delegation is not None:
+        assert resident_delegation["schema_version"] == (
+            "arnold-resident-delegation-provenance-v1"
+        )
+
+
+def test_repair_index_allows_resident_delegation_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "repair-data" / "index.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "sessions": {},
+                "incidents": {},
+                "resident_delegation": {
+                    "schema_version": "arnold-resident-delegation-provenance-v1",
+                    "transport": "discord",
+                    "conversation_key": "discord:dm:123",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = repair_contract.read_repair_index(path)
+
+    assert loaded["resident_delegation"] == {
+        "schema_version": "arnold-resident-delegation-provenance-v1",
+        "transport": "discord",
+        "conversation_key": "discord:dm:123",
     }
 
 
@@ -936,6 +973,11 @@ def test_retention_cleanup_preserves_protected_artifacts_and_records_cleanup_eve
     assert "stale-session" not in summary["index_snapshots"]["after"]["sessions"]
     assert summary["index_snapshots"]["after"]["sessions"]["active-session"]["latest_meta_repair_id"] == ""
     persisted_index = repair_contract.read_repair_index(repair_dir / "index.json")
+    resident_delegation = persisted_index.pop("resident_delegation", None)
+    if resident_delegation is not None:
+        assert resident_delegation["schema_version"] == (
+            "arnold-resident-delegation-provenance-v1"
+        )
     assert persisted_index == summary["index_snapshots"]["after"]
 
     cleanup_records = repair_contract.read_jsonl_records(

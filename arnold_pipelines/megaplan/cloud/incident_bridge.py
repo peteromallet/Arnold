@@ -40,6 +40,7 @@ _EVENT_PREFIXES = {
     "watchdog_detection": "wd",
     "watchdog_dispatch": "wdd",
     "immediate_repair_attempt": "ira",
+    "managed_repair_claim": "mcl",
     "meta_repair_classification": "mrc",
     "meta_repair_attempt": "mra",
     "six_hour_auditor_diagnosis": "sha",
@@ -203,6 +204,47 @@ def append_watchdog_dispatch(
 # ---------------------------------------------------------------------------
 # Immediate-repair helper
 # ---------------------------------------------------------------------------
+
+
+def append_managed_repair_claim(
+    *,
+    incident_id: str,
+    claim_id: str,
+    actor: str,
+    summary: str,
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    next_expected_event: str = "immediate_repair.repair_attempt",
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append the formal claim made by a real managed repair execution."""
+
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["managed_repair_claim"]),
+        "ts": _utc_now_iso(),
+        "type": "claim.acquired",
+        "actor": actor,
+        "scope": "repair_system",
+        "outcome": "acquired",
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": [],
+        "trigger_event_id": None,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": None,
+        "incident_id": incident_id,
+        "claim_id": claim_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
 
 
 def append_immediate_repair_attempt(
@@ -860,6 +902,7 @@ __all__ = [
     "append_immediate_repair_attempt",
     "append_install_sync_applied",
     "append_install_sync_failed",
+    "append_managed_repair_claim",
     "append_meta_repair_attempt",
     "append_meta_repair_classification",
     "append_repair_retriggered",

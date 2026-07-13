@@ -16,13 +16,15 @@ from arnold.execution.step_invocation import StepInvocation
 
 from agentbox.redaction import redact_text
 
-from .agent_loop import AgentRequest, AgentResponse, AgentRunner
+from .agent_loop import AgentRequest, AgentResponse, AgentRunner, durable_launch_run_ids
 from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorizer
 from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
 from .escalations import EscalationAnswerDecision, authorize_escalation_answer, confirm_escalation_resolution
 from .profile import MegaplanResidentProfile
+from .reply_chain import build_reply_provenance, render_reply_context
+from .timezone import localize_text_timestamps, timezone_prompt_instruction
 
 
 @dataclass(frozen=True)
@@ -177,6 +179,194 @@ class ResidentRuntime:
                 warnings_issued=list(turn.warnings_issued or []) + ["recovered as abandoned on resident startup"],
                 idempotency_key=deterministic_idempotency_key("resident-turn-abandoned", turn.id),
             )
+            await self._notify_abandoned_turn(turn.id, turn.triggered_by_message_ids)
+            recovered += 1
+        return recovered
+
+    async def recover_restart_interrupted_turns(
+        self,
+        process_identity: Mapping[str, Any],
+    ) -> int:
+        """Promptly replay the exact inbound source owned by a completed restart."""
+
+        from agentbox.reset_notifications import (
+            claim_restart_interrupted_turns,
+            finish_restart_interrupted_turn,
+        )
+
+        recovered = 0
+        claims = claim_restart_interrupted_turns(process_identity=process_identity)
+        turns = {turn.id: turn for turn in self.store.list_recent_turns(n=1000)}
+        for claim in claims:
+            turn = turns.get(claim.turn_id)
+            messages = self.store.load_messages(claim.source_record_ids)
+            if (
+                turn is None
+                or turn.status != "in_progress"
+                or not messages
+                or any(message.direction != "inbound" for message in messages)
+            ):
+                finish_restart_interrupted_turn(
+                    claim.notification_id, status="skipped"
+                )
+                continue
+            persisted: list[PersistedInboundEvent] = []
+            for message in messages:
+                if not message.conversation_id or not message.discord_message_id:
+                    continue
+                conversation = self.store.load_resident_conversation(
+                    message.conversation_id
+                )
+                if conversation is None:
+                    continue
+                provenance = (
+                    message.discord_reply_provenance
+                    if isinstance(message.discord_reply_provenance, Mapping)
+                    else {}
+                )
+                author_id = str(
+                    provenance.get("source_author_id")
+                    or conversation.metadata.get("last_subject_user_id")
+                    or ""
+                )
+                if not author_id:
+                    continue
+                raw = {
+                    "discord_message_id": message.discord_message_id,
+                    "thread_id": conversation.thread_id,
+                    "dm_user_id": conversation.dm_user_id,
+                    "restart_replay_of_turn_id": turn.id,
+                    "restart_transaction_id": claim.notification_id,
+                }
+                event = InboundEvent(
+                    idempotency_key=message.idempotency_key
+                    or deterministic_idempotency_key(
+                        "resident-restart-replay-source", message.id
+                    ),
+                    conversation_key=conversation.conversation_key,
+                    subject=AuthorizationSubject(
+                        user_id=author_id,
+                        guild_id=conversation.guild_id,
+                        channel_id=conversation.channel_id,
+                    ),
+                    content=message.content,
+                    raw=raw,
+                )
+                persisted.append(
+                    PersistedInboundEvent(
+                        event=event,
+                        conversation=conversation,
+                        message=message,
+                    )
+                )
+            if not persisted:
+                finish_restart_interrupted_turn(
+                    claim.notification_id, status="skipped"
+                )
+                continue
+            conversation = persisted[-1].conversation
+            existing_outbound = next(
+                (
+                    row
+                    for row in reversed(
+                        self.store.list_conversation_messages(
+                            conversation.id, limit=1000
+                        )
+                    )
+                    if row.direction == "outbound" and row.bot_turn_id == turn.id
+                ),
+                None,
+            )
+            if existing_outbound is not None:
+                source_discord_ids = [
+                    str(item.message.discord_message_id)
+                    for item in persisted
+                    if item.message.discord_message_id
+                ]
+                try:
+                    await self.outbound.send(
+                        OutboundMessage(
+                            conversation_key=conversation.conversation_key,
+                            content=existing_outbound.content,
+                            idempotency_key=existing_outbound.idempotency_key,
+                            metadata={
+                                "conversation_id": conversation.id,
+                                "message_id": existing_outbound.id,
+                                "turn_id": turn.id,
+                                "discord_reply_to_message_id": (
+                                    source_discord_ids[-1]
+                                    if source_discord_ids
+                                    else None
+                                ),
+                                "discord_processing_message_ids": source_discord_ids,
+                                "discord_processing_turn_id": turn.id,
+                                "restart_delivery_replay": True,
+                            },
+                        )
+                    )
+                except Exception as exc:
+                    finish_restart_interrupted_turn(
+                        claim.notification_id,
+                        status="pending",
+                        error_class=exc.__class__.__name__,
+                    )
+                    continue
+                self.store.update_turn(
+                    turn.id,
+                    status="completed",
+                    final_output_message_id=existing_outbound.id,
+                    message_sent=True,
+                    warnings_issued=list(turn.warnings_issued or [])
+                    + ["restart replay reused persisted outbound without model execution"],
+                    idempotency_key=deterministic_idempotency_key(
+                        "resident-restart-existing-outbound-delivered",
+                        turn.id,
+                        existing_outbound.id,
+                    ),
+                )
+                finish_restart_interrupted_turn(
+                    claim.notification_id,
+                    status="complete",
+                    replacement_turn_id=turn.id,
+                )
+                recovered += 1
+                continue
+            self.store.update_turn(
+                turn.id,
+                status="abandoned",
+                warnings_issued=list(turn.warnings_issued or [])
+                + [f"interrupted by restart transaction {claim.notification_id}; replayed"],
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-turn-restart-interrupted", turn.id, claim.notification_id
+                ),
+            )
+            for item in persisted:
+                self.store.update_message(
+                    item.message.id,
+                    bot_turn_id=None,
+                    idempotency_key=deterministic_idempotency_key(
+                        "resident-message-restart-requeue",
+                        item.message.id,
+                        claim.notification_id,
+                    ),
+                )
+            try:
+                await self._handle_batch(
+                    BurstBatch(key=persisted[-1].conversation.id, items=tuple(persisted))
+                )
+            except Exception as exc:
+                finish_restart_interrupted_turn(
+                    claim.notification_id,
+                    status="pending",
+                    error_class=exc.__class__.__name__,
+                )
+                continue
+            replacement = self.store.load_message(persisted[-1].message.id)
+            finish_restart_interrupted_turn(
+                claim.notification_id,
+                status="complete",
+                replacement_turn_id=(replacement.bot_turn_id if replacement else None),
+            )
             recovered += 1
         return recovered
 
@@ -210,8 +400,14 @@ class ResidentRuntime:
         if not expected_reply or source_message.discord_message_id != expected_reply:
             raise RuntimeError("managed completion provenance does not match the inbound reply target")
 
-        system_prompt = self.profile.system_prompt() + "\n\n" + _COMPLETION_VERIFIER_SYSTEM_PROMPT
         hot_context = await self.profile.load_hot_context(conversation.id)
+        system_prompt = (
+            self.profile.system_prompt()
+            + "\n\n"
+            + _timezone_instruction_from_hot_context(hot_context)
+            + "\n\n"
+            + _COMPLETION_VERIFIER_SYSTEM_PROMPT
+        )
         run_id = str(manifest.get("run_id") or manifest_path.parent.name)
         completion_state = manifest.get("resident_completion_turn")
         existing_turn_id = (
@@ -275,7 +471,9 @@ class ResidentRuntime:
         try:
             response = await self.runner.run(request, self.profile.tools())
             self._record_tool_calls(turn_id, response)
-            safe_text = redact_text(response.final_text).strip()
+            safe_text = _localize_user_text(
+                redact_text(response.final_text).strip(), hot_context
+            )
             outcome = _verification_outcome(safe_text)
             if not safe_text:
                 safe_text = (
@@ -344,12 +542,42 @@ class ResidentRuntime:
             ),
             idempotency_key=deterministic_idempotency_key("resident-conversation", event.conversation_key),
         )
+        discord_message_id = _optional_string(raw.get("discord_message_id"))
+        reference_message_id = _optional_string(raw.get("discord_reference_message_id"))
+        stored_parent = (
+            self.store.find_conversation_message_by_discord_id(
+                conversation.id, reference_message_id
+            )
+            if reference_message_id
+            else None
+        )
+        reply_provenance = (
+            build_reply_provenance(
+                source_message_id=discord_message_id,
+                source_author_id=event.subject.user_id,
+                conversation_key=event.conversation_key,
+                scope={
+                    "guild_id": event.subject.guild_id,
+                    "channel_id": event.subject.channel_id,
+                    "thread_id": _optional_string(raw.get("thread_id")),
+                    "dm_user_id": _optional_string(raw.get("dm_user_id")),
+                },
+                raw_chain=raw.get("discord_reply_chain"),
+                reference_message_id=reference_message_id,
+                reference_author_id=_optional_string(raw.get("discord_reference_author_id")),
+                reference_content=_optional_string(raw.get("discord_reference_content")),
+                stored_parent=stored_parent,
+            )
+            if discord_message_id
+            else None
+        )
         message = self.store.create_message(
             epic_id=conversation.active_epic_id,
             conversation_id=conversation.id,
             direction="inbound",
             content=event.content,
-            discord_message_id=_optional_string(raw.get("discord_message_id")),
+            discord_message_id=discord_message_id,
+            discord_reply_provenance=reply_provenance,
             idempotency_key=event.idempotency_key,
             has_code_attachment=bool(raw.get("has_code_attachment", False)),
             has_image_attachment=bool(raw.get("has_image_attachment", False)),
@@ -373,8 +601,12 @@ class ResidentRuntime:
             return
         conversation = self.store.load_resident_conversation(batch.key) or items[-1].conversation
         active_epic_id = conversation.active_epic_id
-        system_prompt = self.profile.system_prompt()
         hot_context = await self.profile.load_hot_context(conversation.id)
+        system_prompt = (
+            self.profile.system_prompt()
+            + "\n\n"
+            + _timezone_instruction_from_hot_context(hot_context)
+        )
         message_ids = [item.message.id for item in items]
         turn = self.store.create_turn(
             epic_id=active_epic_id,
@@ -396,6 +628,20 @@ class ResidentRuntime:
                 in_burst_with=[msg_id for msg_id in message_ids if msg_id != item.message.id] or None,
                 idempotency_key=deterministic_idempotency_key("resident-message-turn", item.message.id, turn.id),
             )
+        # Turn and message custody are durable before showing the transient
+        # Discord marker.  Optional so non-Discord/test sinks retain the core
+        # resident contract; transport failure cannot strand accepted work.
+        processing_message_ids = [
+            message_id
+            for item in items
+            if (message_id := _optional_string(item.event.raw.get("discord_message_id")))
+        ]
+        await self._invoke_transport_lifecycle(
+            "mark_processing",
+            conversation_key=conversation.conversation_key,
+            message_ids=processing_message_ids,
+            turn_id=turn.id,
+        )
         burst = tuple(
             {"role": "user", "content": self._message_content_with_discord_reply_context(item)}
             for item in items
@@ -418,7 +664,11 @@ class ResidentRuntime:
             escalation_id=items[-1].event.escalation_id,
             resume_handler=items[-1].event.resume_handler,
             target_id=items[-1].event.target_id,
-            launch_origin=self._managed_subagent_launch_origin(items, turn_id=turn.id),
+            launch_origin=self._managed_subagent_launch_origin(
+                items,
+                turn_id=turn.id,
+                timezone_name=_timezone_name_from_hot_context(hot_context),
+            ),
         )
         try:
             response = await self.runner.run(request, self.profile.tools())
@@ -429,11 +679,18 @@ class ResidentRuntime:
                 warnings_issued=[f"{exc.__class__.__name__}: {exc}"],
                 idempotency_key=deterministic_idempotency_key("resident-turn-failed", turn.id),
             )
+            await self._invoke_transport_lifecycle(
+                "mark_processing_interrupted",
+                conversation_key=conversation.conversation_key,
+                message_ids=processing_message_ids,
+                turn_id=turn.id,
+            )
             raise
         self._record_tool_calls(turn.id, response)
+        processing_continues = _response_has_detached_subagent(response)
         final_message_id = None
         if response.final_text:
-            safe_text = redact_text(response.final_text)
+            safe_text = _localize_user_text(redact_text(response.final_text), hot_context)
             outbound = self.store.create_message(
                 epic_id=active_epic_id,
                 conversation_id=conversation.id,
@@ -453,6 +710,9 @@ class ResidentRuntime:
                         "message_id": outbound.id,
                         "turn_id": turn.id,
                         "discord_reply_to_message_id": _optional_string(items[-1].event.raw.get("discord_message_id")),
+                        "discord_processing_message_ids": processing_message_ids,
+                        "discord_processing_turn_id": turn.id,
+                        "discord_processing_continues": processing_continues,
                     },
                 )
             )
@@ -463,6 +723,15 @@ class ResidentRuntime:
                 last_active_at=utc_now(),
                 idempotency_key=deterministic_idempotency_key("resident-conversation-outbound", conversation.id, outbound.id),
             )
+        elif not processing_continues:
+            # No terminal user-visible reply exists, so remove the transient
+            # marker without inventing a completion reaction.
+            await self._invoke_transport_lifecycle(
+                "mark_processing_interrupted",
+                conversation_key=conversation.conversation_key,
+                message_ids=processing_message_ids,
+                turn_id=turn.id,
+            )
         self.store.update_turn(
             turn.id,
             status="completed",
@@ -470,6 +739,65 @@ class ResidentRuntime:
             message_sent=bool(final_message_id),
             idempotency_key=deterministic_idempotency_key("resident-turn-completed", turn.id),
         )
+
+    async def _notify_abandoned_turn(
+        self,
+        turn_id: str,
+        triggered_by_message_ids: Sequence[str],
+    ) -> None:
+        grouped: dict[str, list[str]] = {}
+        for message in self.store.load_messages(triggered_by_message_ids):
+            if not message.conversation_id or not message.discord_message_id:
+                continue
+            conversation = self.store.load_resident_conversation(message.conversation_id)
+            if conversation is None or not conversation.conversation_key.startswith("discord:"):
+                continue
+            grouped.setdefault(conversation.conversation_key, []).append(message.discord_message_id)
+        for conversation_key, message_ids in grouped.items():
+            await self._invoke_transport_lifecycle(
+                "mark_processing_interrupted",
+                conversation_key=conversation_key,
+                message_ids=message_ids,
+                turn_id=turn_id,
+            )
+
+    async def _invoke_transport_lifecycle(
+        self,
+        method_name: str,
+        *,
+        conversation_key: str,
+        message_ids: list[str],
+        turn_id: str,
+    ) -> None:
+        if not message_ids:
+            return
+        callback = getattr(self.outbound, method_name, None)
+        if not callable(callback):
+            return
+        try:
+            await callback(
+                conversation_key=conversation_key,
+                message_ids=message_ids,
+                turn_id=turn_id,
+            )
+        except Exception as exc:
+            # Reaction state is a transport effect, never custody for the turn
+            # itself. Adapter implementations persist their own retry intent.
+            self.emitter.log_system_event(
+                level="warn",
+                category="external_api",
+                event_type="resident_transport_lifecycle_retry_pending",
+                message="Resident transport lifecycle effect could not be applied",
+                details={
+                    "method": method_name,
+                    "turn_id": turn_id,
+                    "error_class": exc.__class__.__name__,
+                },
+                turn_id=turn_id,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-transport-lifecycle-error", method_name, turn_id
+                ),
+            )
 
     def _record_tool_calls(self, turn_id: str, response: AgentResponse) -> None:
         for record in response.tool_calls:
@@ -484,37 +812,19 @@ class ResidentRuntime:
             )
 
     def _message_content_with_discord_reply_context(self, item: PersistedInboundEvent) -> str:
-        raw = item.event.raw
-        reference_id = _optional_string(raw.get("discord_reference_message_id"))
-        if not reference_id:
+        if not item.message.discord_message_id:
             return item.event.content
-        reference_content = _optional_string(raw.get("discord_reference_content"))
-        reference_label = _optional_string(raw.get("discord_reference_author_id"))
-        if reference_content is None:
-            referenced = self._find_conversation_message_by_discord_id(
-                item.conversation.id,
-                reference_id,
-                exclude_ids=(item.message.id,),
-            )
-            if referenced is not None:
-                reference_content = referenced.content
-                reference_label = referenced.direction
-        if reference_content is None:
-            return item.event.content
-        label = f" from {reference_label}" if reference_label else ""
-        return (
-            f"[Discord reply context]\n"
-            f"The user is replying to Discord message {reference_id}{label}:\n"
-            f"{reference_content}\n\n"
-            f"[User message]\n"
-            f"{item.event.content}"
-        )
+        # Render only immutable provenance on the source record.  History is a
+        # separate bounded excerpt and is never an ancestry oracle.
+        persisted = self.store.load_message(item.message.id) or item.message
+        return render_reply_context(persisted)
 
-    @staticmethod
     def _managed_subagent_launch_origin(
+        self,
         items: Sequence[PersistedInboundEvent],
         *,
         turn_id: str,
+        timezone_name: str,
     ) -> dict[str, Any]:
         """Return durable, non-secret Discord provenance for delegated work."""
 
@@ -561,25 +871,8 @@ class ResidentRuntime:
             "thread_id": _optional_string(item.event.raw.get("thread_id")),
             "dm_user_id": _optional_string(item.event.raw.get("dm_user_id")),
             "source_kind": "discord_inbound_message",
+            "timezone_name": timezone_name,
         }
-
-    def _find_conversation_message_by_discord_id(
-        self,
-        conversation_id: str,
-        discord_message_id: str,
-        *,
-        exclude_ids: Sequence[str] = (),
-    ) -> Message | None:
-        for message in reversed(
-            self.store.list_conversation_messages(
-                conversation_id,
-                limit=max(50, self.config.history_window * 3),
-                exclude_ids=exclude_ids,
-            )
-        ):
-            if message.discord_message_id == discord_message_id:
-                return message
-        return None
 
     async def _handle_escalation_resolution(
         self,
@@ -765,12 +1058,45 @@ def _dedupe_persisted_events(items: Sequence[PersistedInboundEvent]) -> tuple[Pe
     return tuple(deduped)
 
 
+def _response_has_detached_subagent(response: AgentResponse) -> bool:
+    """Keep working state across the resident's non-terminal launch acknowledgement."""
+
+    return bool(durable_launch_run_ids(response.tool_calls))
+
+
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
 def _optional_dict(value: object) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
+
+
+def _timezone_name_from_hot_context(hot_context: Mapping[str, Any]) -> str:
+    value = hot_context.get("user_timezone")
+    if isinstance(value, Mapping):
+        name = str(value.get("timezone_name") or "").strip()
+        if name:
+            return name
+    return "UTC"
+
+
+def _timezone_instruction_from_hot_context(hot_context: Mapping[str, Any]) -> str:
+    from .timezone import ResolvedTimezone
+
+    return timezone_prompt_instruction(
+        ResolvedTimezone(
+            name=_timezone_name_from_hot_context(hot_context),
+            source="hot_context",
+        )
+    )
+
+
+def _localize_user_text(text: str, hot_context: Mapping[str, Any]) -> str:
+    return localize_text_timestamps(
+        text,
+        _timezone_name_from_hot_context(hot_context),
+    )
 
 
 _COMPLETION_VERIFIER_SYSTEM_PROMPT = """

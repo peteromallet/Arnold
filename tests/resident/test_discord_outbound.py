@@ -307,13 +307,64 @@ def test_resident_runtime_sets_discord_reply_target_on_final_response(tmp_path) 
 
         assert outbound.sent
         assert outbound.sent[-1].metadata["discord_reply_to_message_id"] == "456"
+        assert outbound.processing == [("discord:dm:user-1", ["456"])]
+        assert outbound.sent[-1].metadata["discord_processing_message_ids"] == ["456"]
 
     class CapturingOutbound:
         def __init__(self) -> None:
             self.sent: list[OutboundMessage] = []
+            self.processing: list[tuple[str, list[str]]] = []
+
+        async def mark_processing(
+            self, *, conversation_key: str, message_ids: list[str], turn_id: str | None = None
+        ) -> None:
+            self.processing.append((conversation_key, message_ids))
 
         async def send(self, message: OutboundMessage) -> None:
             self.sent.append(message)
+
+    asyncio.run(run_case())
+
+
+def test_rejected_inbound_never_starts_a_working_reaction(tmp_path) -> None:
+    async def run_case() -> None:
+        store = FileStore(tmp_path / "store")
+        config = ResidentConfig(allowed_user_ids=("user-1",), burst_idle_delay_s=0, burst_max_delay_s=1)
+        authorizer = ResidentAuthorizer(config)
+
+        class CapturingOutbound:
+            def __init__(self) -> None:
+                self.processing: list[tuple[str, list[str]]] = []
+
+            async def mark_processing(
+                self, *, conversation_key: str, message_ids: list[str], turn_id: str | None = None
+            ) -> None:
+                self.processing.append((conversation_key, message_ids))
+
+            async def send(self, message: OutboundMessage) -> None:
+                raise AssertionError("rejected inbound must not send a reply")
+
+        outbound = CapturingOutbound()
+        runtime = ResidentRuntime(
+            config=config,
+            authorizer=authorizer,
+            store=store,
+            profile=MegaplanResidentProfile(store=store, authorizer=authorizer, config=config),
+            runner=FakeAgentRunner([FakeAgentStep.final("must not run")]),
+            outbound=outbound,
+        )
+
+        await runtime.receive(
+            InboundEvent(
+                idempotency_key="discord:message:rejected",
+                conversation_key="discord:dm:user-2",
+                subject=AuthorizationSubject(user_id="user-2", guild_id=None, channel_id="user-2"),
+                content="not authorized",
+                raw={"discord_message_id": "rejected", "dm_user_id": "user-2"},
+            )
+        )
+        await runtime.coalescer.flush_all()
+        assert outbound.processing == []
 
     asyncio.run(run_case())
 
@@ -333,7 +384,7 @@ def test_discord_outbound_sink_replies_and_reacts_to_source_message() -> None:
             )
         )
 
-        assert channel.partial_message_ids == [456, 456]
+        assert channel.partial_message_ids == [456, 456, 456]
         assert channel.sent == [("reply text", {"reference": source, "mention_author": False})]
         assert source.reactions == ["☑️"]
 
@@ -343,6 +394,10 @@ def test_discord_outbound_sink_replies_and_reacts_to_source_message() -> None:
 
         async def add_reaction(self, emoji: str) -> None:
             self.reactions.append(emoji)
+
+        async def remove_reaction(self, emoji: str) -> None:
+            if emoji in self.reactions:
+                self.reactions.remove(emoji)
 
     class FakeChannel:
         def __init__(self, source: FakePartialMessage) -> None:
