@@ -15,6 +15,10 @@ from arnold_pipelines.megaplan.orchestration.evidence_contract import (
     TrustClass,
 )
 from arnold_pipelines.megaplan.planning.state import STATE_DONE
+from arnold.workflow.boundary_evidence import (
+    AuthorityState,
+    compile_authority_view,
+)
 
 TRANSITION_DECISION_REVIEW_DONE_FILENAME = "transition_decision_review_done.json"
 
@@ -69,6 +73,7 @@ class TransitionWriter:
         denial_kind: str | None = None,
         operator_summary: str | None = None,
         fresh_evidence_path: str = "review_evidence.json",
+        authority_state: AuthorityState | str | None = None,
     ) -> Path:
         compact_evidence_refs = [
             {
@@ -90,6 +95,35 @@ class TransitionWriter:
                 "evidence_refs_compact": compact_evidence_refs,
             }
         )
+        # ── S2 T11: Persist boundary authority refs for operator visibility ──
+        if decision.boundary_id is not None:
+            routing_provenance.setdefault("boundary_id", decision.boundary_id)
+        if decision.checked_evidence_refs:
+            routing_provenance.setdefault(
+                "checked_evidence_refs", list(decision.checked_evidence_refs)
+            )
+        if decision.authority_record_refs:
+            routing_provenance.setdefault(
+                "authority_record_refs", list(decision.authority_record_refs)
+            )
+        # ── S2 T12: Inject authority state and compact operator/auditor view ─
+        state = (
+            authority_state.value
+            if isinstance(authority_state, AuthorityState)
+            else authority_state
+        )
+        if state is not None:
+            routing_provenance["authority_state"] = state
+        routing_provenance["authority_view"] = compile_authority_view(
+            boundary_id=decision.boundary_id,
+            authority_state=state if state is not None else AuthorityState.MISSING,
+            authority_record_refs=decision.authority_record_refs,
+            checked_evidence_refs=decision.checked_evidence_refs,
+            status=decision.status,
+            would_block_reasons=decision.would_block_reasons,
+            operator_summary=operator_summary,
+        )
+        # ──────────────────────────────────────────────────────────────────────
         payload = TransitionDecision(
             decision_id=decision.decision_id,
             subject=decision.subject,
@@ -107,6 +141,9 @@ class TransitionWriter:
             code_hash=decision.code_hash,
             routing_provider=decision.routing_provider,
             routing_provenance=routing_provenance,
+            boundary_id=decision.boundary_id,
+            checked_evidence_refs=decision.checked_evidence_refs,
+            authority_record_refs=decision.authority_record_refs,
         ).to_dict()
         output_path = plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME
         atomic_write_json(output_path, payload)

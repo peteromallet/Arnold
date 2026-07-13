@@ -15,7 +15,7 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-13T15:39:52.191758+00:00",
+  "generated_at": "2026-07-13T16:00:37.032530+00:00",
   "incident_id": "inc-superfixer-alive-but-failed-recovery",
   "kind": "incident_summary",
   "latest_actor": "immediate_repair",

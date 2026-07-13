@@ -299,3 +299,252 @@ def assert_file_fill_eligible(phase_identity: str) -> None:
             f"It has no scratch file and is not eligible for single-file "
             f"scratch promotion."
         )
+
+
+# ---------------------------------------------------------------------------
+# Structured promotion evidence (T9)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_boundary_ids(phase_identity: str) -> tuple[str, ...]:
+    """Return the boundary contract ids for *phase_identity* from the registry.
+
+    Returns the registered ``boundary_contract_ids`` when the phase has them,
+    falling back to a small phase-specific mapping for backward compatibility.
+    Returns an empty tuple when no boundary ids can be resolved.
+    """
+    reg = get_template_registration(phase_identity)
+    if reg is not None and reg.boundary_contract_ids:
+        return reg.boundary_contract_ids
+    # Phase-specific fallback for callers that haven't set up template registry
+    # bindings (robustness: backward compat).
+    if phase_identity == "gate":
+        return ("gate_to_revise",)
+    if phase_identity == "finalize":
+        return ("finalize_artifacts",)
+    return ()
+
+
+def build_promotion_evidence(
+    plan_dir: Path,
+    scratch_status: ScratchStatus,
+    *,
+    phase_identity: str,
+    scratch_filename: str,
+    worker_payload_used: bool = False,
+) -> list[dict[str, Any]]:
+    """Emit structured evidence records describing the promotion outcome.
+
+    This function inspects the plan directory after ``promote_scratch`` and
+    produces evidence records for four distinct promotion states:
+
+    * **scratch-written/unpromoted** — the model wrote to scratch but the
+      content was not promoted (``missing`` / ``unmodified`` / ``invalid``).
+    * **canonical-without-receipt** — a canonical output artifact exists in
+      the plan directory but no boundary receipt has been emitted.
+    * **receipt-without-phase_result** — a boundary receipt exists but
+      ``phase_result.json`` is missing or stale.
+    * **model-written-wrong-path** — the model wrote output to an unexpected
+      path (e.g. canonical artifact path instead of scratch path).
+
+    Each evidence record is a plain ``dict`` with the standard boundary
+    evidence shape so callers can convert to :class:`BoundaryEvidence` or
+    serialize directly.  This function is intentionally read-only — it
+    never writes files or mutates registry state.
+
+    Args:
+        plan_dir: The plan directory.
+        scratch_status: The outcome from ``promote_scratch``
+            (``\"missing\"``, ``\"unmodified\"``, ``\"filled\"``, ``\"invalid\"``).
+        phase_identity: The phase identity (e.g. ``\"gate\"``, ``\"finalize\"``).
+        scratch_filename: The scratch filename (e.g. ``\"gate_output.json\"``).
+        worker_payload_used: Whether the handler fell back to
+            ``worker.payload`` (inline JSON) instead of promoting scratch
+            content.  Set ``True`` when *scratch_status* is ``\"missing\"``
+            or ``\"unmodified\"``.
+
+    Returns:
+        A list of evidence dicts (possibly empty).  Each dict has keys:
+        ``evidence_id``, ``boundary_id``, ``workflow_id``,
+        ``promotion_state``, ``phase_identity``, ``scratch_status``,
+        ``scratch_filename``, and ``details``.
+    """
+    evidence_records: list[dict[str, Any]] = []
+    workflow_id = "megaplan-review"
+    _now = None  # lazy import to avoid top-level dependency
+
+    # ── resolve boundary ids for this phase ───────────────────────────
+    boundary_ids = _resolve_boundary_ids(phase_identity)
+    primary_boundary_id = boundary_ids[0] if boundary_ids else ""
+
+    # ── canonical artifact paths ──────────────────────────────────────
+    # Derive the likely canonical artifact filename from the scratch
+    # filename (e.g. "gate_output.json" → "gate.json").
+    canonical_candidate = scratch_filename.replace("_output.json", ".json")
+    canonical_path = plan_dir / canonical_candidate
+
+    # Detect whether the model wrote to a wrong path (e.g. wrote directly
+    # to the canonical artifact path instead of the scratch path).
+    scratch_path = plan_dir / scratch_filename
+    scratch_exists = scratch_path.exists()
+    canonical_exists = canonical_path.exists()
+
+    model_wrote_wrong_path = (
+        not scratch_exists
+        and canonical_exists
+        and scratch_status in ("missing", "unmodified")
+    )
+
+    # ── scratch-written / unpromoted ──────────────────────────────────
+    if scratch_status in ("missing", "unmodified", "invalid"):
+        import time as _time
+
+        if _now is None:
+            _now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+
+        promotion_state: str
+        if scratch_status == "missing":
+            promotion_state = "scratch-missing-fallback"
+        elif scratch_status == "unmodified":
+            promotion_state = "scratch-unmodified-fallback"
+        else:
+            promotion_state = "scratch-invalid-fallback"
+
+        evidence_records.append({
+            "evidence_id": f"promotion-{phase_identity}-{promotion_state}",
+            "boundary_id": primary_boundary_id,
+            "workflow_id": workflow_id,
+            "promotion_state": promotion_state,
+            "phase_identity": phase_identity,
+            "scratch_status": scratch_status,
+            "scratch_filename": scratch_filename,
+            "observation_time": _now,
+            "details": {
+                "fallback_source": (
+                    "worker.payload" if worker_payload_used else "none"
+                ),
+                "scratch_exists": scratch_exists,
+                "canonical_exists": canonical_exists,
+                "model_wrote_wrong_path": model_wrote_wrong_path,
+            },
+        })
+
+    # ── canonical-without-receipt ─────────────────────────────────────
+    # When a canonical artifact exists but no boundary receipt for the
+    # phase has been written.  Receipts are stored under the boundary id
+    # filename (e.g. boundary_receipts/gate_to_revise.json), matching
+    # write_boundary_receipt() and semantic-health receipt paths.
+    if canonical_exists and boundary_ids:
+        any_receipt_exists = any(
+            (plan_dir / "boundary_receipts" / f"{bid}.json").exists()
+            for bid in boundary_ids
+        )
+        if not any_receipt_exists:
+            if _now is None:
+                import time as _time
+                _now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+            missing_paths = [
+                str(plan_dir / "boundary_receipts" / f"{bid}.json")
+                for bid in boundary_ids
+            ]
+            evidence_records.append({
+                "evidence_id": (
+                    f"promotion-{phase_identity}-canonical-without-receipt"
+                ),
+                "boundary_id": primary_boundary_id,
+                "workflow_id": workflow_id,
+                "promotion_state": "canonical-without-receipt",
+                "phase_identity": phase_identity,
+                "scratch_status": scratch_status,
+                "scratch_filename": scratch_filename,
+                "observation_time": _now,
+                "details": {
+                    "canonical_artifact": canonical_candidate,
+                    "canonical_exists": True,
+                    "receipt_exists": False,
+                    "checked_boundary_ids": list(boundary_ids),
+                    "receipt_paths_checked": missing_paths,
+                },
+            })
+
+    # ── receipt-without-phase_result ──────────────────────────────────
+    # When a boundary receipt exists but phase_result.json is missing
+    # or does not record this phase.  Receipts are checked under the
+    # boundary id filename, matching write_boundary_receipt().
+    if boundary_ids:
+        phase_result_path = plan_dir / "phase_result.json"
+        phase_result_missing = not phase_result_path.exists()
+        phase_result_stale = False
+        recorded_phase = None
+        if not phase_result_missing:
+            try:
+                import json as _json
+                pr = _json.loads(phase_result_path.read_text(encoding="utf-8"))
+                recorded_phase = pr.get("phase") if isinstance(pr, dict) else None
+                phase_result_stale = recorded_phase != phase_identity
+            except (OSError, ValueError):
+                phase_result_missing = True
+
+        for bid in boundary_ids:
+            receipt_path = plan_dir / "boundary_receipts" / f"{bid}.json"
+            if receipt_path.exists():
+                if phase_result_missing or phase_result_stale:
+                    if _now is None:
+                        import time as _time
+                        _now = _time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", _time.gmtime()
+                        )
+                    state_label = (
+                        "missing" if phase_result_missing else "stale-phase"
+                    )
+                    evidence_records.append({
+                        "evidence_id": (
+                            f"promotion-{phase_identity}"
+                            f"-receipt-without-phase-result"
+                        ),
+                        "boundary_id": bid,
+                        "workflow_id": workflow_id,
+                        "promotion_state": (
+                            f"receipt-without-phase-result-{state_label}"
+                        ),
+                        "phase_identity": phase_identity,
+                        "scratch_status": scratch_status,
+                        "scratch_filename": scratch_filename,
+                        "observation_time": _now,
+                        "details": {
+                            "receipt_exists": True,
+                            "receipt_path": str(receipt_path),
+                            "phase_result_missing": phase_result_missing,
+                            "phase_result_stale": phase_result_stale,
+                            "expected_phase": phase_identity,
+                        },
+                    })
+
+    # ── model-written-wrong-path ──────────────────────────────────────
+    if model_wrote_wrong_path:
+        evidence_records.append({
+            "evidence_id": (
+                f"promotion-{phase_identity}-model-wrote-wrong-path"
+            ),
+            "boundary_id": primary_boundary_id,
+            "workflow_id": workflow_id,
+            "promotion_state": "model-wrote-wrong-path",
+            "phase_identity": phase_identity,
+            "scratch_status": scratch_status,
+            "scratch_filename": scratch_filename,
+            "observation_time": _now,
+            "details": {
+                "expected_path": str(scratch_path),
+                "unexpected_path": str(canonical_path),
+                "scratch_exists": False,
+                "canonical_exists": True,
+                "note": (
+                    "Model wrote to canonical artifact path instead of "
+                    "the expected scratch path. The handler only reads "
+                    "the expected scratch file (expected-path-only), so "
+                    "this write is silently ignored."
+                ),
+            },
+        })
+
+    return evidence_records

@@ -2444,3 +2444,517 @@ def test_override_receipt_without_source_view_hash_is_compatible(
     # The receipt must still be valid with the core keys
     assert details.get("dispatch_surface") == "workflow.native_policy"
     assert "declared_target_ref" in details
+
+
+# ── T7: prep semantic-health parity tests ────────────────────────────────
+# These tests prove that healthy prep requires artifacts, state, history,
+# receipt, and phase_result, and that missing or stale evidence produces
+# structured findings through the contract vocabulary.
+
+
+def test_healthy_prep_all_evidence_present_zero_findings(
+    tmp_path: Path,
+) -> None:
+    """When all five prep evidence types are healthy, zero prep findings."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="prepped",
+        history=[{"step": "prep", "result": "success"}],
+    )
+    state["current_phase"] = "prep"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase="prep", exit_kind="success")
+    _write_artifact(plan_dir, "research.md")
+    _write_artifact(plan_dir, "brief.md")
+    _write_boundary_receipt(
+        plan_dir,
+        prep_to_plan.boundary_id,
+        row_id=prep_to_plan.row_id,
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    # Zero prep-specific findings expected
+    prep_findings = {
+        fid for fid in by_id if fid.startswith("SH-prep_to_plan-")
+    }
+    assert prep_findings == set(), (
+        f"healthy prep must have zero findings, got: {prep_findings}"
+    )
+
+
+def test_prep_parity_missing_canonical_artifact_structured_finding(
+    tmp_path: Path,
+) -> None:
+    """Missing a required canonical artifact produces a structured finding
+    via the contract vocabulary (finding_id, boundary_id, severity,
+    diagnostic_code, contract_ref)."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="prepped",
+        history=[{"step": "prep", "result": "success"}],
+    )
+    state["current_phase"] = "prep"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase="prep")
+    # research.md present, brief.md missing
+    _write_artifact(plan_dir, "research.md")
+    _write_boundary_receipt(
+        plan_dir,
+        prep_to_plan.boundary_id,
+        row_id=prep_to_plan.row_id,
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-prep_to_plan-missing-artifact-brief.md"
+    assert fid in by_id
+    finding = by_id[fid]
+    assert finding.severity == FindingSeverity.ERROR
+    assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert finding.contract_ref == "prep_to_plan"
+    assert "brief.md" in finding.description
+    assert finding.details["missing_artifact"] == "brief.md"
+
+
+def test_prep_parity_stale_state_produces_structured_finding(
+    tmp_path: Path,
+) -> None:
+    """Stale state (wrong current_state) produces a structured finding
+    with BOUNDARY_EVIDENCE_STALE diagnostic code."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="initialized",  # wrong: should be "prepped"
+        history=[{"step": "prep", "result": "success"}],
+    )
+    state["current_phase"] = "prep"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase="prep")
+    _write_artifact(plan_dir, "research.md")
+    _write_artifact(plan_dir, "brief.md")
+    _write_boundary_receipt(
+        plan_dir,
+        prep_to_plan.boundary_id,
+        row_id=prep_to_plan.row_id,
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-prep_to_plan-current-state"
+    assert fid in by_id
+    finding = by_id[fid]
+    assert finding.severity == FindingSeverity.WARNING
+    assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    assert finding.contract_ref == "prep_to_plan"
+    assert "expected current_state 'prepped'" in finding.description
+    assert "initialized" in finding.description
+
+
+def test_prep_parity_stale_history_produces_structured_finding(
+    tmp_path: Path,
+) -> None:
+    """Missing required history entry produces a structured finding
+    through the contract vocabulary."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="prepped",
+        history=[],  # no prep_completed entry
+    )
+    state["current_phase"] = "prep"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase="prep")
+    _write_artifact(plan_dir, "research.md")
+    _write_artifact(plan_dir, "brief.md")
+    _write_boundary_receipt(
+        plan_dir,
+        prep_to_plan.boundary_id,
+        row_id=prep_to_plan.row_id,
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-prep_to_plan-history-entry"
+    assert fid in by_id
+    finding = by_id[fid]
+    assert finding.severity == FindingSeverity.WARNING
+    assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    assert finding.contract_ref == "prep_to_plan"
+    assert "prep_completed" in finding.description
+    assert finding.details["expected_history_entry"] == "prep_completed"
+
+
+def test_prep_parity_missing_receipt_produces_structured_finding(
+    tmp_path: Path,
+) -> None:
+    """Missing boundary receipt produces a structured finding with
+    BOUNDARY_EVIDENCE_MISSING diagnostic code."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="prepped",
+        history=[{"step": "prep", "result": "success"}],
+    )
+    state["current_phase"] = "prep"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase="prep")
+    _write_artifact(plan_dir, "research.md")
+    _write_artifact(plan_dir, "brief.md")
+    # No boundary receipt written
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-prep_to_plan-receipt-missing"
+    assert fid in by_id
+    finding = by_id[fid]
+    assert finding.severity == FindingSeverity.ERROR
+    assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert finding.contract_ref == "prep_to_plan"
+    assert "receipt is missing" in finding.description
+
+
+def test_prep_parity_missing_phase_result_produces_structured_finding(
+    tmp_path: Path,
+) -> None:
+    """Missing phase_result.json produces a structured finding."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="prepped",
+        history=[{"step": "prep", "result": "success"}],
+    )
+    state["current_phase"] = "prep"
+    _write_state(plan_dir, state)
+    # No phase_result.json written
+    _write_artifact(plan_dir, "research.md")
+    _write_artifact(plan_dir, "brief.md")
+    _write_boundary_receipt(
+        plan_dir,
+        prep_to_plan.boundary_id,
+        row_id=prep_to_plan.row_id,
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-prep_to_plan-phase-result-missing"
+    assert fid in by_id
+    finding = by_id[fid]
+    assert finding.severity == FindingSeverity.ERROR
+    assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert finding.contract_ref == "prep_to_plan"
+    assert "phase_result.json is missing" in finding.description
+
+
+def test_prep_parity_stale_phase_result_produces_structured_finding(
+    tmp_path: Path,
+) -> None:
+    """Phase result with wrong phase produces a structured finding with
+    BOUNDARY_EVIDENCE_STALE diagnostic code."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="prepped",
+        history=[{"step": "prep", "result": "success"}],
+    )
+    state["current_phase"] = "prep"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase="plan")  # wrong phase for prep
+    _write_artifact(plan_dir, "research.md")
+    _write_artifact(plan_dir, "brief.md")
+    _write_boundary_receipt(
+        plan_dir,
+        prep_to_plan.boundary_id,
+        row_id=prep_to_plan.row_id,
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-prep_to_plan-phase-result-stale-phase"
+    assert fid in by_id
+    finding = by_id[fid]
+    assert finding.severity == FindingSeverity.WARNING
+    assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    assert finding.contract_ref == "prep_to_plan"
+    assert "phase 'plan'" in finding.description
+    assert "expects phase 'prep'" in finding.description
+
+
+def test_prep_parity_all_negative_cases_produce_distinct_findings(
+    tmp_path: Path,
+) -> None:
+    """When all five evidence types are absent/stale, each produces a
+    distinct structured finding — they do not collapse into one."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="initialized",  # stale
+        history=[],  # missing history
+    )
+    # No current_phase → state-delta mismatch
+    _write_state(plan_dir, state)
+    # No phase_result → missing
+    # No artifacts → missing
+    # No receipt → missing
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    prep_findings = sorted(
+        fid for fid in by_id if fid.startswith("SH-prep_to_plan-")
+    )
+    # Each evidence type should produce its own finding
+    expected_prefixes = [
+        "SH-prep_to_plan-current-state",
+        "SH-prep_to_plan-history-entry",
+        "SH-prep_to_plan-missing-artifact-",
+        "SH-prep_to_plan-phase-result-missing",
+        "SH-prep_to_plan-receipt-missing",
+    ]
+    for prefix in expected_prefixes:
+        found = any(fid.startswith(prefix) for fid in prep_findings)
+        assert found, (
+            f"expected finding prefix '{prefix}' in prep findings, "
+            f"got: {prep_findings}"
+        )
+
+    # Verify diagnostic codes are correct
+    assert (
+        by_id["SH-prep_to_plan-phase-result-missing"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    )
+    assert (
+        by_id["SH-prep_to_plan-receipt-missing"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    )
+    assert (
+        by_id["SH-prep_to_plan-current-state"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    )
+    assert (
+        by_id["SH-prep_to_plan-history-entry"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    )
+
+
+# ── S2 T13: authority visibility tests ───────────────────────────────────
+
+
+def test_missing_authority_records_produces_structured_finding(
+    tmp_path: Path,
+) -> None:
+    """When a contract requires authority but the receipt has no
+    authority_records, a structured finding is emitted."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="gated",
+        history=[{"step": "gate", "result": "success"}],
+    )
+    state["current_phase"] = "gate"
+    _write_state(plan_dir, state)
+    # Write required artifacts for gate_to_revise
+    _write_artifact(plan_dir, "gate_decision.json")
+    _write_phase_result(plan_dir, phase="gate")
+    # Write receipt with NO authority_records
+    _write_boundary_receipt(
+        plan_dir,
+        gate_to_revise.boundary_id,
+        row_id=gate_to_revise.row_id,
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-gate_to_revise-authority-missing"
+    assert fid in by_id, f"Expected finding {fid}, got: {sorted(by_id.keys())}"
+    finding = by_id[fid]
+    assert finding.severity == FindingSeverity.ERROR
+    assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert finding.contract_ref == "gate_to_revise"
+    assert "authority_records" in finding.description
+
+
+def test_authority_records_present_suppresses_authority_finding(
+    tmp_path: Path,
+) -> None:
+    """When a receipt includes non-empty authority_records, no
+    authority-missing finding is produced."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="gated",
+        history=[{"step": "gate", "result": "success"}],
+    )
+    state["current_phase"] = "gate"
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "gate_decision.json")
+    _write_phase_result(plan_dir, phase="gate")
+    _write_boundary_receipt(
+        plan_dir,
+        gate_to_revise.boundary_id,
+        row_id=gate_to_revise.row_id,
+        authority_records=[
+            {
+                "actor": "system",
+                "role": "auto-gate",
+                "decision": "revise",
+                "scope": "gate:authority",
+                "conditions": [],
+                "evidence_refs": [],
+            }
+        ],
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-gate_to_revise-authority-missing"
+    assert fid not in by_id, (
+        f"Should not produce authority-missing when records present, "
+        f"but got: {by_id.get(fid)}"
+    )
+
+
+def test_empty_authority_records_list_produces_finding(
+    tmp_path: Path,
+) -> None:
+    """An empty authority_records list still counts as missing authority."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="gated",
+        history=[{"step": "gate", "result": "success"}],
+    )
+    state["current_phase"] = "gate"
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "gate_decision.json")
+    _write_phase_result(plan_dir, phase="gate")
+    _write_boundary_receipt(
+        plan_dir,
+        gate_to_revise.boundary_id,
+        row_id=gate_to_revise.row_id,
+        authority_records=[],  # empty list
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-gate_to_revise-authority-missing"
+    assert fid in by_id, f"Expected finding {fid}, got: {sorted(by_id.keys())}"
+    finding = by_id[fid]
+    assert "empty" in finding.description.lower() or "missing" in finding.description.lower()
+
+
+def test_waived_authority_record_visible_in_receipt(
+    tmp_path: Path,
+) -> None:
+    """A receipt with a waived authority record is visible and does not
+    produce an authority-missing finding."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="gated",
+        history=[{"step": "gate", "result": "success"}],
+    )
+    state["current_phase"] = "gate"
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "gate_decision.json")
+    _write_phase_result(plan_dir, phase="gate")
+    waived_record = {
+        "actor": "operator",
+        "role": "human-approver",
+        "decision": "waived",
+        "scope": "gate:authority",
+        "waiver_reason": "manual override in test environment",
+        "conditions": [],
+        "evidence_refs": [],
+        "details": {"waiver_id": "W-001"},
+    }
+    _write_boundary_receipt(
+        plan_dir,
+        gate_to_revise.boundary_id,
+        row_id=gate_to_revise.row_id,
+        authority_records=[waived_record],
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    # No authority-missing finding
+    fid = "SH-gate_to_revise-authority-missing"
+    assert fid not in by_id, (
+        f"Waived authority records should suppress authority-missing, "
+        f"but got: {by_id.get(fid)}"
+    )
+
+
+def test_denied_authority_record_visible_in_receipt(
+    tmp_path: Path,
+) -> None:
+    """A receipt with a denied authority record is visible and doesn't
+    produce an authority-missing finding."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="gated",
+        history=[{"step": "gate", "result": "success"}],
+    )
+    state["current_phase"] = "gate"
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "gate_decision.json")
+    _write_phase_result(plan_dir, phase="gate")
+    denied_record = {
+        "actor": "system",
+        "role": "policy-checker",
+        "decision": "denied",
+        "scope": "gate:authority",
+        "conditions": [],
+        "evidence_refs": [],
+        "details": {"reason": "policy violation"},
+    }
+    _write_boundary_receipt(
+        plan_dir,
+        gate_to_revise.boundary_id,
+        row_id=gate_to_revise.row_id,
+        authority_records=[denied_record],
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    # No authority-missing finding
+    fid = "SH-gate_to_revise-authority-missing"
+    assert fid not in by_id, (
+        f"Denied authority records should suppress authority-missing, "
+        f"but got: {by_id.get(fid)}"
+    )
+
+
+def test_authority_finding_has_correct_severity_and_diagnostic(
+    tmp_path: Path,
+) -> None:
+    """Missing authority finding uses ERROR severity and
+    BOUNDARY_EVIDENCE_MISSING diagnostic code."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="gated",
+        history=[{"step": "gate", "result": "success"}],
+    )
+    state["current_phase"] = "gate"
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "gate_decision.json")
+    _write_phase_result(plan_dir, phase="gate")
+    _write_boundary_receipt(
+        plan_dir,
+        gate_to_revise.boundary_id,
+        row_id=gate_to_revise.row_id,
+        # No authority_records at all
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-gate_to_revise-authority-missing"
+    assert fid in by_id
+    finding = by_id[fid]
+    assert finding.severity == FindingSeverity.ERROR
+    assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert finding.contract_ref == "gate_to_revise"
+    assert finding.boundary_id == "gate_to_revise"

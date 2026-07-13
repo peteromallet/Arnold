@@ -2130,3 +2130,537 @@ class TestAutoExecuteRecovery:
 
         assert review_path.stat().st_mtime >= execution_path.stat().st_mtime
         assert _recover_completed_execute_artifacts_after_failure(plan_dir) is False
+
+
+# ---------------------------------------------------------------------------
+# Promotion evidence tests (T9/T10)
+# ---------------------------------------------------------------------------
+
+
+class TestPromotionEvidenceScratchMissing:
+    """build_promotion_evidence when scratch is missing."""
+
+    def test_missing_scratch_produces_missing_fallback_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "missing",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+            worker_payload_used=True,
+        )
+        assert len(evidence) >= 1
+        missing_records = [
+            r for r in evidence if r["promotion_state"] == "scratch-missing-fallback"
+        ]
+        assert len(missing_records) == 1
+        rec = missing_records[0]
+        assert rec["phase_identity"] == "gate"
+        assert rec["scratch_status"] == "missing"
+        assert rec["scratch_filename"] == "gate_output.json"
+        assert rec["boundary_id"] == "gate_to_revise"
+        assert rec["workflow_id"] == "megaplan-review"
+        assert rec["details"]["fallback_source"] == "worker.payload"
+
+    def test_missing_scratch_without_worker_payload_sets_fallback_none(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "missing",
+            phase_identity="finalize",
+            scratch_filename="finalize_output.json",
+            worker_payload_used=False,
+        )
+        missing_records = [
+            r for r in evidence if r["promotion_state"] == "scratch-missing-fallback"
+        ]
+        assert len(missing_records) == 1
+        assert missing_records[0]["details"]["fallback_source"] == "none"
+
+    def test_missing_scratch_for_finalize_uses_artifacts_boundary_id(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "missing",
+            phase_identity="finalize",
+            scratch_filename="finalize_output.json",
+            worker_payload_used=True,
+        )
+        missing_records = [
+            r for r in evidence if r["promotion_state"] == "scratch-missing-fallback"
+        ]
+        assert len(missing_records) == 1
+        assert missing_records[0]["boundary_id"] == "finalize_artifacts"
+
+
+class TestPromotionEvidenceScratchUnmodified:
+    """build_promotion_evidence when scratch is unmodified."""
+
+    def test_unmodified_scratch_produces_unmodified_fallback_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text('{"unchanged": true}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "unmodified",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+            worker_payload_used=True,
+        )
+        unmod_records = [
+            r for r in evidence if r["promotion_state"] == "scratch-unmodified-fallback"
+        ]
+        assert len(unmod_records) == 1
+        rec = unmod_records[0]
+        assert rec["phase_identity"] == "gate"
+        assert rec["scratch_status"] == "unmodified"
+        assert rec["details"]["scratch_exists"] is True
+        assert rec["details"]["fallback_source"] == "worker.payload"
+
+    def test_unmodified_scratch_does_not_produce_missing_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "finalize_output.json"
+        scratch.write_text("{}", encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "unmodified",
+            phase_identity="finalize",
+            scratch_filename="finalize_output.json",
+            worker_payload_used=True,
+        )
+        missing_records = [
+            r for r in evidence if "missing" in r.get("promotion_state", "")
+            and "receipt" not in r.get("promotion_state", "")
+        ]
+        assert len(missing_records) == 0
+
+
+class TestPromotionEvidenceScratchFilled:
+    """build_promotion_evidence when scratch is filled (successful promotion)."""
+
+    def test_filled_scratch_produces_no_scratch_fallback_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text('{"checks": [], "flags": []}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+        )
+        # Filled should NOT produce missing/unmodified/invalid fallback evidence
+        fallback_states = {"scratch-missing-fallback", "scratch-unmodified-fallback", "scratch-invalid-fallback"}
+        fallback_records = [r for r in evidence if r.get("promotion_state") in fallback_states]
+        assert len(fallback_records) == 0
+
+    def test_filled_with_canonical_without_receipt_produces_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text('{"checks": [], "flags": []}', encoding="utf-8")
+        # Also create canonical artifact without receipt
+        canonical = plan_dir / "gate.json"
+        canonical.write_text('{"checks": [], "flags": []}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+        )
+        cwr = [r for r in evidence if r.get("promotion_state") == "canonical-without-receipt"]
+        assert len(cwr) >= 1
+        assert cwr[0]["details"]["canonical_exists"] is True
+        assert cwr[0]["details"]["receipt_exists"] is False
+
+
+class TestPromotionEvidenceScratchInvalid:
+    """build_promotion_evidence when scratch is invalid."""
+
+    def test_invalid_scratch_produces_invalid_fallback_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text("not valid json at all {{{", encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "invalid",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+            worker_payload_used=True,
+        )
+        invalid_records = [
+            r for r in evidence if r["promotion_state"] == "scratch-invalid-fallback"
+        ]
+        assert len(invalid_records) == 1
+        rec = invalid_records[0]
+        assert rec["phase_identity"] == "gate"
+        assert rec["scratch_status"] == "invalid"
+        assert rec["details"]["scratch_exists"] is True
+
+    def test_invalid_scratch_without_worker_payload(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "finalize_output.json"
+        scratch.write_text("{broken", encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "invalid",
+            phase_identity="finalize",
+            scratch_filename="finalize_output.json",
+            worker_payload_used=False,
+        )
+        invalid_records = [
+            r for r in evidence if r["promotion_state"] == "scratch-invalid-fallback"
+        ]
+        assert len(invalid_records) == 1
+        assert invalid_records[0]["details"]["fallback_source"] == "none"
+
+
+class TestPromotionEvidenceWrongPath:
+    """build_promotion_evidence when model wrote to wrong path."""
+
+    def test_model_wrote_canonical_not_scratch_produces_wrong_path_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        # Model wrote to canonical path (gate.json) but NOT scratch (gate_output.json)
+        canonical = plan_dir / "gate.json"
+        canonical.write_text('{"checks": [], "flags": []}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "missing",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+            worker_payload_used=True,
+        )
+        wrong_path_records = [
+            r for r in evidence if r.get("promotion_state") == "model-wrote-wrong-path"
+        ]
+        assert len(wrong_path_records) == 1
+        rec = wrong_path_records[0]
+        assert rec["details"]["scratch_exists"] is False
+        assert rec["details"]["canonical_exists"] is True
+        assert "expected-path-only" in rec["details"]["note"]
+
+    def test_wrong_path_also_produces_missing_fallback(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        canonical = plan_dir / "finalize.json"
+        canonical.write_text('{"tasks": []}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "missing",
+            phase_identity="finalize",
+            scratch_filename="finalize_output.json",
+            worker_payload_used=True,
+        )
+        # Should have both missing-fallback and wrong-path evidence
+        states = {r["promotion_state"] for r in evidence}
+        assert "scratch-missing-fallback" in states
+        assert "model-wrote-wrong-path" in states
+
+    def test_filled_scratch_no_wrong_path_even_if_canonical_exists(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text('{"checks": []}', encoding="utf-8")
+        canonical = plan_dir / "gate.json"
+        canonical.write_text('{"checks": []}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+        )
+        wrong_path_records = [
+            r for r in evidence if r.get("promotion_state") == "model-wrote-wrong-path"
+        ]
+        assert len(wrong_path_records) == 0
+
+
+class TestPromotionEvidenceReceiptPhaseResult:
+    """build_promotion_evidence receipt-without-phase_result detection."""
+
+    def test_receipt_exists_but_no_phase_result(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text('{"checks": []}', encoding="utf-8")
+        canonical = plan_dir / "gate.json"
+        canonical.write_text('{"checks": []}', encoding="utf-8")
+        # Create receipt
+        receipt_dir = plan_dir / "boundary_receipts"
+        receipt_dir.mkdir(parents=True)
+        (receipt_dir / "gate_to_revise.json").write_text("{}", encoding="utf-8")
+        # No phase_result.json
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+        )
+        rwp = [r for r in evidence if "receipt-without-phase-result" in r.get("promotion_state", "")]
+        assert len(rwp) >= 1
+        assert rwp[0]["details"]["phase_result_missing"] is True
+        assert rwp[0]["details"]["receipt_exists"] is True
+
+    def test_receipt_exists_with_stale_phase_result(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "finalize_output.json"
+        scratch.write_text('{"tasks": []}', encoding="utf-8")
+        canonical = plan_dir / "finalize.json"
+        canonical.write_text('{"tasks": []}', encoding="utf-8")
+        receipt_dir = plan_dir / "boundary_receipts"
+        receipt_dir.mkdir(parents=True)
+        (receipt_dir / "finalize_artifacts.json").write_text("{}", encoding="utf-8")
+        # phase_result.json with different phase
+        (plan_dir / "phase_result.json").write_text(
+            '{"phase": "gate", "result": "success"}', encoding="utf-8"
+        )
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="finalize",
+            scratch_filename="finalize_output.json",
+        )
+        rwp = [r for r in evidence if "receipt-without-phase-result" in r.get("promotion_state", "")]
+        assert len(rwp) >= 1
+        assert rwp[0]["details"]["phase_result_stale"] is True
+        assert rwp[0]["details"]["expected_phase"] == "finalize"
+
+    def test_receipt_and_phase_result_both_present_no_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text('{"checks": []}', encoding="utf-8")
+        canonical = plan_dir / "gate.json"
+        canonical.write_text('{"checks": []}', encoding="utf-8")
+        receipt_dir = plan_dir / "boundary_receipts"
+        receipt_dir.mkdir(parents=True)
+        (receipt_dir / "gate_to_revise.json").write_text("{}", encoding="utf-8")
+        (plan_dir / "phase_result.json").write_text(
+            '{"phase": "gate", "result": "success"}', encoding="utf-8"
+        )
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+        )
+        rwp = [r for r in evidence if "receipt-without-phase-result" in r.get("promotion_state", "")]
+        assert len(rwp) == 0
+
+
+class TestPromotionEvidenceEmptyCanonical:
+    """build_promotion_evidence when no canonical artifact exists."""
+
+    def test_filled_without_canonical_produces_no_canonical_receipt_evidence(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text('{"checks": []}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+        )
+        cwr = [r for r in evidence if r.get("promotion_state") == "canonical-without-receipt"]
+        assert len(cwr) == 0
+
+
+# ---------------------------------------------------------------------------
+# Gate and finalize explicit boundary template use tests
+# ---------------------------------------------------------------------------
+
+
+class TestGateBoundaryTemplateUse:
+    """Gate phase explicitly uses reusable boundary template."""
+
+    def test_gate_registration_references_validation_boundary(self) -> None:
+        from arnold_pipelines.megaplan.template_registry import get_template_registration
+
+        reg = get_template_registration("gate")
+        assert reg is not None
+        assert reg.boundary_template_id == "template.validation_boundary"
+
+    def test_gate_boundary_template_has_phase_none(self) -> None:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+            TYPED_BOUNDARY_TEMPLATES_BY_ID,
+        )
+
+        template = TYPED_BOUNDARY_TEMPLATES_BY_ID.get("template.validation_boundary")
+        assert template is not None
+        # Templates are reusable and should have phase=None
+        assert template.phase is None
+
+    def test_gate_boundary_template_is_validation_boundary_instance(self) -> None:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+            TYPED_BOUNDARY_TEMPLATES_BY_ID,
+            ValidationBoundary,
+        )
+
+        template = TYPED_BOUNDARY_TEMPLATES_BY_ID.get("template.validation_boundary")
+        assert template is not None
+        assert template is ValidationBoundary
+
+    def test_gate_registration_contract_ids_match_boundary_contracts(self) -> None:
+        from arnold_pipelines.megaplan.template_registry import get_template_registration
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+            get_contract_by_id,
+        )
+
+        reg = get_template_registration("gate")
+        assert reg is not None
+        for cid in reg.boundary_contract_ids:
+            contract = get_contract_by_id(cid)
+            assert contract is not None, f"Contract {cid!r} not found"
+
+    def test_gate_promotion_evidence_scoped_to_gate_phase(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "gate_output.json"
+        scratch.write_text('{"checks": [], "flags": []}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="gate",
+            scratch_filename="gate_output.json",
+        )
+        # All evidence records should be scoped to gate
+        for rec in evidence:
+            assert rec["phase_identity"] == "gate"
+
+
+class TestFinalizeBoundaryTemplateUse:
+    """Finalize phase explicitly uses reusable boundary template."""
+
+    def test_finalize_registration_references_artifact_promotion(self) -> None:
+        from arnold_pipelines.megaplan.template_registry import get_template_registration
+
+        reg = get_template_registration("finalize")
+        assert reg is not None
+        assert reg.boundary_template_id == "template.artifact_promotion"
+
+    def test_finalize_boundary_template_has_phase_none(self) -> None:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+            TYPED_BOUNDARY_TEMPLATES_BY_ID,
+        )
+
+        template = TYPED_BOUNDARY_TEMPLATES_BY_ID.get("template.artifact_promotion")
+        assert template is not None
+        assert template.phase is None
+
+    def test_finalize_boundary_template_is_artifact_promotion_instance(self) -> None:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+            TYPED_BOUNDARY_TEMPLATES_BY_ID,
+            artifact_promotion_template,
+        )
+
+        template = TYPED_BOUNDARY_TEMPLATES_BY_ID.get("template.artifact_promotion")
+        assert template is not None
+        assert template is artifact_promotion_template
+
+    def test_finalize_registration_contract_ids_match_boundary_contracts(self) -> None:
+        from arnold_pipelines.megaplan.template_registry import get_template_registration
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+            get_contract_by_id,
+        )
+
+        reg = get_template_registration("finalize")
+        assert reg is not None
+        for cid in reg.boundary_contract_ids:
+            contract = get_contract_by_id(cid)
+            assert contract is not None, f"Contract {cid!r} not found"
+
+    def test_finalize_promotion_evidence_scoped_to_finalize_phase(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        scratch = plan_dir / "finalize_output.json"
+        scratch.write_text('{"tasks": [], "sense_checks": [], "watch_items": []}', encoding="utf-8")
+        evidence = build_promotion_evidence(
+            plan_dir,
+            "filled",
+            phase_identity="finalize",
+            scratch_filename="finalize_output.json",
+        )
+        for rec in evidence:
+            assert rec["phase_identity"] == "finalize"

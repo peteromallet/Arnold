@@ -1923,6 +1923,7 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         # fail hard on modified invalid scratch when file-fill was
         # instructed (hermes agent).
         from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
             promote_scratch,
         )
 
@@ -1931,7 +1932,7 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         # hard-fail on a modified invalid scratch.
         file_fill_instructed = agent == "hermes"
 
-        _, promoted_payload = promote_scratch(
+        scratch_status, promoted_payload = promote_scratch(
             plan_dir,
             scratch_filename,
             _FINALIZE_SCRATCH_KNOWN_KEYS,
@@ -1940,6 +1941,20 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             file_fill_instructed=file_fill_instructed,
         )
         worker.payload = promoted_payload
+
+        # ── T9: Structured promotion evidence ────────────────────
+        promotion_evidence = build_promotion_evidence(
+            plan_dir,
+            scratch_status,
+            phase_identity="finalize",
+            scratch_filename=scratch_filename,
+            worker_payload_used=scratch_status in ("missing", "unmodified"),
+        )
+        if promotion_evidence:
+            LOGGER.debug(
+                "finalize promotion evidence: %s",
+                [e["promotion_state"] for e in promotion_evidence],
+            )
         # ────────────────────────────────────────────────────────────
 
         _validate_finalize_payload(plan_dir, state, worker)
