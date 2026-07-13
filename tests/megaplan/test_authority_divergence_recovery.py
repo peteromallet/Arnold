@@ -390,6 +390,55 @@ def test_status_hides_recovery_blockers_while_execute_step_is_live(
     assert "suggested_recovery_commands" not in response
 
 
+def test_status_ignores_stale_phase_result_after_prior_recover_blocked(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    state = load_state(local_plan_fixture.plan_dir)
+    state["current_state"] = "finalized"
+    state["resume_cursor"] = {"phase": "execute", "retry_strategy": "fresh_session"}
+    state.setdefault("meta", {})["overrides"] = [
+        {
+            "action": "recover-blocked",
+            "timestamp": "2026-07-11T22:14:02Z",
+            "reason": "resolved quality blocker",
+            "from_state": STATE_BLOCKED,
+            "to_state": "finalized",
+            "resume_cursor": {"phase": "execute", "retry_strategy": "fresh_session"},
+            "blocker_ids": ["quality:global:pending-tasks"],
+        }
+    ]
+    write_plan_state(local_plan_fixture.plan_dir, mode="replace", state=state)
+    (local_plan_fixture.plan_dir / "finalize.json").write_text(
+        '{"tasks":[]}\n',
+        encoding="utf-8",
+    )
+    atomic_write_phase_result(
+        local_plan_fixture.plan_dir,
+        PhaseResult(
+            phase="execute",
+            invocation_id="fixture-invocation",
+            exit_kind=ExitKind.blocked_by_quality.value,
+            deviations=(
+                Deviation(
+                    kind="quality_gate",
+                    message="Already-resolved blocker still present in old phase_result.json.",
+                    blocker_id="quality:global:pending-tasks",
+                ),
+            ),
+        ),
+    )
+
+    response = handle_status(
+        local_plan_fixture.root,
+        argparse.Namespace(plan=local_plan_fixture.plan_name, pending_human=False),
+    )
+
+    assert response["state"] == "finalized"
+    assert response["next_step"] == "execute"
+    assert "blocker_recovery" not in response
+    assert "suggested_recovery_commands" not in response
+
+
 def test_status_ignores_non_blocking_gate_warnings_after_finalize(
     local_plan_fixture: LocalPlanFixture,
 ) -> None:
