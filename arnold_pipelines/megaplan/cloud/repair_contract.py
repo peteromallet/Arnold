@@ -1657,6 +1657,9 @@ LIVE_WITH_FRESH_ACTIVITY = "live_with_fresh_activity"
 TRUE_HUMAN_BLOCKER = "true_human_blocker"
 PARTIAL_LIVENESS = "partial_liveness"
 REPAIRING = "repairing"
+RECOVERY_VERIFIED = "verified_recovered"
+RECOVERY_PROVISIONAL = "provisional"
+RECOVERY_UNKNOWN = "unknown"
 REPAIR_TIMEOUT = "repair_timeout"
 REPAIR_EXHAUSTED = "repair_exhausted"
 NEEDS_HUMAN = "needs_human"
@@ -1776,11 +1779,114 @@ def classify_verification_outcome(
     return REPAIRING
 
 
+def classify_recovery_verification(
+    *,
+    original_blocker: Mapping[str, Any] | None,
+    observation: Mapping[str, Any] | None,
+    repair_completed_at: object = None,
+) -> dict[str, Any]:
+    """Require later, independent, blocker-specific proof before recovery closes."""
+
+    blocker = _as_mapping(original_blocker)
+    observed = _as_mapping(observation)
+    evidence_state = _as_mapping(observed.get("evidence_state"))
+    if evidence_state and (
+        _as_text(evidence_state.get("status")).lower() == "unknown"
+        or bool(_as_text(evidence_state.get("unknown_type")))
+    ):
+        unknown_type = _as_text(evidence_state.get("unknown_type")) or "missing"
+        return {
+            "status": RECOVERY_UNKNOWN,
+            "unknown_type": unknown_type,
+            "reason": f"recovery evidence is {unknown_type}",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+        }
+
+    expected_id = _as_text(blocker.get("blocker_id"))
+    observed_id = _as_text(observed.get("blocker_id"))
+    if expected_id and observed_id and observed_id != expected_id:
+        return {
+            "status": RECOVERY_UNKNOWN,
+            "unknown_type": "contradictory",
+            "reason": "recovery observation belongs to a different blocker",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+        }
+
+    def parse_time(value: object) -> datetime | None:
+        text = _as_text(value)
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    completed_at = parse_time(repair_completed_at)
+    observed_at = parse_time(observed.get("observed_at"))
+    if completed_at is not None and observed_at is not None and observed_at <= completed_at:
+        return {
+            "status": RECOVERY_UNKNOWN,
+            "unknown_type": "stale",
+            "reason": "recovery proof is not later than repair completion",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+        }
+
+    proven = bool(
+        expected_id
+        and observed_id == expected_id
+        and observed.get("blocker_cleared") is True
+        and observed.get("directly_observed") is True
+        and observed.get("independent") is True
+        and observed_at is not None
+    )
+    if proven:
+        return {
+            "status": RECOVERY_VERIFIED,
+            "unknown_type": "",
+            "reason": "later independent observation proves the original blocker cleared",
+            "blocker_identity": expected_id,
+            "observed_at": observed_at.isoformat(),
+            "repair_completed_at": completed_at.isoformat() if completed_at is not None else None,
+            "recovery_verified": True,
+            "authorizes_verified_recovered": True,
+        }
+
+    provisional_signal = any(
+        observed.get(key) is True
+        for key in ("pid_alive", "heartbeat_active", "is_live", "subprocess_succeeded")
+    ) or observed.get("returncode") == 0
+    if provisional_signal:
+        return {
+            "status": RECOVERY_PROVISIONAL,
+            "unknown_type": "",
+            "reason": "liveness or subprocess success is provisional recovery evidence",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+        }
+
+    return {
+        "status": RECOVERY_UNKNOWN,
+        "unknown_type": "missing",
+        "reason": "later independent blocker-specific recovery proof is missing",
+        "recovery_verified": False,
+        "authorizes_verified_recovered": False,
+    }
+
+
 def build_verification_record(
     outcome: str,
     *,
     pre_snapshot: Mapping[str, Any] | None = None,
     post_snapshot: Mapping[str, Any] | None = None,
+    original_blocker: Mapping[str, Any] | None = None,
+    observation: Mapping[str, Any] | None = None,
+    repair_completed_at: object = None,
     delta_summary: str = "",
     recorded_at: datetime | None = None,
 ) -> dict[str, Any]:
@@ -1795,6 +1901,11 @@ def build_verification_record(
     """
     if recorded_at is None:
         recorded_at = datetime.now(timezone.utc)
+    recovery_verification = classify_recovery_verification(
+        original_blocker=original_blocker,
+        observation=observation,
+        repair_completed_at=repair_completed_at,
+    )
     return {
         "outcome": outcome,
         "is_success": is_success_outcome(outcome),
@@ -1802,6 +1913,7 @@ def build_verification_record(
         "recorded_at": recorded_at.isoformat(),
         "pre_snapshot": dict(pre_snapshot) if pre_snapshot is not None else None,
         "post_snapshot": dict(post_snapshot) if post_snapshot is not None else None,
+        "recovery_verification": recovery_verification,
         "delta_summary": delta_summary,
     }
 
@@ -2706,7 +2818,7 @@ def durable_repair_active(custody: Mapping[str, Any] | None) -> bool:
         attempt = _as_mapping(value)
         if attempt.get("terminal") is not False:
             continue
-        if not _as_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
+        if not _as_scalar_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
             continue
         request_id = _as_text(attempt.get("request_id"))
         if request_id and request_id in active_request_ids:
@@ -2753,7 +2865,10 @@ def _attempts_from_snapshot(
         attempt_id = _as_scalar_text(record.get("attempt_id"))
         if not attempt_id:
             continue
-        if not _problem_signature_matches_fingerprint(record.get("problem_signature"), fingerprint):
+        record_request_id = _as_scalar_text(record.get("request_id"))
+        if not record_request_id and not _problem_signature_matches_fingerprint(
+            record.get("problem_signature"), fingerprint
+        ):
             continue
         attempts.append(
             _build_attempt_record(
@@ -2763,7 +2878,7 @@ def _attempts_from_snapshot(
                 path=str(path),
                 blocker_id=blocker_id,
                 fingerprint=fingerprint,
-                request_id=_as_scalar_text(record.get("request_id")),
+                request_id=record_request_id,
                 state=_attempt_state_from_snapshot(payload, record),
                 outcome=snapshot_outcome,
                 recorded_at=_repair_data_recorded_at(payload),
@@ -2790,8 +2905,6 @@ def _attempts_from_snapshot(
                 else None
             )
         )
-        if not _problem_signature_matches_fingerprint(snapshot_signature, fingerprint):
-            return attempts
         payload_request_id = _as_scalar_text(
             payload.get("request_id")
         ) or _as_scalar_text(
@@ -2799,6 +2912,10 @@ def _attempts_from_snapshot(
             if isinstance(payload.get("current_recurrence"), Mapping)
             else None
         )
+        if not payload_request_id and not _problem_signature_matches_fingerprint(
+            snapshot_signature, fingerprint
+        ):
+            return attempts
         attempts.append(
             _build_attempt_record(
                 attempt_id=current_attempt_id,
@@ -2973,7 +3090,7 @@ def _problem_signature_matches_fingerprint(
 ) -> bool:
     signature = _as_mapping(problem_signature)
     if not signature:
-        return True
+        return False
     current = _as_mapping(fingerprint)
     if not current:
         return False
@@ -2984,12 +3101,15 @@ def _problem_signature_matches_fingerprint(
         ("milestone_or_plan", "milestone_or_plan"),
         ("blocked_task_id", "blocked_task_id"),
     )
+    compared = False
     for sig_key, current_key in comparable:
         sig_value = _as_text(signature.get(sig_key))
         current_value = _as_text(current.get(current_key))
+        if sig_value and current_value:
+            compared = True
         if sig_value and current_value and sig_value != current_value:
             return False
-    return True
+    return compared
 
 
 def _attempt_state_from_snapshot(
@@ -3099,10 +3219,7 @@ def _has_active_repair(
     process_evidence: Mapping[str, Any] | None,
     custody: Mapping[str, Any],
 ) -> bool:
-    attempts = _as_list(custody.get("attempts"))
-    if any(not bool(_as_mapping(item).get("terminal")) for item in attempts if isinstance(item, Mapping)):
-        return True
-    if _as_text(custody.get("custody_bucket")) == CUSTODY_BUCKET_REPAIRING:
+    if durable_repair_active(custody):
         return True
 
     lock_status = _as_text(getattr(lock_evidence, "status", ""))
