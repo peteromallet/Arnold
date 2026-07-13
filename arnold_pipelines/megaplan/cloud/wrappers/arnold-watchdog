@@ -1372,6 +1372,7 @@ if not projection.get("active_request_ids"):
     metadata = latest_failure.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
     enqueue_repair_request(
+        queue_root=repair_queue_dir(marker_dir),
         marker_dir=marker_dir,
         session=session,
         source="watchdog",
@@ -5848,11 +5849,15 @@ def gh_pr_state(pr_number: int) -> tuple[str, str]:
 def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> str:
     try:
         from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
-        from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            enqueue_repair_request,
+            repair_queue_dir,
+        )
 
         if not repair_request_queue_enabled():
             return "queue_disabled"
         result = enqueue_repair_request(
+            queue_root=repair_queue_dir(marker_dir),
             marker_dir=marker_dir,
             session=session,
             source="watchdog_pr_merge_reconciliation",

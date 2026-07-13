@@ -277,7 +277,16 @@ class RepairCustodyProjection(TypedDict):
     retry_strategy: str
     failure_kind: str
     request_status_counts: dict[str, int]
+    claim_retry_counts: dict[str, int]
+    claim_alert_request_ids: list[str]
     active_request_ids: list[str]
+    active_claim_request_ids: list[str]
+    accepted_unclaimed_request_ids: list[str]
+    request_count: int
+    claim_count: int
+    attempt_count: int
+    retry_budget: dict[str, Any]
+    evidence_cursor: dict[str, Any]
     terminal_outcomes: list[str]
     requests: list[RepairCustodyRequestRecord]
     attempts: list[RepairCustodyAttemptRecord]
@@ -416,6 +425,7 @@ def project_repair_custody(
     plan_state: Mapping[str, Any] | None = None,
     current_target: Mapping[str, Any] | None = None,
     canonical_run_state: CanonicalRunState | None = None,
+    queue_root: str | Path | None = None,
     marker_dir: str | Path | None = None,
     queue_dir: str | Path | None = None,
     repair_data_dir: str | Path | None = None,
@@ -429,17 +439,32 @@ def project_repair_custody(
 
     plan_payload = _as_mapping(plan_state)
     target_payload = _as_mapping(current_target)
-    queue_root: Path | None = None
-    if queue_dir is not None:
-        queue_root = Path(queue_dir)
-    elif marker_dir is not None:
-        queue_root = repair_requests.repair_queue_dir(marker_dir)
+    queue_candidates = [
+        Path(value)
+        for value in (queue_root, queue_dir)
+        if value is not None
+    ]
+    if marker_dir is not None:
+        queue_candidates.append(repair_requests.repair_queue_dir(marker_dir))
+    validated_queue_root: Path | None = None
+    if queue_candidates:
+        validated_candidates = {
+            repair_requests.validate_queue_root(candidate)
+            for candidate in queue_candidates
+        }
+        if len(validated_candidates) != 1:
+            raise ValueError("conflicting repair queue roots")
+        validated_queue_root = validated_candidates.pop()
 
     queue_requests = (
-        repair_requests.iter_repair_requests(queue_root, marker_dir=False) if queue_root is not None else []
+        repair_requests.iter_repair_requests(validated_queue_root)
+        if validated_queue_root is not None
+        else []
     )
     queue_decisions = (
-        repair_requests.iter_repair_decisions(queue_root, marker_dir=False) if queue_root is not None else []
+        repair_requests.iter_repair_decisions(validated_queue_root)
+        if validated_queue_root is not None
+        else []
     )
     decision_history = _decision_history_by_request(queue_decisions)
 
@@ -542,10 +567,71 @@ def project_repair_custody(
     active_request_ids = sorted(
         request["request_id"] for request in requests if request["active"] and request["request_id"]
     )
+    if validated_queue_root is not None:
+        for record in repair_requests.iter_repair_attempts(validated_queue_root):
+            request_id = _as_text(record.get("request_id"))
+            record_blocker_id = _as_text(record.get("blocker_id"))
+            if request_id not in active_request_ids:
+                continue
+            if blocker_id and record_blocker_id != blocker_id:
+                continue
+            attempts.append(
+                _build_attempt_record(
+                    attempt_id=_as_text(record.get("attempt_id")),
+                    session=target_session,
+                    source="repair_queue_dispatch_attempt",
+                    path=_as_text(record.get("_path")),
+                    blocker_id=record_blocker_id,
+                    fingerprint=fingerprint,
+                    request_id=request_id,
+                    state=ATTEMPT_STATE_RUNNING,
+                    outcome=REPAIRING,
+                    recorded_at=_as_text(record.get("created_at")),
+                    raw=record,
+                )
+            )
+    active_claim_request_ids: list[str] = []
+    if validated_queue_root is not None and blocker_id:
+        claim_path = repair_requests.active_repair_claim_lock_dir(
+            validated_queue_root, blocker_id
+        ) / "owner.json"
+        claim_owner = load_json(claim_path, default={})
+        if isinstance(claim_owner, Mapping):
+            claim_request_id = _as_text(claim_owner.get("request_id"))
+            if claim_request_id:
+                active_claim_request_ids.append(claim_request_id)
+    attempts = [
+        attempt
+        for attempt in attempts
+        if _attempt_has_current_custody(
+            attempt,
+            active_request_ids=set(active_request_ids),
+            blocker_id=blocker_id or "",
+        )
+    ]
+    attempted_request_ids = {
+        attempt["request_id"] for attempt in attempts if attempt["request_id"]
+    }
+    accepted_unclaimed_request_ids = sorted(
+        request_id
+        for request_id in active_request_ids
+        if request_id not in attempted_request_ids
+        and request_id not in active_claim_request_ids
+    )
     request_status_counts: dict[str, int] = {}
     for request in requests:
         status = str(request["status"])
         request_status_counts[status] = int(request_status_counts.get(status, 0)) + 1
+    claim_retry_counts = {
+        request_id: sum(item["decision"] == "claim_retry" for item in history)
+        for request_id, history in decision_history.items()
+        if any(item["decision"] == "claim_retry" for item in history)
+    }
+    claim_alert_request_ids = sorted(
+        request_id
+        for request_id, history in decision_history.items()
+        if any(item["decision"] == "claim_alert" for item in history)
+    )
     terminal_outcomes = sorted(
         {
             attempt["outcome"]
@@ -554,8 +640,14 @@ def project_repair_custody(
         }
     )
 
-    has_active_attempt = any(not attempt["terminal"] for attempt in attempts)
-    if has_active_attempt:
+    has_active_custody = durable_repair_active(
+        {
+            "attempts": attempts,
+            "active_request_ids": active_request_ids,
+            "active_claim_request_ids": active_claim_request_ids,
+        }
+    )
+    if has_active_custody:
         bucket = CUSTODY_BUCKET_REPAIRING
     elif active_request_ids:
         bucket = CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
@@ -569,15 +661,52 @@ def project_repair_custody(
         else:
             bucket = CUSTODY_BUCKET_BROKEN_SUPERFIXER
 
+    failure_payload = _as_mapping(plan_payload.get("latest_failure"))
+    failure_kind = _as_text(failure_payload.get("kind"))
+    max_attempts = 1 if failure_kind in {
+        "quality_gate_blocked",
+        "deterministic_quality_blocked",
+    } else 3
+    used_attempts = len(attempts)
+    remaining_attempts = max(0, max_attempts - used_attempts)
+    evidence_cursor = _as_mapping(failure_payload.get("evidence_cursor"))
+    if not evidence_cursor:
+        evidence_cursor = _as_mapping(
+            _as_mapping(failure_payload.get("metadata")).get("evidence_cursor")
+        )
+
     projection: dict[str, Any] = {
         "blocker_id": blocker_id or "",
         "blocker_fingerprint": fingerprint,
         "custody_bucket": bucket,
         "current_state": _as_text(plan_payload.get("current_state")),
         "retry_strategy": _as_text(_as_mapping(plan_payload.get("resume_cursor")).get("retry_strategy")),
-        "failure_kind": _as_text(_as_mapping(plan_payload.get("latest_failure")).get("kind")),
+        "failure_kind": failure_kind,
         "request_status_counts": request_status_counts,
+        "claim_retry_counts": claim_retry_counts,
+        "claim_alert_request_ids": claim_alert_request_ids,
         "active_request_ids": active_request_ids,
+        "active_claim_request_ids": active_claim_request_ids,
+        "accepted_unclaimed_request_ids": accepted_unclaimed_request_ids,
+        "request_count": len(requests),
+        "claim_count": len(active_claim_request_ids),
+        "attempt_count": len(attempts),
+        "retry_budget": {
+            "max_attempts": max_attempts,
+            "used_attempts": used_attempts,
+            "remaining_attempts": remaining_attempts,
+            "retryable": bool(accepted_unclaimed_request_ids and remaining_attempts > 0),
+            "alert_required": bool(accepted_unclaimed_request_ids and remaining_attempts == 0),
+            "claim_max_retries": 3,
+            "claim_retries_used": max(
+                (claim_retry_counts.get(request_id, 0) for request_id in active_request_ids),
+                default=0,
+            ),
+            "claim_alerted": any(
+                request_id in claim_alert_request_ids for request_id in active_request_ids
+            ),
+        },
+        "evidence_cursor": dict(evidence_cursor),
         "terminal_outcomes": terminal_outcomes,
         "requests": requests,
         "attempts": attempts,
@@ -605,7 +734,10 @@ def _custody_bucket_from_canonical_state(
 ) -> RepairCustodyBucket:
     state = canonical_run_state.canonical_state
     if state is CanonicalState.REPAIRING:
-        return CUSTODY_BUCKET_REPAIRING
+        # The resolver's REPAIRING state can be derived from an advisory legacy
+        # sidecar.  Only a current, durable attempt projected above owns repair
+        # custody; canonical classification alone must never advertise a launch.
+        return CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
     if state in {
         CanonicalState.REAL_IMPLEMENTATION_BLOCK,
         CanonicalState.RETRYABLE_EXECUTION_BLOCK,
@@ -835,10 +967,22 @@ def _classify_repair_dispatch_canonical(
             failure_kind=failure_kind,
         )
     if state is CanonicalState.REPAIRING:
+        if durable_repair_active(custody):
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_REPAIRING,
+                dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+                rationale=("resolver enforcement: canonical repairing state with durable custody",),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
         return _make_dispatch_decision(
-            decision=DISPATCH_DECISION_REPAIRING,
+            decision=DISPATCH_DECISION_NO_ACTION,
             dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-            rationale=("resolver enforcement: canonical repairing state",),
+            rationale=("resolver repairing label has no durable repair custody",),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -2511,6 +2655,70 @@ def _collect_custody_attempts(
     return attempts
 
 
+def _attempt_has_current_custody(
+    attempt: Mapping[str, Any],
+    *,
+    active_request_ids: set[str],
+    blocker_id: str,
+) -> bool:
+    """Reject identity-free legacy attempts that cannot own the current target."""
+
+    request_id = _as_text(attempt.get("request_id"))
+    if request_id:
+        return request_id in active_request_ids
+    raw = _as_mapping(attempt.get("raw"))
+    raw_blocker_id = _as_text(raw.get("blocker_id"))
+    if blocker_id and raw_blocker_id:
+        return raw_blocker_id == blocker_id
+    signature = (
+        raw.get("problem_signature")
+        or raw.get("current_signature")
+        or _as_mapping(raw.get("current_recurrence")).get("problem_signature")
+    )
+    return bool(signature) and _problem_signature_matches_fingerprint(
+        signature, _as_mapping(attempt.get("blocker_fingerprint"))
+    )
+
+
+def durable_repair_active(custody: Mapping[str, Any] | None) -> bool:
+    """Return true only for durable ownership/launch evidence, never labels.
+
+    A custody bucket, resolver classification, or legacy progress sidecar is a
+    derived observation.  Active repair requires either a blocker-scoped claim
+    tied to a current request or a target-matched nonterminal attempt with an
+    immutable identity and source path.
+    """
+
+    payload = _as_mapping(custody)
+    active_request_ids = {
+        _as_text(value)
+        for value in _as_list(payload.get("active_request_ids"))
+        if _as_text(value)
+    }
+    active_claim_ids = {
+        _as_text(value)
+        for value in _as_list(payload.get("active_claim_request_ids"))
+        if _as_text(value)
+    }
+    if active_request_ids & active_claim_ids:
+        return True
+    for value in _as_list(payload.get("attempts")):
+        attempt = _as_mapping(value)
+        if attempt.get("terminal") is not False:
+            continue
+        if not _as_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
+            continue
+        request_id = _as_text(attempt.get("request_id"))
+        if request_id and request_id in active_request_ids:
+            return True
+        if (
+            _as_text(attempt.get("source")) == "repair_queue_dispatch_attempt"
+            and _as_text(attempt.get("blocker_id"))
+        ):
+            return True
+    return False
+
+
 def _collect_snapshot_request_ids(
     repair_data_dir: str | Path | None,
 ) -> set[tuple[str, str]]:
@@ -3046,6 +3254,7 @@ __all__ = [
     "blocker_id_for_fingerprint",
     "build_verification_record",
     "classify_repair_dispatch",
+    "durable_repair_active",
     "classify_verification_outcome",
     "cleanup_repair_data_retention",
     "compute_deadline",

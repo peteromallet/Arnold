@@ -4730,14 +4730,24 @@ def _payload_for(name):
 def _watchdog_is_repairing(evidence):
     if not isinstance(evidence, dict) or evidence.get("status") != "present":
         return False
-    action = str(evidence.get("action") or "")
-    status = str(evidence.get("watchdog_status") or "")
-    return (
-        action in {{"repair", "meta_repair"}}
-        or status in {{"repair_dispatched", "repairing", "dispatched"}}
-        or "repair" in action
-        or "repair" in status
-    )
+    custody = evidence.get("repair_custody")
+    if not isinstance(custody, dict):
+        return False
+    active_requests = {{str(value) for value in custody.get("active_request_ids", []) if str(value)}}
+    active_claims = {{str(value) for value in custody.get("active_claim_request_ids", []) if str(value)}}
+    if active_requests & active_claims:
+        return True
+    for attempt in custody.get("attempts", []):
+        if not isinstance(attempt, dict) or attempt.get("terminal") is not False:
+            continue
+        if not attempt.get("attempt_id") or not attempt.get("path"):
+            continue
+        request_id = str(attempt.get("request_id") or "")
+        if request_id and request_id in active_requests:
+            return True
+        if attempt.get("source") == "repair_queue_dispatch_attempt" and attempt.get("blocker_id"):
+            return True
+    return False
 
 def _should_be_running(payload):
     status = payload.get("status")

@@ -576,10 +576,30 @@ def test_derive_recovery_view_repairable_with_custody() -> None:
     assert view.observations[0].active_request_count == 1
 
 
-def test_derive_recovery_view_repairing() -> None:
-    """Repairing custody yields repairing status."""
+def test_derive_recovery_view_rejects_bucket_only_repairing() -> None:
+    """A repairing label with no durable owner/attempt is only advisory."""
     view = derive_megaplan_recovery_view(
         repair_custody=_r_custody(custody_bucket="repairing", active_request_ids=[])
+    )
+    assert view.status == "healthy"
+    assert view.recovery_needed is False
+    assert any(d.code == "unsupported_repairing_custody" for d in view.diagnostics)
+
+
+def test_derive_recovery_view_repairing_with_durable_attempt() -> None:
+    """A linked nonterminal durable attempt yields repairing status."""
+    view = derive_megaplan_recovery_view(
+        repair_custody=_r_custody(
+            custody_bucket="repairing",
+            active_request_ids=["req-1"],
+            attempts=[{
+                "attempt_id": "attempt-1",
+                "request_id": "req-1",
+                "source": "repair_queue_dispatch_attempt",
+                "path": "/durable/attempt-1.json",
+                "terminal": False,
+            }],
+        )
     )
     assert view.status == "repairing"
     assert view.recovery_needed is True

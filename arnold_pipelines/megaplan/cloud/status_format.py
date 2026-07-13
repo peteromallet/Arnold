@@ -163,6 +163,10 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
             out.append(f"      latest_activity: {entry['latest_activity']}")
         if entry.get("operator_next"):
             out.append(f"      operator_next: {entry['operator_next']}")
+        projection_degraded = entry.get("repair_projection_degraded")
+        if isinstance(projection_degraded, Mapping):
+            reason = projection_degraded.get("reason") or "canonical repair projection unavailable"
+            out.append(f"      repair_projection: degraded — {reason}")
         repair_summary = _repair_dispatch_summary(entry)
         if repair_summary:
             out.append(f"      repair_dispatch: {repair_summary}")
