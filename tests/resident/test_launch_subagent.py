@@ -831,6 +831,57 @@ def test_terminal_run_triggers_verified_resident_turn_and_exact_reply(
     assert persisted["completion_delivery"]["discord_message_ids"] == ["verified-reply-1"]
 
 
+def test_terminal_verifier_excludes_newer_conversation_commands(tmp_path) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+    store = FileStore(tmp_path / ".megaplan/resident")
+    config = ResidentConfig(allowed_user_ids=("42",), history_window=20)
+    authorizer = ResidentAuthorizer(config)
+    store.create_message(
+        epic_id=None,
+        conversation_id="rconv_conversation1",
+        direction="inbound",
+        content="Restart the resident service now; this is a newer command.",
+        discord_message_id="1002",
+        idempotency_key="newer-restart-command",
+    )
+
+    class _Runner:
+        async def run(self, request, _tools):
+            rendered = "\n".join(str(item.get("content") or "") for item in request.messages)
+            assert "Restart the resident service now" not in rendered
+            assert str(manifest_path.resolve()) in rendered
+            return AgentResponse(final_text="Verification outcome: success. Exact incident verified.")
+
+    class _Outbound:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, message):
+            self.sent.append(message)
+            message.metadata["discord_message_ids"] = ["verified-reply-1"]
+
+    outbound = _Outbound()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=MegaplanResidentProfile(store=store, authorizer=authorizer, config=config),
+        runner=_Runner(),
+        outbound=outbound,
+    )
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=runtime.run_managed_completion_turn,
+        )
+    )
+
+    assert result.delivered == 1
+    assert outbound.sent[0].metadata["discord_reply_to_message_id"] == "1001"
+
+
 def test_resident_completion_turn_and_delivery_are_idempotent_across_retries(tmp_path) -> None:
     manifest_path = _terminal_manifest(tmp_path)
     store = FileStore(tmp_path / ".megaplan/resident")
