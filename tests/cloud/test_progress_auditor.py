@@ -31,6 +31,15 @@ def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
 
 
+def test_installed_auditor_trampoline_honors_deployed_source_root() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    hot_env_at = text.index(". /workspace/.cloud-hot-env")
+    source_root_at = text.index('AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-')
+    reexec_at = text.index('exec "$SOURCE_AUDITOR" "$@"')
+    assert hot_env_at < source_root_at < reexec_at
+    assert 'CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold' in text
+
+
 def _systemd_file(name: str) -> str:
     return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
@@ -285,6 +294,9 @@ def _run_gather_program(
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(tmp_path / ".megaplan" / "repair-queue")
+    # Synthetic sessions may intentionally reuse a production incident name;
+    # never let live meta-run evidence alter the deterministic fixture.
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / ".megaplan" / "meta-runs")
     if extra_env:
         env.update(extra_env)
 
