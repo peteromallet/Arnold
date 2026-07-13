@@ -6458,7 +6458,7 @@ repair_unhealthy_session() {
 
 canonical_direct_relaunch() {
   local report_items="$1" session="$2" workspace="$3" remote_spec="$4" reason="$5"
-  local marker run_kind plan_name relaunch_command quoted_command safe launch_script
+  local marker run_kind plan_name relaunch_command quoted_command quoted_command_shell safe launch_script
   marker="$(session_marker_path "$session")"
   run_kind="$(json_field "$marker" run_kind 2>/dev/null || true)"
   plan_name="$(json_field "$marker" plan_name 2>/dev/null || true)"
@@ -6470,6 +6470,7 @@ canonical_direct_relaunch() {
     report_item "$report_items" "$session" "restart" "restart_failed" "direct_relaunch_required; unable to resolve command; cause=$reason" "$workspace" "$remote_spec"
     return 1
   }
+  printf -v quoted_command_shell '%q' "$quoted_command"
   safe="$(safe_name "$session")"
   launch_script="$(mktemp)"
   cat > "$launch_script" <<EOF
@@ -6480,7 +6481,11 @@ export ARNOLD_SUPERVISE_SESSION=$(printf '%q' "$session")
 export ARNOLD_SUPERVISE_WORKSPACE=$(printf '%q' "$workspace")
 export ARNOLD_SUPERVISE_REMOTE_SPEC=$(printf '%q' "$remote_spec")
 export ARNOLD_SUPERVISE_RUN_KIND=$(printf '%q' "$run_kind")
-exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
+export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "$REPAIR_QUEUE_ROOT")
+export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
+export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
+export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
+exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $quoted_command_shell
 EOF
   chmod +x "$launch_script"
   if ! tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'"; then
@@ -7680,6 +7685,10 @@ export ARNOLD_SUPERVISE_SESSION=$(printf '%q' "$session")
 export ARNOLD_SUPERVISE_WORKSPACE=$(printf '%q' "$workspace")
 export ARNOLD_SUPERVISE_REMOTE_SPEC=$(printf '%q' "$remote_spec")
 export ARNOLD_SUPERVISE_RUN_KIND=$(printf '%q' "$run_kind")
+export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "$REPAIR_QUEUE_ROOT")
+export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
+export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
+export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
 exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $quoted_command_shell
 EOF
   chmod +x "$launch_script"

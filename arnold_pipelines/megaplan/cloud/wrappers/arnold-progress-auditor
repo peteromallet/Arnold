@@ -592,8 +592,12 @@ worklist, gather_dir, window_h, arnold_src, stall_summary = sys.argv[1:6]
 window = float(window_h)
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=window)
-sys.path.insert(0, arnold_src)
 sys.path.insert(0, str(pathlib.Path.cwd()))
+# The deployed source must win over the caller's working directory.  Audits
+# are often invoked from /workspace/arnold while a corrective runtime is
+# selected through MEGAPLAN_AUDIT_ARNOLD_SRC; reversing these inserts silently
+# mixes the old Python modules with the new wrapper.
+sys.path.insert(0, arnold_src)
 
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
@@ -3368,8 +3372,7 @@ def _resolve_current_target_evidence(session, *, workspace_root, repo_root):
             session,
             marker_dir=marker_dir,
             repair_data_dir=repair_data_dir,
-            repo_root=repo_root,
-            base_branch="main",
+            workspace_hint=workspace_root,
         )
     except Exception as exc:
         return _current_target_fallback(

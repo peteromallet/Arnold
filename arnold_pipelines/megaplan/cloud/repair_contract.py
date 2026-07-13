@@ -468,6 +468,7 @@ def project_repair_custody(
         _as_text(target_current_refs.get("current_plan_name")),
         _as_text(target_current_refs.get("chain_current_plan_name")),
         _as_text(target_current_refs.get("marker_plan_name")),
+        _as_text(plan_payload.get("name")),
     )
 
     requests: list[RepairCustodyRequestRecord] = []
@@ -501,7 +502,10 @@ def project_repair_custody(
         signature_failure_kind = _as_text(problem_signature.get("failure_kind"))
         signature_phase = _as_text(problem_signature.get("phase_or_step"))
         signature_blocked_task_id = _as_text(problem_signature.get("blocked_task_id"))
-        if signature_failure_kind or signature_phase or signature_blocked_task_id:
+        request_has_typed_blocker_identity = bool(
+            signature_failure_kind or signature_phase or signature_blocked_task_id
+        )
+        if request_has_typed_blocker_identity:
             request_plan_state["latest_failure"] = {
                 "kind": signature_failure_kind,
                 "phase": signature_phase,
@@ -513,9 +517,18 @@ def project_repair_custody(
             problem_signature=problem_signature,
         )
         request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
-        if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
+        if (
+            request_has_typed_blocker_identity
+            and blocker_id
+            and request_blocker_id
+            and request_blocker_id != blocker_id
+        ):
             continue
-        if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
+        if (
+            current_plan_identity
+            and request_plan_identity
+            and request_plan_identity != current_plan_identity
+        ):
             continue
         if blocker_id is None and request_blocker_id and blocker_id != request_blocker_id:
             blocker_id = request_blocker_id
