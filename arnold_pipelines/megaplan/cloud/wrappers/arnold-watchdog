@@ -1940,6 +1940,77 @@ ensure_install_or_repair() {
   codex_repair_editable_install "$reason"
 }
 
+write_watchdog_observation_error() {
+  local reason="$1"
+  local status_dir="${2:-$STATUS_DIR}"
+  python3 - "$status_dir" "$reason" <<'PY' 2>/dev/null || true
+import datetime
+import json
+import pathlib
+import sys
+
+status_dir = pathlib.Path(sys.argv[1])
+reason = sys.argv[2]
+status_dir.mkdir(parents=True, exist_ok=True)
+path = status_dir / "cloud-status.write-error.json"
+payload = {
+    "error": "watchdog observation bootstrap failed; watchdog report may be stale",
+    "reason": reason,
+    "at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+}
+path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+watchdog_observation_runtime_check() {
+  local trigger_bin="${REPAIR_TRIGGER_BIN:-}"
+  local output rc
+  output="$(mktemp)"
+  if ! PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - <<'PY' >"$output" 2>&1; then
+import yaml  # noqa: F401
+import arnold_pipelines.megaplan.cloud.cli  # noqa: F401
+import arnold_pipelines.megaplan.cloud.status_snapshot  # noqa: F401
+PY
+    cat "$output"
+    rm -f "$output"
+    return 1
+  fi
+  if [[ -n "$trigger_bin" && -x "$trigger_bin" ]]; then
+    if ! PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$trigger_bin" --help > /dev/null 2>"$output"; then
+      cat "$output"
+      rm -f "$output"
+      return 1
+    fi
+  fi
+  rm -f "$output"
+  return 0
+}
+
+bootstrap_watchdog_observation() {
+  local report_items="$1"
+  local reason=""
+  WATCHDOG_BOOTSTRAP_RECOVERED=0
+  if reason="$(watchdog_observation_runtime_check 2>&1)"; then
+    return 0
+  fi
+  log "watchdog observation bootstrap invalid; attempting editable sync/refresh recovery"
+  report_item "$report_items" "watchdog" "observe" "observation_runtime_invalid" "watchdog observation runtime invalid; attempting editable sync/refresh recovery" "$SRC_DIR" "$SYNC_BRANCH"
+  if sync_editable_source_branch "$report_items"; then
+    WATCHDOG_BOOTSTRAP_RECOVERED=1
+    if reason="$(watchdog_observation_runtime_check 2>&1)"; then
+      log "watchdog observation bootstrap recovered after editable sync/refresh"
+      report_item "$report_items" "watchdog" "observe" "observation_runtime_recovered" "watchdog observation runtime recovered after editable sync/refresh" "$SRC_DIR" "$SYNC_BRANCH"
+      return 0
+    fi
+  fi
+  reason="$(printf '%s' "$reason" | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g' | sed 's/^ //; s/ $//')"
+  [[ -n "$reason" ]] || reason="watchdog observation runtime check failed"
+  log "watchdog observation bootstrap failed after recovery: $reason"
+  report_item "$report_items" "watchdog" "observe" "observation_blind" "watchdog observation bootstrap failed after recovery: $reason" "$SRC_DIR" "$SYNC_BRANCH"
+  write_watchdog_observation_error "$reason"
+  return 1
+}
+
 matching_runner_process_alive() {
   local workspace="$1"
   local remote_spec="$2"
@@ -2192,6 +2263,33 @@ session_health_status() {
   fi
 
   echo "stopped"
+}
+
+verify_relaunch_health() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local attempts="${6:-15}"
+  local health="stopped"
+  local attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+    case "$health" in
+      alive|awaiting_pr_merge)
+        printf '%s\n' "$health"
+        return 0
+        ;;
+      chain_log_failure|retrying_failure)
+        printf '%s\n' "$health"
+        return 1
+        ;;
+    esac
+    sleep 1
+  done
+  printf '%s\n' "$health"
+  return 1
 }
 
 repair_trigger_scan() {
@@ -7435,8 +7533,21 @@ EOF
   log "relaunching stopped session=$session kind=$run_kind spec=$remote_spec"
   tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'" || {
     if tmux has-session -t "$session" 2>/dev/null; then
-      log "relaunch raced with existing tmux session; treating as relaunched: $session"
-      report_item "$report_items" "$session" "restart" "restarted" "session exists after relaunch race" "$workspace" "$remote_spec"
+      local race_health
+      if ! declare -F verify_relaunch_health >/dev/null 2>&1; then
+        race_health="modular_invocation_unverified"
+        log "relaunch raced with existing tmux session; verifier unavailable in modular invocation session=$session"
+        report_item "$report_items" "$session" "restart" "restarted" "session exists after relaunch race; health verifier unavailable in modular invocation" "$workspace" "$remote_spec"
+      elif race_health="$(verify_relaunch_health "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"; then
+        log "relaunch raced with existing tmux session; verified health=$race_health session=$session"
+        report_item "$report_items" "$session" "restart" "restarted" "session exists after relaunch race" "$workspace" "$remote_spec"
+      else
+        log "relaunch raced with existing tmux session but substantive launch failed health=$race_health session=$session"
+        report_item "$report_items" "$session" "restart" "restart_failed" "session exists after relaunch race but launch health=$race_health" "$workspace" "$remote_spec"
+        dispatch_kimi_repair "$session" "$workspace" "$remote_spec" || true
+        rm -f "$launch_script"
+        return 1
+      fi
       rm -f "$launch_script"
       return 0
     fi
@@ -7445,23 +7556,51 @@ EOF
     rm -f "$launch_script"
     return 1
   }
-  report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
+  local verified_health
+  if ! declare -F verify_relaunch_health >/dev/null 2>&1; then
+    # launch_chain_tick is extracted in isolation by focused shell contract
+    # tests. The deployed wrapper always defines the verifier above.
+    verified_health="modular_invocation_unverified"
+    report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
+    return 0
+  elif verified_health="$(verify_relaunch_health "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"; then
+    log "relaunch ground-truth verification passed session=$session health=$verified_health"
+    report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
+    return 0
+  fi
+  log "relaunch did not produce a healthy runner session=$session health=$verified_health"
+  report_item "$report_items" "$session" "restart" "restart_failed" "tmux relaunch did not produce a healthy runner; health=$verified_health" "$workspace" "$remote_spec"
+  emit_watchdog_incident_bridge_event "repair_failure" "$session" "$workspace" "$remote_spec" "mechanical relaunch failed ground-truth verification: $verified_health" "$verified_health" "l1_repair"
+  if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+    report_item "$report_items" "$session" "repair" "repair_dispatched" "repair loop dispatched after unverified relaunch; health=$verified_health" "$workspace" "$remote_spec"
+  fi
+  return 1
 }
 
 scan_once_unlocked() {
   log "scan start marker_dir=$MARKER_DIR"
   maybe_reexec_updated_watchdog
+  local report_items
+  report_items="$(mktemp)"
+  # Validate the observation/runtime path before any repair-trigger or status
+  # scan. If the watchdog cannot import its own cloud modules, never continue
+  # silently on a stale report.
+  write_watchdog_heartbeat
+  if ! bootstrap_watchdog_observation "$report_items"; then
+    emit_report "$report_items" 0
+    rm -f "$report_items"
+    return 1
+  fi
   # P2: heartbeat + an early snapshot write BEFORE the heavy/stall-prone work
   # (repair_trigger_scan, git sync, pip refresh). If anything below hangs, the
   # cache is at most ~one sweep stale instead of frozen indefinitely. The early
   # write uses last sweep's report and is "notrack" (best-effort, not counted
   # toward escalation); the authoritative write at sweep end still counts.
-  write_watchdog_heartbeat
   write_status_snapshot "" "" "" notrack
-  local report_items
-  report_items="$(mktemp)"
   repair_trigger_scan
-  sync_editable_source_branch "$report_items" || true
+  if [[ "${WATCHDOG_BOOTSTRAP_RECOVERED:-0}" != "1" ]]; then
+    sync_editable_source_branch "$report_items" || true
+  fi
   maybe_reexec_updated_watchdog
   while IFS=$'\t' read -r adopted_session adopted_workspace adopted_remote_spec adopted_kind adopted_plan_name; do
     [[ -n "$adopted_session" ]] || continue

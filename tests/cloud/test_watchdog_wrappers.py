@@ -4696,6 +4696,56 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     assert 'bash -lc "$quoted_command"' not in text
 
 
+def test_watchdog_relaunch_requires_substantive_health_before_reporting_restart() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert "verify_relaunch_health()" in text
+    assert 'verified_health="$(verify_relaunch_health ' in text
+    assert '"restart_failed" "tmux relaunch did not produce a healthy runner' in text
+    assert 'dispatch_kimi_repair "$session" "$workspace" "$remote_spec"' in text
+
+
+def test_verify_relaunch_health_rejects_tmux_only_false_success() -> None:
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("verify_relaunch_health"),
+            """
+checks=0
+session_health_status() {
+  checks=$((checks + 1))
+  printf '%s\n' stopped
+}
+sleep() { :; }
+verify_relaunch_health demo /workspace/demo /workspace/demo/chain.yaml chain '' 2
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 1
+    assert result.stdout.strip() == "stopped"
+
+
+def test_verify_relaunch_health_fails_fast_on_launch_log_failure() -> None:
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("verify_relaunch_health"),
+            """
+session_health_status() { printf '%s\n' chain_log_failure; }
+sleep() { printf '%s\n' unexpected-sleep >&2; }
+verify_relaunch_health demo /workspace/demo /workspace/demo/chain.yaml chain '' 15
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 1
+    assert result.stdout.strip() == "chain_log_failure"
+    assert "unexpected-sleep" not in result.stderr
+
+
 def test_supervise_exhaustion_queues_repair_request() -> None:
     text = _wrapper("arnold-supervise")
 
@@ -9663,11 +9713,12 @@ def test_chain_health_status_is_wired_into_launch_chain_tick() -> None:
     assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "${CHAIN_HEALTH_STATUS:-chain_issue}:' in text
 
 
-def test_watchdog_scan_once_runs_repair_trigger_before_marker_scan() -> None:
-    text = _wrapper("arnold-watchdog")
+def test_watchdog_scan_once_bootstraps_observation_before_repair_trigger() -> None:
+    text = _extract_wrapper_function_until("scan_once_unlocked", "scan_once")
 
-    assert "repair_trigger_scan()" in text
-    assert text.index("repair_trigger_scan") < text.index('sync_editable_source_branch "$report_items" || true')
+    assert 'bootstrap_watchdog_observation "$report_items"' in text
+    assert "repair_trigger_scan" in text
+    assert text.index('if ! bootstrap_watchdog_observation "$report_items"; then') < text.index("repair_trigger_scan")
 
 
 def test_repair_trigger_path_unit_fires_immediate_error_queue_scan() -> None:
@@ -9694,32 +9745,70 @@ def test_watchdog_scan_once_tolerates_repair_trigger_observe_only_without_system
 
     script = "\n\n".join(
         [
+            _extract_wrapper_function_until("write_watchdog_observation_error", "watchdog_observation_runtime_check"),
+            _extract_wrapper_function("bootstrap_watchdog_observation"),
             _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
             f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
+            f"STATUS_DIR={str(tmp_path / 'status')!r}",
             """
 log() { printf '%s\n' "$*" >> "$ORDER_PATH"; }
-maybe_reexec_updated_watchdog() { :; }
+watchdog_observation_runtime_check() { return 0; }
 sync_editable_source_branch() { printf '%s\n' sync >> "$ORDER_PATH"; }
-adopt_unmarked_tmux_sessions() { :; }
-emit_report() { printf '%s\n' "emit:$2" >> "$ORDER_PATH"; }
-reap_stale_repairs() { printf '%s\n' reap >> "$ORDER_PATH"; }
+report_item() { :; }
 """.strip(),
             f"ORDER_PATH={str(order_path)!r}",
-            "scan_once",
+            'report_items="$(mktemp)"',
+            'bootstrap_watchdog_observation "$report_items"',
+            'printf "%s\n" bootstrap >> "$ORDER_PATH"',
+            "repair_trigger_scan",
+            'sync_editable_source_branch "$report_items"',
         ]
     )
 
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     lines = order_path.read_text(encoding="utf-8").splitlines()
+    assert "bootstrap" in lines
     assert any("repair-trigger {\"event\":\"repair_trigger\",\"status\":\"busy\"}" in line for line in lines)
     assert lines.index("sync") > next(
         idx for idx, line in enumerate(lines) if "repair-trigger" in line
     )
-    assert "emit:0" in lines
+
+
+def test_watchdog_scan_once_fails_closed_when_observation_bootstrap_stays_blind(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "missing-markers"
+    order_path = tmp_path / "order.log"
+    status_dir = tmp_path / "status"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("write_watchdog_observation_error", "watchdog_observation_runtime_check"),
+            _extract_wrapper_function("bootstrap_watchdog_observation"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"STATUS_DIR={str(status_dir)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$ORDER_PATH"; }
+watchdog_observation_runtime_check() { printf '%s\n' broken >&2; return 1; }
+sync_editable_source_branch() { printf '%s\n' sync >> "$ORDER_PATH"; return 1; }
+report_item() { printf '%s\n' "report:$4" >> "$ORDER_PATH"; }
+SRC_DIR=/workspace/arnold
+SYNC_BRANCH=editible-install
+""".strip(),
+            f"ORDER_PATH={str(order_path)!r}",
+            'report_items="$(mktemp)"',
+            'bootstrap_watchdog_observation "$report_items"',
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 1, result.stderr
+    lines = order_path.read_text(encoding="utf-8").splitlines()
+    assert "report:observation_runtime_invalid" in lines
+    assert "report:observation_blind" in lines
+    error_payload = json.loads((status_dir / "cloud-status.write-error.json").read_text(encoding="utf-8"))
+    assert "observation bootstrap failed" in error_payload["error"]
 
 
 def test_watchdog_session_health_status_treats_live_worker_process_as_alive_without_tmux(tmp_path: Path) -> None:
