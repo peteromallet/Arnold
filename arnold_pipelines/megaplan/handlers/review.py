@@ -1587,6 +1587,45 @@ def _persist_review_done_transition_decision(
     if not isinstance(invocation_id, str) or not invocation_id:
         invocation_id = review_evidence.get("invocation_id")
     iteration = state.get("iteration")
+
+    # ── S2 T11: Build checked evidence refs and authority record refs ─────
+    evidence_refs = _review_done_evidence_refs(review_evidence)
+    checked_evidence_refs: tuple[str, ...] = tuple(
+        f"evidence:{ref.kind}" for ref in evidence_refs
+    )
+    # Gather execution authority decisions for authority_record_refs
+    authority_record_refs: tuple[str, ...] = ()
+    if project_dir and str(project_dir):
+        try:
+            from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                effective_execute_completed_task_ids,
+            )
+            finalize_path = plan_dir / "finalize.json"
+            if finalize_path.exists():
+                finalize_data = read_json(finalize_path)
+                if isinstance(finalize_data, dict):
+                    tasks = [
+                        t for t in finalize_data.get("tasks", []) or []
+                        if isinstance(t, dict) and (t.get("id") or t.get("task_id"))
+                    ]
+                    if tasks:
+                        decisions: dict = {}
+                        effective_execute_completed_task_ids(
+                            tasks,
+                            plan_dir=plan_dir,
+                            project_dir=project_dir if str(project_dir) else None,
+                            state=state,
+                            decisions=decisions,
+                        )
+                        if decisions:
+                            authority_record_refs = tuple(
+                                f"authority:execute:{tid}"
+                                for tid in sorted(decisions.keys())
+                            )
+        except Exception:
+            pass
+    # ──────────────────────────────────────────────────────────────────────
+
     decision = TransitionDecision(
         decision_id=f"review-done-{invocation_id or iteration or 'unknown'}",
         subject=f"plan:{state.get('name', '')}",
@@ -1594,7 +1633,7 @@ def _persist_review_done_transition_decision(
         to_state=next_state,
         action="allow_transition" if policy_decision.allowed else "deny_transition",
         status="allowed" if policy_decision.allowed else "denied",
-        evidence=_review_done_evidence_refs(review_evidence),
+        evidence=evidence_refs,
         would_block_reasons=policy_decision.reasons,
         invocation_id=invocation_id if isinstance(invocation_id, str) else None,
         phase="review",
@@ -1607,6 +1646,9 @@ def _persist_review_done_transition_decision(
             "policy": "review_done",
             "advisory": list(policy_decision.advisory),
         },
+        boundary_id="megaplan.review_done",
+        checked_evidence_refs=checked_evidence_refs,
+        authority_record_refs=authority_record_refs,
     )
     TransitionWriter.write_review_done(
         plan_dir,
