@@ -91,6 +91,10 @@ deployed source; source and installed hashes matched after deployment.
 - The final L3-to-L2 custody matrix passed 9/9, covering stable typed identity,
   queue claim and immutable launch attempt, authorization fencing, duplicate
   suppression, already-held claims, and stale-target terminalization.
+- The final combined request/auditor/contract/custody/recovery suite passed
+  213/213 with inherited Discord context deliberately removed only for legacy
+  round-trip fixtures. The malformed/ambiguous inbound-provenance launch guard
+  passed independently and stops before process creation.
 - C1's approved review reported 897 scoped review tests and 122 Run Authority /
   launch-safety tests passing. Its full-suite shadow backstop retained the same
   13 baseline collection failures with `newly_failing=[]`; no gate was weakened.
@@ -112,6 +116,22 @@ deployed source; source and installed hashes matched after deployment.
   handoff instead of erasing the repair churn. The canonical publication step
   then appended incident event 457 (`github_sync.issue_published`) and opened
   GitHub issue 214 for `problem-3bc7a5eaa27e`.
+- Final install-sync event 348 records a successful editable deployment of
+  `43efef0058`; the global Python import resolves to the corrective worktree and
+  the installed repair-trigger SHA-256 exactly matches source. The subsequent
+  supported watchdog audit sweep exited successfully using that runtime.
+- The post-deploy sweep briefly observed S2 at its attempt threshold while the
+  same canonical runner was still active; process-authoritative verification
+  then showed PID `2009128` live at gate attempt 21 with fresh `llm_stream`
+  activity at `2026-07-13T16:37:09Z`. C1 remains `done`, the chain retains one
+  completed milestone, and S2 remains the same current plan—no duplicate chain,
+  state hand-advance, or guard relaxation occurred.
+- The marker's Discord-origin fields still match the immutable inbound resident
+  envelope. The marker adds only the durable root-run link; it does not replace
+  Discord message, reply, conversation, custody, correlation, channel, or user
+  provenance. Current PID `2009128` is a watchdog-managed chain continuation,
+  not a new resident child; repair/meta-repair wrappers independently validate
+  and inherit the marker envelope before any managed child launch.
 
 ## Remaining operational caveat
 
