@@ -1155,7 +1155,7 @@ def _build_session_entry(
     if (
         entry["status"] == "repairing"
         and isinstance(custody, Mapping)
-        and custody.get("bucket") != "repairing"
+        and custody.get("custody_bucket") != "repairing"
     ):
         # A fresh legacy sidecar is not repair custody.  Once the canonical
         # projection is available, fail closed instead of advertising work
