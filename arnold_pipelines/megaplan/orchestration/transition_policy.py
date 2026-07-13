@@ -90,6 +90,18 @@ class TransitionWriter:
                 "evidence_refs_compact": compact_evidence_refs,
             }
         )
+        # ── S2 T11: Persist boundary authority refs for operator visibility ──
+        if decision.boundary_id is not None:
+            routing_provenance.setdefault("boundary_id", decision.boundary_id)
+        if decision.checked_evidence_refs:
+            routing_provenance.setdefault(
+                "checked_evidence_refs", list(decision.checked_evidence_refs)
+            )
+        if decision.authority_record_refs:
+            routing_provenance.setdefault(
+                "authority_record_refs", list(decision.authority_record_refs)
+            )
+        # ──────────────────────────────────────────────────────────────────────
         payload = TransitionDecision(
             decision_id=decision.decision_id,
             subject=decision.subject,
@@ -107,6 +119,9 @@ class TransitionWriter:
             code_hash=decision.code_hash,
             routing_provider=decision.routing_provider,
             routing_provenance=routing_provenance,
+            boundary_id=decision.boundary_id,
+            checked_evidence_refs=decision.checked_evidence_refs,
+            authority_record_refs=decision.authority_record_refs,
         ).to_dict()
         output_path = plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME
         atomic_write_json(output_path, payload)
