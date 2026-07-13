@@ -44,6 +44,7 @@ from arnold_pipelines.megaplan.cloud.current_target import resolve_current_targe
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     classify_repair_dispatch,
+    durable_repair_active,
     is_success_outcome,
     project_repair_custody,
 )
@@ -1151,36 +1152,16 @@ def _build_session_entry(
     )
     entry.update(repair_projection)
     custody = repair_projection.get("repair_custody")
-    dispatch = repair_projection.get("repair_dispatch")
-    custody_bucket = (
-        str(dispatch.get("custody_bucket") or "")
-        if isinstance(dispatch, Mapping)
-        else ""
-    ) or (
-        str(custody.get("custody_bucket") or "")
-        if isinstance(custody, Mapping)
-        else ""
-    )
-    if (
-        entry["status"] == "repairing"
-        and custody_bucket
-        and custody_bucket != "repairing"
-    ):
-        # A fresh legacy sidecar is not repair custody.  Once the canonical
-        # projection is available, fail closed instead of advertising work
-        # that has no active claim/attempt owner.
-        runner_live = bool(liveness.get("tmux") or liveness.get("process"))
-        entry["status"] = "running" if runner_live else "attention"
+    # Normal execution classification is authoritative unless the canonical
+    # custody projection proves a current durable repair owner/attempt.  Labels,
+    # sidecars, broken-superfixer decisions, and projection failures can never
+    # upgrade the display to repairing.
+    if durable_repair_active(custody if isinstance(custody, Mapping) else None):
+        entry["status"] = "repairing"
+        entry["repairing"] = True
+        entry["operator_next"] = "automated repair dispatched for this session"
+    else:
         entry["repairing"] = False
-        if runner_live:
-            entry["operator_next"] = "live runner supersedes stale repair sidecar"
-        else:
-            rationale = dispatch.get("rationale") if isinstance(dispatch, Mapping) else None
-            entry["operator_next"] = (
-                "; ".join(str(item) for item in rationale if item)
-                if isinstance(rationale, list)
-                else str(rationale or "repair custody is absent")
-            )
     return entry
 
 
@@ -1195,7 +1176,11 @@ def _compose_repair_decision_projection(
     """Use the same custody/dispatch contract consumed by watchdog dispatch."""
 
     if workspace is None or not isinstance(plan_state, Mapping):
-        return {"repair_custody": None, "repair_dispatch": None}
+        return {
+            "repair_custody": None,
+            "repair_dispatch": None,
+            "repair_projection_degraded": None,
+        }
     effective_queue_root = queue_root or (workspace / ".megaplan" / "repair-queue")
     try:
         canonical = resolve_run_state(current_target or {})
@@ -1228,14 +1213,16 @@ def _compose_repair_decision_projection(
                 "attempt_count": custody.get("attempt_count", 0),
                 "retry_budget": custody.get("retry_budget", {}),
             },
+            "repair_projection_degraded": None,
         }
     except Exception as exc:
         return {
             "repair_custody": None,
-            "repair_dispatch": {
-                "decision": "broken_superfixer",
-                "dispatch_intent": "broken_superfixer",
-                "rationale": [f"canonical repair projection failed: {type(exc).__name__}"],
+            "repair_dispatch": None,
+            "repair_projection_degraded": {
+                "status": "degraded",
+                "error_type": type(exc).__name__,
+                "reason": f"canonical repair projection failed: {type(exc).__name__}",
             },
         }
 
@@ -1341,11 +1328,9 @@ def _compose_shadow_views(
     )
 
     # --- recovery custody projection -------------------------------------------
-    repair_custody: dict[str, Any] | None = None
-    if repair_progress and isinstance(repair_progress, Mapping):
-        repair_custody = dict(repair_progress)
     recovery = derive_megaplan_recovery_view(
-        repair_custody=repair_custody,
+        # Legacy repair-progress is a diagnostic observation, not custody.
+        repair_custody=None,
         runner_view=runner,
         execution_view=execution,
         publication_view=publication,
@@ -1646,12 +1631,6 @@ def _classify_session(
     )
     if plan_current_state == "paused" or str((chain_health or {}).get("last_state") or "").lower() == "paused":
         return "paused", "durable operator pause; explicit resume required"
-
-    # Fresh repair custody is stronger than a needs-human sidecar. Repair loops
-    # can leave old needs-human markers in place while a higher layer is already
-    # working the case; status consumers should show that as repairing.
-    if _is_repair_active(repair_progress, repair_data_dir, session, now):
-        return "repairing", "automated repair dispatched for this session"
 
     # A live runner with activity newer than the needs-human marker means the
     # target has moved since escalation. Do not let that stale marker mask the

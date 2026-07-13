@@ -1526,6 +1526,35 @@ def _normalize_recovery_custody_observation(
     )
 
 
+def _recovery_custody_has_durable_active_repair(custody: Mapping[str, Any]) -> bool:
+    active_requests = {
+        str(value).strip()
+        for value in custody.get("active_request_ids", ())
+        if isinstance(value, str) and value.strip()
+    }
+    active_claims = {
+        str(value).strip()
+        for value in custody.get("active_claim_request_ids", ())
+        if isinstance(value, str) and value.strip()
+    }
+    if active_requests & active_claims:
+        return True
+    attempts = custody.get("attempts")
+    if not isinstance(attempts, list):
+        return False
+    return any(
+        isinstance(attempt, Mapping)
+        and attempt.get("terminal") is False
+        and bool(str(attempt.get("attempt_id") or "").strip())
+        and bool(str(attempt.get("path") or "").strip())
+        and (
+            str(attempt.get("request_id") or "").strip() in active_requests
+            or str(attempt.get("source") or "").strip() == "repair_queue_dispatch_attempt"
+        )
+        for attempt in attempts
+    )
+
+
 def derive_megaplan_recovery_view(
     repair_custody: Mapping[str, Any] | None = None,
     *,
@@ -1571,8 +1600,21 @@ def derive_megaplan_recovery_view(
     custody_obs: RecoveryCustodyObservation | None = None
     custody_bucket: str | None = None
     if repair_custody is not None and isinstance(repair_custody, Mapping):
+        normalized_custody = dict(repair_custody)
+        if (
+            str(normalized_custody.get("custody_bucket") or "") == "repairing"
+            and not _recovery_custody_has_durable_active_repair(normalized_custody)
+        ):
+            diagnostics.append(
+                RecoveryDiagnostic(
+                    "unsupported_repairing_custody",
+                    "repairing label has no durable active claim or attempt",
+                    custody_source,
+                )
+            )
+            normalized_custody["custody_bucket"] = "unknown"
         custody_obs = _normalize_recovery_custody_observation(
-            repair_custody, source=custody_source
+            normalized_custody, source=custody_source
         )
         observations.append(custody_obs)
         source_paths.add(custody_source)

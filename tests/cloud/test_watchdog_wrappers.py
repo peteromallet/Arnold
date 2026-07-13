@@ -4660,11 +4660,17 @@ tmux() { printf 'TMUX %s\n' "$*" >> "$CALL_LOG"; return 0; }
     assert "TMUX" not in calls
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #43 state=open evidence=queued\t" in report
-    queued = list((tmp_path / "repair-queue" / "requests").glob("*.json"))
+    queued = list((tmp_path / ".megaplan" / "repair-queue" / "requests").glob("*.json"))
     assert len(queued) == 1
     payload = json.loads(queued[0].read_text(encoding="utf-8"))
     assert payload["source"] == "watchdog_pr_merge_reconciliation"
     assert payload["target"]["pr_number"] == 43
+
+
+def test_watchdog_queue_writers_use_explicit_central_queue_root() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert text.count("queue_root=repair_queue_dir(marker_dir)") >= 2
 
 
 def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace() -> None:

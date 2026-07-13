@@ -199,7 +199,8 @@ def test_two_running_plus_one_repairing(fx):
 
     snap = fx.build()
     assert snap["summary"]["running"] == 2
-    assert snap["summary"]["repairing"] == 1
+    assert snap["summary"]["repairing"] == 0
+    assert snap["summary"]["attention"] == 1
 
 
 
@@ -215,7 +216,29 @@ def test_active_repair_overrides_stale_needs_human_marker(fx):
     fx.add_repair_progress("repairing", updated_at=NOW - timedelta(minutes=2))
     fx.add_repair_data("repairing", outcome="repairing")
 
-    snap = fx.build()
+    original = ss._compose_repair_decision_projection
+    ss._compose_repair_decision_projection = lambda **_kwargs: {
+        "repair_custody": {
+            "custody_bucket": "repairing",
+            "active_request_ids": ["req-1"],
+            "active_claim_request_ids": [],
+            "attempts": [{
+                "attempt_id": "attempt-1",
+                "request_id": "req-1",
+                "source": "repair_queue_dispatch_attempt",
+                "path": "/durable/attempt-1.json",
+                "blocker_id": "blocker-1",
+                "terminal": False,
+            }],
+        },
+        "repair_dispatch": {"decision": "repairing", "custody_bucket": "repairing"},
+        "repair_projection_degraded": None,
+    }
+
+    try:
+        snap = fx.build()
+    finally:
+        ss._compose_repair_decision_projection = original
     entry = _by_session(snap, "repairing")
 
     assert entry["status"] == "repairing"
@@ -254,7 +277,71 @@ def test_repair_sidecar_without_canonical_custody_is_not_reported_as_repairing(
 
     assert entry["status"] == "attention"
     assert entry["repairing"] is False
-    assert entry["operator_next"] == "accepted request has no active claim or attempt"
+    assert "dispatch" not in entry["operator_next"].lower()
+
+
+def test_type_error_projection_without_custody_bucket_preserves_live_execution(
+    fx, monkeypatch
+):
+    fx.add_session("type-error", plan_name="plan-live")
+    fx.add_chain_health("type-error", current_plan_name="plan-live")
+    fx.add_plan_state("type-error", "plan-live", current_state="finalized")
+    fx.add_repair_progress("type-error", updated_at=NOW - timedelta(minutes=2))
+    fx.add_repair_data("type-error", outcome="repairing")
+    monkeypatch.setattr(
+        ss,
+        "_compose_repair_decision_projection",
+        lambda **_kwargs: {
+            "repair_custody": None,
+            "repair_dispatch": {
+                "decision": "broken_superfixer",
+                "dispatch_intent": "broken_superfixer",
+                "rationale": ["canonical repair projection failed: TypeError"],
+            },
+        },
+    )
+
+    snapshot = fx.build(
+        liveness_probe=lambda _marker: {"tmux": False, "process": True}
+    )
+    entry = _by_session(snapshot, "type-error")
+
+    assert entry["status"] == "running"
+    assert entry["repairing"] is False
+    assert snapshot["summary"]["repairing"] == 0
+    assert "dispatch" not in entry["operator_next"].lower()
+
+
+def test_projection_exception_is_separate_degradation_not_repair_dispatch(
+    fx, monkeypatch
+):
+    fx.add_session("degraded", plan_name="plan-live")
+    fx.add_chain_health("degraded", current_plan_name="plan-live")
+    fx.add_plan_state("degraded", "plan-live", current_state="finalized")
+    fx.add_repair_progress("degraded", updated_at=NOW - timedelta(minutes=2))
+    fx.add_repair_data("degraded", outcome="repairing")
+    monkeypatch.setattr(
+        ss,
+        "project_repair_custody",
+        lambda **_kwargs: (_ for _ in ()).throw(TypeError("artifact shape")),
+    )
+
+    snapshot = fx.build(
+        liveness_probe=lambda _marker: {"tmux": False, "process": True}
+    )
+    entry = _by_session(snapshot, "degraded")
+
+    assert entry["status"] == "running"
+    assert entry["repairing"] is False
+    assert entry["repair_dispatch"] is None
+    assert entry["repair_projection_degraded"] == {
+        "status": "degraded",
+        "error_type": "TypeError",
+        "reason": "canonical repair projection failed: TypeError",
+    }
+    rendered = sf.format_cloud_status_detailed(snapshot)
+    assert "repair_projection: degraded" in rendered
+    assert "automated repair dispatched" not in rendered
 
 def test_completed_not_counted_as_active_even_with_stale_failure(fx):
     fx.add_session("done", plan_name="planDone")
@@ -333,8 +420,8 @@ def test_repair_marker_plus_blocked_watchdog_item_is_repairing(fx):
     )
     snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
     entry = _by_session(snap, "stuck")
-    assert entry["status"] == "repairing"
-    assert entry["repairing"] is True
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
 
 
 def test_successful_repair_data_suppresses_stale_repair_marker(fx):
@@ -569,8 +656,9 @@ def test_live_process_beats_repair_marker(fx):
 
     snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
     entry = _by_session(snap, "live-repair")
-    assert entry["status"] == "repairing"
-    assert entry["repairing"] is True
+    assert entry["status"] == "running"
+    assert entry["repairing"] is False
+    assert "dispatch" not in entry["operator_next"].lower()
 
 
 def test_active_plan_step_counts_as_live_process_and_latest_activity(fx, monkeypatch):
@@ -935,11 +1023,11 @@ def test_summary_counts_partition_all_sessions(fx):
     assert total == 6, summary
     assert summary == {
         "running": 2,
-        "repairing": 1,
+        "repairing": 0,
         "blocked": 0,
         "paused": 0,
         "complete": 1,
-        "attention": 2,
+        "attention": 3,
     }
 
 

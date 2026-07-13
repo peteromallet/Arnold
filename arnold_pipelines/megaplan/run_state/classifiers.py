@@ -191,6 +191,41 @@ def _detect_broken_repeat(evidence: Mapping[str, Any]) -> int:
     return best
 
 
+def _has_durable_repair_custody(evidence: Mapping[str, Any]) -> bool:
+    """Require formal custody records; repair-progress presence is advisory."""
+
+    custody = evidence.get("repair_custody")
+    if not isinstance(custody, Mapping):
+        return False
+    active_requests = {
+        str(value).strip()
+        for value in custody.get("active_request_ids", ())
+        if isinstance(value, str) and value.strip()
+    }
+    active_claims = {
+        str(value).strip()
+        for value in custody.get("active_claim_request_ids", ())
+        if isinstance(value, str) and value.strip()
+    }
+    if active_requests & active_claims:
+        return True
+    attempts = custody.get("attempts")
+    if not isinstance(attempts, list):
+        return False
+    for attempt in attempts:
+        if not isinstance(attempt, Mapping) or attempt.get("terminal") is not False:
+            continue
+        attempt_id = str(attempt.get("attempt_id") or "").strip()
+        source = str(attempt.get("source") or "").strip()
+        path = str(attempt.get("path") or "").strip()
+        request_id = str(attempt.get("request_id") or "").strip()
+        if attempt_id and path and (
+            request_id in active_requests or source == "repair_queue_dispatch_attempt"
+        ):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # resolver context
 # ---------------------------------------------------------------------------
@@ -315,7 +350,7 @@ class ResolverContext:
             has_missing_workspace=norm.is_missing_workspace,
             broken_repeat_count=_detect_broken_repeat(evidence),
             changed_file_count=norm.changed_file_count,
-            has_active_repair=norm.has_active_repair,
+            has_active_repair=_has_durable_repair_custody(evidence),
             is_operator_paused=is_operator_paused,
             root_cause_fingerprint=root_cause_fingerprint,
             base_evidence=base_evidence,
@@ -643,20 +678,20 @@ def classify_retryable_execution_block(ctx: ResolverContext) -> "CanonicalRunSta
 
 
 def classify_repairing(ctx: ResolverContext) -> "CanonicalRunState | None":
-    """Active repair-progress sidecars with no more-specific diagnosis."""
+    """Durable repair custody with no more-specific diagnosis."""
     if not ctx.has_active_repair:
         return None
     return CanonicalRunState(
         canonical_state=CanonicalState.REPAIRING,
         confidence="medium",
-        source_of_truth=("repair_progress",),
+        source_of_truth=("repair_custody",),
         stale_sources=ctx.stale_source_names,
         human_required=False,
         human_gate=None,
         repairable=True,
         running=False,
         next_action="continue_repair",
-        reason="Active repair-progress sidecars present (advisory repair data).",
+        reason="Current durable repair custody proves an active repair owner or attempt.",
         evidence=ctx.evidence_with_fingerprint()
         + (_evi("repair_status", "", ctx.norm.active_repair_status or "active"),),
     )

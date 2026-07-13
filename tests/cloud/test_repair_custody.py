@@ -13,9 +13,11 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     CUSTODY_BUCKET_REPAIRING,
     BlockerFingerprintV1,
     blocker_id_for_fingerprint,
+    durable_repair_active,
     normalize_blocker_fingerprint_v1,
     project_repair_custody,
 )
+from arnold_pipelines.megaplan.run_state import CanonicalState, resolve_run_state
 
 
 def _fingerprint(**overrides: str) -> BlockerFingerprintV1:
@@ -120,6 +122,12 @@ def _current_target() -> dict[str, object]:
     }
 
 
+def _queue_root(tmp_path: Path) -> Path:
+    root = tmp_path / ".megaplan" / "repair-queue"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def test_custody_projection_reads_plan_state_and_accepted_request_without_migration(
     tmp_path: Path,
 ) -> None:
@@ -127,8 +135,10 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     repair_data_dir = marker_dir / "repair-data"
     marker_dir.mkdir()
     repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
 
     queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -148,7 +158,7 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     projection = project_repair_custody(
         plan_state=_plan_state(),
         current_target=_current_target(),
-        marker_dir=marker_dir,
+        queue_root=queue_root,
         repair_data_dir=repair_data_dir,
     )
 
@@ -166,6 +176,31 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     assert projection["requests"][0]["problem_signature"]["blocked_task_id"] == "T1"
 
 
+def test_advisory_sidecar_canonical_label_does_not_create_repair_custody(
+    tmp_path: Path,
+) -> None:
+    canonical = resolve_run_state(
+        {"repair_progress": {"present": True, "items": [{"status": "repairing"}]}}
+    )
+    assert canonical.canonical_state is not CanonicalState.REPAIRING
+
+    projection = project_repair_custody(
+        plan_state={"name": "live-plan", "current_state": "finalized"},
+        current_target={"target_session": "demo-session"},
+        canonical_run_state=canonical,
+        queue_root=_queue_root(tmp_path),
+        repair_data_dir=tmp_path / "repair-data",
+    )
+
+    assert projection["custody_bucket"] != CUSTODY_BUCKET_REPAIRING
+    assert projection["request_count"] == 0
+    assert projection["claim_count"] == 0
+    assert projection["attempt_count"] == 0
+    assert projection["requests"] == []
+    assert projection["attempts"] == []
+    assert durable_repair_active(projection) is False
+
+
 def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcomes(
     tmp_path: Path,
 ) -> None:
@@ -173,8 +208,10 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     repair_data_dir = marker_dir / "repair-data"
     marker_dir.mkdir()
     repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
 
     queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="repair_trigger",
@@ -190,7 +227,7 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
         created_at="2026-07-04T01:00:00Z",
     )
     repair_requests.write_decision(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_root,
         request_id=queued["request"]["request_id"],
         decision="dispatched",
         reason="repair loop launched",
@@ -223,7 +260,7 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     projection = project_repair_custody(
         plan_state=_plan_state(),
         current_target=_current_target(),
-        marker_dir=marker_dir,
+        queue_root=queue_root,
         repair_data_dir=repair_data_dir,
     )
 
@@ -237,6 +274,62 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     assert projection["attempts"][0]["terminal"] is False
 
 
+def test_custody_projection_reads_immutable_queue_dispatch_attempt(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="dispatch me",
+    )
+    request_id = queued["request"]["request_id"]
+    blocker_id = blocker_id_for_fingerprint(_fingerprint())
+    assert blocker_id is not None
+    repair_requests.write_decision(
+        queue_root,
+        request_id=request_id,
+        decision="dispatched",
+        reason="managed repair child launched",
+    )
+    repair_requests.write_dispatch_attempt(
+        queue_root,
+        request_id=request_id,
+        blocker_id=blocker_id,
+        actor="watchdog",
+        repair_layer="l1",
+        command="managed repair",
+        child_pid=4242,
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRING
+    assert projection["request_count"] == 1
+    assert projection["attempt_count"] == 1
+    assert projection["attempts"][0]["source"] == "repair_queue_dispatch_attempt"
+    assert projection["attempts"][0]["terminal"] is False
+
+
 def test_custody_projection_uses_managed_execution_as_formal_attempt(
     tmp_path: Path,
 ) -> None:
@@ -246,8 +339,10 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
     marker_dir.mkdir()
     repair_data_dir.mkdir()
     managed_dir.mkdir(parents=True)
+    queue_root = _queue_root(tmp_path)
 
     queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -308,7 +403,7 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
     projection = project_repair_custody(
         plan_state=_plan_state(),
         current_target=_current_target(),
-        marker_dir=marker_dir,
+        queue_root=queue_root,
         repair_data_dir=repair_data_dir,
     )
 
@@ -326,8 +421,10 @@ def test_custody_projection_drops_stale_request_from_advanced_plan_target(tmp_pa
     repair_data_dir = marker_dir / "repair-data"
     marker_dir.mkdir()
     repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
 
     stale = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -360,7 +457,7 @@ def test_custody_projection_drops_stale_request_from_advanced_plan_target(tmp_pa
             "event_cursors": {},
             "plan_state": {"fingerprint": "sha256:target-proof"},
         },
-        marker_dir=marker_dir,
+        queue_root=queue_root,
         repair_data_dir=repair_data_dir,
     )
 
