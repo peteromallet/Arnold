@@ -254,10 +254,12 @@ class ResidentRuntime:
             manifest=manifest,
             source_message=source_message.content,
         )
-        messages = (
-            *self._build_history(conversation.id, exclude_ids=()),
-            {"role": "user", "content": verification_prompt},
-        )
+        # Completion verification is correlated to one immutable delegation.
+        # Conversation history may contain newer user commands (for example a
+        # resident restart) and must not be allowed to change the incident this
+        # turn verifies.  The verifier prompt already carries the exact source
+        # message and terminal manifest evidence it is authorized to assess.
+        messages = ({"role": "user", "content": verification_prompt},)
         request = AgentRequest(
             conversation_id=conversation.id,
             messages=messages,
