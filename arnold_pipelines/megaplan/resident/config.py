@@ -38,6 +38,7 @@ class ResidentConfig(BaseModel):
     codex_reasoning_effort: str = "low"
     codex_sandbox: str = "workspace-write"
     model_timeout_s: float = Field(default=120.0, gt=0)
+    max_prompt_chars: int = Field(default=700_000, gt=0)
     voice_transcription_enabled: bool = True
     voice_transcription_provider: Literal["groq", "openai", "resident"] = "groq"
     voice_transcription_model: str = "whisper-large-v3-turbo"
@@ -115,6 +116,7 @@ class ResidentConfig(BaseModel):
             codex_reasoning_effort=env.get("MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT", "low"),
             codex_sandbox=env.get("MEGAPLAN_RESIDENT_CODEX_SANDBOX", "workspace-write"),
             model_timeout_s=_env_float(env, "MEGAPLAN_RESIDENT_MODEL_TIMEOUT_S", 120.0),
+            max_prompt_chars=_env_int(env, "MEGAPLAN_RESIDENT_MAX_PROMPT_CHARS", 700_000),
             voice_transcription_enabled=_env_bool(
                 env,
                 "MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_ENABLED",

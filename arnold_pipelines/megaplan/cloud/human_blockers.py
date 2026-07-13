@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.observability.events import (
     event_signature_summary,
     format_signature_line,
 )
+from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,13 @@ class BlockerVerdict(Enum):
 
 @dataclass(frozen=True)
 class HumanBlockerClassification:
-    """Result of conservative human-blocker classification."""
+    """Result of conservative human-blocker classification.
+
+    When ``human_gate_view`` is populated it carries the read-only
+    :class:`~arnold_pipelines.megaplan.authority.views.HumanGateView`
+    serialized to a dict so that stale/superseded diagnostics are
+    source-addressable without granting the view enforcement authority.
+    """
 
     verdict: BlockerVerdict
     session: str
@@ -51,6 +58,7 @@ class HumanBlockerClassification:
     rationale: Sequence[str] = field(default_factory=tuple)
     resolver_record: dict[str, Any] | None = None
     needs_human_payload: dict[str, Any] | None = None
+    human_gate_view: dict[str, Any] | None = None
 
     @property
     def is_true_blocker(self) -> bool:
@@ -95,11 +103,61 @@ def dispatch_gate_for_human_blocker(
 
     if classification is None:
         return "clear"
-    if classification.is_true_blocker or classification.is_ambiguous:
+    if classification.is_true_blocker:
         return "human_required"
-    if classification.is_mechanical:
+    if classification.is_mechanical or classification.is_ambiguous:
         return "broken_superfixer"
     return "clear"
+
+
+def _derive_human_gate_view_dict(
+    payload: dict[str, Any] | None,
+    *,
+    current_plan: str,
+    needs_human_path: str,
+    resolver_record: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Derive a read-only HumanGateView dict from needs-human payload.
+
+    Returns ``None`` when the payload carries insufficient signal to build
+    a meaningful view.  The dict is always the serialized form of
+    :class:`~arnold_pipelines.megaplan.authority.views.HumanGateView` — it
+    never grants enforcement authority.
+    """
+    if payload is None:
+        return None
+    try:
+        from arnold_pipelines.megaplan.authority.views import derive_human_gate_view
+
+        plan_ref = (
+            _safe_marker_text(payload.get("plan_name"))
+            or _safe_marker_text(payload.get("current_plan_name"))
+            or current_plan
+        )
+        signal: dict[str, Any] = {
+            "gate_type": "needs_human",
+            "gate_reason": _safe_marker_text(payload.get("summary")) or "unspecified",
+            "source": needs_human_path or "observation://unknown",
+            "plan_ref": plan_ref,
+        }
+        # If resolver evidence indicates staleness, mark the signal accordingly
+        if resolver_record:
+            stale_evidence = resolver_record.get("stale_evidence", [])
+            if isinstance(stale_evidence, list):
+                stale_kinds = {e.get("kind") for e in stale_evidence if isinstance(e, dict)}
+                if "stale_needs_human_plan_ref" in stale_kinds:
+                    signal["stale_token"] = True
+                elif any("superseded" in str(e.get("kind", "")) for e in stale_evidence if isinstance(e, dict)):
+                    signal["superseded"] = True
+            resolver_plan_refs = resolver_record.get("needs_human", {}).get("plan_refs", [])
+            if isinstance(resolver_plan_refs, list) and resolver_plan_refs:
+                if current_plan not in resolver_plan_refs:
+                    signal["stale_token"] = True
+
+        view = derive_human_gate_view([signal], current_plan_revision=plan_ref)
+        return view.to_dict()
+    except Exception:
+        return None
 
 
 def classify_needs_human_blocker(
@@ -123,6 +181,11 @@ def classify_needs_human_blocker(
     Stale markers, mechanical/liveness gates, and ambiguous evidence remain
     distinct non-success classifications.
 
+    Stale and superseded diagnostics are additionally routed through a
+    read-only :class:`~arnold_pipelines.megaplan.authority.views.HumanGateView`
+    attached as ``human_gate_view`` on the returned classification.  The view
+    is a serialized dict — diagnostics only, never enforcement authority.
+
     Args:
         session: Repair session identifier.
         current_plan: The plan name currently considered authoritative.
@@ -138,22 +201,25 @@ def classify_needs_human_blocker(
         pid_is_live: Optional PID-liveness probe.
 
     Returns:
-        A :class:`HumanBlockerClassification` with the conservative verdict.
+        A :class:`HumanBlockerClassification` with the conservative verdict
+        and an optional read-only ``human_gate_view`` dict.
     """
     rationale: list[str] = []
 
     # --- resolve the needs-human path and payload -----------------------------------
     resolved_path = _resolve_needs_human_path(session, repair_data_dir, needs_human_path)
     payload = _resolve_needs_human_payload(resolved_path, needs_human_payload)
+    needs_human_path_str = str(resolved_path) if resolved_path else ""
 
     if payload is None:
         return HumanBlockerClassification(
             verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
             session=session,
             current_plan=current_plan,
-            needs_human_path=str(resolved_path) if resolved_path else "",
+            needs_human_path=needs_human_path_str,
             rationale=("needs-human sidecar missing or unreadable — conservatively treating as blocker",),
             needs_human_payload=None,
+            human_gate_view=None,
         )
 
     # --- resolve the evidence record -----------------------------------------------
@@ -174,6 +240,14 @@ def classify_needs_human_blocker(
             pid_is_live=pid_is_live,
         )
 
+    # --- derivation of the read-only HumanGateView ---------------------------------
+    human_gate_view = _derive_human_gate_view_dict(
+        payload,
+        current_plan=current_plan,
+        needs_human_path=needs_human_path_str,
+        resolver_record=record,
+    )
+
     # --- check for explicit stale_needs_human_plan_ref in stale_evidence ------------
     stale_kinds = {e.get("kind") for e in record.get("stale_evidence", []) if isinstance(e, dict)}
     has_stale_needs_human = "stale_needs_human_plan_ref" in stale_kinds
@@ -192,10 +266,11 @@ def classify_needs_human_blocker(
             verdict=BlockerVerdict.STALE_MISMATCH,
             session=session,
             current_plan=current_plan,
-            needs_human_path=str(resolved_path),
+            needs_human_path=needs_human_path_str,
             rationale=tuple(rationale),
             resolver_record=record,
             needs_human_payload=payload,
+            human_gate_view=human_gate_view,
         )
 
     # Check if the current plan appears in the needs-human plan refs
@@ -210,10 +285,11 @@ def classify_needs_human_blocker(
             verdict=BlockerVerdict.STALE_MISMATCH,
             session=session,
             current_plan=current_plan,
-            needs_human_path=str(resolved_path),
+            needs_human_path=needs_human_path_str,
             rationale=tuple(rationale),
             resolver_record=record,
             needs_human_payload=payload,
+            human_gate_view=human_gate_view,
         )
 
     if not resolver_plan_refs:
@@ -226,10 +302,11 @@ def classify_needs_human_blocker(
             verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
             session=session,
             current_plan=current_plan,
-            needs_human_path=str(resolved_path),
+            needs_human_path=needs_human_path_str,
             rationale=tuple(rationale),
             resolver_record=record,
             needs_human_payload=payload,
+            human_gate_view=human_gate_view,
         )
 
     # --- current plan IS in refs → verify with current-target proof ----------------
@@ -261,10 +338,11 @@ def classify_needs_human_blocker(
             verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
             session=session,
             current_plan=current_plan,
-            needs_human_path=str(resolved_path),
+            needs_human_path=needs_human_path_str,
             rationale=tuple(rationale),
             resolver_record=record,
             needs_human_payload=payload,
+            human_gate_view=human_gate_view,
         )
 
     # --- current-target proof established → check for mechanical/liveness gate ------
@@ -277,25 +355,45 @@ def classify_needs_human_blocker(
             verdict=BlockerVerdict.MECHANICAL_BLOCKER,
             session=session,
             current_plan=current_plan,
-            needs_human_path=str(resolved_path),
+            needs_human_path=needs_human_path_str,
             rationale=tuple(rationale),
             resolver_record=record,
             needs_human_payload=payload,
+            human_gate_view=human_gate_view,
         )
 
-    # --- genuine TRUE_BLOCKER: current-target proof + current plan match ------------
+    # --- human-required is an allowlist, never an ambiguity fallback ----------------
+    gate = typed_human_gate(payload)
+    if gate is None:
+        rationale.append(
+            "current marker has no allowlisted typed human decision; preserving it as "
+            "ambiguous control-plane evidence rather than claiming human action is required"
+        )
+        return HumanBlockerClassification(
+            verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
+            session=session,
+            current_plan=current_plan,
+            needs_human_path=needs_human_path_str,
+            rationale=tuple(rationale),
+            resolver_record=record,
+            needs_human_payload=payload,
+            human_gate_view=human_gate_view,
+        )
+
+    # --- genuine TRUE_BLOCKER: typed gate + current-target proof + plan match --------
     rationale.append(
         f"needs-human sidecar references current plan {current_plan!r} "
-        f"with current-target proof (source={authoritative_source})"
+        f"with typed gate {gate.name} and current-target proof (source={authoritative_source})"
     )
     return HumanBlockerClassification(
         verdict=BlockerVerdict.TRUE_BLOCKER,
         session=session,
         current_plan=current_plan,
-        needs_human_path=str(resolved_path),
+        needs_human_path=needs_human_path_str,
         rationale=tuple(rationale),
         resolver_record=record,
         needs_human_payload=payload,
+        human_gate_view=human_gate_view,
     )
 
 
@@ -385,6 +483,12 @@ def build_needs_human_marker(
         "authoritative_source": current_pointer.get("authoritative_source", ""),
         "current": current_pointer,
     }
+    gate = typed_human_gate(repair_payload)
+    if gate is not None:
+        marker["human_gate"] = gate.name.lower()
+        marker["decision_required"] = _safe_marker_text(
+            repair_payload.get("decision_required")
+        )
     return redact_payload(marker)
 
 
@@ -803,6 +907,19 @@ def _classification_to_record(classification: HumanBlockerClassification) -> dic
     plan_state_mtime = resolver.get("plan_state", {}).get("mtime", 0.0)
     chain_state_mtime = resolver.get("chain_state", {}).get("mtime", 0.0)
 
+    # Extract HumanGateView diagnostics for audit trail
+    human_gate_diagnostics: list[dict[str, str]] = []
+    if classification.human_gate_view:
+        hgv = classification.human_gate_view
+        if isinstance(hgv, dict):
+            diags = hgv.get("diagnostics", [])
+            if isinstance(diags, list):
+                human_gate_diagnostics = [
+                    {"code": d.get("code", ""), "reason": d.get("reason", ""), "source": d.get("source", "")}
+                    for d in diags
+                    if isinstance(d, dict)
+                ]
+
     return {
         "session": classification.session,
         "kind": "blocker_classified",
@@ -818,6 +935,7 @@ def _classification_to_record(classification: HumanBlockerClassification) -> dic
         "authoritative_source": authoritative_source,
         "plan_state_mtime": plan_state_mtime,
         "chain_state_mtime": chain_state_mtime,
+        "human_gate_diagnostics": human_gate_diagnostics,
     }
 
 

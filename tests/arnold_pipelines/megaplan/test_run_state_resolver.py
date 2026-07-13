@@ -538,8 +538,6 @@ def test_missing_credential_account_gate_resolves_human_action_required() -> Non
         ("approval", TypedHumanGate.EXPLICIT_APPROVAL),
         ("credential", TypedHumanGate.CREDENTIAL_ACCOUNT),
         ("credential_account", TypedHumanGate.CREDENTIAL_ACCOUNT),
-        ("quota", TypedHumanGate.QUOTA),
-        ("rate_limit", TypedHumanGate.QUOTA),
         ("verification", TypedHumanGate.VERIFICATION),
         ("policy", TypedHumanGate.POLICY),
         ("user_action", TypedHumanGate.USER_ACTION),
@@ -641,8 +639,8 @@ def test_resolver_result_serializes_round_trip() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_quota_gate_resolves_human_action_required() -> None:
-    """A quota/rate-limit gate must resolve to HUMAN_ACTION_REQUIRED with QUOTA."""
+def test_quota_gate_is_external_unknown_not_invented_human_decision() -> None:
+    """A quota may clear automatically and is not itself a human decision."""
     evidence = {
         "tmux_process": {"live_status": "stopped"},
         "plan_state": {
@@ -665,11 +663,11 @@ def test_quota_gate_resolves_human_action_required() -> None:
     result = resolve_run_state(evidence)
     assert_contract_invariants(result)
 
-    assert result.canonical_state is CanonicalState.HUMAN_ACTION_REQUIRED
-    assert result.human_required is True
-    assert result.human_gate is TypedHumanGate.QUOTA
-    assert result.next_action == "await_human_action"
-    assert result.confidence == "high"
+    assert result.canonical_state is CanonicalState.UNKNOWN
+    assert result.human_required is False
+    assert result.human_gate is None
+    assert result.next_action == "inspect_evidence"
+    assert result.confidence == "low"
 
 
 def test_verification_gate_resolves_human_action_required() -> None:

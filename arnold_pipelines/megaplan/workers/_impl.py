@@ -2179,7 +2179,8 @@ def _emit_codex_execute_llm_start(
     model: str | None,
     prompt: str,
     json_trace: bool,
-) -> None:
+) -> str:
+    call_transaction_id = uuid.uuid4().hex
     try:
         from arnold_pipelines.megaplan.observability.events import EventKind, emit
 
@@ -2198,10 +2199,12 @@ def _emit_codex_execute_llm_start(
                 "prompt_hash": prompt_hash,
                 "streaming": bool(json_trace),
                 "request_id": None,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
         pass
+    return call_transaction_id
 
 
 def _emit_codex_execute_llm_end(
@@ -2211,6 +2214,7 @@ def _emit_codex_execute_llm_end(
     model: str | None,
     tokens_in: int,
     tokens_out: int,
+    call_transaction_id: str | None = None,
 ) -> None:
     try:
         from arnold_pipelines.megaplan.observability.events import EventKind, emit
@@ -2224,6 +2228,7 @@ def _emit_codex_execute_llm_end(
                 "tokens_out": tokens_out,
                 "request_id": request_id,
                 "model": model,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
@@ -3358,8 +3363,9 @@ def _run_codex_step_uncapped(
             codex_idle_s = float(os.getenv("MEGAPLAN_CODEX_IDLE_TIMEOUT_S", "600"))
         except (TypeError, ValueError):
             codex_idle_s = 600.0
+        execute_call_transaction_id: str | None = None
         if step == "execute":
-            _emit_codex_execute_llm_start(
+            execute_call_transaction_id = _emit_codex_execute_llm_start(
                 plan_dir,
                 model=model,
                 prompt=prompt,
@@ -3809,6 +3815,7 @@ def _run_codex_step_uncapped(
             model=observed_model,
             tokens_in=prompt_tokens,
             tokens_out=completion_tokens,
+            call_transaction_id=execute_call_transaction_id,
         )
         if current_totals is not None and cost_pricing == "priced":
             _emit_codex_execute_cost_recorded(

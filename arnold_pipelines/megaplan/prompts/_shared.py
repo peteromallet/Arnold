@@ -61,6 +61,7 @@ def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
                 for item in gate.get("flag_resolutions", [])
                 if isinstance(item, dict) and item.get("action") == "accept_tradeoff"
             ],
+            "north_star_actions": gate.get("north_star_actions", []),
             "iteration": gate.get("iteration"),
             "produced_at": gate.get("produced_at"),
         }

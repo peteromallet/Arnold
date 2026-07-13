@@ -32,6 +32,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
+    is_superseded_recovered_phase_result,
     read_phase_result,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
@@ -243,6 +244,7 @@ def _tasks_by_id(finalize_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def _phase_result_recovery_inputs(
     plan_dir: Path,
+    state: dict[str, Any],
 ) -> tuple[tuple[BlockedTask, ...], tuple[Any, ...]]:
     try:
         phase_result = read_phase_result(plan_dir)
@@ -251,6 +253,12 @@ def _phase_result_recovery_inputs(
     if phase_result is None:
         return (), ()
     if phase_result.exit_kind == ExitKind.success.value:
+        return (), ()
+    if is_superseded_recovered_phase_result(
+        phase=phase_result.phase,
+        exit_kind=phase_result.exit_kind,
+        state=state,
+    ):
         return (), ()
     return phase_result.blocked_tasks, phase_result.deviations
 
@@ -445,7 +453,7 @@ def _build_blocker_recovery_context(
             "quality_blockers": [],
             "suggested_commands": [],
         }
-    phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir)
+    phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir, state)
     baseline_deviation_by_task: dict[str, Deviation] = {}
     if phase_blocked_tasks:
         from arnold_pipelines.megaplan.execute.batch import baseline_unavailable_checkpoint_deviations

@@ -440,6 +440,11 @@ def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(
         "degraded": None,
     }
     snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    # Force the cache-read path even when this test runs on the shared cloud
+    # worker, where the real canonical marker directory exists.
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", tmp_path / "no-cloud-sessions")
     profile = MegaplanResidentProfile(
         store=FileStore(tmp_path / "store"),
         config=ResidentConfig(status_snapshot_path=snapshot_path),
@@ -457,12 +462,63 @@ def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(
     assert [e["session"] for e in summary["active_working"]] == ["demo"]
 
 
+def test_hot_context_cannot_embed_oversized_cloud_repair_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    project = tmp_path / "project"
+    project.mkdir()
+    snapshot_path = tmp_path / "cloud-status.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "source": "cloud-local-observer",
+                "summary": {"running": 1},
+                "sessions": [
+                    {
+                        "session": "oversized-repair",
+                        "status": "running",
+                        "repair_custody": {"raw_history": "x" * 1_100_000},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", tmp_path / "no-markers")
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=snapshot_path),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+    serialized = json.dumps(context)
+
+    assert len(serialized) < 100_000
+    assert "raw_history" not in serialized
+    assert context["cloud_status_snapshot"]["detail_node"] == "status"
+    assert any(
+        route.get("node_id") == "status"
+        for route in context["context_root"]["routes"]
+    )
+
+
 def test_megaplan_resident_hot_context_labels_missing_snapshot_degraded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", tmp_path / "no-cloud-sessions")
     profile = MegaplanResidentProfile(
         store=FileStore(tmp_path / "store"),
         config=ResidentConfig(status_snapshot_path=tmp_path / "absent.json"),

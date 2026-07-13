@@ -281,7 +281,7 @@ class TestAwf018EnforcementDispatch:
         assert decision.request_id == "req-awf018-001"
         assert "resolver enforcement" in decision.rationale[0]
 
-    def test_returns_no_action_without_active_request(self, tmp_path: Path) -> None:
+    def test_routes_broken_superfixer_without_active_request(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
             canonical_run_state=resolve_run_state(_awf018_target()),
             event_plan_dir=_event_plan_dir(tmp_path),
@@ -289,8 +289,8 @@ class TestAwf018EnforcementDispatch:
             current_target=_awf018_target(),
             custody_projection=_custody(request_id=""),
         )
-        assert decision.decision == DISPATCH_DECISION_NO_ACTION
-        assert decision.dispatch_intent == DISPATCH_INTENT_QUEUE_ONLY
+        assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
+        assert decision.dispatch_intent == DISPATCH_INTENT_BROKEN_SUPERFIXER
         assert decision.request_id == ""
 
     def test_defers_to_active_repair(self, tmp_path: Path) -> None:
@@ -326,7 +326,7 @@ class TestRetryableEnforcementDispatch:
         assert decision.dispatch_intent == DISPATCH_INTENT_L1
         assert decision.request_id == "req-budget-001"
 
-    def test_returns_no_action_without_active_request(self, tmp_path: Path) -> None:
+    def test_routes_broken_superfixer_without_active_request(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
             canonical_run_state=resolve_run_state(_budget_target()),
             event_plan_dir=_event_plan_dir(tmp_path),
@@ -334,8 +334,8 @@ class TestRetryableEnforcementDispatch:
             current_target=_budget_target(),
             custody_projection=_custody(request_id=""),
         )
-        assert decision.decision == DISPATCH_DECISION_NO_ACTION
-        assert decision.dispatch_intent == DISPATCH_INTENT_QUEUE_ONLY
+        assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
+        assert decision.dispatch_intent == DISPATCH_INTENT_BROKEN_SUPERFIXER
 
 
 # ===========================================================================
@@ -528,9 +528,11 @@ def _custody_projection(
     """Build a real custody projection with a queued repair request."""
     marker_dir = tmp_path / "markers"
     repair_data_dir = marker_dir / "repair-data"
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
     marker_dir.mkdir(parents=True, exist_ok=True)
     repair_data_dir.mkdir(parents=True, exist_ok=True)
     enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -552,7 +554,7 @@ def _custody_projection(
                 "latest_failure": {"kind": "blocked_recovery_not_resolved"},
             },
             current_target=target or _awf018_target(),
-            marker_dir=marker_dir,
+            queue_root=queue_root,
             repair_data_dir=repair_data_dir,
         )
     )

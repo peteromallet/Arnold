@@ -20,10 +20,10 @@ that could trigger a recursive or destructive action.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     NEEDS_HUMAN,
     load_json,
@@ -44,6 +44,7 @@ _CODEX_LAUNCH_FAILURE_NEEDLES = (
     "Input exceeds the maximum length",
     "input_too_large",
 )
+_MAX_COMMIT_CUSTODY_FAILURE_RETRIES = 2
 
 
 def _is_unrecordable_launch_failure(data: dict) -> bool:
@@ -120,6 +121,7 @@ def check_meta_repair_recursion(
 
     # Collect meta-repair record IDs for this session
     matching_ids: list[str] = []
+    commit_custody_failure_ids: list[str] = []
     for record_file in sorted(meta_dir.glob("*.json")):
         try:
             data = load_json(record_file, default={})
@@ -127,10 +129,20 @@ def check_meta_repair_recursion(
                 if _is_unrecordable_launch_failure(data):
                     continue
                 record_id = record_file.stem
+                if str(data.get("outcome") or "") == "commit_custody_failed":
+                    commit_custody_failure_ids.append(record_id)
+                    continue
                 matching_ids.append(record_id)
         except Exception:
             # Corrupt/unreadable file — still counts as evidence
             matching_ids.append(record_file.stem)
+
+    # A meta-repair that could not establish commit custody never deployed its
+    # fix, so one such record must not poison the session forever.  Permit one
+    # bounded retry (often after repository custody is repaired); the second
+    # identical failure is then counted and trips the normal human backstop.
+    if len(commit_custody_failure_ids) >= _MAX_COMMIT_CUSTODY_FAILURE_RETRIES:
+        matching_ids.extend(commit_custody_failure_ids)
 
     recursing = len(matching_ids) >= max_meta_repair_attempts
 
@@ -183,21 +195,18 @@ def can_commit_changes(
     Args:
         session: Optional session for context (included in the reason string).
     """
-    enabled = os.environ.get("ARNOLD_META_REPAIR_COMMIT_ENABLED", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    path_authorized = feature_flags.mutation_authorized(
+        feature_flags.MUTATION_PATH_L2
+    )
+    enabled = path_authorized and feature_flags.meta_repair_commit_enabled()
 
     if enabled:
-        reason = "META_REPAIR_COMMIT_ENABLED is on; commits are permitted"
+        reason = "master, meta-repair, and commit gates are on; commits are permitted"
         if session:
             reason += f" (session={session})"
     else:
         reason = (
-            "META_REPAIR_COMMIT_ENABLED is off; "
-            "commits are not permitted"
+            "master, meta-repair, or commit gate is off; commits are not permitted"
         )
         if session:
             reason += f" (session={session})"
@@ -226,7 +235,7 @@ def can_push_changes(
         return CommitGateResult(
             allowed=True,
             reason=(
-                "META_REPAIR_COMMIT_ENABLED is on; "
+                "master, meta-repair, and commit gates are on; "
                 "push is permitted (same gate as commit)"
                 + (f" (session={session})" if session else "")
             ),
@@ -235,7 +244,7 @@ def can_push_changes(
         return CommitGateResult(
             allowed=False,
             reason=(
-                "META_REPAIR_COMMIT_ENABLED is off; "
+                "master, meta-repair, or commit gate is off; "
                 "push is not permitted (same gate as commit)"
                 + (f" (session={session})" if session else "")
             ),

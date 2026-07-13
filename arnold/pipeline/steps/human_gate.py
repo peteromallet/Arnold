@@ -323,18 +323,20 @@ def _enqueue_human_gate_repair_request(
     hook_extensions = ctx.hook_extensions if isinstance(ctx.hook_extensions, Mapping) else {}
     plan_dir = str(hook_extensions.get("plan_dir") or "").strip()
     workspace_path = str(hook_extensions.get("workspace_path") or "").strip()
+    queue_root = str(hook_extensions.get("repair_queue_root") or "").strip()
     session = str(
         hook_extensions.get("chain_session")
         or hook_extensions.get("session")
         or ""
     ).strip()
-    if not plan_dir or not workspace_path or not session:
+    if not plan_dir or not workspace_path or not queue_root or not session:
         return
     hook = hook_extensions.get("human_gate_repair_request_hook")
     if not callable(hook):
         return
     try:
         hook(
+            queue_root=queue_root,
             marker_dir=plan_dir,
             session=session,
             workspace=workspace_path,

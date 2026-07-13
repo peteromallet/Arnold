@@ -327,6 +327,7 @@ def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[s
         "warnings": list(gate_summary.get("warnings", [])) if isinstance(gate_summary.get("warnings"), list) else [],
         "orchestrator_guidance": str(gate_summary.get("orchestrator_guidance", "")),
         "carried_flags": carried_flags,
+        "north_star_actions": gate_summary.get("north_star_actions", []),
         "iteration": iteration,
         "produced_at": now_utc(),
     }
@@ -895,6 +896,7 @@ def _normalize_gate_payload(
     gate_payload.setdefault("settled_decisions", [])
     gate_payload.setdefault("flag_resolutions", [])
     gate_payload.setdefault("accepted_tradeoffs", [])
+    gate_payload.setdefault("north_star_actions", [])
     # Strip placeholder/empty tradeoff objects emitted by some workers.
     gate_payload["accepted_tradeoffs"] = [
         item
@@ -967,6 +969,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         # fail hard on modified invalid scratch when file-fill was
         # instructed (hermes agent).
         from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
             promote_scratch,
             require_scratch_filename_for_phase,
         )
@@ -982,7 +985,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
 
         _file_fill_instructed = agent == "hermes"
 
-        _, _promoted = promote_scratch(
+        _scratch_status, _promoted = promote_scratch(
             plan_dir,
             _scratch_filename,
             _GATE_SCRATCH_KNOWN_KEYS,
@@ -991,6 +994,21 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             file_fill_instructed=_file_fill_instructed,
         )
         worker.payload = _promoted
+
+        # ── T9: Structured promotion evidence (first attempt) ─────
+        _promotion_evidence = build_promotion_evidence(
+            plan_dir,
+            _scratch_status,
+            phase_identity="gate",
+            scratch_filename=_scratch_filename,
+            worker_payload_used=_scratch_status in ("missing", "unmodified"),
+        )
+        if _promotion_evidence:
+            log.debug(
+                "gate promotion evidence: %s",
+                [e["promotion_state"] for e in _promotion_evidence],
+            )
+        # ───────────────────────────────────────────────────────────
         # ────────────────────────────────────────────────────────────
 
         gate_payload = _normalize_gate_payload(worker.payload, signals_artifact)
@@ -1079,7 +1097,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 except (OSError, UnicodeDecodeError):
                     _retry_seed_json = None
 
-            _, _retry_promoted = promote_scratch(
+            _retry_scratch_status, _retry_promoted = promote_scratch(
                 plan_dir,
                 _scratch_filename,
                 _GATE_SCRATCH_KNOWN_KEYS,
@@ -1088,6 +1106,21 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 file_fill_instructed=_file_fill_instructed,
             )
             retry_worker.payload = _retry_promoted
+
+            # ── T9: Structured promotion evidence (reprompt) ─────
+            _retry_promotion_evidence = build_promotion_evidence(
+                plan_dir,
+                _retry_scratch_status,
+                phase_identity="gate",
+                scratch_filename=_scratch_filename,
+                worker_payload_used=_retry_scratch_status in ("missing", "unmodified"),
+            )
+            if _retry_promotion_evidence:
+                log.debug(
+                    "gate reprompt promotion evidence: %s",
+                    [e["promotion_state"] for e in _retry_promotion_evidence],
+                )
+            # ────────────────────────────────────────────────────────
             # ────────────────────────────────────────────────────────
 
             worker = _merge_gate_worker_attempt(worker, retry_worker)

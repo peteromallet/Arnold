@@ -154,6 +154,7 @@ class ProgressEmitter:
         target_plan_id = plan_id if plan_id is not None else self.plan_id
         target_sprint_id = sprint_id if sprint_id is not None else self.sprint_id
         event_details = dict(details or {})
+        event_details = _project_recovery_claims(event_details)
         if self.run_id and "run_id" not in event_details:
             event_details["run_id"] = self.run_id
         effective_key = idempotency_key or self.idempotency_key(kind, target_epic_id, target_plan_id, target_sprint_id, *key_parts)
@@ -197,6 +198,70 @@ class ProgressEmitter:
 
     def manual_fix_attached(self, *, summary: str = "Manual fix attached", **details: Any) -> ProgressEvent | None:
         return self.emit("manual_fix_attached", summary, details=details, key_parts=("manual-fix",))
+
+    def recovery_observed(
+        self,
+        recovery_verification: Mapping[str, Any],
+        *,
+        summary: str = "Repair recovery observed",
+        **details: Any,
+    ) -> ProgressEvent | None:
+        """Emit a progress projection that preserves recovery evidence state."""
+        projected = {
+            **details,
+            "phase": "repair_recovery",
+            "recovery_verification": dict(recovery_verification),
+        }
+        classified = _project_recovery_claims(projected)
+        return self.emit(
+            "phase_end",
+            summary,
+            details=classified,
+            key_parts=(
+                "repair_recovery",
+                classified["recovery_status"],
+                classified["unknown_type"],
+            ),
+        )
+
+
+def _project_recovery_claims(details: dict[str, Any]) -> dict[str, Any]:
+    """Replace caller-asserted recovery claims with the core classification."""
+    recovery_keys = {
+        "recovery_verification",
+        "recovery_state",
+        "recovery_status",
+        "recovery_verified",
+        "authorizes_verified_recovered",
+    }
+    if not recovery_keys.intersection(details):
+        return details
+
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        classify_recovery_verification,
+    )
+
+    raw = details.get("recovery_verification")
+    verification = raw if isinstance(raw, Mapping) else {}
+    classified = classify_recovery_verification(
+        original_blocker=verification.get("original_blocker"),
+        observation=verification.get("observation"),
+        repair_completed_at=verification.get("repair_completed_at"),
+    )
+    details.update(
+        {
+            "recovery_verification": dict(verification),
+            "recovery_state": classified["status"],
+            "recovery_status": classified["status"],
+            "recovery_verified": classified["recovery_verified"],
+            "authorizes_verified_recovered": classified[
+                "authorizes_verified_recovered"
+            ],
+            "unknown_type": classified["unknown_type"],
+            "recovery_reason": classified["reason"],
+        }
+    )
+    return details
 
 
 __all__ = [

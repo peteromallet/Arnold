@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     META_REPAIR_BUDGET_SECS,
     MetaRepairClassification,
     MetaRepairRecord,
+    extract_reported_repair_custody,
+    verify_meta_repair_commit_custody,
     MetaRepairTrigger,
     RetriggerExecutionResult,
     build_meta_repair_prompt,
@@ -36,6 +39,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     load_redacted_evidence,
     persist_meta_repair_record,
     remaining_meta_budget_secs,
+    retrigger_ordinary_repair,
     trigger_priority,
     verify_retrigger_success,
 )
@@ -61,6 +65,106 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
 # ---------------------------------------------------------------------------
 
 
+def _git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def _commit_file(repo: Path, name: str, content: str, message: str) -> str:
+    (repo / name).write_text(content, encoding="utf-8")
+    _git(repo, "add", name)
+    _git(repo, "commit", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+class TestMetaRepairCommitCustody:
+    def _repo(self, tmp_path: Path) -> tuple[Path, Path, str]:
+        remote = tmp_path / "remote.git"
+        subprocess.run(["git", "init", "--bare", str(remote)], check=True)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-b", "editible-install")
+        _git(repo, "config", "user.email", "test@example.invalid")
+        _git(repo, "config", "user.name", "Test")
+        _git(repo, "remote", "add", "origin", str(remote))
+        baseline = _commit_file(repo, "repair.py", "old\n", "baseline")
+        _git(repo, "push", "-u", "origin", "editible-install")
+        return repo, remote, baseline
+
+    def test_fixed_requires_the_new_commit_to_be_published(self, tmp_path: Path) -> None:
+        repo, _, baseline = self._repo(tmp_path)
+        current = _commit_file(repo, "repair.py", "fixed\n", "fix repair")
+
+        rejected = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=baseline,
+            verdict="FIXED",
+            push_required=True,
+        )
+        assert rejected["accepted"] is False
+        assert rejected["current_head"] == current
+        assert rejected["local_reachable"] is True
+        assert rejected["remote_reachable"] is False
+
+        _git(repo, "push", "origin", "editible-install")
+        accepted = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=baseline,
+            verdict="FIXED",
+            push_required=True,
+        )
+        assert accepted["accepted"] is True
+        assert accepted["outcome"] == "commit_custody_verified"
+        assert accepted["remote_reachable"] is True
+
+    def test_rejects_detached_or_nonfixed_source_changes(self, tmp_path: Path) -> None:
+        repo, _, baseline = self._repo(tmp_path)
+        current = _commit_file(repo, "repair.py", "changed\n", "unexpected change")
+
+        nonfixed = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=baseline,
+            verdict="ESCALATE",
+            push_required=False,
+        )
+        assert nonfixed["accepted"] is False
+        assert nonfixed["reason"] == "non-FIXED verdict moved source HEAD"
+
+        _git(repo, "checkout", "--detach", current)
+        detached_nonfixed = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=current,
+            verdict="ESCALATE",
+            push_required=False,
+        )
+        assert detached_nonfixed["accepted"] is False
+        assert detached_nonfixed["reason"] == "source commit is on detached HEAD"
+
+        detached = verify_meta_repair_commit_custody(
+            repo,
+            baseline_head=baseline,
+            verdict="FIXED",
+            push_required=False,
+        )
+        assert detached["accepted"] is False
+        assert detached["reason"] == "source commit is on detached HEAD"
+
+    def test_custody_rejection_controls_the_effective_outcome(self) -> None:
+        outcome = meta_repair_module.derive_meta_repair_effective_outcome(
+            verdict="ESCALATE",
+            post_retrigger_verification={
+                "commit_custody": {"accepted": False},
+            },
+        )
+        assert outcome == "commit_custody_failed"
+
+
 def _make_session_dir(tmp_path: Path, session: str) -> Path:
     """Create a minimal repair-data directory for *session*."""
     repair_root = tmp_path / "repair-data"
@@ -84,7 +188,7 @@ def _make_session_dir(tmp_path: Path, session: str) -> Path:
 class TestTriggerPriority:
     def test_all_triggers_have_priority(self) -> None:
         for trigger in MetaRepairTrigger:
-            assert trigger_priority(trigger) in range(1, 7)
+            assert trigger_priority(trigger) in range(1, 8)
 
     def test_non_trigger_has_no_priority(self) -> None:
         assert trigger_priority("none") == 99  # type: ignore[arg-type]
@@ -1400,7 +1504,7 @@ class TestEdgeCases:
         assert result.trigger == MetaRepairTrigger.PERSISTENT_RECURRING_RETRY
 
     def test_all_triggers_represented(self) -> None:
-        """Ensure all six trigger enum values are distinct and enumerable."""
+        """Ensure all seven trigger enum values are distinct and enumerable."""
         triggers = set(t.value for t in MetaRepairTrigger)
         assert triggers == {
             "repair_timeout",
@@ -1409,8 +1513,9 @@ class TestEdgeCases:
             "model_tool_launch_failure",
             "partial_liveness_recurrence",
             "discord_delivery_failure",
+            "l1_custody_failure",
         }
-        assert len(triggers) == 6
+        assert len(triggers) == 7
 
     def test_trigger_label_for_non_trigger(self) -> None:
         result = classify_repair_system_failure(session="edge-5")
@@ -1587,6 +1692,33 @@ class TestMetaRepairRecordShape:
             "created_at",
         }
         assert set(d.keys()) == required_keys
+
+    def test_extracts_reported_change_and_test_custody(self) -> None:
+        response = """ESCALATE
+
+Change made: [meta_repair.py](/workspace/arnold/arnold_pipelines/megaplan/cloud/meta_repair.py:250) now scopes history.
+Focused validation passed: `python3 -m py_compile arnold_pipelines/megaplan/cloud/meta_repair.py`.
+Focused tests passed: `python3 -m pytest tests/cloud/test_meta_repair.py -q` -> `5 passed`.
+"""
+
+        changes, tests = extract_reported_repair_custody(response)
+
+        assert changes == [
+            {
+                "file": "/workspace/arnold/arnold_pipelines/megaplan/cloud/meta_repair.py",
+                "status": "reported",
+            }
+        ]
+        assert tests == [
+            {
+                "command": "python3 -m py_compile arnold_pipelines/megaplan/cloud/meta_repair.py",
+                "result": "reported_pass",
+            },
+            {
+                "command": "python3 -m pytest tests/cloud/test_meta_repair.py -q",
+                "result": "reported_pass",
+            },
+        ]
 
     def test_record_defaults_are_empty(self) -> None:
         record = MetaRepairRecord(
@@ -1955,7 +2087,18 @@ class TestMetaRepairTimeout:
 
 
 class TestRetriggerVerification:
-    def test_live_with_fresh_activity_is_accepted_success(self) -> None:
+    @pytest.mark.parametrize(
+        "verification",
+        [
+            {"outcome": COMPLETE, "kind": "pid", "pid_alive": True},
+            {"outcome": COMPLETE, "kind": "heartbeat", "heartbeat_active": True},
+            {"outcome": PARTIAL_LIVENESS, "kind": "partial_liveness", "is_live": True},
+            {"outcome": COMPLETE, "kind": "subprocess_success"},
+        ],
+    )
+    def test_process_and_liveness_only_are_never_accepted(
+        self, verification: dict[str, object]
+    ) -> None:
         result = verify_retrigger_success(
             retriggered=True,
             retrigger_result=RetriggerExecutionResult(
@@ -1965,12 +2108,12 @@ class TestRetriggerVerification:
                 stderr="",
                 lock_released=True,
             ),
-            post_retrigger_verification={"outcome": LIVE_WITH_FRESH_ACTIVITY},
+            post_retrigger_verification=verification,
         )
 
-        assert result["accepted"] is True
-        assert result["outcome"] == LIVE_WITH_FRESH_ACTIVITY
-        assert result["rejection_reason"] == ""
+        assert result["accepted"] is False
+        assert result["recovery_status"] == "provisional"
+        assert result["recovery_verification"]["authorizes_verified_recovered"] is False
 
     def test_partial_liveness_remains_rejected(self) -> None:
         result = verify_retrigger_success(
@@ -1987,7 +2130,103 @@ class TestRetriggerVerification:
 
         assert result["accepted"] is False
         assert result["outcome"] == PARTIAL_LIVENESS
-        assert "not a terminal success" in result["rejection_reason"]
+        assert result["recovery_status"] == "provisional"
+
+    @pytest.mark.parametrize("unknown_type", ["missing", "stale", "partial", "contradictory"])
+    def test_typed_unknown_verification_fails_closed(self, unknown_type: str) -> None:
+        result = verify_retrigger_success(
+            retriggered=True,
+            retrigger_result=RetriggerExecutionResult(
+                command=("arnold-repair-loop", "demo-session"), returncode=0
+            ),
+            post_retrigger_verification={
+                "outcome": COMPLETE,
+                "original_blocker": {"blocker_id": "blocker-42"},
+                "observation": {
+                    "evidence_state": {
+                        "status": "unknown",
+                        "unknown_type": unknown_type,
+                    }
+                },
+                "repair_completed_at": "2026-07-09T07:53:00+00:00",
+            },
+        )
+
+        assert result["accepted"] is False
+        assert result["recovery_status"] == "unknown"
+        assert result["unknown_type"] == unknown_type
+
+    def test_later_independent_blocker_specific_observation_is_accepted(self) -> None:
+        result = verify_retrigger_success(
+            retriggered=True,
+            retrigger_result=RetriggerExecutionResult(
+                command=("arnold-repair-loop", "demo-session"), returncode=0
+            ),
+            post_retrigger_verification={
+                "outcome": COMPLETE,
+                "repair_completed_at": "2026-07-09T07:53:00+00:00",
+                "post_snapshot": _terminal_post_snapshot(),
+                "original_blocker": {"blocker_id": "blocker-42"},
+                "observation": {
+                    "kind": "plan_state",
+                    "blocker_id": "blocker-42",
+                    "blocker_cleared": True,
+                    "directly_observed": True,
+                    "independent": True,
+                    "observed_at": "2026-07-09T07:54:00+00:00",
+                },
+            },
+        )
+
+        assert result["accepted"] is True
+        assert result["recovery_status"] == "verified_recovered"
+        assert result["recovery_verification"]["blocker_identity"] == "blocker-42"
+
+
+@pytest.mark.parametrize(
+    ("master", "path", "authorized"),
+    [("0", "0", False), ("0", "1", False), ("1", "0", False), ("1", "1", True)],
+)
+def test_retrigger_effect_boundary_requires_master_and_l2_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    master: str,
+    path: str,
+    authorized: bool,
+) -> None:
+    monkeypatch.setenv("ARNOLD_AUTONOMY", master)
+    monkeypatch.setenv("ARNOLD_META_REPAIR_ENABLED", path)
+    calls: list[str] = []
+
+    def release(_path: object, *, expected_pid: int | None = None) -> bool:
+        calls.append(f"release:{expected_pid}")
+        return True
+
+    def runner(*_args: object, **_kwargs: object) -> object:
+        calls.append("launch")
+        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    if not authorized:
+        with pytest.raises(PermissionError, match="L2 mutation requires"):
+            retrigger_ordinary_repair(
+                command=("arnold-repair-loop", "session"),
+                repair_lock_dir=tmp_path / "lock",
+                expected_lock_pid=42,
+                runner=runner,
+                release_lock=release,
+            )
+        assert calls == []
+        return
+
+    result = retrigger_ordinary_repair(
+        command=("arnold-repair-loop", "session"),
+        repair_lock_dir=tmp_path / "lock",
+        expected_lock_pid=42,
+        runner=runner,
+        release_lock=release,
+    )
+    assert result.returncode == 0
+    assert calls == ["release:42", "launch"]
 
 
 # ---------------------------------------------------------------------------
@@ -2114,6 +2353,50 @@ class TestCheckMetaRepairRecursion:
         )
         assert result.recursing is False
         assert result.existing_meta_repair_ids == ()
+
+    def test_one_commit_custody_failure_allows_bounded_retry(self, tmp_path: Path) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "mr-custody-1.json").write_text(
+            json.dumps({
+                "meta_repair_id": "mr-custody-1",
+                "session": "recursion-test",
+                "outcome": "commit_custody_failed",
+            }),
+            encoding="utf-8",
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test", repair_data_dir=repair_dir
+        )
+
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
+
+    def test_repeated_commit_custody_failure_escalates(self, tmp_path: Path) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        for index in (1, 2):
+            (meta_dir / f"mr-custody-{index}.json").write_text(
+                json.dumps({
+                    "meta_repair_id": f"mr-custody-{index}",
+                    "session": "recursion-test",
+                    "outcome": "commit_custody_failed",
+                }),
+                encoding="utf-8",
+            )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test", repair_data_dir=repair_dir
+        )
+
+        assert result.recursing is True
+        assert result.existing_meta_repair_ids == (
+            "mr-custody-1",
+            "mr-custody-2",
+        )
 
     def test_input_too_large_record_does_not_poison_recursion(
         self, tmp_path: Path
@@ -2295,20 +2578,36 @@ class TestCommitGateResult:
 class TestCanCommitChanges:
     """Commit gating: commits require META_REPAIR_COMMIT_ENABLED."""
 
-    def test_commit_blocked_when_flag_off(self) -> None:
+    def test_commit_allowed_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes()
-        assert result.allowed is False
-        assert "off" in result.reason.lower() or "not permitted" in result.reason.lower()
+        assert result.allowed is True
         assert result.flag_name == "ARNOLD_META_REPAIR_COMMIT_ENABLED"
 
     def test_commit_allowed_when_flag_on(self) -> None:
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
         try:
             result = can_commit_changes()
             assert result.allowed is True
             assert "on" in result.reason.lower() or "permitted" in result.reason.lower()
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
+            os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+
+    def test_commit_blocked_when_commit_on_but_master_off(self) -> None:
+        os.environ["ARNOLD_AUTONOMY"] = "0"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
+        os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
+        try:
+            result = can_commit_changes()
+            assert result.allowed is False
+            assert "master" in result.reason.lower()
+        finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_commit_blocked_with_falsey_values(self) -> None:
@@ -2325,28 +2624,32 @@ class TestCanCommitChanges:
         result = can_commit_changes(session="my-session")
         assert "my-session" in result.reason
 
-    def test_commit_blocked_with_empty_env(self) -> None:
+    def test_commit_allowed_with_unset_env(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes(session="")
-        assert result.allowed is False
+        assert result.allowed is True
 
 
 class TestCanPushChanges:
     """Push gating: push uses the same commit gate."""
 
-    def test_push_blocked_when_flag_off(self) -> None:
+    def test_push_allowed_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_push_changes()
-        assert result.allowed is False
+        assert result.allowed is True
         assert "push" in result.reason.lower()
 
     def test_push_allowed_when_flag_on(self) -> None:
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
         try:
             result = can_push_changes()
             assert result.allowed is True
             assert "push" in result.reason.lower()
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_push_blocked_with_falsey_values(self) -> None:
@@ -2366,11 +2669,15 @@ class TestCanPushChanges:
         assert push_result.allowed == commit_result.allowed
 
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         try:
             commit_result = can_commit_changes()
             push_result = can_push_changes()
             assert push_result.allowed == commit_result.allowed
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_push_includes_session_in_reason(self) -> None:
@@ -2414,6 +2721,8 @@ class TestPolicyEndToEnd:
         """
         # Set commit flag ON
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         try:
             commit_result = can_commit_changes(session="any")
             assert commit_result.allowed is True
@@ -2429,15 +2738,15 @@ class TestPolicyEndToEnd:
             assert recursion.should_escalate is True
             # Both gates must be checked independently by the caller
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_commit_gate_independent_of_recursion(self) -> None:
-        """Commit gate should remain off-by-default regardless of recursion state."""
+        """Commit gate default is independent of recursion state."""
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes()
-        assert result.allowed is False, (
-            "Commit gate must be off by default even when no recursion exists"
-        )
+        assert result.allowed is True
 
 
 def test_repair_evidence_superseded_terminal_blocker_does_not_crash(tmp_path):
@@ -2541,6 +2850,16 @@ def test_meta_retrigger_accepts_only_complete_with_authoritative_terminal_snapsh
         post_retrigger_verification={
             "outcome": COMPLETE,
             "post_snapshot": _terminal_post_snapshot(),
+            "repair_completed_at": "2026-07-10T00:59:00+00:00",
+            "original_blocker": {"blocker_id": "blocker-terminal"},
+            "observation": {
+                "kind": "plan_state",
+                "blocker_id": "blocker-terminal",
+                "blocker_cleared": True,
+                "directly_observed": True,
+                "independent": True,
+                "observed_at": "2026-07-10T01:00:00+00:00",
+            },
         },
     )
 

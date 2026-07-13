@@ -4,7 +4,7 @@ When ordinary repair fails as a system, meta-repair diagnoses the
 repair-system failure, builds a redacted Codex/DeepSeek prompt, and
 prepares evidence for the meta-repair loop to act on.
 
-Trigger types (six specified + explicit non-trigger):
+Trigger types (seven specified + explicit non-trigger):
     1. repair_timeout            – repair took longer than its allotted budget
     2. persistent_recurring_retry – same failure repeats across attempts
     3. state_inspection_failure   – resolver/snapshot failed to read state
@@ -12,6 +12,8 @@ Trigger types (six specified + explicit non-trigger):
     5. partial_liveness_recurrence – partial-liveness across >=2 watchdog ticks
     6. discord_delivery_failure   – Discord delivery failed for a TRUE_BLOCKER
        human escalation
+    7. l1_custody_failure         – L1 could not establish canonical
+       request/blocker/claim custody
 
 Non-trigger: healthy repair, non-system error, stale evidence, etc.
 """
@@ -23,9 +25,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Callable, Mapping, Sequence
 
+from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
@@ -43,6 +47,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     TRUE_HUMAN_BLOCKER,
     atomic_write_json,
     build_verification_record,
+    classify_recovery_verification,
     classify_verification_outcome,
     compute_deadline,
     is_budget_exhausted,
@@ -66,7 +71,7 @@ META_REPAIR_BUDGET_SECS: int = 5400  # 90 minutes, longer than ordinary repair
 
 
 class MetaRepairTrigger(str, Enum):
-    """The six specified meta-repair trigger types."""
+    """The specified meta-repair trigger types."""
 
     REPAIR_TIMEOUT = "repair_timeout"
     PERSISTENT_RECURRING_RETRY = "persistent_recurring_retry"
@@ -74,6 +79,7 @@ class MetaRepairTrigger(str, Enum):
     MODEL_TOOL_LAUNCH_FAILURE = "model_tool_launch_failure"
     PARTIAL_LIVENESS_RECURRENCE = "partial_liveness_recurrence"
     DISCORD_DELIVERY_FAILURE = "discord_delivery_failure"
+    L1_CUSTODY_FAILURE = "l1_custody_failure"
 
 
 # Canonical ordering for display / prompt ordering
@@ -84,11 +90,163 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE: 4,
     MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE: 5,
     MetaRepairTrigger.DISCORD_DELIVERY_FAILURE: 6,
+    MetaRepairTrigger.L1_CUSTODY_FAILURE: 7,
 }
 
+# Outcomes that suppress another meta-repair dispatch.  Fresh activity remains
+# provisional recovery evidence, but it is not itself a repair-system failure.
 _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES | frozenset(
     {LIVE_WITH_FRESH_ACTIVITY}
 )
+
+
+def extract_reported_repair_custody(
+    response: str,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Extract structured change/test claims from a meta-repair response.
+
+    The meta-repair agent returns concise Markdown rather than a schema.  Keep
+    its claims explicitly labelled as reported evidence; downstream consumers
+    can then distinguish them from install-sync and retrigger verification.
+    """
+
+    changes: list[dict[str, str]] = []
+    tests: list[dict[str, str]] = []
+    seen_changes: set[str] = set()
+    seen_tests: set[str] = set()
+
+    for line in response.splitlines():
+        lowered = line.lower()
+        if any(token in lowered for token in ("change made", "changed", "patched", "fixed")):
+            for match in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", line):
+                path = match.group(1).split(":", 1)[0].strip()
+                if path and path not in seen_changes:
+                    seen_changes.add(path)
+                    changes.append({"file": path, "status": "reported"})
+
+        if any(token in lowered for token in ("pytest", "py_compile")):
+            commands = re.findall(r"`([^`]*(?:pytest|py_compile)[^`]*)`", line)
+            for command in commands:
+                command = command.strip()
+                if not command or command in seen_tests:
+                    continue
+                seen_tests.add(command)
+                result = "reported_pass" if any(
+                    token in lowered for token in ("passed", "passes", "validation passed", "tests passed")
+                ) else "reported"
+                tests.append({"command": command, "result": result})
+
+    return changes, tests
+
+
+def verify_meta_repair_commit_custody(
+    repo: str | Path,
+    *,
+    baseline_head: str,
+    verdict: str,
+    push_required: bool,
+    remote: str = "origin",
+) -> dict[str, Any]:
+    """Fail closed unless a meta-repair change has durable git custody.
+
+    ``FIXED`` requires a new, clean commit on a named local branch.  When push
+    policy is enabled, the same commit must already be published at the
+    corresponding remote branch.  Non-fix verdicts must not leave tracked
+    source changes or move HEAD.
+    """
+
+    root = Path(repo)
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    baseline = str(baseline_head or "").strip()
+    normalized_verdict = str(verdict or "").strip()
+    result: dict[str, Any] = {
+        "accepted": False,
+        "outcome": "commit_custody_failed",
+        "reason": "",
+        "baseline_head": baseline,
+        "current_head": "",
+        "branch": "",
+        "local_reachable": False,
+        "remote_reachable": False,
+        "push_required": bool(push_required),
+    }
+
+    current_proc = git("rev-parse", "HEAD")
+    if current_proc.returncode != 0 or not current_proc.stdout.strip():
+        result["reason"] = "meta-repair source HEAD is unavailable"
+        return result
+    current = current_proc.stdout.strip()
+    result["current_head"] = current
+
+    status_proc = git("status", "--porcelain", "--untracked-files=no")
+    if status_proc.returncode != 0 or status_proc.stdout.strip():
+        result["reason"] = "meta-repair left tracked source changes uncommitted"
+        return result
+
+    if not baseline:
+        result["reason"] = "pre-dispatch source HEAD was not captured"
+        return result
+
+    changed = bool(baseline) and current != baseline
+    if not normalized_verdict.startswith("FIXED"):
+        if changed:
+            result["reason"] = "non-FIXED verdict moved source HEAD"
+            return result
+    elif not changed:
+        result["reason"] = "FIXED verdict produced no new source commit"
+        return result
+
+    branch_proc = git("symbolic-ref", "--quiet", "--short", "HEAD")
+    branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+    result["branch"] = branch
+    if not branch:
+        result["reason"] = "source commit is on detached HEAD"
+        return result
+
+    branch_proc = git("rev-parse", f"refs/heads/{branch}")
+    local_reachable = (
+        branch_proc.returncode == 0 and branch_proc.stdout.strip() == current
+    )
+    result["local_reachable"] = local_reachable
+    if not local_reachable:
+        result["reason"] = "new source commit is not the named branch tip"
+        return result
+
+    if push_required:
+        remote_proc = git("ls-remote", "--heads", remote, f"refs/heads/{branch}")
+        remote_head = ""
+        if remote_proc.returncode == 0 and remote_proc.stdout.strip():
+            remote_head = remote_proc.stdout.split()[0]
+        result["remote_reachable"] = remote_head == current
+        if not result["remote_reachable"]:
+            result["reason"] = "new source commit is not published at the remote branch tip"
+            return result
+    else:
+        result["remote_reachable"] = False
+
+    if not normalized_verdict.startswith("FIXED"):
+        result.update(
+            accepted=True,
+            outcome="no_source_change",
+            reason="non-FIXED verdict preserved source custody",
+        )
+        return result
+
+    result.update(
+        accepted=True,
+        outcome="commit_custody_verified",
+        reason="new source commit has durable branch custody",
+    )
+    return result
 
 
 def authoritative_terminal_snapshot_reason(snapshot: Mapping[str, Any] | None) -> str:
@@ -1619,6 +1777,14 @@ def retrigger_ordinary_repair(
     if not command:
         raise ValueError("command must not be empty")
 
+    # Releasing the L1 lock and starting another repair process are both L2
+    # effects.  Keep the check adjacent to those effects so direct and fallback
+    # callers cannot bypass the master autonomy gate.
+    if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L2):
+        raise PermissionError(
+            "L2 mutation requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED"
+        )
+
     effective_release = release_repair_lock if release_lock is None else release_lock
     lock_released = False
     if repair_lock_dir is not None:
@@ -1685,16 +1851,28 @@ def verify_retrigger_success(
     snapshot_reason = authoritative_terminal_snapshot_reason(
         verification.get("post_snapshot")
     )
-    # L2 can hand a genuinely live target back to ordinary supervision.  Only
-    # a COMPLETE outcome *closes* custody, and only that terminal claim needs
-    # the all-milestones/no-worker authoritative snapshot.
+    observation = verification.get("observation")
+    if not isinstance(observation, Mapping):
+        observation = verification
+    observation = dict(observation)
+    if retrigger_result is not None:
+        observation.setdefault("returncode", retrigger_result.returncode)
+        observation.setdefault("subprocess_succeeded", retrigger_result.returncode == 0)
+    original_blocker = verification.get("original_blocker")
+    recovery = classify_recovery_verification(
+        original_blocker=(
+            original_blocker if isinstance(original_blocker, Mapping) else None
+        ),
+        observation=observation,
+        repair_completed_at=verification.get("repair_completed_at"),
+    )
+
     accepted = (
         retriggered
         and (retrigger_result is None or retrigger_result.returncode == 0)
-        and (
-            normalized_outcome == LIVE_WITH_FRESH_ACTIVITY
-            or (normalized_outcome == COMPLETE and not snapshot_reason)
-        )
+        and normalized_outcome == COMPLETE
+        and not snapshot_reason
+        and recovery["authorizes_verified_recovered"] is True
     )
 
     rejection_reason = ""
@@ -1707,17 +1885,24 @@ def verify_retrigger_success(
         )
     elif normalized_outcome == COMPLETE and snapshot_reason:
         rejection_reason = snapshot_reason
+    elif recovery["authorizes_verified_recovered"] is not True:
+        rejection_reason = str(recovery["reason"])
     elif normalized_outcome == PARTIAL_LIVENESS:
         rejection_reason = "partial_liveness is not a terminal success"
     elif normalized_outcome == REPAIRING:
         rejection_reason = "repairing is not a verified terminal success"
-    elif normalized_outcome not in {COMPLETE, LIVE_WITH_FRESH_ACTIVITY}:
+    elif normalized_outcome != COMPLETE:
         rejection_reason = f"outcome {normalized_outcome!r} cannot close repair custody"
 
     verification_record = build_verification_record(
         normalized_outcome,
         pre_snapshot=verification.get("pre_snapshot"),
         post_snapshot=verification.get("post_snapshot"),
+        original_blocker=(
+            original_blocker if isinstance(original_blocker, Mapping) else None
+        ),
+        observation=observation,
+        repair_completed_at=verification.get("repair_completed_at"),
         delta_summary=str(verification.get("delta_summary", "")),
     )
     verification_record.update(
@@ -1726,6 +1911,9 @@ def verify_retrigger_success(
             "accepted": accepted,
             "retriggered": retriggered,
             "rejection_reason": rejection_reason,
+            "recovery_verification": recovery,
+            "recovery_status": recovery["status"],
+            "unknown_type": recovery["unknown_type"],
         }
     )
     if raw_outcome == "running":
@@ -1754,13 +1942,16 @@ def derive_meta_repair_effective_outcome(
     """
 
     normalized_verdict = str(verdict or "").strip()
+    verification = dict(post_retrigger_verification or {})
+    commit_custody = verification.get("commit_custody")
+    if isinstance(commit_custody, Mapping) and commit_custody.get("accepted") is False:
+        return "commit_custody_failed"
     if not normalized_verdict.startswith("FIXED"):
         return normalized_verdict or "UNKNOWN"
 
     if str(install_sync_status or "").strip().lower() == "failed":
         return "install_sync_failed"
 
-    verification = dict(post_retrigger_verification or {})
     accepted = bool(verification.get("accepted"))
     outcome = str(verification.get("outcome") or "").strip().lower()
 

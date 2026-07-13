@@ -32,7 +32,9 @@ from arnold_pipelines.megaplan._core import (
     atomic_write_text,
     batch_artifact_index,
     configured_robustness,
+    infer_next_steps,
     is_creative_mode,
+    latest_plan_meta_path,
     latest_plan_path,
     load_plan_locked,
     read_json,
@@ -1679,6 +1681,97 @@ def _route_finalize_baseline_selection_failure_to_revise(
     return response
 
 
+def _reject_finalize_unresolved_north_star(plan_dir: Path, state: PlanState) -> None:
+    """Reject finalize when carried blocking North Star actions remain unresolved.
+
+    Compares the carried blocking actions from ``gate_carry.json`` (or
+    ``gate.json``) against the ``north_star_actions_addressed[]`` metadata
+    persisted by the latest revise step.  Absent, malformed, or incomplete
+    addressed metadata is treated as all-carried-blocking-unresolved
+    (fail-closed, SD1).
+
+    Raises :class:`CliError` via ``record_step_failure`` when unresolved
+    blockers are found, preventing finalize from producing executable tasks
+    while blocking North Star actions are not concretely addressed.
+    """
+    from arnold_pipelines.megaplan.north_star_actions import (
+        blocking_north_star_actions,
+        find_unresolved_blocking_actions,
+        read_carried_north_star_actions,
+    )
+
+    carried = read_carried_north_star_actions(plan_dir)
+    carried_blocking = blocking_north_star_actions(carried)
+    if not carried_blocking:
+        return  # nothing to block on
+
+    # Read latest revise metadata for north_star_actions_addressed[].
+    # When the plan has never been revised (e.g. bare-mode plan→finalize
+    # that somehow reached GATED) the metadata is absent → fail-closed.
+    meta_path = latest_plan_meta_path(plan_dir, state)
+    meta: dict[str, Any] | None = None
+    if meta_path.exists():
+        try:
+            meta = read_json(meta_path)
+        except Exception:
+            meta = None
+
+    addressed: list[dict[str, Any]] | None = None
+    if isinstance(meta, dict):
+        raw_addressed = meta.get("north_star_actions_addressed")
+        if isinstance(raw_addressed, list):
+            addressed = raw_addressed
+
+    unresolved = find_unresolved_blocking_actions(
+        carried_blocking=carried_blocking,
+        addressed=addressed,
+    )
+
+    if unresolved:
+        summaries = [
+            {
+                "id": u.get("id"),
+                "action_type": u.get("action_type"),
+                "reason": u.get("reason"),
+            }
+            for u in unresolved
+        ]
+        bullet_ids = ", ".join(str(u.get("id")) for u in unresolved)
+        reason_counts: dict[str, int] = {}
+        for u in unresolved:
+            key = str(u.get("reason"))
+            reason_counts[key] = reason_counts.get(key, 0) + 1
+        reasons = ", ".join(
+            f"{reason}={count}" for reason, count in reason_counts.items()
+        )
+        message = (
+            f"Finalize blocked: {len(unresolved)} carried blocking North Star "
+            f"action(s) unresolved ({bullet_ids}) [{reasons}]. Each blocking "
+            "action needs a north_star_actions_addressed record in the latest "
+            "revise metadata with concrete plan_refs and the matching "
+            "action_type marker. Re-run revise to address these actions before "
+            "finalize can produce executable tasks."
+        )
+        error = CliError(
+            "north_star_finalize_unresolved_blocking",
+            message,
+            valid_next=infer_next_steps(state),
+            extra={
+                "step": "finalize",
+                "unresolved_actions": summaries,
+                "count": len(unresolved),
+            },
+        )
+        record_step_failure(
+            plan_dir,
+            state,
+            step="finalize",
+            iteration=state["iteration"],
+            error=error,
+        )
+        raise error
+
+
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
     contract_payload = normalize_contract_payload(
         {
@@ -1830,6 +1923,7 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         # fail hard on modified invalid scratch when file-fill was
         # instructed (hermes agent).
         from arnold_pipelines.megaplan.handlers.structured_output import (
+            build_promotion_evidence,
             promote_scratch,
         )
 
@@ -1838,7 +1932,7 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         # hard-fail on a modified invalid scratch.
         file_fill_instructed = agent == "hermes"
 
-        _, promoted_payload = promote_scratch(
+        scratch_status, promoted_payload = promote_scratch(
             plan_dir,
             scratch_filename,
             _FINALIZE_SCRATCH_KNOWN_KEYS,
@@ -1847,9 +1941,30 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             file_fill_instructed=file_fill_instructed,
         )
         worker.payload = promoted_payload
+
+        # ── T9: Structured promotion evidence ────────────────────
+        promotion_evidence = build_promotion_evidence(
+            plan_dir,
+            scratch_status,
+            phase_identity="finalize",
+            scratch_filename=scratch_filename,
+            worker_payload_used=scratch_status in ("missing", "unmodified"),
+        )
+        if promotion_evidence:
+            LOGGER.debug(
+                "finalize promotion evidence: %s",
+                [e["promotion_state"] for e in promotion_evidence],
+            )
         # ────────────────────────────────────────────────────────────
 
         _validate_finalize_payload(plan_dir, state, worker)
+
+        # North Star closeout gate: reject finalize when carried blocking
+        # North Star actions are not concretely addressed in the latest
+        # revise metadata. This prevents prose-only completion from
+        # producing executable tasks while blocking actions remain open.
+        _reject_finalize_unresolved_north_star(plan_dir, state)
+
         try:
             artifact_hash = _write_finalize_artifacts(plan_dir, worker.payload, state)
         except FinalizeBaselineSelectionError as error:

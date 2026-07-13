@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import threading
 import time
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, Sequence
 from urllib.parse import urlparse
 
 from pydantic import Field
@@ -80,6 +80,19 @@ from .reply_chain import (
     decode_reply_cursor,
     reply_chain_page,
 )
+from .status_tree import (
+    DEFAULT_NODE_LIMIT,
+    MAX_NODE_LIMIT,
+    compact_cloud_status_snapshot,
+    read_cloud_status_node,
+)
+from .context_tree import (
+    POLICY_PACKS,
+    build_context_root,
+    classify_intent_packs,
+    read_context_node,
+    search_context,
+)
 
 MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v6"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
@@ -90,6 +103,9 @@ _SNAPSHOT_BACKGROUND_REFRESH_MIN_INTERVAL_S = 60.0
 _VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT = 3
 _VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS = 240
 _VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS = 160
+_INITIATIVE_HOT_CONTEXT_LIMIT = 5
+_RESIDENT_AGENT_RUNNING_LIMIT = 12
+_RESIDENT_AGENT_RECENT_LIMIT = 3
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
 
 
@@ -674,6 +690,27 @@ class ReadTodoListInput(ToolInput):
     """Read the VP special-requests to-do list (no arguments)."""
 
 
+class ReadCloudStatusNodeInput(ToolInput):
+    node_id: str = "root"
+    cursor: int = Field(default=0, ge=0)
+    limit: int = Field(default=DEFAULT_NODE_LIMIT, ge=1, le=MAX_NODE_LIMIT)
+
+
+class ReadContextNodeInput(ToolInput):
+    node_id: str = "root"
+    cursor: int = Field(default=0, ge=0)
+    limit: int = Field(default=DEFAULT_NODE_LIMIT, ge=1, le=MAX_NODE_LIMIT)
+
+
+class SearchContextInput(ToolInput):
+    scope: Literal[
+        "status", "agents", "conversation", "initiatives", "todos", "capabilities", "policies"
+    ]
+    query: str = ""
+    cursor: int = Field(default=0, ge=0)
+    limit: int = Field(default=DEFAULT_NODE_LIMIT, ge=1, le=MAX_NODE_LIMIT)
+
+
 class CompleteTodoItemInput(ToolInput):
     id: str
     result: str = ""
@@ -719,6 +756,39 @@ class LaunchSubagentInput(ToolInput):
     )
 
 
+def _resident_core_prompt() -> str:
+    """Small permanent contract; task-specific detail is loaded as policy packs."""
+
+    return (
+        "You are the resident Megaplan operator. Be evidence-led, concise, and honest about "
+        "unknowns. Use constrained resident/CLI operations for durable actions and never claim an "
+        "action, launch, delivery, or restart without returned durable evidence. Ask for human input "
+        "only when a real approval gate or material ambiguity blocks safe work.\n"
+        f"Planning assets follow {LAYOUT_POLICY_VERSION} under .megaplan/initiatives/<slug>/; search "
+        "initiatives by rough slug/title/description first and reuse matches before creating one. Never put planning docs directly under "
+        ".megaplan/briefs. Never create planning docs directly under .megaplan/briefs.\n"
+        "Hot context is a bounded orientation root, not the database. Follow context_root.routes and "
+        "use read_context_node/search_context (or the listed python -P CLI twins) for only the branch "
+        "needed. Never load a complete cloud-status JSON. conversation_history and model history are "
+        "bounded excerpts; search the authoritative current conversation before historical claims.\n"
+        "Default to `launch_subagent` for any user-requested execution work; make that tool call before replying "
+        "so the launch is durable. Never invent a run ID. Do not babysit normal delegated work or Megaplan/cloud "
+        "chains; durable agents, runners, watchdogs, and bounded repair own continuation. Babysitting should be exceptionally rare.\n"
+        "The vp_special_requests_todos preview contains pending, not necessarily due, items; call "
+        "`read_todo_list` with no arguments for the full retained list.\n"
+        "Absolute user-visible times use hot-context user_timezone; stored control-plane timestamps stay "
+        "UTC. Reply ancestry is only the exact preloaded ancestry or bounded read_reply_chain output.\n"
+        "For broad status, use context_root.attention and the status node, cite generated_at, and preserve "
+        "canonical progress/display fields. Use `progress.display_state` as its canonical status label, "
+        "falling back to `progress.plan_state` only when `display_state` is absent; show an active execute step as `executing`. "
+        "If stale_banner exists, emit it verbatim first and do not quote "
+        "withheld frozen numbers.\n"
+        "For a Discord restart, use only the canonical command in hot context; never use pkill, killall, "
+        "cgroup-wide stops, or tmux cleanup; state that the current turn can be interrupted while durable "
+        "agents and chains are preserved."
+    )
+
+
 @dataclass
 class MegaplanResidentProfile:
     """Megaplan-specific prompt, context, and constrained tool surface."""
@@ -735,6 +805,9 @@ class MegaplanResidentProfile:
         default=None, init=False, repr=False
     )
     _snapshot_refresh_started_at: float = field(default=0.0, init=False, repr=False)
+    _context_source_cache: dict[str, dict[str, Any]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.confirmation_manager is None:
@@ -748,6 +821,10 @@ class MegaplanResidentProfile:
             self._registered_default_tools = True
 
     def system_prompt(self) -> str:
+        return _resident_core_prompt()
+
+        # Historical monolith retained unreachable for one migration cycle; it
+        # is no longer sent to the model and can be removed after rollout.
         return (
             "You are the resident Megaplan operator. Shape epics through Megaplan "
             "editorial tools, report cloud status through constrained cloud tools, "
@@ -816,8 +893,9 @@ class MegaplanResidentProfile:
             "call `read_reply_chain` with the supplied cursor to page through older store-backed ancestry; "
             "the tool is bounded, cycle-safe, and restricted to this DM/channel/thread conversation."
             " For broad status questions ('how's it going?', 'what is active?', 'is it cooking?', "
-            "'why did it not reply?'), answer from `cloud_status_snapshot` / `plan_activity_summary` "
-            "in hot context FIRST. That snapshot is the canonical shared-runner view produced by the "
+            "'why did it not reply?'), answer from the compact `cloud_status_snapshot` / "
+            "`plan_activity_summary` in hot context FIRST. This is a bounded root projection of the "
+            "canonical shared-runner snapshot produced by the "
             "watchdog; cite its generated_at timestamp. If `cloud_status_snapshot.stale_banner` is "
             "present, you MUST emit that banner VERBATIM as your first line and you MUST NOT quote "
             "any percent, sprint, summary, or progress number from that snapshot — those have been "
@@ -847,13 +925,22 @@ class MegaplanResidentProfile:
             "reserves 30% for pre-execute stages and weights execute progress by the finalized "
             "task inventory's authoritative complexity scores. "
             "Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
-            "without labeling it degraded. Targeted per-plan questions may still use the cloud tools. "
+            "without labeling it degraded. For deeper status questions, navigate only the relevant "
+            "child node with `read_cloud_status_node`. In the Codex CLI runner, use "
+            "`python -P -m arnold_pipelines.megaplan resident status-tree --node '<node_id>'`; "
+            "never load the complete cloud-status JSON into the prompt. Targeted per-plan questions "
+            "may still use the constrained cloud tools. "
             "For a Discord resident restart, use only the canonical command in hot context under "
             "`resident_runtime.restart`; never use pkill, killall, a cgroup-wide stop, or tmux cleanup. "
             "The command must fail closed unless the installed unit proves its main-process-only "
             "stop boundary. Be explicit that the current Discord turn can be interrupted even though "
             "durable resident agents and Megaplan/cloud chains are preserved."
         )
+
+    def system_prompt_for(self, request_text: str | None) -> str:
+        packs = classify_intent_packs(request_text)
+        rendered = "\n".join(f"[{name}] {POLICY_PACKS[name]}" for name in packs)
+        return f"{_resident_core_prompt()}\nSelected policy packs:\n{rendered}"
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
         async def bounded_live_cloud() -> dict[str, Any] | None:
@@ -880,15 +967,23 @@ class MegaplanResidentProfile:
             live_cloud_chain,
         ) = await asyncio.gather(
             asyncio.to_thread(self._load_local_epic_chain_state_context),
-            asyncio.to_thread(initiative_compact_index, Path.cwd(), limit=40),
+            asyncio.to_thread(
+                initiative_compact_index, Path.cwd(), limit=_INITIATIVE_HOT_CONTEXT_LIMIT
+            ),
             asyncio.to_thread(list_managed_resident_agents, project_root=Path.cwd()),
             asyncio.to_thread(_vp_todo_hot_context, self._todo_path()),
             asyncio.to_thread(list_reset_notifications, limit=5),
             asyncio.to_thread(self._load_cloud_status_snapshot),
             bounded_live_cloud(),
         )
-        cloud_status_snapshot, snapshot_degraded = snapshot_result
+        full_cloud_status_snapshot, snapshot_degraded = snapshot_result
         self._schedule_cloud_status_snapshot_refresh()
+        cloud_status_tree_root = compact_cloud_status_snapshot(full_cloud_status_snapshot)
+        cloud_status_snapshot = _status_hot_orientation(cloud_status_tree_root)
+        activity_summary = _compact_activity_summary(
+            status_snapshot.plan_activity_summary(full_cloud_status_snapshot)
+        )
+        compact_agents = _compact_resident_agents(resident_agents)
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
@@ -939,7 +1034,7 @@ class MegaplanResidentProfile:
                         "systemctl kill --kill-whom=all",
                         "tmux kill-server or session cleanup",
                     ],
-                    "lifecycle": restart_lifecycle,
+                    "lifecycle": _compact_restart_lifecycle(restart_lifecycle),
                 },
                 "subagent_launch": {
                     "standard": MANAGED_RUN_SCHEMA,
@@ -996,21 +1091,66 @@ class MegaplanResidentProfile:
             # going?" / "what is active?" questions. Produced by the watchdog
             # from local observation only; never requires SSH from the resident.
             "cloud_status_snapshot": cloud_status_snapshot,
-            "plan_activity_summary": status_snapshot.plan_activity_summary(cloud_status_snapshot),
+            "plan_activity_summary": activity_summary,
             "cloud_status_degraded": snapshot_degraded,
             "epic_chain_visibility": _summarize_epic_chain_visibility(local_epic_chain_state, live_cloud_chain),
-            # Supplemental detail only; NOT the canonical shared-runner view.
-            "local_epic_chain_state": local_epic_chain_state,
+            # The broad snapshot root is sufficient when fresh. Keep the much
+            # larger local scan only as an explicitly degraded fallback.
+            "local_epic_chain_state": (
+                local_epic_chain_state
+                if full_cloud_status_snapshot is None or snapshot_degraded
+                else {"available_as_degraded_fallback": True, "embedded": False}
+            ),
             "live_cloud_chain": live_cloud_chain,
-            "resident_agents": resident_agents,
+            "resident_agents": compact_agents,
             "vp_special_requests_todos": todo_context,
         }
+        base["context_root"] = build_context_root(
+            status=cloud_status_tree_root,
+            agents=compact_agents,
+            initiatives=initiative_index,
+            todos=todo_context,
+            runtime={
+                "model_provider": self.config.model_provider,
+                "model": self.config.model_name,
+                "trusted_container": status_snapshot.is_trusted_container(),
+                "restart_node": "runtime/restart",
+            },
+            conversation={"conversation_id": conversation_id},
+        )
+
+        def cache_sources(messages: Sequence[Any] = ()) -> None:
+            self._context_source_cache[conversation_id] = {
+                "root": base["context_root"],
+                "status_snapshot": full_cloud_status_snapshot,
+                "agents": resident_agents,
+                "initiatives": initiative_index,
+                "todos": [vp_todo.public_item(item) for item in vp_todo.load_items(self._todo_path())],
+                "runtime": {
+                    "model_provider": self.config.model_provider,
+                    "model": self.config.model_name,
+                    "trusted_container": status_snapshot.is_trusted_container(),
+                    "restart": {
+                        "canonical_command": DISCORD_RESIDENT_RESTART_COMMAND,
+                        "lifecycle": restart_lifecycle,
+                    },
+                },
+                "messages": [
+                    item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+                    for item in messages
+                ],
+                "capabilities": self.tool_registry.as_compact_catalog(),
+            }
+            while len(self._context_source_cache) > 32:
+                self._context_source_cache.pop(next(iter(self._context_source_cache)))
         if self.store is None:
+            cache_sources()
             resolved = TimezoneService(self.store, self.config).resolve(user_id=None)
             base["user_timezone"] = resolved.hot_context()
             return add_localized_timestamp_fields(base, resolved.name)
         conversation = self.store.load_resident_conversation(conversation_id)
         if conversation is None:
+            cache_sources()
             resolved = TimezoneService(self.store, self.config).resolve(user_id=None)
             base["user_timezone"] = resolved.hot_context()
             return add_localized_timestamp_fields(base, resolved.name)
@@ -1059,6 +1199,9 @@ class MegaplanResidentProfile:
             guild_id=conversation.guild_id,
         )
         base["user_timezone"] = resolved.hot_context()
+        cache_sources(
+            self.store.list_conversation_messages(conversation.id, limit=200)
+        )
         return add_localized_timestamp_fields(base, resolved.name)
 
     def _load_local_epic_chain_state_context(self) -> dict[str, Any]:
@@ -1226,6 +1369,9 @@ class MegaplanResidentProfile:
             ToolRegistration("schedule_cloud_check", "Schedule a durable cloud status check.", "control", ScheduleCloudCheckInput, ToolResult, self._schedule_cloud_check),
             ToolRegistration("cancel_cloud_check", "Cancel a durable cloud status check.", "control", CancelCloudCheckInput, ToolResult, self._cancel_cloud_check),
             ToolRegistration("list_cloud_checks", "List durable cloud status checks.", "cloud_read", ListCloudChecksInput, ToolResult, self._list_cloud_checks),
+            ToolRegistration("read_cloud_status_node", "Read one bounded branch of the canonical cloud status tree. Start from node IDs in hot context and paginate event branches; raw snapshots are never returned.", "cloud_read", ReadCloudStatusNodeInput, ToolResult, self._read_cloud_status_node),
+            ToolRegistration("read_context_node", "Read one typed, bounded branch from the resident context tree.", "read", ReadContextNodeInput, ToolResult, self._read_context_node),
+            ToolRegistration("search_context", "Search one allow-listed resident context namespace without loading unrelated state.", "read", SearchContextInput, ToolResult, self._search_context),
             ToolRegistration("read_todo_list", "Read the full VP special-requests to-do list, including pending, conditional, and retained failed items.", "read", ReadTodoListInput, ToolResult, self._read_todo_list),
             ToolRegistration("get_timezone_preference", "Read the current Discord user's durable IANA timezone preference and effective presentation timezone.", "read", GetTimezonePreferenceInput, ToolResult, self._get_timezone_preference),
             ToolRegistration("set_timezone_preference", "Set the current Discord user's durable IANA timezone preference. The update applies on the next message.", "write", SetTimezonePreferenceInput, ToolResult, self._set_timezone_preference),
@@ -1236,6 +1382,57 @@ class MegaplanResidentProfile:
         )
         for registration in registrations:
             self.tool_registry.register(registration)
+
+    def _read_cloud_status_node(self, payload: ReadCloudStatusNodeInput) -> ToolResult:
+        snapshot, degraded_reason = self._load_cloud_status_snapshot()
+        result = read_cloud_status_node(
+            snapshot,
+            node_id=payload.node_id,
+            cursor=payload.cursor,
+            limit=payload.limit,
+        )
+        if not result.get("success"):
+            return _fail(str(result.get("error") or "status-tree node read failed"))
+        return _ok(
+            "cloud status node read",
+            node=result["node"],
+            degraded_reason=degraded_reason,
+        )
+
+    def _active_context_sources(self) -> dict[str, Any] | None:
+        runtime_context = current_tool_runtime_context()
+        conversation_id = runtime_context.conversation_id if runtime_context is not None else None
+        if conversation_id and conversation_id in self._context_source_cache:
+            return self._context_source_cache[conversation_id]
+        if len(self._context_source_cache) == 1:
+            return next(iter(self._context_source_cache.values()))
+        return None
+
+    def _read_context_node(self, payload: ReadContextNodeInput) -> ToolResult:
+        sources = self._active_context_sources()
+        if sources is None:
+            return _fail("context root is unavailable for the active conversation")
+        result = read_context_node(
+            sources, node_id=payload.node_id, cursor=payload.cursor, limit=payload.limit
+        )
+        if not result.get("success"):
+            return _fail(str(result.get("error") or "context node read failed"))
+        return _ok("context node read", node=result["node"])
+
+    def _search_context(self, payload: SearchContextInput) -> ToolResult:
+        sources = self._active_context_sources()
+        if sources is None:
+            return _fail("context root is unavailable for the active conversation")
+        result = search_context(
+            sources,
+            scope=payload.scope,
+            query=payload.query,
+            cursor=payload.cursor,
+            limit=payload.limit,
+        )
+        if not result.get("success"):
+            return _fail(str(result.get("error") or "context search failed"))
+        return _ok("context searched", node=result["node"])
 
     def _timezone_tool_subject(self) -> AuthorizationSubject | None:
         context = current_tool_runtime_context()

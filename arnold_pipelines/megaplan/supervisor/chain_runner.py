@@ -413,6 +413,12 @@ def run_chain(
                         outcome=RunOutcome.AWAITING_HUMAN,
                         reason=pr_resolution.reason or "pr_merge_resolution",
                     )
+                    authority_shadow = _derive_milestone_authority_shadow(
+                        root,
+                        plan_name,
+                        normalized=normalized,
+                        decision=decision,
+                    )
                     result = _milestone_result(
                         label=milestone.label,
                         plan=plan_name,
@@ -420,6 +426,7 @@ def run_chain(
                         decision=decision,
                         pr_number=pr_resolution.pr_number,
                         pr_state=pr_resolution.pr_state,
+                        authority_shadow=authority_shadow,
                     )
                     if not _completed_contains(chain_state, milestone.label):
                         chain_state.completed.append(result)
@@ -529,11 +536,18 @@ def run_chain(
             )
 
             if decision.action == LadderAction.ADVANCE:
+                authority_shadow = _derive_milestone_authority_shadow(
+                    root,
+                    plan_name,
+                    normalized=normalized,
+                    decision=decision,
+                )
                 result = _milestone_result(
                     label=milestone.label,
                     plan=plan_name,
                     normalized=normalized,
                     decision=decision,
+                    authority_shadow=authority_shadow,
                 )
                 if not _completed_contains(chain_state, milestone.label):
                     chain_state.completed.append(result)
@@ -1097,6 +1111,7 @@ def _milestone_result(
     decision: LadderDecision,
     pr_number: int | None = None,
     pr_state: str | None = None,
+    authority_shadow: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result = {
         "label": label,
@@ -1110,6 +1125,8 @@ def _milestone_result(
         result["pr_number"] = pr_number
     if pr_state is not None:
         result["pr_state"] = pr_state
+    if authority_shadow is not None:
+        result["authority_shadow"] = authority_shadow
     return result
 
 
@@ -1154,6 +1171,49 @@ def _optional_state_int(value: object) -> int | None:
 
 def _optional_state_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _derive_milestone_authority_shadow(
+    root: Path,
+    plan_name: str,
+    *,
+    normalized: NormalizedOutcome,
+    decision: LadderDecision,
+) -> dict[str, Any]:
+    """Derive authority-view-backed shadow for a supervisor milestone completion.
+
+    Cross-checks the ladder's ADVANCE decision against the accepted-attempt /
+    view-backed projection via ``_latest_execution_batch_all_tasks_done``.
+    Legacy chain state is retained as an observation; the authority shadow is
+    purely diagnostic and never blocks milestone advancement.
+
+    Returns a dict suitable for inclusion in ``_milestone_result`` and
+    ``chain_state.completed`` entries.
+    """
+    shadow: dict[str, Any] = {
+        "kind": "supervisor_milestone_authority_shadow",
+        "plan": plan_name,
+        "ladder_action": decision.action.value,
+        "legacy_outcome": normalized.outcome.value,
+    }
+    try:
+        plan_dir = _plan_dir(root, plan_name)
+        authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+        shadow["authority_verdict"] = authoritative
+        shadow["authority_reason"] = reason
+        if decision.action == LadderAction.ADVANCE and not authoritative:
+            shadow["authority_drift"] = {
+                "kind": "ladder_advance_authority_disagrees",
+                "legacy_ladder_action": decision.action.value,
+                "legacy_outcome": normalized.outcome.value,
+                "authority_verdict": authoritative,
+                "authority_reason": reason,
+                "plan": plan_name,
+            }
+    except Exception:
+        shadow["authority_verdict"] = None
+        shadow["authority_reason"] = "authority_shadow_derivation_failed"
+    return shadow
 
 
 __all__ = [

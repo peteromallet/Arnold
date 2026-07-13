@@ -174,6 +174,7 @@ DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES = 3
 # retrying the same binding cannot make progress and should not spend the
 # global max_iterations budget.
 DEFAULT_MAX_INVALID_TRANSITION_ATTEMPTS = 2
+DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS = 3
 # Auto-ESCALATE-up: after this many consecutive execute failures with no
 # forward progress, the driver pins execute to the next *more capable* tier
 # model and retries with a fresh session. It keeps climbing on further
@@ -1311,6 +1312,26 @@ def _command_for_auto_target(next_step: str) -> list[str]:
     return [target]
 
 
+def _phase_command(
+    next_step: str,
+    substrate: "Substrate" = "subprocess_isolated",
+) -> list[str]:
+    """Preserve the legacy phase-command contract for external callers.
+
+    Command selection is owned by :func:`_command_for_auto_target`. Explicit
+    multi-token override commands retain their historical argv shape so
+    compatibility callers can continue to pass them through unchanged.
+    ``substrate`` is accepted for forward compatibility; both supported
+    substrates currently use the same command translation.
+    """
+
+    del substrate
+    parts = shlex.split(next_step)
+    if len(parts) >= 2 and parts[0] == "override":
+        return parts
+    return _command_for_auto_target(next_step)
+
+
 def _failure_resume_cursor_for_step(
     next_step: str,
     *,
@@ -2051,8 +2072,15 @@ def _record_lifecycle_failure(
         )
     except (OSError, RuntimeError, ValueError):
         return
+    queue_root, marker_dir, repair_session, repair_run_kind = (
+        _lifecycle_repair_request_route(plan_dir)
+    )
     _enqueue_lifecycle_failure_request(
         plan_dir=plan_dir,
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session=repair_session,
+        run_kind=repair_run_kind,
         kind=kind,
         message=message,
         current_state=current_state,
@@ -2070,6 +2098,10 @@ def _record_lifecycle_failure(
 def _enqueue_lifecycle_failure_request(
     *,
     plan_dir: Path,
+    queue_root: Path,
+    marker_dir: Path | None = None,
+    session: str | None = None,
+    run_kind: str = "plan",
     kind: str,
     message: str,
     current_state: str | None,
@@ -2085,11 +2117,12 @@ def _enqueue_lifecycle_failure_request(
             return
         workspace_path = _workspace_path_for_plan_dir(plan_dir)
         enqueue_repair_request(
-            marker_dir=plan_dir,
-            session=plan_dir.name,
+            queue_root=queue_root,
+            marker_dir=marker_dir or plan_dir,
+            session=session or plan_dir.name,
             source="lifecycle_failure",
             workspace=workspace_path,
-            run_kind="plan",
+            run_kind=run_kind,
             target={
                 "plan_dir": str(plan_dir),
                 "plan_name": plan_dir.name,
@@ -2113,6 +2146,28 @@ def _enqueue_lifecycle_failure_request(
             phase=phase,
             context={"failure_kind": kind},
         )
+
+
+def _lifecycle_repair_request_route(
+    plan_dir: Path,
+) -> tuple[Path, Path, str, str]:
+    """Resolve lifecycle failures onto the dispatcher-owned queue when set.
+
+    Local runs retain their workspace queue. Managed cloud launchers inject the
+    canonical queue, session, marker, and run-kind identity so plan-level
+    failures cannot become accepted-but-unclaimed sidecars in a nested
+    workspace queue.
+    """
+
+    workspace_path = _workspace_path_for_plan_dir(plan_dir)
+    queue_root = Path(
+        os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+        or workspace_path / ".megaplan" / "repair-queue"
+    )
+    marker_dir = Path(os.environ.get("ARNOLD_REPAIR_MARKER_DIR") or plan_dir)
+    session = os.environ.get("ARNOLD_REPAIR_SESSION") or plan_dir.name
+    run_kind = os.environ.get("ARNOLD_REPAIR_RUN_KIND") or "plan"
+    return queue_root, marker_dir, session, run_kind
 
 
 def _workspace_path_for_plan_dir(plan_dir: Path) -> Path:
@@ -3707,6 +3762,8 @@ def drive(
     repeated_failure_signature_count = 0
     invalid_transition_signature: str | None = None
     invalid_transition_signature_count = 0
+    deterministic_phase_failure_signature: str | None = None
+    deterministic_phase_failure_count = 0
 
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
@@ -4991,6 +5048,13 @@ def drive(
             code, out, err, result = _run_phase(cmd, next_step)
             _clear_completed_phase_active_step(next_step, result)
 
+        if result is None or getattr(result, "exit_kind", None) not in {
+            ExitKind.internal_error.value,
+            ExitKind.malformed_model_output.value,
+        }:
+            deterministic_phase_failure_signature = None
+            deterministic_phase_failure_count = 0
+
         # Timeout detection: read from PhaseResult.exit_kind, not exit code.
         if result is not None and getattr(result, "exit_kind", None) == ExitKind.timeout.value:
             log(f"phase '{next_step}' timed out — stall detection will enforce the cap")
@@ -5160,11 +5224,15 @@ def drive(
             # auto drivers raced into the same phase. Treat as a no-op; the next
             # iteration's status() will see the lock released.
             if "plan_locked" in ((err or "") + (out or "")):
+                deterministic_phase_failure_signature = None
+                deterministic_phase_failure_count = 0
                 log(f"phase '{next_step}' hit plan_locked — transient contention, retrying next iteration")
             elif (
                 next_step == "execute"
                 and _recover_completed_execute_artifacts_after_failure(plan_dir)
             ):
+                deterministic_phase_failure_signature = None
+                deterministic_phase_failure_count = 0
                 log("phase 'execute' failed after writing complete artifacts — recovered to executed")
                 events.append(
                     {
@@ -5174,6 +5242,59 @@ def drive(
                     }
                 )
             else:
+                signature = json.dumps(
+                    [next_step, exit_kind, failure_detail],
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+                if signature == deterministic_phase_failure_signature:
+                    deterministic_phase_failure_count += 1
+                else:
+                    deterministic_phase_failure_signature = signature
+                    deterministic_phase_failure_count = 1
+                if (
+                    deterministic_phase_failure_count
+                    >= DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS
+                ):
+                    reason = (
+                        f"phase '{next_step}' repeated the same {exit_kind} "
+                        f"{deterministic_phase_failure_count} times: {failure_detail}"
+                    )
+                    _record_failure(
+                        plan_dir=plan_dir,
+                        kind="deterministic_phase_failure",
+                        message=reason,
+                        current_state=STATE_BLOCKED,
+                        phase=next_step,
+                        resume_cursor={
+                            "phase": next_step,
+                            "retry_strategy": "repair_phase_contract",
+                        },
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action=(
+                            "Repair or change the deterministic phase contract before resuming; "
+                            "re-running the same phase output cannot make progress."
+                        ),
+                        metadata={
+                            "signature": signature,
+                            "count": deterministic_phase_failure_count,
+                            "max_attempts": DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS,
+                            "exit_code": code,
+                            "stderr": filtered_stderr,
+                            "stderr_raw": redacted_stderr,
+                            "stdout": out.strip()[-400:],
+                            "iteration": iteration,
+                            **diagnostic_metadata,
+                        },
+                    )
+                    return _outcome(
+                        "blocked",
+                        final_state=STATE_BLOCKED,
+                        iterations=iteration,
+                        reason=reason,
+                        last_phase=next_step,
+                        blocking_reasons=["deterministic_phase_failure"],
+                    )
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="phase_failed",

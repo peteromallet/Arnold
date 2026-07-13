@@ -125,9 +125,19 @@ class Fixture:
         (plan_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
 
     def add_needs_human(self, name: str, *, summary: str = "awaiting human action") -> None:
+        marker = json.loads((self.marker_dir / f"{name}.json").read_text(encoding="utf-8"))
+        plan_name = str(marker.get("plan_name") or "")
         (self.repair_dir / f"{name}.needs-human.json").write_text(
             json.dumps(
-                {"session": name, "summary": summary, "recorded_at": NOW.isoformat()},
+                {
+                    "session": name,
+                    "summary": summary,
+                    "recorded_at": NOW.isoformat(),
+                    "human_gate": "explicit_approval",
+                    "decision_required": "approve or reject the pending action",
+                    "plan_name": plan_name,
+                    "current_plan_name": plan_name,
+                },
             ),
             encoding="utf-8",
         )
@@ -213,6 +223,38 @@ def test_active_repair_overrides_stale_needs_human_marker(fx):
     assert entry["operator_next"] == "automated repair dispatched for this session"
     assert snap["summary"]["repairing"] == 1
     assert snap["summary"]["blocked"] == 0
+
+
+def test_repair_sidecar_without_canonical_custody_is_not_reported_as_repairing(
+    fx, monkeypatch
+):
+    fx.add_session("uncustodied", plan_name="planR")
+    fx.add_chain_health(
+        "uncustodied",
+        current_plan_name="planR",
+        last_state="blocked",
+        updated_at=NOW - timedelta(hours=3),
+    )
+    fx.add_repair_progress("uncustodied", updated_at=NOW - timedelta(minutes=2))
+    fx.add_repair_data("uncustodied", outcome="repairing")
+    monkeypatch.setattr(
+        ss,
+        "_compose_repair_decision_projection",
+        lambda **_kwargs: {
+            "repair_custody": {"custody_bucket": "repairable_not_repairing"},
+            "repair_dispatch": {
+                "decision": "broken_superfixer",
+                "custody_bucket": "repairable_not_repairing",
+                "rationale": ["accepted request has no active claim or attempt"],
+            },
+        },
+    )
+
+    entry = _by_session(fx.build(), "uncustodied")
+
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
+    assert entry["operator_next"] == "accepted request has no active claim or attempt"
 
 def test_completed_not_counted_as_active_even_with_stale_failure(fx):
     fx.add_session("done", plan_name="planDone")
@@ -583,6 +625,35 @@ def test_plan_live_activity_sidecar_does_not_count_as_live_process_without_pid(f
     assert "stalled" in entry["operator_next"]
 
 
+def test_fresh_sidecar_cannot_make_dead_active_step_runner_running(fx):
+    fx.add_session("wbc", plan_name="c1-contract-reality-20260711-1433")
+    fx.add_chain_health(
+        "wbc",
+        current_plan_name="c1-contract-reality-20260711-1433",
+        last_state="executed",
+        updated_at=NOW - timedelta(seconds=30),
+    )
+    fx.add_plan_state(
+        "wbc",
+        "c1-contract-reality-20260711-1433",
+        current_state="executed",
+        active_step={
+            "phase": "execute",
+            "worker_pid": 99999999,
+            "last_activity_at": (NOW - timedelta(seconds=20)).isoformat(),
+        },
+    )
+
+    snap = fx.build()
+    entry = _by_session(snap, "wbc")
+
+    assert entry["tmux"] is False
+    assert entry["process"] is False
+    assert entry["status"] == "attention"
+    assert "dead worker PID" in entry["operator_next"]
+    assert entry["advancement"]["action"] != "preserve_live"
+
+
 
 def test_live_activity_supersedes_stale_needs_human_and_chain_health_plan(fx):
     spec = fx.root / "native" / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
@@ -865,10 +936,10 @@ def test_summary_counts_partition_all_sessions(fx):
     assert summary == {
         "running": 2,
         "repairing": 1,
-        "blocked": 1,
+        "blocked": 0,
         "paused": 0,
         "complete": 1,
-        "attention": 1,
+        "attention": 2,
     }
 
 
@@ -900,6 +971,109 @@ def test_plan_activity_summary_prefers_snapshot_over_no_snapshot():
     assert [e["session"] for e in derived["active_working"]] == ["r"]
     assert [e["session"] for e in derived["recently_completed"]] == ["d"]
     assert [e["session"] for e in derived["should_be_working_but_needs_attention"]] == ["a"]
+
+
+def test_snapshot_adds_separate_read_only_shadow_views_without_reclassification(fx):
+    workspace = fx.add_session("shadowed", plan_name="plan-a")
+    fx.add_chain_health(
+        "shadowed",
+        current_plan_name="plan-a",
+        completed_count=1,
+        milestone_count=3,
+        pr_number=42,
+        pr_state="open",
+    )
+    fx.add_plan_state("shadowed", "plan-a", current_state="executed")
+
+    entry = _by_session(fx.build(), "shadowed")
+
+    # Existing compatibility fields and classification retain their established
+    # values even when the sibling views disagree about runner/publication state.
+    assert {
+        key: entry[key]
+        for key in ("session", "workspace", "status", "should_run", "current_plan", "pr_number", "pr_state")
+    } == {
+        "session": "shadowed",
+        "workspace": str(workspace),
+        "status": "running",
+        "should_run": True,
+        "current_plan": "plan-a",
+        "pr_number": 42,
+        "pr_state": "open",
+    }
+    sections = [entry["execution_authority"], entry["runner"], entry["publication"]]
+    assert all(section["shadow"] is True and section["read_only"] is True for section in sections)
+    assert len({section["view_hash"] for section in sections}) == 3
+    assert entry["execution_authority"]["accepted_task_ids"] == []
+    assert any(
+        item["code"] == "legacy_plan_state_observation"
+        and item["source"].endswith("/plan-a/state.json")
+        for item in entry["execution_authority"]["diagnostics"]
+    )
+    assert entry["runner"]["status"] == "stopped"
+    publication = {item["field"]: item for item in entry["publication"]["observations"]}
+    assert publication["pull_request"]["value"] == "42"
+    assert publication["branch"]["state"] == "unknown"
+
+
+def test_shadow_views_reuse_collected_contradiction_paths_and_are_deterministic(fx):
+    fx.add_session("contradicted", plan_name="marker-plan")
+    fx.add_chain_health("contradicted", current_plan_name="chain-plan")
+    marker_file = fx.marker_dir / "contradicted.json"
+    marker = json.loads(marker_file.read_text(encoding="utf-8"))
+    marker["branch"] = "marker-branch"
+    marker_file.write_text(json.dumps(marker), encoding="utf-8")
+    health_file = fx.marker_dir / "contradicted.chain-health.progress.json"
+    health = json.loads(health_file.read_text(encoding="utf-8"))
+    health["branch"] = "health-branch"
+    health_file.write_text(json.dumps(health), encoding="utf-8")
+
+    first = _by_session(fx.build(), "contradicted")
+    second = _by_session(fx.build(), "contradicted")
+
+    for name in ("execution_authority", "runner", "publication"):
+        assert first[name] == second[name]
+    diagnostics = first["publication"]["diagnostics"]
+    assert any(
+        item["code"] == "publication_observation_contradiction"
+        and "contradicted.json" in item["source"]
+        and "contradicted.chain-health.progress.json" in item["source"]
+        and item["reason"] == "conflicting observations for branch"
+        for item in diagnostics
+    )
+
+
+def test_detailed_status_renders_separate_shadow_views_with_hashes_and_sources(fx):
+    fx.add_session("contradicted", plan_name="marker-plan")
+    fx.add_chain_health("contradicted", current_plan_name="chain-plan")
+    marker_file = fx.marker_dir / "contradicted.json"
+    marker = json.loads(marker_file.read_text(encoding="utf-8"))
+    marker["branch"] = "marker-branch"
+    marker_file.write_text(json.dumps(marker), encoding="utf-8")
+    health_file = fx.marker_dir / "contradicted.chain-health.progress.json"
+    health = json.loads(health_file.read_text(encoding="utf-8"))
+    health["branch"] = "health-branch"
+    health_file.write_text(json.dumps(health), encoding="utf-8")
+
+    detailed = sf.format_cloud_status_detailed(fx.build())
+
+    # The established session/evidence surface remains present, followed by
+    # operator-facing views that do not imply authority or mutate the snapshot.
+    assert "[running] contradicted" in detailed
+    assert f"evidence: {marker_file}" in detailed
+    assert "execution_authority [shadow, read-only]:" in detailed
+    assert "runner [shadow, read-only]:" in detailed
+    assert "publication [shadow, read-only]:" in detailed
+    # Five separated read-only domains (execution, runner, publication,
+    # human_gate, recovery) plus the composition facade each carry a hash.
+    assert "human_gate [shadow, read-only]:" in detailed
+    assert "recovery [shadow, read-only]:" in detailed
+    assert "megaplan_plan_view [shadow, read-only, facade]:" in detailed
+    assert detailed.count("hash=") == 6
+    assert "observation: branch=contradicted" in detailed
+    assert "diagnostic: publication_observation_contradiction subject=branch" in detailed
+    assert str(marker_file) in detailed
+    assert str(health_file) in detailed
 
 
 def test_write_load_roundtrip_and_freshness(tmp_path, fx):

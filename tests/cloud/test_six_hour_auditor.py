@@ -6,12 +6,16 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+    AUDIT_CODEX_MODEL,
     AuditorConfig,
     audit_incident,
     audit_projection_input,
     build_audit_input,
+    github_sync_publication_due,
+    enqueue_audit_repair_request,
+    validate_audit_model_inputs,
 )
-from arnold_pipelines.megaplan.incident import IncidentLedger
+from arnold_pipelines.megaplan.cloud.incident_bridge import IncidentStoreWriter
 
 
 def _event(**overrides: object) -> dict[str, object]:
@@ -97,6 +101,43 @@ def _problem(**overrides: object) -> dict[str, object]:
         },
         **overrides,
     )
+
+
+def test_github_sync_publication_due_survives_primary_human_escalation() -> None:
+    incident_audit = {
+        "next_expected_event": "auditor_escalate_to_human",
+        "audit_complete": {
+            "outcome": "auditor_human_escalation",
+            "next_expected_event": "auditor_escalate_to_human",
+        },
+        "findings": [
+            {
+                "layer": "resolver_confidence",
+                "recommendation": "auditor_escalate_to_human",
+            },
+            {
+                "layer": "github_sync",
+                "code": "github_sync_publish_due",
+                "recommendation": "github_sync.publish",
+            },
+        ],
+    }
+
+    assert github_sync_publication_due(incident_audit) is True
+
+
+def test_github_sync_publication_due_is_false_without_publish_action() -> None:
+    assert github_sync_publication_due(
+        {
+            "next_expected_event": "auditor_escalate_to_human",
+            "findings": [
+                {
+                    "layer": "resolver_confidence",
+                    "recommendation": "auditor_escalate_to_human",
+                }
+            ],
+        }
+    ) is False
 
 
 def _resolver_state(**overrides: object) -> dict[str, object]:
@@ -198,15 +239,147 @@ def _finding(result: dict[str, object], *, code: str) -> dict[str, object]:
 
 
 def test_build_audit_input_resolves_brief_incident_and_problem(tmp_path: Path) -> None:
-    ledger = IncidentLedger(tmp_path)
-    ledger.append_event(_event())
+    fixture_root = tmp_path / "isolated-incident-store"
+    writer = IncidentStoreWriter.isolated_test(
+        fixture_root,
+        production_root=Path.cwd(),
+        identity="test:six_hour_auditor",
+    )
+    writer.append_event(_event())
 
-    payload = build_audit_input("session-audit-1", root=tmp_path, now="2026-07-03T10:10:00Z")
+    payload = build_audit_input(
+        "session-audit-1", root=fixture_root, now="2026-07-03T10:10:00Z"
+    )
 
     assert payload["brief"]["found"] is True
     assert payload["brief"]["incident_id"] == "inc-audit-1"
     assert payload["incident"]["incident_id"] == "inc-audit-1"
     assert payload["problem"]["problem_id"] == "prob-audit-1"
+
+
+def test_fixture_writer_cannot_alias_production_incident_paths(tmp_path: Path) -> None:
+    production_root = tmp_path / "production"
+    production_ledger = production_root / ".megaplan" / "incident-ledger"
+    production_ledger.mkdir(parents=True)
+
+    for alias in (
+        production_root,
+        production_ledger,
+        production_ledger / "events.jsonl",
+        production_ledger / "incidents.json",
+        production_ledger / "problems.json",
+    ):
+        with pytest.raises(ValueError, match="production ledger, projection, or journal"):
+            IncidentStoreWriter(
+                root=alias,
+                namespace="fixture",
+                identity="fixture:six_hour_auditor",
+                production_root=production_root,
+            )
+
+    isolated = IncidentStoreWriter(
+        root=tmp_path / "fixture-store",
+        namespace="fixture",
+        identity="fixture:six_hour_auditor",
+        production_root=production_root,
+    )
+    assert isolated.events_path != production_ledger / "events.jsonl"
+
+
+def test_audit_model_pin_rejects_conflicting_inputs() -> None:
+    assert validate_audit_model_inputs({}) == AUDIT_CODEX_MODEL == "gpt-5.6-sol"
+    assert validate_audit_model_inputs({"CODEX_MODEL": "gpt-5.6-sol"}) == "gpt-5.6-sol"
+    for name in ("CODEX_MODEL", "MEGAPLAN_AUDIT_CODEX_MODEL", "CLOUD_WATCHDOG_CODEX_MODEL"):
+        with pytest.raises(ValueError, match=f"{name}=gpt-5.5"):
+            validate_audit_model_inputs({name: "gpt-5.5"})
+
+
+def test_unhealthy_audit_routes_only_to_central_repair_request(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    queue_root = workspace / ".megaplan" / "repair-queue"
+    item = {
+        "plan": "demo-plan",
+        "session": "demo-session",
+        "workspace": str(workspace),
+        "session_header": {"kind": "chain"},
+        "incident_projection": {"state": "blocked"},
+        "incident_audit": {
+            "incident_id": "inc-1",
+            "problem_id": "problem-1",
+            "diagnosis": {"summary": "watchdog evidence is stale"},
+            "findings": [{
+                "status": "error",
+                "layer": "watchdog",
+                "code": "watchdog_report_stale",
+                "recommendation": "watchdog.dispatch",
+            }],
+        },
+    }
+
+    result = enqueue_audit_repair_request(item, queue_root=queue_root)
+
+    assert result is not None and result["status"] == "queued"
+    request = result["request"]
+    assert request["source"] == "six_hour_auditor"
+    assert request["queue_dir"] == str(queue_root)
+    assert request["problem_signature"]["event_signature"] == (
+        "six_hour_auditor:watchdog:watchdog_report_stale"
+    )
+    assert not (workspace / ".git").exists()
+    assert not (workspace / ".megaplan" / "plans").exists()
+    written = {path.relative_to(workspace).parts[:3] for path in workspace.rglob("*")}
+    assert written <= {
+        (".megaplan",),
+        (".megaplan", "repair-queue"),
+        (".megaplan", "repair-queue", "requests"),
+        (".megaplan", "repair-queue", "decisions"),
+    }
+
+
+def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "target-workspace"
+    workspace.mkdir()
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    evidence = {
+        "actionable": True,
+        "accepted_unclaimed_count": 1,
+        "accepted_unclaimed_request_ids": ["7473fa42"],
+        "claim_count": 0,
+        "attempt_count": 0,
+        "repair_outcome": "repair_exhausted",
+        "repair_age_min": 180,
+        "runner_dead": True,
+        "chain_incomplete": True,
+        "absent_or_stale_l2": True,
+        "retry_budget": {"claim_retries_used": 2, "claim_alerted": False},
+    }
+
+    result = enqueue_audit_repair_request(
+        {
+            "plan": "c1-contract-reality-20260711-1433",
+            "session": "workflow-boundary-contracts-corrective-20260710",
+            "workspace": str(workspace),
+            "session_header": {"kind": "chain"},
+            "deterministic_superfixer_evidence": evidence,
+        },
+        queue_root=queue_root,
+    )
+
+    assert result is not None and result["status"] == "queued"
+    request = result["request"]
+    assert request["queue_dir"] == str(queue_root)
+    assert request["workspace"] == str(workspace)
+    assert request["target"]["workspace"] == str(workspace)
+    assert request["target"]["deterministic_superfixer_evidence"] == evidence
+    assert request["problem_signature"]["failure_kind"] == "stale_l1_l2_cycle"
+    assert request["problem_signature"]["blocked_task_id"].startswith("audit:")
+    assert request["target"]["root_cause_identity"] == request["problem_signature"]["blocked_task_id"]
+    assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["7473fa42"]
+    assert request["target"]["retry_budget"] == evidence["retry_budget"]
+    assert request["target"]["retry_strategy"] == "meta_repair"
+    assert not (workspace / ".megaplan" / "repair-queue").exists()
 
 
 def test_audit_incident_emits_layer_findings_without_mutating_state() -> None:

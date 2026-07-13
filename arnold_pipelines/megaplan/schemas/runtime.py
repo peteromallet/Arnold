@@ -5,6 +5,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from arnold_pipelines.megaplan.north_star_actions import (
+    NORTH_STAR_ACTION_ADDRESSED_SCHEMA,
+    NORTH_STAR_ACTION_SCHEMA,
+)
 
 STANCE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -463,6 +467,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         ],
     },
     "revise.json": {
+        "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
             "plan": {"type": "string"},
@@ -480,6 +485,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "required": ["id", "resolution", "reason"],
                     "additionalProperties": False,
                 },
+            },
+            "north_star_actions_addressed": {
+                "type": "array",
+                "items": deepcopy(NORTH_STAR_ACTION_ADDRESSED_SCHEMA),
             },
             "assumptions": {"type": "array", "items": {"type": "string"}},
             "success_criteria": {
@@ -508,6 +517,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         ],
     },
     "gate.json": {
+        "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
             "recommendation": {
@@ -564,6 +574,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 "items": {"type": "string"},
             },
             "tiebreaker_fuzzy_group_id": {"type": "string"},
+            "north_star_actions": {
+                "type": "array",
+                "items": deepcopy(NORTH_STAR_ACTION_SCHEMA),
+            },
         },
         "required": [
             "recommendation",
@@ -573,6 +587,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "settled_decisions",
             "flag_resolutions",
             "accepted_tradeoffs",
+            "north_star_actions",
         ],
     },
     "critique.json": {
@@ -1064,6 +1079,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "issues": {"type": "array", "items": {"type": "string"}},
+            "north_star_actions": {
+                "type": "array",
+                "items": deepcopy(NORTH_STAR_ACTION_SCHEMA),
+            },
             "rework_items": {
                 "type": "array",
                 "items": {

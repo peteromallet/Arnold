@@ -4,6 +4,8 @@ import argparse
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -25,6 +27,7 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
 from arnold_pipelines.megaplan.orchestration.transition_policy import (
     TRANSITION_DECISION_REVIEW_DONE_FILENAME,
     TransitionPolicy,
+    TransitionPolicyDecision,
     TransitionWriter,
 )
 from arnold_pipelines.megaplan.execute.merge import _validate_and_merge_batch
@@ -66,6 +69,7 @@ from arnold_pipelines.megaplan._core import (
     get_effective,
     is_prose_mode,
     is_creative_mode,
+    latest_plan_meta_path,
     load_plan_locked,
     make_history_entry,
     now_utc,
@@ -988,6 +992,93 @@ def _force_proceed_blockers(
     return blockers
 
 
+def _deterministic_review_block_evidence(
+    rework_items: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return structured failing checks that a repair worker can reproduce."""
+
+    evidence: list[dict[str, Any]] = []
+    for item in rework_items or []:
+        if not isinstance(item, dict) or not _rework_item_is_blocker(item):
+            continue
+        raw_checks: list[Mapping[str, Any]] = []
+        check = item.get("deterministic_check")
+        if isinstance(check, Mapping):
+            raw_checks.append(check)
+        checks = item.get("deterministic_checks")
+        if isinstance(checks, list):
+            raw_checks.extend(value for value in checks if isinstance(value, Mapping))
+        for raw in raw_checks:
+            command = str(raw.get("command") or "").strip()
+            baseline = str(raw.get("baseline_status") or "").strip().lower()
+            post = str(raw.get("post_status") or "").strip().lower()
+            if not command or not ({baseline, post} & {"fail", "failed", "error"}):
+                continue
+            evidence.append(
+                {
+                    "command": command,
+                    "baseline_status": baseline or "unknown",
+                    "post_status": post or "unknown",
+                    "task_id": str(item.get("task_id") or ""),
+                    "issue": str(item.get("issue") or item.get("flag_id") or ""),
+                }
+            )
+    return evidence
+
+
+def _review_quality_block_failure(
+    *,
+    state: PlanState,
+    blockers: list[str],
+    rework_items: list[dict[str, Any]] | None,
+    review_artifact_hash: str,
+) -> dict[str, Any]:
+    deterministic_evidence = _deterministic_review_block_evidence(rework_items)
+    fingerprint_payload = {
+        "blockers": sorted(blockers),
+        "deterministic_evidence": deterministic_evidence,
+        "review_artifact_hash": review_artifact_hash,
+    }
+    digest = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    cursor = {
+        "history_index": len(state.get("history", [])),
+        "review_artifact_hash": review_artifact_hash,
+    }
+    deterministic = bool(deterministic_evidence)
+    blocked_task_ids = sorted(
+        {
+            str(item.get("task_id") or "").strip()
+            for item in deterministic_evidence
+            if str(item.get("task_id") or "").strip()
+        }
+    )
+    return {
+        "kind": "quality_gate_blocked" if deterministic else "review_quality_blocked_unknown",
+        "message": "review rework budget exhausted with unresolved quality blockers",
+        "phase": "review",
+        "state": STATE_BLOCKED,
+        "recorded_at": now_utc(),
+        "last_artifact": "review.json",
+        "suggested_action": (
+            "Dispatch one bounded automatic repair using the recorded deterministic checks."
+            if deterministic
+            else "Collect structured deterministic evidence before selecting a recovery action."
+        ),
+        "blocker_ids": [f"quality:review:{digest}"],
+        "evidence_cursor": cursor,
+        "metadata": {
+            "repairability": "deterministic_machine" if deterministic else "unknown",
+            "deterministic": deterministic,
+            "deterministic_evidence": deterministic_evidence,
+            "blocking_reasons": list(blockers),
+            "blocked_task_ids": blocked_task_ids,
+            "evidence_cursor": cursor,
+        },
+    }
+
+
 @dataclass(frozen=True)
 class ReviewRouteDecision:
     result: ReviewDecisionResult
@@ -1385,6 +1476,74 @@ def _review_done_evidence_refs(review_evidence: dict[str, Any]) -> tuple[Evidenc
     )
 
 
+def _review_north_star_closeout_blockers(
+    plan_dir: Path,
+    state: PlanState,
+) -> list[str]:
+    """Return hard denial reasons for unresolved carried blocking North Star actions.
+
+    This is the review→done closeout pre-check (SD3). It runs BEFORE
+    ``TransitionPolicy.evaluate_review_done`` so a milestone cannot be marked
+    complete while a carried blocking North Star action remains unresolved.
+    It is intentionally a *separate* pre-check: the transition policy keeps
+    its existing concerns (evidence freshness, completion status) and this
+    gate stays focused on North Star closeout. Denials are routed through the
+    existing denial path via :meth:`TransitionPolicyDecision.merge_denial_reasons`.
+
+    Fail-closed (SD1): absent, malformed, or incomplete
+    ``north_star_actions_addressed[]`` metadata in the latest revise step is
+    treated as every carried blocker being unresolved.
+    """
+    from arnold_pipelines.megaplan.north_star_actions import (
+        blocking_north_star_actions,
+        find_unresolved_blocking_actions,
+        read_carried_north_star_actions,
+    )
+
+    carried = read_carried_north_star_actions(plan_dir)
+    carried_blocking = blocking_north_star_actions(carried)
+    if not carried_blocking:
+        return []
+
+    # Read the latest revise metadata for north_star_actions_addressed[].
+    # When the plan has never been revised the metadata is absent → fail-closed
+    # (every carried blocker is reported as unresolved), mirroring the finalize
+    # guard and _post_revise_gate_allowed.
+    meta_path = latest_plan_meta_path(plan_dir, state)
+    meta: dict[str, Any] | None = None
+    if meta_path.exists():
+        try:
+            meta = read_json(meta_path)
+        except Exception:
+            meta = None
+
+    addressed: list[dict[str, Any]] | None = None
+    if isinstance(meta, dict):
+        raw_addressed = meta.get("north_star_actions_addressed")
+        if isinstance(raw_addressed, list):
+            addressed = raw_addressed
+
+    unresolved = find_unresolved_blocking_actions(
+        carried_blocking=carried_blocking,
+        addressed=addressed,
+    )
+    if not unresolved:
+        return []
+
+    reasons: list[str] = []
+    for action in unresolved:
+        aid = action.get("id")
+        action_type = action.get("action_type")
+        reason = action.get("reason")
+        reasons.append(
+            f"unresolved blocking North Star action {aid} "
+            f"(type={action_type}, reason={reason}): milestone cannot be "
+            "marked complete until this action is concretely addressed in a "
+            "revise pass with concrete plan_refs and the matching action_type marker"
+        )
+    return reasons
+
+
 def _persist_review_done_transition_decision(
     *,
     plan_dir: Path,
@@ -1401,6 +1560,15 @@ def _persist_review_done_transition_decision(
     if not isinstance(review_evidence, dict):
         review_evidence = {}
     project_dir = Path(str(state.get("config", {}).get("project_dir", "")))
+
+    # ── T9: North Star closeout blocker pre-check (SD3) ──────────────────
+    # Fail-closed: unresolved carried blocking North Star actions MUST deny
+    # the review→done transition ahead of the normal policy. This is a
+    # separate pre-check (not a TransitionPolicy concern); the denial is
+    # merged into the policy decision so it routes through the existing
+    # denial path with no TransitionPolicy signature change.
+    north_star_denial_reasons = _review_north_star_closeout_blockers(plan_dir, state)
+
     policy_decision = TransitionPolicy.evaluate_review_done(
         result=result,
         next_state=next_state,
@@ -1408,11 +1576,85 @@ def _persist_review_done_transition_decision(
         review_evidence=review_evidence,
         project_dir=project_dir if str(project_dir) else None,
     )
+    if north_star_denial_reasons:
+        # Force the transition denied via the existing denial path. The merged
+        # decision carries the North Star reasons on top of the policy's own
+        # reasons so the written transition decision and downstream denial
+        # routing both surface the unresolved blockers.
+        policy_decision = policy_decision.merge_denial_reasons(north_star_denial_reasons)
     meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
     invocation_id = meta.get("current_invocation_id")
     if not isinstance(invocation_id, str) or not invocation_id:
         invocation_id = review_evidence.get("invocation_id")
     iteration = state.get("iteration")
+
+    # ── S2 T11: Build checked evidence refs and authority record refs ─────
+    evidence_refs = _review_done_evidence_refs(review_evidence)
+    checked_evidence_refs: tuple[str, ...] = tuple(
+        f"evidence:{ref.kind}" for ref in evidence_refs
+    )
+    # Gather execution authority decisions for authority_record_refs
+    authority_record_refs: tuple[str, ...] = ()
+    has_waiver: bool = False
+    provider_errors: bool = False
+    if project_dir and str(project_dir):
+        try:
+            from arnold_pipelines.megaplan.orchestration.authority_readers import (
+                effective_execute_completed_task_ids,
+            )
+            finalize_path = plan_dir / "finalize.json"
+            if finalize_path.exists():
+                finalize_data = read_json(finalize_path)
+                if isinstance(finalize_data, dict):
+                    tasks = [
+                        t for t in finalize_data.get("tasks", []) or []
+                        if isinstance(t, dict) and (t.get("id") or t.get("task_id"))
+                    ]
+                    if tasks:
+                        decisions: dict = {}
+                        effective_execute_completed_task_ids(
+                            tasks,
+                            plan_dir=plan_dir,
+                            project_dir=project_dir if str(project_dir) else None,
+                            state=state,
+                            decisions=decisions,
+                        )
+                        if decisions:
+                            authority_record_refs = tuple(
+                                f"authority:execute:{tid}"
+                                for tid in sorted(decisions.keys())
+                            )
+                        # ── S2 T12: Detect waiver / degraded signals ─────
+                        for t in tasks:
+                            raw_status = str(t.get("status") or "").lower()
+                            if raw_status == "waived":
+                                has_waiver = True
+                        # ──────────────────────────────────────────────────
+        except Exception:
+            pass
+    # Detect provider errors from review evidence
+    provider_diagnostics = review_evidence.get("provider_diagnostics")
+    if isinstance(provider_diagnostics, dict):
+        for _provider, diagnostic in provider_diagnostics.items():
+            if isinstance(diagnostic, dict) and diagnostic.get("ok") is False:
+                provider_errors = True
+                break
+    # ──────────────────────────────────────────────────────────────────────
+
+    # ── S2 T12: Classify authority state for structured provenance ─────────
+    from arnold.workflow.boundary_evidence import classify_authority_state
+
+    authority_state = classify_authority_state(
+        allowed=policy_decision.allowed,
+        authority_record_refs=authority_record_refs,
+        checked_evidence_refs=checked_evidence_refs,
+        advisory=policy_decision.advisory,
+        has_waiver=has_waiver,
+        provider_errors=provider_errors,
+        denial_reasons=policy_decision.reasons,
+    )
+    # ──────────────────────────────────────────────────────────────────────
+
     decision = TransitionDecision(
         decision_id=f"review-done-{invocation_id or iteration or 'unknown'}",
         subject=f"plan:{state.get('name', '')}",
@@ -1420,7 +1662,7 @@ def _persist_review_done_transition_decision(
         to_state=next_state,
         action="allow_transition" if policy_decision.allowed else "deny_transition",
         status="allowed" if policy_decision.allowed else "denied",
-        evidence=_review_done_evidence_refs(review_evidence),
+        evidence=evidence_refs,
         would_block_reasons=policy_decision.reasons,
         invocation_id=invocation_id if isinstance(invocation_id, str) else None,
         phase="review",
@@ -1433,6 +1675,9 @@ def _persist_review_done_transition_decision(
             "policy": "review_done",
             "advisory": list(policy_decision.advisory),
         },
+        boundary_id="megaplan.review_done",
+        checked_evidence_refs=checked_evidence_refs,
+        authority_record_refs=authority_record_refs,
     )
     TransitionWriter.write_review_done(
         plan_dir,
@@ -1445,6 +1690,7 @@ def _persist_review_done_transition_decision(
             if policy_decision.allowed
             else "Review-to-done transition denied by policy."
         ),
+        authority_state=authority_state,
     )
     return policy_decision
 
@@ -1662,13 +1908,32 @@ def _finalize_review_outcome(
         attach_agent_fallback(response, args)
         return response
     atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
+    criteria = worker.payload.get("criteria", [])
     force_proceed_blocked = (
         result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED
     )
     if force_proceed_blocked:
+        raw_rework_items = worker.payload.get("rework_items")
+        blocked_rework_items = (
+            [item for item in raw_rework_items if isinstance(item, dict)]
+            if isinstance(raw_rework_items, list)
+            else []
+        )
+        blocker_reasons = _force_proceed_blockers(
+            criteria if isinstance(criteria, list) else None,
+            blocked_rework_items,
+        )
+        review_artifact_hash = sha256_file(plan_dir / "review.json")
+        state["latest_failure"] = _review_quality_block_failure(
+            state=state,
+            blockers=blocker_reasons,
+            rework_items=blocked_rework_items,
+            review_artifact_hash=review_artifact_hash,
+        )
         state["resume_cursor"] = {
             "phase": "review",
             "retry_strategy": "manual_review",
+            "evidence_cursor": dict(state["latest_failure"]["evidence_cursor"]),
         }
     state["current_state"] = next_state
     if result != ReviewDecisionResult.BLOCKED and next_state != STATE_BLOCKED:
@@ -1707,7 +1972,6 @@ def _finalize_review_outcome(
     )
     save_state_merge_meta(plan_dir, state)
 
-    criteria = worker.payload.get("criteria", [])
     if force_proceed_blocked:
         summary = next(
             (

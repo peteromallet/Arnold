@@ -214,6 +214,23 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--project-dir", dest="project_dir")
     status_parser.add_argument("--pending-human", action="store_true", default=False)
 
+    authority_inventory_parser = subparsers.add_parser(
+        "authority-inventory",
+        help="Report the read-only authority evidence inventory for a plan.",
+    )
+    authority_inventory_parser.add_argument("--plan", required=False)
+    authority_inventory_parser.add_argument("--project-dir", dest="project_dir")
+    authority_inventory_parser.add_argument(
+        "--session",
+        default=None,
+        help="Optional cloud session whose marker evidence should be observed.",
+    )
+    authority_inventory_parser.add_argument(
+        "--marker-dir",
+        default=None,
+        help="Directory containing optional cloud session marker files.",
+    )
+
     override_parser = subparsers.add_parser("override")
     override_parser.add_argument(
         "override_action",
@@ -2471,8 +2488,30 @@ def handle_anchors(root: Path, args: argparse.Namespace) -> StepResponse:
     return _handle(root, args)
 
 
+def handle_authority_inventory(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Return the canonical, read-only authority evidence inventory."""
+
+    from arnold_pipelines.megaplan.authority.inventory import collect_authority_inventory
+
+    plan_dir = resolve_plan_dir(root, args.plan)
+    inventory = collect_authority_inventory(
+        plan_dir,
+        session=getattr(args, "session", None),
+        marker_dir=getattr(args, "marker_dir", None),
+    )
+    return {
+        "success": True,
+        "step": "authority-inventory",
+        "plan": plan_dir.name,
+        "plan_dir": str(plan_dir),
+        "inventory": inventory.to_dict(),
+        "fingerprint": inventory.fingerprint,
+    }
+
+
 COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "anchors": handle_anchors,
+    "authority-inventory": handle_authority_inventory,
     "init": handle_init,
     "plan": handle_plan,
     "prep": handle_prep,

@@ -62,6 +62,119 @@ def test_repair_loop_bin_falls_back_when_override_missing() -> None:
     )
 
 
+def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'if ! has_recordable_verdict "$RESP_PATH"; then' in text
+    assert "run_direct_hermes_fallback || true" in text
+    assert '--query-file "$FALLBACK_BRIEF_PATH"' in text
+    assert '--project-dir /workspace' in text
+    assert 'cd /workspace || exit 1' in text
+    assert 'sys.modules["megaplan.agent"] = agent_probe' in text
+    assert 'runpy.run_path(launcher, run_name="__main__")' in text
+
+
+def test_meta_repair_wrapper_fails_closed_on_commit_custody() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'SOURCE_BASELINE_HEAD="$(git -C "$ARNOLD_SRC" rev-parse HEAD' in text
+    assert "verify_meta_repair_commit_custody" in text
+    assert 'INSTALL_SYNC_STATUS="commit_custody_failed"' in text
+    assert "will NOT install sync or retrigger ordinary repair" in text
+    assert 'post_retrigger_verification["commit_custody"]' in text
+
+
+def test_recordable_verdict_check_rejects_arbitrary_output(tmp_path: Path) -> None:
+    text = _meta_repair_wrapper()
+    start = text.index("has_recordable_verdict() {")
+    end = text.index("\n\nrun_direct_hermes_fallback()", start)
+    function = text[start:end]
+    response_path = tmp_path / "response.txt"
+
+    response_path.write_text("diagnosis without verdict\n", encoding="utf-8")
+    rejected = subprocess.run(
+        ["bash", "-lc", f"{function}\nhas_recordable_verdict {shlex.quote(str(response_path))}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode == 1
+
+    response_path.write_text("ESCALATE\noperator action required\n", encoding="utf-8")
+    accepted = subprocess.run(
+        ["bash", "-lc", f"{function}\nhas_recordable_verdict {shlex.quote(str(response_path))}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted.returncode == 0
+
+
+def test_direct_hermes_requires_a_recordable_verdict() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'if ! has_recordable_verdict "$FALLBACK_RESP_PATH"; then' in text
+    assert 'log "direct Hermes fallback produced no recordable verdict"' in text
+    assert 'cp "$FALLBACK_RESP_PATH" "$RESP_PATH"' in text
+
+
+def test_failed_launch_persists_retryable_negative_evidence() -> None:
+    text = _meta_repair_wrapper()
+
+    assert "persist_unrecordable_launch_failure()" in text
+    assert 'outcome="model_tool_launch_failure"' in text
+    assert "Codex meta-repair orchestrator returned no output and direct Hermes" in text
+    assert "recursion guard remains unpoisoned" in text
+
+
+def test_failed_launch_record_does_not_poison_recursion(tmp_path: Path) -> None:
+    marker = (
+        '"$SESSION" "$TRIGGER_TYPE" "$REPAIR_DATA_DIR" "$RESP_PATH" '
+        '"$ERR_PATH" <<'
+    )
+    program = _extract_meta_repair_embedded_python(marker)
+    prog_path = tmp_path / "_persist_launch_failure.py"
+    prog_path.write_text(program, encoding="utf-8")
+    repair_data_dir = tmp_path / "repair-data"
+    response_path = tmp_path / "response.txt"
+    response_path.write_text("unrecordable response\n", encoding="utf-8")
+    error_path = tmp_path / "response.err"
+    error_path.write_text("provider unavailable\n", encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(prog_path),
+            "demo-session",
+            "model_tool_launch_failure",
+            str(repair_data_dir),
+            str(response_path),
+            str(error_path),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    records = list((repair_data_dir / "meta").glob("*.json"))
+    assert len(records) == 1
+    payload = json.loads(records[0].read_text(encoding="utf-8"))
+    assert payload["outcome"] == "model_tool_launch_failure"
+
+    from arnold_pipelines.megaplan.cloud.meta_repair_policy import (
+        check_meta_repair_recursion,
+    )
+
+    recursion = check_meta_repair_recursion(
+        "demo-session", repair_data_dir=repair_data_dir
+    )
+    assert recursion.recursing is False
+    assert recursion.existing_meta_repair_ids == ()
+
+
 def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> None:
     marker = (
         'python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" '

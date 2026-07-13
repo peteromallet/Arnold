@@ -2555,6 +2555,8 @@ def _megaplan_refresh_command(
         "    exit 20",
         "  fi",
         '  pip install -e "$MEGAPLAN_RUNTIME_SRC"',
+        '  RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
+        '  PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
         "fi",
@@ -5772,6 +5774,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
     repair_custody: dict[str, Any] = {"status": "unavailable", "reason": "local custody evidence unavailable"}
     local_workspace = Path(resolved_workspace)
     marker_dir = local_workspace / ".megaplan" / "cloud-sessions"
+    queue_root = local_workspace / ".megaplan" / "repair-queue"
     repair_data_dir = marker_dir / "repair-data"
     if local_workspace.exists():
         try:
@@ -5785,7 +5788,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
                 plan_state=plan_status,
                 current_target=current_target,
                 canonical_run_state=canonical_run_state,
-                marker_dir=marker_dir,
+                queue_root=queue_root,
                 repair_data_dir=repair_data_dir,
             )
             bucket = projection["custody_bucket"]

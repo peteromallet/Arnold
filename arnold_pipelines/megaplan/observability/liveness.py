@@ -10,20 +10,30 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
+def _call_identity(event: dict[str, Any]) -> str | None:
+    payload = event.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    for value in (
+        payload.get("call_transaction_id"),
+        payload.get("request_id"),
+    ):
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
 def unmatched_llm_starts(
     events: list[dict[str, Any]],
     *,
     start_kind: str = "llm_call_start",
     end_kind: str = "llm_call_end",
 ) -> list[dict[str, Any]]:
-    """Return LLM starts that have no later matching completion event.
+    """Return starts not closed by a later call-identity or phase match.
 
-    Some providers do not know their request id when the start event is
-    emitted, but do include it on the end event.  In that case request-id-only
-    correlation leaves every historical start looking in-flight forever.
-    Match exact ids when possible, then pair an end with the oldest unkeyed
-    start in the same phase.  The latter preserves the conservative count of
-    concurrent calls without turning completed sequential calls into wedges.
+    New telemetry carries ``call_transaction_id``.  Legacy telemetry often
+    learned a provider request id only at completion, so it falls back to
+    closing the oldest requestless start in the same phase.  Sequential legacy
+    calls therefore cannot leave every historical call falsely in flight.
     """
     pending: list[dict[str, Any]] = []
     for event in events:
@@ -31,36 +41,22 @@ def unmatched_llm_starts(
         if kind == start_kind:
             pending.append(event)
             continue
-        if kind != end_kind:
+        if kind not in {end_kind, "llm_call_error"}:
             continue
-
-        payload = event.get("payload")
-        payload = payload if isinstance(payload, dict) else {}
-        request_id = payload.get("request_id")
-        match_index: int | None = None
-        if request_id:
-            request_id = str(request_id)
+        identity = _call_identity(event)
+        match: int | None = None
+        if identity is not None:
             for index, start in enumerate(pending):
-                start_payload = start.get("payload")
-                start_payload = start_payload if isinstance(start_payload, dict) else {}
-                if str(start_payload.get("request_id") or "") == request_id:
-                    match_index = index
+                if _call_identity(start) == identity:
+                    match = index
                     break
-
-        if match_index is None:
-            phase = event.get("phase")
+        if match is None:
             for index, start in enumerate(pending):
-                start_payload = start.get("payload")
-                start_payload = start_payload if isinstance(start_payload, dict) else {}
-                if start_payload.get("request_id"):
-                    continue
-                if start.get("phase") == phase:
-                    match_index = index
+                if _call_identity(start) is None and start.get("phase") == event.get("phase"):
+                    match = index
                     break
-
-        if match_index is not None:
-            pending.pop(match_index)
-
+        if match is not None:
+            pending.pop(match)
     return pending
 
 
@@ -99,11 +95,7 @@ def has_active_in_flight_llm(
     if active_phase is None or active_model is None:
         return False
 
-    for event in unmatched_llm_starts(
-        events,
-        start_kind=start_kind,
-        end_kind=end_kind,
-    ):
+    for event in unmatched_llm_starts(events, start_kind=start_kind, end_kind=end_kind):
         payload = event.get("payload", {})
         if event.get("phase") != active_phase or payload.get("model") != active_model:
             continue

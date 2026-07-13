@@ -1,6 +1,6 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 60,
+  "evidence_ref_count": 82,
   "evidence_refs": [
     {
       "kind": "verification_record"
@@ -93,25 +93,37 @@
       "kind": "verification_record"
     },
     {
-      "kind": "attempt_ids"
+      "kind": "verification_record"
     },
     {
-      "kind": "attempt_ids"
+      "kind": "verification_record"
     },
     {
-      "kind": "attempt_ids"
+      "kind": "verification_record"
     },
     {
-      "kind": "attempt_ids"
+      "kind": "verification_record"
     },
     {
-      "kind": "attempt_ids"
+      "kind": "verification_record"
     },
     {
-      "kind": "attempt_ids"
+      "kind": "verification_record"
     },
     {
-      "kind": "attempt_ids"
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
     },
     {
       "kind": "attempt_ids"
@@ -183,11 +195,12 @@
       "kind": "attempt_ids"
     }
   ],
-  "generated_at": "2026-07-07T13:29:44.805726+00:00",
+  "generated_at": "2026-07-11T13:41:18.494885+00:00",
   "incident_id": "incident-42",
   "kind": "incident_summary",
   "latest_actor": "immediate_repair",
   "next_expected_event": "repair_attempt.verification",
+  "omitted_evidence_ref_count": 18,
   "outcome": "attempted",
   "placeholders": {
     "install_freshness": "unknown",
@@ -199,8 +212,8 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:8c80f44e6634cba0574620716302c91c608f8e33e973547f4eef72e23785616e",
-    "last_seq": 205,
+    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
+    "last_seq": 268,
     "projection": "incidents"
   },
   "state": "repair_attempt",

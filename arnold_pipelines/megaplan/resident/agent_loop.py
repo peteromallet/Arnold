@@ -99,6 +99,10 @@ class AgentLoopError(RuntimeError):
     """Deterministic resident agent-loop failure."""
 
 
+class AgentPromptTooLargeError(AgentLoopError):
+    """The resident request exceeded its safe budget before model launch."""
+
+
 class ResidentCredentialError(AgentLoopError):
     """A configured resident API call has no usable credential."""
 
@@ -407,22 +411,25 @@ class CodexCliAgentRunner(DispatchProtocol):
             "hot_context": request.hot_context,
             "messages": request.messages,
             "launch_provenance": request.launch_origin,
-            "available_resident_tools": tools.as_schema_catalog(),
+            "available_resident_tools": tools.as_compact_catalog(),
         }
-        return (
+        prompt = (
             f"{request.system_prompt}\n\n"
             "You are running through the Codex CLI resident runner in the project repository. "
             "Use the local filesystem and Megaplan CLI for durable project actions. "
-            "For initiatives, prefer `python -m arnold_pipelines.megaplan initiative ...`; "
+            "For initiatives, prefer `python -P -m arnold_pipelines.megaplan initiative ...`; "
             "initiative creation requires a non-empty description. The resident tool catalog below is "
             "reference material for equivalent CLI capabilities, not a set of callable Codex functions. "
             "For Discord reply ancestry older than the three ancestors preloaded in the current message, "
-            "use only `python -m arnold_pipelines.megaplan resident read-reply-chain --cursor <cursor>`; "
+            "use only `python -P -m arnold_pipelines.megaplan resident read-reply-chain --cursor <cursor>`; "
             "it is store-backed and restricted by the immutable active conversation envelope. "
             "When native function exposure is absent and delegated work is required, use the supported "
             "local resident seam before replying: write the complete task to a file, then run "
-            "`python -m arnold_pipelines.megaplan.resident.subagent launch --task-file <path> "
+            "`python -P -m arnold_pipelines.megaplan.resident.subagent launch --task-file <path> "
             "--task-kind <kind> --difficulty <D1-D10>`. Do not call a generic subagent launcher in its place. "
+            "The `-P` isolation flag is mandatory: this resident may intentionally run from a pinned "
+            "runtime source while its working directory contains another checkout, and importing from "
+            "that checkout would split launch manifests from status and delivery. "
             "Immutable delegation provenance is injected into this process. Any resident-managed child "
             "launch must inherit it; never replace it with a recent conversation cursor, infer it from "
             "final text, or construct discord_origin manually. A malformed/ambiguous envelope must stop "
@@ -434,6 +441,12 @@ class CodexCliAgentRunner(DispatchProtocol):
             "Resident request JSON:\n"
             + json.dumps(payload, sort_keys=True, default=str)
         )
+        if len(prompt) > self.config.max_prompt_chars:
+            raise AgentPromptTooLargeError(
+                "resident prompt exceeds the safe pre-dispatch budget: "
+                f"{len(prompt)} > {self.config.max_prompt_chars} characters"
+            )
+        return prompt
 
 
 async def _await_maybe(value: Any) -> Any:

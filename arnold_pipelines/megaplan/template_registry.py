@@ -106,6 +106,37 @@ class TemplateRegistration:
     #: integration is deferred.  Used by parity tests.
     note: str = ""
 
+    # ── optional boundary template / contract references ────────────────
+    # These fields allow a TemplateRegistration to cross-reference the
+    # declarative boundary contract registry so that structured-output
+    # promotion, semantic-health checks, and receipt emission can read
+    # template/profile metadata without reaching into handler-private
+    # surfaces.
+
+    #: Optional reference to a typed boundary template id (e.g.
+    #: ``\"template.validation_boundary\"``).  When set, consumers can
+    #: retrieve the canonical :class:`BoundaryContract` template from
+    #: :data:`~arnold_pipelines.megaplan.workflows.boundary_contracts.TYPED_BOUNDARY_TEMPLATES_BY_ID`.
+    boundary_template_id: str | None = None
+
+    #: Optional version string for the referenced boundary template
+    #: (e.g. ``\"1.0\"``).  Paired with *boundary_template_id* for
+    #: compatibility-pinning checks.
+    boundary_template_version: str | None = None
+
+    #: Optional tuple of :class:`BoundaryContract` ``boundary_id`` values
+    #: that this registration satisfies or bridges (e.g.
+    #: ``(\"gate_to_revise\",)`` for the gate phase).  Used by
+    #: semantic-health to cross-reference template registrations with
+    #: boundary contracts.
+    boundary_contract_ids: tuple[str, ...] = ()
+
+    #: Optional compatibility classification when this registration
+    #: references a boundary template.  Uses the
+    #: :class:`~arnold.workflow.boundary_evidence.TemplateCompatibility`
+    #: enum values (``\"exact_match\"``, ``\"compatible_extension\"``, etc.).
+    compatibility: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Registry storage
@@ -172,7 +203,13 @@ for _reg in [
         mode="file_fill",
         scratch_filename="finalize_output.json",
         builder=_write_finalize_template_from_state,
-        note="File-fill template builder and handler promotion are wired.",
+        boundary_template_id="template.artifact_promotion",
+        boundary_template_version="1.0",
+        boundary_contract_ids=("finalize_artifacts", "finalize_fallback"),
+        compatibility="compatible_extension",
+        note="File-fill template builder and handler promotion are wired. "
+        "References template.artifact_promotion as its declarative boundary "
+        "template for artifact promotion semantics.",
     ),
     TemplateRegistration(
         phase_identity="critique",
@@ -195,7 +232,13 @@ for _reg in [
         mode="file_fill",
         scratch_filename="gate_output.json",
         builder=_write_gate_template_from_state,
-        note="File-fill template builder and reprompt scratch reuse are wired.",
+        boundary_template_id="template.validation_boundary",
+        boundary_template_version="1.0",
+        boundary_contract_ids=("gate_to_revise",),
+        compatibility="compatible_extension",
+        note="File-fill template builder and reprompt scratch reuse are wired. "
+        "References template.validation_boundary (ValidationBoundary) as its "
+        "declarative boundary template.",
     ),
     TemplateRegistration(
         phase_identity="critique_evaluator",

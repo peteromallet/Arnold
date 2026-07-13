@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from arnold_pipelines.megaplan._core import sha256_file
 
@@ -41,6 +41,53 @@ class Receipt(TypedDict):
     verdict: str | None
     metrics: dict[str, Any]
     scope_drift_severity: str | None
+
+
+DispatchOutcome = Literal[
+    "initialized",
+    "running",
+    "blocked",
+    "succeeded",
+    "failed",
+    "indeterminate",
+]
+
+
+class DispatchMutationFacts(TypedDict, total=False):
+    """Facts about mutation observed during one automatic dispatch.
+
+    The common mutation classes are declared for type checkers while the
+    mapping remains extensible for action-specific facts.  Values are facts,
+    not permissions or intentions.
+    """
+
+    state: bool | None
+    source: bool | None
+    commit: bool | None
+    push: bool | None
+
+
+class AutomaticDispatchReceipt(TypedDict):
+    """Authoritative lifecycle record for a subprocess-backed action.
+
+    ``subprocess_started`` records observation, not expected behaviour.
+    ``resolved_runtime_model`` is runtime evidence and must not be populated
+    from configuration intent.
+    """
+
+    schema_version: Literal[1]
+    dispatch_id: str
+    action: str
+    configured_model: str | None
+    resolved_runtime_model: str | None
+    subprocess_started: bool
+    outcome: DispatchOutcome
+    mutation_facts: DispatchMutationFacts
+    created_at_utc: str
+    updated_at_utc: str
+    sequence: int
+    failure_stage: NotRequired[str | None]
+    detail: NotRequired[str | None]
 
 
 def _hash_if_present(path: Path) -> list[str]:

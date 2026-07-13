@@ -21,6 +21,7 @@ from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorize
 from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
+from .context_tree import classify_intent_packs
 from .escalations import EscalationAnswerDecision, authorize_escalation_answer, confirm_escalation_resolution
 from .profile import MegaplanResidentProfile
 from .reply_chain import build_reply_provenance, render_reply_context
@@ -387,8 +388,15 @@ class ResidentRuntime:
             raise RuntimeError("managed completion provenance does not match the inbound reply target")
 
         hot_context = await self.profile.load_hot_context(conversation.id)
+        if isinstance(hot_context.get("context_root"), dict):
+            hot_context["context_root"]["intent_packs"] = ["delegation", "conversation"]
+        prompt_for = getattr(self.profile, "system_prompt_for", None)
         system_prompt = (
-            self.profile.system_prompt()
+            (
+                prompt_for("delegated terminal result verification")
+                if callable(prompt_for)
+                else self.profile.system_prompt()
+            )
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
             + "\n\n"
@@ -419,7 +427,7 @@ class ResidentRuntime:
                     "message_count": 1,
                     "turn_kind": "managed_delegation_completion_verification",
                     "managed_agent_run_id": run_id,
-                    "tool_catalog": self.profile.tools().as_schema_catalog(),
+                    "tool_catalog": self.profile.tools().as_compact_catalog(),
                 },
                 prompt_version=(hot_context.get("prompt_version") if isinstance(hot_context, dict) else None),
                 state_at_turn=hot_context,
@@ -436,10 +444,12 @@ class ResidentRuntime:
             manifest=manifest,
             source_message=source_message.content,
         )
-        messages = (
-            *self._build_history(conversation.id, exclude_ids=()),
-            {"role": "user", "content": verification_prompt},
-        )
+        # Completion verification is correlated to one immutable delegation.
+        # Conversation history may contain newer user commands (for example a
+        # resident restart) and must not be allowed to change the incident this
+        # turn verifies.  The verifier prompt already carries the exact source
+        # message and terminal manifest evidence it is authorized to assess.
+        messages = ({"role": "user", "content": verification_prompt},)
         request = AgentRequest(
             conversation_id=conversation.id,
             messages=messages,
@@ -587,9 +597,15 @@ class ResidentRuntime:
             return
         conversation = self.store.load_resident_conversation(batch.key) or items[-1].conversation
         active_epic_id = conversation.active_epic_id
+        request_text = "\n".join(item.message.content for item in items if item.message.content)
         hot_context = await self.profile.load_hot_context(conversation.id)
+        if isinstance(hot_context.get("context_root"), dict):
+            hot_context["context_root"]["intent_packs"] = list(
+                classify_intent_packs(request_text)
+            )
+        prompt_for = getattr(self.profile, "system_prompt_for", None)
         system_prompt = (
-            self.profile.system_prompt()
+            (prompt_for(request_text) if callable(prompt_for) else self.profile.system_prompt())
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
         )
@@ -600,7 +616,7 @@ class ResidentRuntime:
             prompt_snapshot={
                 "system_prompt": system_prompt,
                 "message_count": len(items),
-                "tool_catalog": self.profile.tools().as_schema_catalog(),
+                "tool_catalog": self.profile.tools().as_compact_catalog(),
             },
             prompt_version=hot_context.get("prompt_version") if isinstance(hot_context, dict) else None,
             state_at_turn=hot_context,
@@ -632,7 +648,11 @@ class ResidentRuntime:
             {"role": "user", "content": self._message_content_with_discord_reply_context(item)}
             for item in items
         )
-        history = self._build_history(conversation.id, exclude_ids=message_ids)
+        history = self._build_history(
+            conversation.id,
+            exclude_ids=message_ids,
+            discord_only=bool(processing_message_ids),
+        )
         request_messages = (*history, *burst)
         model_seam_metadata = self._model_seam_metadata(
             conversation_id=conversation.id,
@@ -659,19 +679,64 @@ class ResidentRuntime:
         try:
             response = await self.runner.run(request, self.profile.tools())
         except Exception as exc:
+            warning = _bounded_failure_warning(exc)
+            safe_text = _resident_turn_failure_reply(exc)
+            outbound = self.store.create_message(
+                epic_id=active_epic_id,
+                conversation_id=conversation.id,
+                direction="outbound",
+                content=safe_text,
+                bot_turn_id=turn.id,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-outbound", turn.id, "model-failure"
+                ),
+            )
             self.store.update_turn(
                 turn.id,
                 status="failed",
-                warnings_issued=[f"{exc.__class__.__name__}: {exc}"],
+                final_output_message_id=outbound.id,
+                message_sent=False,
+                warnings_issued=[warning],
                 idempotency_key=deterministic_idempotency_key("resident-turn-failed", turn.id),
             )
-            await self._invoke_transport_lifecycle(
-                "mark_processing_interrupted",
-                conversation_key=conversation.conversation_key,
-                message_ids=processing_message_ids,
-                turn_id=turn.id,
+            await self.outbound.send(
+                OutboundMessage(
+                    conversation_key=conversation.conversation_key,
+                    content=safe_text,
+                    idempotency_key=outbound.idempotency_key,
+                    metadata={
+                        "conversation_id": conversation.id,
+                        "message_id": outbound.id,
+                        "turn_id": turn.id,
+                        "discord_reply_to_message_id": _optional_string(
+                            items[-1].event.raw.get("discord_message_id")
+                        ),
+                        "discord_processing_message_ids": processing_message_ids,
+                        "discord_processing_turn_id": turn.id,
+                        "discord_processing_continues": False,
+                    },
+                )
             )
-            raise
+            self.store.update_resident_conversation(
+                conversation.id,
+                last_outbound_message_id=outbound.id,
+                delivery_cursor=outbound.id,
+                last_active_at=utc_now(),
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-conversation-outbound", conversation.id, outbound.id
+                ),
+            )
+            self.store.update_turn(
+                turn.id,
+                status="failed",
+                final_output_message_id=outbound.id,
+                message_sent=True,
+                warnings_issued=[warning],
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-turn-failure-delivered", turn.id
+                ),
+            )
+            return
         self._record_tool_calls(turn.id, response)
         processing_continues = _response_has_detached_subagent(response)
         final_message_id = None
@@ -970,7 +1035,13 @@ class ResidentRuntime:
             release_repair_lock(lock_dir, owner=lock.owner)
         return True
 
-    def _build_history(self, conversation_id: str, *, exclude_ids: Sequence[str]) -> tuple[dict[str, Any], ...]:
+    def _build_history(
+        self,
+        conversation_id: str,
+        *,
+        exclude_ids: Sequence[str],
+        discord_only: bool = False,
+    ) -> tuple[dict[str, Any], ...]:
         """Reconstruct the last N prior messages as user/assistant turns for context.
 
         ``exclude_ids`` drops the current burst, which is already persisted before
@@ -985,12 +1056,32 @@ class ResidentRuntime:
         )
         history: list[dict[str, Any]] = []
         for message in rows:
+            if (
+                discord_only
+                and message.direction == "inbound"
+                and not getattr(message, "discord_message_id", None)
+            ):
+                # Scheduler and maintenance inputs are not Discord-user speech.
+                # Including them in later human turns bloats context and changes
+                # the apparent conversation history.
+                continue
             content = message.content
             if not (content and content.strip()):
                 continue
+            content = content.strip()
+            if len(content) > 4_000:
+                content = content[:3_999] + "…"
             role = "user" if message.direction == "inbound" else "assistant"
             history.append({"role": role, "content": content})
-        return tuple(history)
+        selected: list[dict[str, Any]] = []
+        used = 0
+        for item in reversed(history):
+            size = len(item["content"])
+            if selected and used + size > 16_000:
+                break
+            selected.append(item)
+            used += size
+        return tuple(reversed(selected))
 
     def _model_seam_metadata(
         self,
@@ -1065,6 +1156,24 @@ def _timezone_name_from_hot_context(hot_context: Mapping[str, Any]) -> str:
         if name:
             return name
     return "UTC"
+
+
+def _bounded_failure_warning(exc: Exception) -> str:
+    warning = redact_text(f"{exc.__class__.__name__}: {exc}").strip()
+    return warning if len(warning) <= 1200 else f"{warning[:1199]}…"
+
+
+def _resident_turn_failure_reply(exc: Exception) -> str:
+    detail = str(exc).lower()
+    if "prompt exceeds" in detail or "input_too_large" in detail or "maximum length" in detail:
+        return (
+            "I couldn't process this message because the resident's internal context exceeded "
+            "the model input limit. The failure was recorded and no requested action was taken."
+        )
+    return (
+        "I couldn't complete this resident turn because the model invocation failed. "
+        "The failure was recorded and no requested action was taken."
+    )
 
 
 def _timezone_instruction_from_hot_context(hot_context: Mapping[str, Any]) -> str:

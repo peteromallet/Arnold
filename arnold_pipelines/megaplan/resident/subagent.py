@@ -29,7 +29,6 @@ from typing import Any, Literal
 
 from arnold_pipelines.megaplan.managed_agent import (
     ACTIVE_STATUSES as SHARED_ACTIVE_STATUSES,
-    LEGACY_RESIDENT_SCHEMA,
     MANAGED_AGENT_CUSTODIAN,
     MANAGED_AGENT_SCHEMA,
     is_managed_manifest,
@@ -96,6 +95,8 @@ _DELIVERY_RETRY_BASE_S = 30
 _DELIVERY_RETRY_MAX_S = 60 * 60
 _DELIVERY_MAX_ATTEMPTS = 8
 _MAX_COMPLETION_DELIVERY_CHARS = 7_600
+MAX_DELEGATED_TASK_CHARS = 32_000
+MAX_DELEGATED_PROMPT_CHARS = 40_000
 FINAL_SUMMARY_INSTRUCTION = (
     "Your FINAL response will be sent directly to the user as a Discord reply. "
     "Make it a concise, user-facing summary that stands on its own. State the outcome, "
@@ -221,16 +222,119 @@ def _atomic_json(path: Path, payload: dict[str, object]) -> None:
     os.replace(temporary, path)
 
 
-def _delivery_prompt(task: str, timezone_name: str = "UTC") -> str:
+def _git_revision_without_process(root: Path) -> str | None:
+    """Resolve HEAD without spawning git in the latency-sensitive launch path."""
+
+    git_path = root / ".git"
+    try:
+        if git_path.is_file():
+            marker = git_path.read_text(encoding="utf-8").strip()
+            if not marker.startswith("gitdir:"):
+                return None
+            git_dir = Path(marker.split(":", 1)[1].strip())
+            if not git_dir.is_absolute():
+                git_dir = (root / git_dir).resolve()
+        else:
+            git_dir = git_path
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", head):
+            return head.lower()
+        if not head.startswith("ref:"):
+            return None
+        ref = head.split(":", 1)[1].strip()
+        candidates = [git_dir / ref]
+        commondir_path = git_dir / "commondir"
+        if commondir_path.is_file():
+            common = Path(commondir_path.read_text(encoding="utf-8").strip())
+            if not common.is_absolute():
+                common = (git_dir / common).resolve()
+            candidates.append(common / ref)
+        for candidate in candidates:
+            if candidate.is_file():
+                revision = candidate.read_text(encoding="utf-8").strip()
+                if re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+                    return revision.lower()
+    except OSError:
+        return None
+    return None
+
+
+def _delegated_context_directory(
+    *,
+    project_root: Path,
+    provenance: Mapping[str, Any],
+) -> dict[str, Any]:
+    runtime_root = Path(__file__).resolve().parents[3]
+    conversation_id = (
+        str(provenance.get("resident_conversation_id") or "") or None
+        if provenance.get("applicability") == "applicable"
+        else None
+    )
+    store_root = str(os.environ.get("MEGAPLAN_RESIDENT_STORE_ROOT") or "").strip() or None
+    base = "python -P -m arnold_pipelines.megaplan resident"
+    store_arg = ' --store-root "$MEGAPLAN_RESIDENT_STORE_ROOT"' if store_root else ""
+    return {
+        "project_worktree": str(project_root),
+        "resident_runtime_source": str(runtime_root),
+        "resident_runtime_revision": _git_revision_without_process(runtime_root),
+        "project_equals_runtime_source": project_root == runtime_root,
+        "resident_conversation_id": conversation_id,
+        "routes": {
+            "context_root": f"{base} context --node root{store_arg}",
+            "targeted_context": f"{base} context --node '<node_id>'{store_arg}",
+            "context_search": (
+                f"{base} context-search --scope '<scope>' --query '<query>'{store_arg}"
+            ),
+            "reply_ancestry": f"{base} read-reply-chain --cursor '<cursor>'{store_arg}",
+        },
+    }
+
+
+def _render_delegated_context_directory(directory: Mapping[str, Any]) -> str:
+    routes = directory.get("routes") if isinstance(directory.get("routes"), Mapping) else {}
     return (
+        "[Delegated context directory]\n"
+        "The full resident/cloud/conversation state is deliberately not embedded. Use these bounded "
+        "routes only when the task needs more evidence.\n"
+        f"- project worktree: {directory.get('project_worktree')}\n"
+        f"- resident runtime source: {directory.get('resident_runtime_source')}\n"
+        f"- resident runtime revision: {directory.get('resident_runtime_revision') or 'unknown'}\n"
+        f"- project is runtime source: {directory.get('project_equals_runtime_source')}\n"
+        f"- resident conversation: {directory.get('resident_conversation_id') or 'not applicable'}\n"
+        f"- context root: {routes.get('context_root')}\n"
+        f"- targeted node: {routes.get('targeted_context')}\n"
+        f"- scoped search: {routes.get('context_search')}\n"
+        f"- older reply ancestry: {routes.get('reply_ancestry')}\n"
+        "The immutable Discord source envelope is inherited in the process environment. Never replace "
+        "it with a recent-message guess. The project worktree may differ from the pinned resident runtime; "
+        "inspect both before resident-code changes, preserve concurrent dirty work, and publish/deploy only "
+        "after explicit tree/revision reconciliation.\n"
+    )
+
+
+def _delivery_prompt(
+    task: str,
+    timezone_name: str = "UTC",
+    *,
+    context_directory: Mapping[str, Any] | None = None,
+) -> str:
+    prompt = (
         f"{task.rstrip()}\n\n"
         "[Completion delivery contract]\n"
         "[User-time presentation rule]\n"
         f"Render absolute user-visible times in {timezone_name} with local date/time, timezone "
         "abbreviation, and numeric UTC offset. Keep stored/control-plane/evidence timestamps in "
         "UTC and keep relative durations relative.\n\n"
-        f"{FINAL_SUMMARY_INSTRUCTION}\n"
     )
+    if context_directory is not None:
+        prompt += _render_delegated_context_directory(context_directory) + "\n"
+    prompt += f"{FINAL_SUMMARY_INSTRUCTION}\n"
+    if len(prompt) > MAX_DELEGATED_PROMPT_CHARS:
+        raise ValueError(
+            f"delegated prompt exceeds {MAX_DELEGATED_PROMPT_CHARS} characters; "
+            "put large evidence in durable files and provide bounded routes"
+        )
+    return prompt
 
 
 _RESIDENT_MESSAGE_ID_RE = re.compile(r"^msg_[A-Za-z0-9]{8,64}$")
@@ -622,6 +726,11 @@ def launch_codex_subagent_detached(
     The supervisor process owns the manifest transitions and durable output, so
     the Discord resident can return immediately without losing lifecycle state.
     """
+    if len(task) > MAX_DELEGATED_TASK_CHARS:
+        raise ValueError(
+            f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
+            "store large evidence durably and pass paths/routes"
+        )
     project_root = Path(project_dir or Path.cwd()).resolve()
     provenance = _canonical_launch_provenance(
         launch_origin,
@@ -668,7 +777,15 @@ def launch_codex_subagent_detached(
     manifest_path = run_dir / "manifest.json"
     log_path = run_dir / "run.log"
     result_path = run_dir / "result.md"
-    prompt = _delivery_prompt(task, str(provenance.get("timezone_name") or "UTC"))
+    context_directory = _delegated_context_directory(
+        project_root=project_root,
+        provenance=provenance,
+    )
+    prompt = _delivery_prompt(
+        task,
+        str(provenance.get("timezone_name") or "UTC"),
+        context_directory=context_directory,
+    )
     prompt_path.write_text(prompt, encoding="utf-8")
     result_path.touch()
     created_at = _utc_now()
@@ -692,6 +809,7 @@ def launch_codex_subagent_detached(
         "result_path": str(result_path),
         "task_sha256": task_digest,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "context_directory": context_directory,
         "launch_idempotency_key": launch_key,
         "correlation_id": provenance.get("correlation_id") or run_id,
         "custody_id": provenance.get("custody_id") or stable_identity("resident-custody", run_id),
@@ -2273,6 +2391,11 @@ async def launch_subagent_task(
     explicit compatibility mode for old synchronous callers; its stdout carries
     the final response and it does not claim the managed lifecycle schema.
     """
+    if len(task) > MAX_DELEGATED_TASK_CHARS:
+        raise ValueError(
+            f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
+            "store large evidence durably and pass paths/routes"
+        )
     if backend == "codex":
         if not background:
             raise ValueError(
@@ -2336,6 +2459,10 @@ async def launch_subagent_task(
             _delivery_prompt(
                 task,
                 str(compatibility_provenance.get("timezone_name") or "UTC"),
+                context_directory=_delegated_context_directory(
+                    project_root=Path(project_dir or Path.cwd()).resolve(),
+                    provenance=compatibility_provenance,
+                ),
             )
         )
         query_path = handle.name
