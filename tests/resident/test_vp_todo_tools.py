@@ -136,7 +136,7 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
 
     assert context["resident_agents"] == expected
     assert context["resident_runtime"]["subagent_launch"]["standard"] == (
-        "arnold-resident-agent-run-v1"
+        "arnold-managed-agent-run-v2"
     )
 
 

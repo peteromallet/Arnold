@@ -143,6 +143,8 @@ def test_restart_reconciles_same_reserved_run_id(tmp_path: Path) -> None:
 
 
 def test_restart_adopts_live_worker_without_duplicate_launch(tmp_path: Path) -> None:
+    if not Path("/proc").is_dir():
+        pytest.skip("managed worker adoption uses Linux procfs identity")
     duplicate_marker = tmp_path / "must-not-launch.txt"
     item = spec(
         tmp_path,

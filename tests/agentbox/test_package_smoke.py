@@ -123,6 +123,10 @@ def test_agentbox_runtime_modules_do_not_import_megaplan_or_out_of_scope_surface
             "arnold_pipelines.megaplan.resident.provenance",
             "arnold_pipelines.megaplan.resident.runtime",
         },
+        "resident_profile.py": {
+            "arnold_pipelines.megaplan.resident.reply_chain",
+            "arnold_pipelines.megaplan.resident.timezone",
+        },
     }
 
 

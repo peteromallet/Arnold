@@ -285,6 +285,7 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
     managed_dir.mkdir(parents=True)
 
     queued = repair_requests.enqueue_repair_request(
+        queue_root=repair_requests.repair_queue_dir(marker_dir),
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -345,7 +346,7 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
     projection = project_repair_custody(
         plan_state=_plan_state(),
         current_target=_current_target(),
-        marker_dir=marker_dir,
+        queue_root=repair_requests.repair_queue_dir(marker_dir),
         repair_data_dir=repair_data_dir,
     )
 
