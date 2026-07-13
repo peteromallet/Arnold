@@ -63,6 +63,18 @@ def _ordered_sessions(snapshot: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return sorted(sessions, key=rank)
 
 
+def _in_flight_progress_text(progress: Any) -> str:
+    """Render progress with the canonical derived label when it is available."""
+    if not isinstance(progress, Mapping):
+        return ""
+    label = progress.get("display_state") or progress.get("plan_state")
+    plan_percent = progress.get("plan_percent")
+    if plan_percent is not None:
+        text = f"in-flight {plan_percent}%"
+        return f"{text} ({label})" if label else text
+    return f"in-flight {label}" if label else ""
+
+
 def format_cloud_status_short(
     snapshot: Mapping[str, Any] | None,
     *,
@@ -95,6 +107,9 @@ def format_cloud_status_short(
         emoji = _STATUS_EMOJI.get(status, "❓")
         plan = entry.get("current_plan") or entry.get("session", "?")
         line = f"{emoji} `{entry.get('session', '?')}` — {status}: {plan}"
+        in_flight = _in_flight_progress_text(entry.get("progress"))
+        if in_flight:
+            line += f"; {in_flight}"
         if entry.get("operator_next") and status in {"repairing", "blocked", "attention"}:
             line += f" ({entry['operator_next']})"
         repair_summary = _repair_dispatch_summary(entry)
@@ -123,14 +138,9 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
             progress_str = f"  progress={progress.get('percent')}%"
             # In-flight plan stage estimate (completed lifecycle stages / total),
             # or the raw plan state when it is not percentage-able (e.g. blocked).
-            plan_percent = progress.get("plan_percent")
-            plan_state = progress.get("plan_state")
-            if plan_percent is not None:
-                progress_str += f"  plan={plan_percent}%"
-                if plan_state:
-                    progress_str += f" ({plan_state})"
-            elif plan_state:
-                progress_str += f"  plan={plan_state}"
+            in_flight = _in_flight_progress_text(progress)
+            if in_flight:
+                progress_str += "  plan=" + in_flight.removeprefix("in-flight ")
             # Epic % gained over the last 1h / 5h, from sweep history.
             delta_parts = []
             for window, key in (("1h", "epic_delta_1h"), ("5h", "epic_delta_5h")):

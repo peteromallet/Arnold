@@ -797,7 +797,36 @@ notify_needs_human() {
   local run_kind="${5:-chain}"
   local health="${6:-stopped}"
   local summary="$7"
-  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir
+  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir suppression_reason
+  suppression_reason="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$workspace" "$session" "$remote_spec" "$MARKER_DIR" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.notification_safety import classify_user_notification
+
+workspace, session, remote_spec, marker_dir = sys.argv[1:]
+payload = {"session": session, "workspace": workspace, "remote_spec": remote_spec}
+try:
+    marker = json.loads((pathlib.Path(marker_dir) / f"{session}.json").read_text(encoding="utf-8"))
+except Exception:
+    marker = None
+if isinstance(marker, dict):
+    payload["session_marker"] = marker
+decision = classify_user_notification(
+    workspace=workspace,
+    payload=payload,
+)
+if not decision.allowed:
+    print(decision.reason)
+PY
+)"
+  if [[ -n "$suppression_reason" ]]; then
+    log "needs-human user notification suppressed session=$session reason=$suppression_reason"
+    report_item "$report_items" "$session" "observe" "needs_human" "$summary" "$workspace" "$remote_spec"
+    report_item "$report_items" "$session" "notify" "test_notification_suppressed" "user notification suppressed: $suppression_reason" "$workspace" "$remote_spec"
+    return 0
+  fi
   payload_tmp="$(mktemp)"
   dm_result_tmp="$(mktemp)"
   escalation_context_tmp="$(mktemp)"
@@ -5738,18 +5767,20 @@ def load_json(path: pathlib.Path) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def merge_policy() -> str:
+def advancement_policy() -> tuple[bool, str]:
     if remote_spec is None:
-        return ""
+        return False, "chain spec is missing"
     try:
-        for raw_line in remote_spec.read_text(encoding="utf-8").splitlines():
-            line = raw_line.split("#", 1)[0].strip()
-            if line.startswith("merge_policy:"):
-                value = line.split(":", 1)[1].strip().strip("'\"")
-                return "review" if value == "manual" else value
-    except Exception:
-        return ""
-    return ""
+        from arnold_pipelines.megaplan.chain.advancement import policy_for_spec_path
+
+        policy = policy_for_spec_path(remote_spec)
+    except Exception as exc:
+        return False, f"chain advancement policy unreadable: {exc}"
+    return (
+        policy.automatic_pr_progression,
+        f"merge_policy={policy.merge_policy} "
+        f"clean_milestone_pr={policy.clean_milestone_pr} source={policy.source}",
+    )
 
 
 def chain_state_paths() -> list[pathlib.Path]:
@@ -5828,8 +5859,9 @@ def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> 
         return f"queue_error:{exc}"
 
 
-if merge_policy() != "auto":
-    emit("review_policy", "merge policy is not auto")
+automatic_progression, policy_reason = advancement_policy()
+if not automatic_progression:
+    emit("review_policy", policy_reason)
     raise SystemExit(0)
 
 for path in chain_state_paths():
@@ -6480,10 +6512,31 @@ except Exception:
 
 state = result.canonical_state.name
 human_gate = result.human_gate.name if result.human_gate is not None else None
-if provider_retry_enabled and state == "HUMAN_ACTION_REQUIRED" and human_gate in {
+needs_human = evidence.get("needs_human")
+needs_human = needs_human if isinstance(needs_human, dict) else {}
+structured_gate_token = next(
+    (
+        str(needs_human.get(field) or "").strip().lower()
+        for field in ("gate_type", "human_gate", "gate", "category", "gate_kind", "kind")
+        if str(needs_human.get(field) or "").strip()
+    ),
+    "",
+)
+structured_gate_name = {
+    "quota": "QUOTA",
+    "rate_limit": "QUOTA",
+    "ratelimit": "QUOTA",
+    "rate-limit": "QUOTA",
+    "credential": "CREDENTIAL_ACCOUNT",
+    "credentials": "CREDENTIAL_ACCOUNT",
+    "credential_account": "CREDENTIAL_ACCOUNT",
+    "missing_credential": "CREDENTIAL_ACCOUNT",
+}.get(structured_gate_token)
+provider_gate = human_gate or structured_gate_name
+if provider_retry_enabled and state in {"HUMAN_ACTION_REQUIRED", "UNKNOWN"} and provider_gate in {
     "QUOTA", "CREDENTIAL_ACCOUNT",
 }:
-    print("provider_retry:{}".format(human_gate))
+    print("provider_retry:{}".format(provider_gate))
     sys.exit(0)
 if state in MACHINE_ACTIONABLE_STATES and human_gate is None:
     print("suppress:{}".format(state))

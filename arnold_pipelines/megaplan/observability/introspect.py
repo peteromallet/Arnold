@@ -26,6 +26,7 @@ from arnold_pipelines.megaplan.observability.liveness import (
     unmatched_llm_starts,
 )
 from arnold.runtime.outcome import RunOutcome
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
 
 # Default phase timeout (overridable from state)
 _DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
@@ -633,11 +634,18 @@ def build_introspect_payload(plan_dir: Path) -> dict:
         if isinstance(it, int):
             iteration = it
 
+    presentation = plan_status_presentation(
+        plan_state,
+        active_phase=active_phase.get("phase"),
+    )
+
     # ── Assemble payload ────────────────────────────────────────────────
     payload: dict = {
         "now_utc": now.isoformat(),
         "plan": plan_name,
         "plan_state": plan_state,
+        "display_state": presentation["display_state"],
+        "execution_state": presentation["execution_state"],
         "iteration": iteration,
         "plan_dir": str(plan_dir),
         "anchors": anchor_summary(state or {}, plan_dir),

@@ -603,6 +603,12 @@ def _cloud_request_for_job(job: ScheduledJob, run: CloudRun) -> CloudToolRequest
         target_id=run.target_id,
         arguments=arguments,
         confirmed=True,
+        launch_provenance=(
+            run.metadata.get("resident_delegation")
+            if isinstance(run.metadata, dict)
+            and isinstance(run.metadata.get("resident_delegation"), dict)
+            else None
+        ),
     )
 
 
@@ -651,14 +657,17 @@ def _vp_todo_sweep_prompt(todo_path: object, pending: list[dict[str, Any]]) -> s
         "`read_epic`, `cloud_status`) only if the hot context doesn't already show it. "
         "If the condition is NOT yet satisfied, skip that item for now (leave it pending) "
         "and move to the next one.\n"
-        "3. Call `launch_subagent` with the item's task to execute it with a sub-agent.\n"
-        "4. On success, call `complete_todo_item` with the item id and the result "
-        "(this clears it from the list).\n"
-        "5. On failure, call `fail_todo_item` with the item id and the reason "
-        "(it is retained for retry).\n\n"
-        "Your reply to the channel must contain each completed task's ACTUAL result — "
-        "the sub-agent's full output, quoted near-verbatim under the task — not a "
-        "paraphrase or a one-line summary. Also list any items you skipped because of an "
+        "3. Reconcile the item id against `resident_agents` in hot context. If its managed "
+        "agent is running, leave the item pending and report the manifest/full-log/result paths. "
+        "If it recently completed or failed, use its result/manifest paths to report the durable "
+        "outcome and then call `complete_todo_item` or `fail_todo_item` as appropriate.\n"
+        "4. If no managed agent exists for the item, call `launch_subagent` with its task, "
+        "`request_id` set to the item id, and the canonical defaults `backend=codex`, "
+        "`background=true`. Leave the item pending while that agent runs.\n"
+        "5. Never use the legacy Hermes override for scheduled special-request work.\n\n"
+        "Your reply to the channel must give the canonical manifest, full-log, and result "
+        "locations for every launched or reconciled task. Include the actual result for a "
+        "completed task when available. Also list any items you skipped because of an "
         "overlap with in-flight/recently-completed work or because their `when` condition "
         "was not yet met."
     )

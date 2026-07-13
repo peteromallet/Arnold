@@ -29,6 +29,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _phase_model_by_label_from_preflight,
     _filter_cloud_sessions_since,
     _parse_cloud_status_since,
+    _provider_for_action,
     _remote_chain_upload_path,
     _remote_chain_workspace_path,
     _resolve_resume_workspace,
@@ -54,6 +55,17 @@ from arnold_pipelines.megaplan.cloud.spec import (
     ResourcesSpec,
     SshSpec,
 )
+
+
+def test_on_box_chain_uses_direct_agentbox_transport() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    provider = _provider_for_action(
+        _cloud_spec(),
+        argparse.Namespace(cloud_action="chain", on_box=True, session=None),
+    )
+
+    assert isinstance(provider, OnBoxProvider)
 from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 from arnold_pipelines.megaplan.types import CliError
 
@@ -119,6 +131,8 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     assert marker_json is not None
     marker = json.loads(marker_json.group(1))
     assert marker["run_kind"] == "chain"
+    assert marker["notification_context"]["audience"] == "test_only"
+    assert marker["notification_context"]["reason"] == "pytest_environment"
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
@@ -538,9 +552,9 @@ def test_cloud_preflight_expands_vendor_depth_like_init() -> None:
     )
 
     phase_map = summary["milestones"][0]["resolved_phase_map"]
-    assert phase_map["plan"] == "codex:high"
-    assert phase_map["revise"] == "codex:high"
-    assert phase_map["execute"] == "codex"
+    assert phase_map["plan"] == "codex:gpt-5.6-sol:high"
+    assert phase_map["revise"] == "codex:gpt-5.6-sol:high"
+    assert phase_map["execute"] == "codex:gpt-5.6-sol:high"
 
 
 def test_cloud_preflight_reports_dependencies_for_every_spec_in_each_chain() -> None:

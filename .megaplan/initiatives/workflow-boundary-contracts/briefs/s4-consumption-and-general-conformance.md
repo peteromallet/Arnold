@@ -1,11 +1,14 @@
 # S4: Consumption And General Conformance
 
+> Superseded as an executable milestone by C1-C6. Preserved as historical
+> checklist material; see the 2026-07-10 corrective reshape decision.
+
 ## Outcome
 
 Repair-loop, cloud status, and the 6h auditor consume the same structured
-semantic-health and custody findings, and the boundary system is exposed as an
-opt-in authoring/conformance surface for non-Megaplan workflows when the native
-substrate is ready.
+semantic-health and custody findings. The former opt-in adoption proposal is
+superseded: the corrective chain requires ledger/conformance adoption for every
+declared supported runtime while leaving genuinely out-of-scope runtimes alone.
 
 This sprint collapses the detailed briefs:
 
@@ -45,11 +48,12 @@ OUT:
 
 - Status renders derived views but does not become source of truth.
 - Auditor gather surfaces suspicious facts deterministically.
-- Repeated unchanged findings after 2-3 repair attempts escalate to
-  meta-repair.
+- Findings unchanged after 2 consecutive independently verified repair
+  attempts escalate automatically to meta-repair.
 - Megaplan-specific details stay in Megaplan adapters.
 - Domain-specific concepts belong in adapters that map onto generic primitives.
-- Reusable templates are opt-in profiles over the core contract model.
+- Reusable templates are selectable profiles over the core contract model;
+  supported-runtime ledgering and boundary conformance are not optional.
 
 ## Done Criteria
 

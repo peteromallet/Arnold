@@ -1,0 +1,13 @@
+# Definitive authority migration follow-through
+
+Act as the durable Megaplan portfolio operator for the user's request to proceed from the definitive migration architecture audit into a safe, executable plan.
+
+First inspect resident run `subagent-20260711-172710-6a2d7183` and its managed child run(s). If it is still running, do not duplicate its research; wait only as supported by the durable lifecycle or consume its result once terminal. Reconcile its evidence with the canonical initiatives, especially `workflow-boundary-contracts`, `custody-control-plane`, `megaplan-maintenance`, `runauthority-epic`, `megaplan-native-parity-corrective`, and `sequential-model-fallbacks` if that is what the user's “PC stuff” means. Search initiatives before creating anything. Reuse the closest canonical initiative and do not create a competing truth/control-plane program.
+
+Produce or update only canonical `megaplan-initiatives-v1` assets under the selected `.megaplan/initiatives/<slug>/`: chain spec at `chain.yaml`, milestone briefs in `briefs/`, research in `research/`, decisions in `decisions/`, notes in `notes/`, assets in `assets/`, and handoffs in `handoff/`. Never write planning documents under `.megaplan/briefs`.
+
+Build the definitive migration plan that inventories every producer and consumer of authority, run state, attempts, effects, transitions, custody, liveness, repair, status, projections, compatibility paths, native/runtime adapters, resident/cloud paths, and relevant PC/profile-contract work. The plan must map each legacy path to its target contract, migration owner/milestone, shadow/conformance proof, fail-closed behavior, deletion gate, rollback/mixed-version policy, and completion evidence. Preserve Run Authority, Canonical Run-State, and native topology as foundations; do not invent another authority.
+
+Reconcile with the currently running Workflow Boundary Contracts chain without changing milestone identity or touching its runtime state. Do not launch, resume, approve, reject, or mutate any active cloud/chain run. If “PC” cannot be resolved from repository evidence, record it as a material human decision and stop before any scope-dependent chain launch. Likewise stop for any overlap, initiative ownership, rollout, destructive migration, or active-chain gate requiring human approval.
+
+Validate all edited planning assets and report exactly what is ready, what remains gated, and the safest launch sequence. Do not start execution merely because planning validates. If and only if there is an already-authorized, non-overlapping, gate-free planning/editing action, complete it. Do not use arbitrary remote shell commands. Do not babysit.

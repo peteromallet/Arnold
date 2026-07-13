@@ -1,57 +1,75 @@
 base_branch: main
+
 anchors:
   north_star: NORTHSTAR.md
+
 milestones:
-- label: m1
-  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m1-containment-and-truthful-control.md
-  branch: megaplan/megaplan-maintenance/m1-containment
-  profile: all-codex
-  robustness: full
-  depth: medium
-  with_prep: true
-  prep_direction: Trace the real repair and progress-auditor wrapper adapters, queue
-    roots, feature gates, action receipts, incident namespaces, and every runtime
-    model-selection seam. Prove automatic repair and six-hour checks resolve gpt-5.6-sol
-    rather than trusting configuration comments.
-- label: m2
-  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-evidence-and-authority.md
-  branch: megaplan/megaplan-maintenance/m2-authority
-  profile: all-codex
-  robustness: full
-  depth: medium
-  with_prep: true
-  prep_direction: Map every state reader and writer, journal/projection boundary,
-    lock, version token, and existing schema before designing the coherent envelope
-    and transition authority.
-- label: m3
-  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m3-independent-verification-and-reopen.md
-  branch: megaplan/megaplan-maintenance/m3-verification
-  profile: all-codex
-  robustness: full
-  depth: medium
-  with_prep: true
-  prep_direction: Trace attempt, install, retrigger, liveness, closure, recurrence,
-    and scheduled-check paths. Preserve human gates and design independent delayed
-    verification using supported scheduling surfaces.
-- label: m4
-  idea: .megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-feedback-product.md
-  branch: megaplan/megaplan-maintenance/m4-six-hour-product
-  profile: all-codex
-  robustness: full
-  depth: medium
-  with_prep: true
-  prep_direction: Trace production report generation from immutable typed inputs through
-    exact-window aggregation and receipts. Keep L3 read-only and verify its model-backed
-    check resolves gpt-5.6-sol.
+  - label: m1-containment-and-truth
+    idea: .megaplan/initiatives/megaplan-maintenance/briefs/m1-containment-and-truth.md
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    prep_clarify: false
+    notes: "Overall plan difficulty 5/5; partnered-5/full/high @codex because a locally plausible containment plan could still leave a non-local mutation path or false action claim. This preserves the existing first milestone and does not enable autonomy."
+
+  - label: m2-coherent-authority
+    idea: .megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-authority.md
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    depends_on:
+      - m1-containment-and-truth
+    prep_clarify: false
+    prep_direction: "Map every resolver/classifier consumer, incident-ledger projection, Run Authority/WBC evidence surface, and direct plan/chain write. Reuse custody-control-plane and workflow-boundary-contracts decisions where compatible."
+    notes: "Overall plan difficulty 5/5; partnered-5/full/high @codex because the shared ledger, coherent observation envelope, and transition-authority contracts are public cross-system boundaries whose failure can remain locally green."
+
+  - label: m3-independent-verification
+    idea: .megaplan/initiatives/megaplan-maintenance/briefs/m3-independent-verification.md
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    depends_on:
+      - m2-coherent-authority
+    prep_clarify: false
+    notes: "Overall plan difficulty 5/5; partnered-5/full/high @codex because custody, fencing, recurrence, terminal verification, canary install, and rollback are non-local production-safety contracts."
+
+  - label: m4-six-hour-product-and-rollout
+    idea: .megaplan/initiatives/megaplan-maintenance/briefs/m4-six-hour-operational-unblocker.md
+    profile: partnered-4
+    vendor: codex
+    robustness: full
+    depth: high
+    depends_on:
+      - m3-independent-verification
+    prep_clarify: false
+    notes: "Overall plan difficulty 4/5; partnered-4/full/high @codex because the six-hour loop has subtle event-time, custody, and false-intervention behavior, while its authority and schemas are fixed by M2-M3."
+
+  - label: m5-daily-efficiency-auditor
+    idea: .megaplan/initiatives/megaplan-maintenance/briefs/m5-daily-efficiency-auditor.md
+    profile: partnered-4
+    vendor: codex
+    robustness: full
+    depth: high
+    depends_on:
+      - m4-six-hour-product-and-rollout
+    prep_clarify: false
+    notes: "Overall plan difficulty 4/5; partnered-4/full/high @codex because censored analytics, cohort baselines, recurrence clustering, and recommendation precision need careful planning, but the loop is read-only and cannot reshape active chains."
+
 on_failure:
   abort: stop_chain
 on_escalate:
   abort: stop_chain
-merge_policy: auto
+
+merge_policy: review
+review_policy:
+  clean_milestone_pr: manual
+
 driver:
   robustness: full
-  phase_timeout: 10800
-  auto_approve: true
-  on_escalate: abort
-  max_iterations: 40
+  auto_approve: false
+  require_anchor: true
+  max_iterations: 60
   poll_sleep: 8.0

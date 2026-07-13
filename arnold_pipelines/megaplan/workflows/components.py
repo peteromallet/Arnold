@@ -1236,6 +1236,19 @@ GATE_POLICY = _policy(
         },
     },
 )
+
+# Compatibility exports retained for handlers that still import the gate policy
+# surfaces directly from this module.
+GATE_NORMALIZATION_POLICY = MappingProxyType(
+    GATE_POLICY.metadata["route_surface"]["normalization_policy"]
+)
+GATE_DEBT_VISIBILITY_POLICY = MappingProxyType(
+    GATE_POLICY.metadata["route_surface"]["debt_visibility"]
+)
+GATE_REPROMPT_POLICY = MappingProxyType(
+    GATE_POLICY.metadata["route_surface"]["reprompt_policy"]
+)
+
 REVISE_LOOP_POLICY = _policy(
     export_name="REVISE_LOOP_POLICY",
     policy_id="megaplan:revise-loop",
@@ -2920,6 +2933,9 @@ __all__ = [
     "GATE_OUTPUT_SCHEMA",
     "GATE_PROMPT",
     "GATE_POLICY",
+    "GATE_NORMALIZATION_POLICY",
+    "GATE_DEBT_VISIBILITY_POLICY",
+    "GATE_REPROMPT_POLICY",
     "HALT",
     "HALT_OUTPUT_SCHEMA",
     "ARTIFACT_CONTRACT_POLICY",

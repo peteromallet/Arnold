@@ -328,6 +328,7 @@ def test_agentbox_operator_runs_through_resident_runtime_persistence_and_outboun
                 "conversation_id": conversation.id,
                 "message_id": outbound_message.id,
                 "turn_id": turn.id,
+                "discord_reply_to_message_id": "m1",
             },
         )
     ]
@@ -342,6 +343,79 @@ def test_agentbox_operator_runs_through_resident_runtime_persistence_and_outboun
     assert ticket.title == "Runtime Persistence"
     assert ticket.codebase_id == codebase.id
     assert ticket.filed_by_actor_id == "user-1"
+
+
+def test_resident_runtime_includes_replied_to_discord_message_in_runner_context(
+    tmp_path: Path,
+) -> None:
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        allowed_user_ids=("user-1",),
+        burst_idle_delay_s=0,
+        burst_max_delay_s=1,
+    )
+    authorizer = ResidentAuthorizer(config)
+    runner = _RecordingFakeRunner([FakeAgentStep.final("handled")])
+    outbound = _FakeOutboundSink()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=AgentBoxOperatorProfile(
+            store=store,
+            authorizer=authorizer,
+            agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+        ),
+        runner=runner,
+        outbound=outbound,
+    )
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            transport="discord",
+            conversation_key="discord:guild:g1:channel:c1",
+            guild_id="g1",
+            channel_id="c1",
+        ),
+        idempotency_key="conversation-1",
+    )
+    store.create_message(
+        epic_id=None,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="prior message body",
+        discord_message_id="discord-prior",
+        idempotency_key="prior-message",
+    )
+
+    asyncio.run(
+        _receive_and_flush(
+            runtime,
+            InboundEvent(
+                idempotency_key="discord:message:reply-m1",
+                conversation_key="discord:guild:g1:channel:c1",
+                subject=AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1"),
+                content="answering that",
+                raw={
+                    "discord_message_id": "reply-m1",
+                    "discord_reference_message_id": "discord-prior",
+                },
+            ),
+        )
+    )
+
+    assert runner.captured_request is not None
+    assert runner.captured_request.messages[-1] == {
+        "role": "user",
+        "content": (
+            "[Discord reply context]\n"
+            "The user is replying to Discord message discord-prior from inbound:\n"
+            "prior message body\n\n"
+            "[User message]\n"
+            "answering that"
+        ),
+    }
+    assert outbound.sent[-1].metadata["discord_reply_to_message_id"] == "reply-m1"
 
 
 def test_agentbox_operator_resident_runtime_denies_non_allowlisted_discord_author_before_execution(

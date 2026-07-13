@@ -108,6 +108,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_PREPPED,
 )
 from . import spec as chain_spec
+from .advancement import policy_for_spec
 
 APEX_EXTREME_RETRY_CAP = chain_spec.APEX_EXTREME_RETRY_CAP
 BLOCKED_EXECUTE_OUTCOME_STATUSES = chain_spec.BLOCKED_EXECUTE_OUTCOME_STATUSES
@@ -119,6 +120,17 @@ FailurePolicy = chain_spec.FailurePolicy
 MilestoneSpec = chain_spec.MilestoneSpec
 PROFILE_BUMP_ORDER = chain_spec.PROFILE_BUMP_ORDER
 ROBUSTNESS_BUMP_ORDER = chain_spec.ROBUSTNESS_BUMP_ORDER
+
+
+def _automatic_pr_progression_permitted(
+    spec: ChainSpec, spec_path: Path
+) -> bool:
+    """Return the shared effective PR review/merge policy decision."""
+
+    return policy_for_spec(
+        spec,
+        runtime_overrides=chain_spec.load_runtime_policy(spec_path),
+    ).automatic_pr_progression
 VALID_FAILURE_ACTIONS = chain_spec.VALID_FAILURE_ACTIONS
 VALID_CLEAN_MILESTONE_PR_POLICIES = chain_spec.VALID_CLEAN_MILESTONE_PR_POLICIES
 VALID_PREREQUISITE_POLICIES = chain_spec.VALID_PREREQUISITE_POLICIES
@@ -5323,6 +5335,16 @@ def run_chain(
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
     _preflight_agent_backends(spec, writer=writer)
     state = chain_spec.load_chain_state(spec_path)
+    from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+
+    if is_paused(state):
+        return _result(
+            "paused",
+            state,
+            [],
+            spec=spec,
+            reason="durable operator pause is active; explicit chain resume required",
+        )
     env = resolve_execution_environment(
         root=root,
         state={"config": {"project_dir": str(root), "base_branch": spec.base_branch}},
@@ -5501,6 +5523,15 @@ def run_chain(
         except CliError as exc:
             log(f"terminal PR reconciliation skipped: {exc.message}")
     while idx < len(spec.milestones):
+        state = chain_spec.load_chain_state(spec_path)
+        if is_paused(state):
+            return _result(
+                "paused",
+                state,
+                events,
+                spec=spec,
+                reason="durable operator pause is active; explicit chain resume required",
+            )
         state = _reconcile_chain_from_ground_truth(
             root,
             spec_path,
@@ -5723,7 +5754,7 @@ def run_chain(
                         )
                     if publish_reason.startswith("published "):
                         state = chain_spec.load_chain_state(spec_path)
-                    if spec.merge_policy != "review":
+                    if _automatic_pr_progression_permitted(spec, spec_path):
                         _mark_pr_ready(root, state.pr_number, writer=writer)
                         state.pr_state = _enable_auto_merge(
                             root, state.pr_number, writer=writer
@@ -5766,7 +5797,15 @@ def run_chain(
                                 ),
                             )
                     else:
-                        log(f"PR #{state.pr_number} state={pr_state}; awaiting merge")
+                        policy = policy_for_spec(
+                            spec,
+                            runtime_overrides=chain_spec.load_runtime_policy(spec_path),
+                        )
+                        log(
+                            f"PR #{state.pr_number} state={pr_state}; awaiting human "
+                            f"review/merge (merge_policy={policy.merge_policy}, "
+                            f"clean_milestone_pr={policy.clean_milestone_pr})"
+                        )
                         return _result(
                             STATE_AWAITING_PR_MERGE,
                             state,
@@ -6308,46 +6347,74 @@ def run_chain(
                     chain_state=state,
                 )
                 if not premerge_ok:
-                    writer(
-                        f"[chain] completion guard blocked {milestone.label} before "
-                        f"PR merge: {premerge_reason}\n"
+                    # Auto-merge can complete between the first PR observation
+                    # and this (potentially expensive) authority check.  A
+                    # merged PR has stronger publication evidence than an open
+                    # one, so re-read external truth before persisting a stale
+                    # blocked cursor.  The normal completed-record guard below
+                    # still validates the merged publication; no authority
+                    # requirement is weakened here.
+                    latest_pr_state = _pr_state(
+                        root, state.pr_number, writer=writer
                     )
-                    state.last_state = STATE_BLOCKED
-                    state.pr_state = current_pr_state
+                    if latest_pr_state == "merged":
+                        state.pr_state = "merged"
+                        chain_spec.save_chain_state(spec_path, state)
+                        log(
+                            f"PR #{state.pr_number} merged while completion guard "
+                            f"was evaluating; reconciling {milestone.label} from "
+                            "published evidence"
+                        )
+                    else:
+                        writer(
+                            f"[chain] completion guard blocked {milestone.label} before "
+                            f"PR merge: {premerge_reason}\n"
+                        )
+                        state.last_state = STATE_BLOCKED
+                        state.pr_state = latest_pr_state
+                        chain_spec.save_chain_state(spec_path, state)
+                        return _result(
+                            "stopped",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=(
+                                f"milestone {milestone.label} completion guard blocked "
+                                f"before PR merge: {premerge_reason}"
+                            ),
+                        )
+                else:
+                    _mark_pr_ready(root, state.pr_number, writer=writer)
+                    if not _automatic_pr_progression_permitted(spec, spec_path):
+                        state.last_state = STATE_AWAITING_PR_MERGE
+                        state.pr_state = current_pr_state
+                        chain_spec.save_chain_state(spec_path, state)
+                        policy = policy_for_spec(
+                            spec,
+                            runtime_overrides=chain_spec.load_runtime_policy(spec_path),
+                        )
+                        log(
+                            f"PR #{state.pr_number} ready; awaiting human review/merge "
+                            f"(merge_policy={policy.merge_policy}, "
+                            f"clean_milestone_pr={policy.clean_milestone_pr})"
+                        )
+                        _capture_sync_state(
+                            root,
+                            spec_path,
+                            branch=milestone.branch,
+                            pr_number=state.pr_number,
+                        )
+                        return _result(
+                            STATE_AWAITING_PR_MERGE,
+                            state,
+                            events,
+                            spec=spec,
+                            reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
+                        )
+                    state.pr_state = _enable_auto_merge(
+                        root, state.pr_number, writer=writer
+                    )
                     chain_spec.save_chain_state(spec_path, state)
-                    return _result(
-                        "stopped",
-                        state,
-                        events,
-                        spec=spec,
-                        reason=(
-                            f"milestone {milestone.label} completion guard blocked "
-                            f"before PR merge: {premerge_reason}"
-                        ),
-                    )
-                _mark_pr_ready(root, state.pr_number, writer=writer)
-                if spec.merge_policy == "review":
-                    state.last_state = STATE_AWAITING_PR_MERGE
-                    state.pr_state = current_pr_state
-                    chain_spec.save_chain_state(spec_path, state)
-                    log(f"PR #{state.pr_number} ready; awaiting manual merge")
-                    _capture_sync_state(
-                        root,
-                        spec_path,
-                        branch=milestone.branch,
-                        pr_number=state.pr_number,
-                    )
-                    return _result(
-                        STATE_AWAITING_PR_MERGE,
-                        state,
-                        events,
-                        spec=spec,
-                        reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
-                    )
-                state.pr_state = _enable_auto_merge(
-                    root, state.pr_number, writer=writer
-                )
-                chain_spec.save_chain_state(spec_path, state)
         # Completion-verification contract (SHADOW-MODE, fail-open): compute +
         # persist + log a milestone-level verdict. NEVER alters the append,
         # NEVER blocks the chain, NEVER runs the suite. See
@@ -6795,6 +6862,21 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Read chain state from this project directory instead of discovering from CWD.",
     )
 
+    pause_parser = chain_sub.add_parser(
+        "pause", help="Durably pause a chain and disable automatic recovery"
+    )
+    pause_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    pause_parser.add_argument("--project-dir", required=False)
+    pause_parser.add_argument("--reason", required=True)
+    pause_parser.add_argument("--actor", default="operator")
+
+    resume_chain_parser = chain_sub.add_parser(
+        "resume", help="Explicitly clear a durable operator pause"
+    )
+    resume_chain_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    resume_chain_parser.add_argument("--project-dir", required=False)
+    resume_chain_parser.add_argument("--actor", default="operator")
+
     verify_parser = chain_sub.add_parser(
         "verify", help="Replay landed-diff completion evidence for completed milestones"
     )
@@ -6948,6 +7030,30 @@ def run_chain_cli(
         sys.stderr.write("megaplan chain: --spec is required\n")
         return 64
     spec_path = Path(spec_arg).expanduser().resolve()
+
+    if action in {"pause", "resume"}:
+        from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
+
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        try:
+            if action == "pause":
+                payload = pause_chain(
+                    spec_path,
+                    project_root,
+                    reason=args.reason,
+                    actor=args.actor,
+                )
+            else:
+                payload = resume_chain(spec_path, project_root, actor=args.actor)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps({"success": True, "spec": str(spec_path), **payload}, indent=2) + "\n"
+        )
+        return 0
 
     if action == "override":
         set_prereq = getattr(args, "set_prerequisite_policy", None)

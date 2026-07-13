@@ -32,6 +32,7 @@ from arnold_pipelines.megaplan.fallback_chains import (
     ExecuteFallbackUnsafe,
     classify_retryability,
     is_retryable_classification,
+    is_same_family_operational_classification,
     normalize_fallback_spec_list,
     provider_family,
 )
@@ -460,16 +461,25 @@ def _next_fallback_index(
     failed_index: int,
     classification: str,
 ) -> int | None:
-    if not is_retryable_classification(classification):  # type: ignore[arg-type]
-        return None
     candidate_index = failed_index + 1
     if candidate_index >= len(unit.configured_specs):
         return None
-    if provider_family(unit.configured_specs[candidate_index]) == provider_family(
+    same_family = provider_family(unit.configured_specs[candidate_index]) == provider_family(
         unit.configured_specs[failed_index]
-    ):
-        return None
-    return candidate_index
+    )
+    if same_family:
+        if not unit.read_only:
+            return None
+        return (
+            candidate_index
+            if is_same_family_operational_classification(classification)  # type: ignore[arg-type]
+            else None
+        )
+    return (
+        candidate_index
+        if is_retryable_classification(classification)  # type: ignore[arg-type]
+        else None
+    )
 
 
 def _run_worker_unit_with_ordered_fallback(

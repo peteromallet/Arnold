@@ -420,6 +420,14 @@ def is_retryable_classification(classification: RetryabilityClass) -> bool:
     return classification in {"availability", "infrastructure"}
 
 
+def is_same_family_operational_classification(
+    classification: RetryabilityClass,
+) -> bool:
+    """Return whether a non-writing same-family model fallback may advance."""
+
+    return classification in {"availability", "rate_limit", "unsupported_model"}
+
+
 def is_retryable_failure(value: object | None) -> bool:
     return is_retryable_classification(classify_retryability(value))
 

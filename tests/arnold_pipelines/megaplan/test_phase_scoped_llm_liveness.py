@@ -119,3 +119,42 @@ def test_introspection_process_discovery_excludes_self_and_unrelated_prompt(monk
 
     monkeypatch.setitem(__import__("sys").modules, "psutil", Psutil)
     assert [item["pid"] for item in _process_tree("demo")] == [3]
+
+
+def test_requestless_start_is_closed_by_later_same_phase_end() -> None:
+    now = datetime.now(timezone.utc)
+    events = [
+        _event("llm_call_start", now - timedelta(seconds=180), phase="execute", model="gpt-5.6-sol"),
+        _event(
+            "llm_call_end",
+            now - timedelta(seconds=60),
+            phase="execute",
+            model="gpt-5.4",
+            request_id="provider-id-known-only-at-end",
+        ),
+    ]
+
+    assert unmatched_llm_starts(events) == []
+
+
+def test_sequential_requestless_calls_leave_only_latest_start_in_flight() -> None:
+    now = datetime.now(timezone.utc)
+    first_start = _event(
+        "llm_call_start", now - timedelta(seconds=240), phase="execute", model="gpt-5.6-sol"
+    )
+    latest_start = _event(
+        "llm_call_start", now - timedelta(seconds=30), phase="execute", model="gpt-5.6-sol"
+    )
+    events = [
+        first_start,
+        _event(
+            "llm_call_end",
+            now - timedelta(seconds=120),
+            phase="execute",
+            model="gpt-5.4",
+            request_id="provider-id-known-only-at-end",
+        ),
+        latest_start,
+    ]
+
+    assert unmatched_llm_starts(events) == [latest_start]

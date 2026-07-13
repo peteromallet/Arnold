@@ -1,5 +1,9 @@
 # M1: Prep Semantic Health Guard
 
+> Superseded as an executable milestone by C1-C6. Preserved only as historical
+> checklist material; it cannot add a prompt, gate, or policy choice to the
+> corrective chain.
+
 ## Outcome
 
 Protect current cloud runs from the observed prep artifact/state divergence
@@ -64,4 +68,3 @@ OUT:
 - new semantic health module under `arnold_pipelines/megaplan/cloud/`
 - `tests/cloud/test_watchdog_wrappers.py`
 - new focused semantic-health tests under `tests/cloud/`
-

@@ -352,9 +352,57 @@ def test_scatter_worker_unit_does_not_advance_for_forbidden_failure_classes(
     assert calls == 1
 
 
-def test_scatter_worker_unit_does_not_advance_to_same_provider_family(
+@pytest.mark.parametrize(
+    "error",
+    [
+        CliError("worker_timeout", "timed out"),
+        CliError("rate_limit", "rate limit"),
+        CliError("unsupported_model", "unsupported model"),
+    ],
+)
+def test_scatter_worker_unit_advances_same_family_for_read_only_operational_failure(
     monkeypatch,
+    error: CliError,
 ) -> None:
+    calls = 0
+
+    def fake_run_step_with_worker(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise error
+        return (
+            _worker_result({"attempt": "same-family"}),
+            kwargs["resolved"].agent,
+            "persistent",
+            True,
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.workers.run_step_with_worker",
+        fake_run_step_with_worker,
+    )
+
+    result = scatter_worker_unit(
+        0,
+        _chain_unit(
+            configured_specs=[
+                "codex:gpt-5.6-sol:high",
+                "codex:gpt-5.6-terra:high",
+            ]
+        ),
+        state={"name": "plan", "config": {"project_dir": "."}},
+        plan_dir=Path("."),
+        root=Path("."),
+        args=argparse.Namespace(phase_model=[]),
+    )
+
+    assert calls == 2
+    assert result[1].payload == {"attempt": "same-family"}
+    assert result[1].attempt_index == 1
+
+
+def test_scatter_worker_unit_keeps_writing_same_family_failure_fail_closed(monkeypatch) -> None:
     calls = 0
 
     def fake_run_step_with_worker(*args, **kwargs):
@@ -370,12 +418,14 @@ def test_scatter_worker_unit_does_not_advance_to_same_provider_family(
     with pytest.raises(CliError):
         scatter_worker_unit(
             0,
-            _chain_unit(
-                configured_specs=[
-                    "hermes:deepseek:deepseek-v4-pro",
-                    "hermes:deepseek:deepseek-r1",
-                    "claude:claude-sonnet-4-6:high",
-                ]
+            dataclasses.replace(
+                _chain_unit(
+                    configured_specs=[
+                        "codex:gpt-5.6-sol:high",
+                        "codex:gpt-5.6-terra:high",
+                    ]
+                ),
+                read_only=False,
             ),
             state={"name": "plan", "config": {"project_dir": "."}},
             plan_dir=Path("."),

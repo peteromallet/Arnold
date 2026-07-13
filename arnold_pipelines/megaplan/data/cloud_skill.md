@@ -100,6 +100,11 @@ verification fails, the command fails instead of leaving an orphaned chain.
 `cloud launch-epic` remains a compatibility/materialization helper for older
 brief directories; prefer `initiative new` plus `cloud chain` for new work.
 
+When already inside the target agentbox/container, add `--on-box` to that
+canonical `cloud chain` command. It bypasses SSH transport only: canonical
+validation, workspace/session setup, tmux launch, watchdog registration, and
+launch verification still run. Do not substitute a raw `chain start` command.
+
 Canonical chain layout on the box:
 
 ```text

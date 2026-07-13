@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,7 +17,7 @@ from arnold.execution.step_invocation import StepInvocation
 from agentbox.redaction import redact_text
 
 from .agent_loop import AgentRequest, AgentResponse, AgentRunner
-from .auth import AuthorizationSubject, ResidentAuthorizer
+from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorizer
 from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
@@ -109,8 +109,13 @@ class ResidentRuntime:
             max_delay_s=config.burst_max_delay_s,
         )
 
-    async def receive(self, event: InboundEvent) -> None:
-        decision = self.authorizer.authorize_inbound(event.subject)
+    async def receive(
+        self,
+        event: InboundEvent,
+        *,
+        authorization_decision: AuthorizationDecision | None = None,
+    ) -> None:
+        decision = authorization_decision or self.authorizer.authorize_inbound(event.subject)
         if not decision.allowed:
             if decision.audit is not None:
                 self.emitter.log_system_event(
@@ -174,6 +179,155 @@ class ResidentRuntime:
             )
             recovered += 1
         return recovered
+
+    async def run_managed_completion_turn(
+        self,
+        manifest_path: Path,
+        manifest: Mapping[str, Any],
+    ) -> Any:
+        """Run a delegated terminal result through the normal resident turn lifecycle.
+
+        The delegated final response is explicitly untrusted evidence.  This
+        turn has its own prompt snapshot, model invocation, canonical turn and
+        outbound message records.  Discord transport remains the responsibility
+        of the manifest's existing durable completion outbox.
+        """
+
+        from .subagent import ManagedCompletionTurnResult, record_completion_turn_id
+
+        provenance = manifest.get("launch_provenance")
+        if not isinstance(provenance, Mapping):
+            raise RuntimeError("managed completion has no immutable launch provenance")
+        source_record_id = str(provenance.get("source_record_id") or "")
+        conversation_id = str(provenance.get("resident_conversation_id") or "")
+        source_message = self.store.load_message(source_record_id)
+        conversation = self.store.load_resident_conversation(conversation_id)
+        if source_message is None or conversation is None:
+            raise RuntimeError("managed completion source message or conversation is unavailable")
+        if source_message.conversation_id != conversation.id:
+            raise RuntimeError("managed completion provenance does not match the source conversation")
+        expected_reply = str(provenance.get("reply_to_message_id") or "")
+        if not expected_reply or source_message.discord_message_id != expected_reply:
+            raise RuntimeError("managed completion provenance does not match the inbound reply target")
+
+        system_prompt = self.profile.system_prompt() + "\n\n" + _COMPLETION_VERIFIER_SYSTEM_PROMPT
+        hot_context = await self.profile.load_hot_context(conversation.id)
+        run_id = str(manifest.get("run_id") or manifest_path.parent.name)
+        completion_state = manifest.get("resident_completion_turn")
+        existing_turn_id = (
+            str(completion_state.get("resident_turn_id") or "")
+            if isinstance(completion_state, Mapping)
+            else ""
+        )
+        if existing_turn_id:
+            turn_id = existing_turn_id
+            self.store.update_turn(
+                turn_id,
+                current_activity="verifying delegated terminal result",
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-completion-turn-resume", run_id, turn_id
+                ),
+            )
+        else:
+            turn = self.store.create_turn(
+                epic_id=conversation.active_epic_id,
+                triggered_by_message_ids=[source_message.id],
+                prompt_snapshot={
+                    "system_prompt": system_prompt,
+                    "message_count": 1,
+                    "turn_kind": "managed_delegation_completion_verification",
+                    "managed_agent_run_id": run_id,
+                    "tool_catalog": self.profile.tools().as_schema_catalog(),
+                },
+                prompt_version=(hot_context.get("prompt_version") if isinstance(hot_context, dict) else None),
+                state_at_turn=hot_context,
+                model_version=self.config.model_name,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-completion-turn", run_id
+                ),
+            )
+            turn_id = turn.id
+            record_completion_turn_id(manifest_path, turn_id)
+
+        verification_prompt = _managed_completion_verification_prompt(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            source_message=source_message.content,
+        )
+        messages = (
+            *self._build_history(conversation.id, exclude_ids=()),
+            {"role": "user", "content": verification_prompt},
+        )
+        request = AgentRequest(
+            conversation_id=conversation.id,
+            messages=messages,
+            system_prompt=system_prompt,
+            hot_context=hot_context,
+            model_seam_metadata=self._model_seam_metadata(
+                conversation_id=conversation.id,
+                messages=messages,
+                system_prompt=system_prompt,
+                hot_context=hot_context,
+            ),
+            subject=None,
+            launch_origin=dict(provenance),
+        )
+        try:
+            response = await self.runner.run(request, self.profile.tools())
+            self._record_tool_calls(turn_id, response)
+            safe_text = redact_text(response.final_text).strip()
+            outcome = _verification_outcome(safe_text)
+            if not safe_text:
+                safe_text = (
+                    "Verification outcome: unknown. The resident verification turn returned no "
+                    "summary, so the delegated result is not being treated as proof."
+                )
+                outcome = "unknown"
+            elif outcome == "unknown" and "verification outcome:" not in safe_text.lower():
+                safe_text = (
+                    "Verification outcome: unknown. The resident did not provide the required "
+                    "evidence classification.\n\n" + safe_text
+                )
+            turn_status = "completed"
+            warnings = None
+        except Exception as exc:
+            outcome = "unknown"
+            safe_text = (
+                f"Verification outcome: unknown. The delegated run reached terminal status "
+                f"{str(manifest.get('status') or 'unknown')!r}, but the resident verification turn "
+                "failed before it could independently validate the claimed work. The delegated final "
+                "result is therefore not being reported as proof; operator inspection is still required."
+            )
+            turn_status = "failed"
+            warnings = [f"completion verifier {exc.__class__.__name__}"]
+
+        outbound = self.store.create_message(
+            epic_id=conversation.active_epic_id,
+            conversation_id=conversation.id,
+            direction="outbound",
+            content=safe_text,
+            bot_turn_id=turn_id,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-completion-outbound", run_id
+            ),
+        )
+        self.store.update_turn(
+            turn_id,
+            status=turn_status,
+            final_output_message_id=outbound.id,
+            message_sent=False,
+            warnings_issued=warnings,
+            current_activity=None,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-completion-turn-finished", run_id, turn_status
+            ),
+        )
+        return ManagedCompletionTurnResult(
+            final_text=safe_text,
+            verification_outcome=outcome,
+            turn_id=turn_id,
+            outbound_message_id=outbound.id,
+        )
 
     def _persist_inbound_event(self, event: InboundEvent) -> PersistedInboundEvent:
         raw = dict(event.raw)
@@ -242,7 +396,10 @@ class ResidentRuntime:
                 in_burst_with=[msg_id for msg_id in message_ids if msg_id != item.message.id] or None,
                 idempotency_key=deterministic_idempotency_key("resident-message-turn", item.message.id, turn.id),
             )
-        burst = tuple({"role": "user", "content": item.event.content} for item in items)
+        burst = tuple(
+            {"role": "user", "content": self._message_content_with_discord_reply_context(item)}
+            for item in items
+        )
         history = self._build_history(conversation.id, exclude_ids=message_ids)
         request_messages = (*history, *burst)
         model_seam_metadata = self._model_seam_metadata(
@@ -261,6 +418,7 @@ class ResidentRuntime:
             escalation_id=items[-1].event.escalation_id,
             resume_handler=items[-1].event.resume_handler,
             target_id=items[-1].event.target_id,
+            launch_origin=self._managed_subagent_launch_origin(items, turn_id=turn.id),
         )
         try:
             response = await self.runner.run(request, self.profile.tools())
@@ -290,7 +448,12 @@ class ResidentRuntime:
                     conversation_key=conversation.conversation_key,
                     content=safe_text,
                     idempotency_key=outbound.idempotency_key,
-                    metadata={"conversation_id": conversation.id, "message_id": outbound.id, "turn_id": turn.id},
+                    metadata={
+                        "conversation_id": conversation.id,
+                        "message_id": outbound.id,
+                        "turn_id": turn.id,
+                        "discord_reply_to_message_id": _optional_string(items[-1].event.raw.get("discord_message_id")),
+                    },
                 )
             )
             self.store.update_resident_conversation(
@@ -319,6 +482,104 @@ class ResidentRuntime:
                 duration_ms=record.duration_ms,
                 idempotency_key=deterministic_idempotency_key("resident-tool-call", turn_id, record.id),
             )
+
+    def _message_content_with_discord_reply_context(self, item: PersistedInboundEvent) -> str:
+        raw = item.event.raw
+        reference_id = _optional_string(raw.get("discord_reference_message_id"))
+        if not reference_id:
+            return item.event.content
+        reference_content = _optional_string(raw.get("discord_reference_content"))
+        reference_label = _optional_string(raw.get("discord_reference_author_id"))
+        if reference_content is None:
+            referenced = self._find_conversation_message_by_discord_id(
+                item.conversation.id,
+                reference_id,
+                exclude_ids=(item.message.id,),
+            )
+            if referenced is not None:
+                reference_content = referenced.content
+                reference_label = referenced.direction
+        if reference_content is None:
+            return item.event.content
+        label = f" from {reference_label}" if reference_label else ""
+        return (
+            f"[Discord reply context]\n"
+            f"The user is replying to Discord message {reference_id}{label}:\n"
+            f"{reference_content}\n\n"
+            f"[User message]\n"
+            f"{item.event.content}"
+        )
+
+    @staticmethod
+    def _managed_subagent_launch_origin(
+        items: Sequence[PersistedInboundEvent],
+        *,
+        turn_id: str,
+    ) -> dict[str, Any]:
+        """Return durable, non-secret Discord provenance for delegated work."""
+
+        discord_items = [
+            item
+            for item in items
+            if _optional_string(item.event.raw.get("discord_message_id"))
+            and item.conversation.conversation_key.startswith("discord:")
+        ]
+        if len(discord_items) > 1:
+            # A burst can contain independent user requests.  The resident may
+            # answer the burst conversationally, but delegated side effects
+            # must not guess which message owns the reply.
+            return {
+                "transport": "discord",
+                "applicability": "ambiguous",
+                "source_kind": "discord_burst",
+                "resident_turn_id": turn_id,
+            }
+        if not discord_items:
+            return {
+                "transport": "non_discord",
+                "applicability": "not_applicable",
+                "source_kind": "scheduler_or_internal_turn",
+            }
+        item = discord_items[0]
+        message_id = _optional_string(item.event.raw.get("discord_message_id"))
+        conversation_key = item.conversation.conversation_key
+        assert message_id is not None
+        return {
+            "transport": "discord",
+            "applicability": "applicable",
+            "conversation_id": item.conversation.id,
+            "resident_conversation_id": item.conversation.id,
+            "resident_turn_id": turn_id,
+            "source_record_id": item.message.id,
+            "reply_target_source_record_id": item.message.id,
+            "conversation_key": conversation_key,
+            "message_id": message_id,
+            "discord_message_id": message_id,
+            "reply_to_message_id": message_id,
+            "guild_id": item.event.subject.guild_id,
+            "channel_id": item.event.subject.channel_id,
+            "thread_id": _optional_string(item.event.raw.get("thread_id")),
+            "dm_user_id": _optional_string(item.event.raw.get("dm_user_id")),
+            "source_kind": "discord_inbound_message",
+        }
+
+    def _find_conversation_message_by_discord_id(
+        self,
+        conversation_id: str,
+        discord_message_id: str,
+        *,
+        exclude_ids: Sequence[str] = (),
+    ) -> Message | None:
+        for message in reversed(
+            self.store.list_conversation_messages(
+                conversation_id,
+                limit=max(50, self.config.history_window * 3),
+                exclude_ids=exclude_ids,
+            )
+        ):
+            if message.discord_message_id == discord_message_id:
+                return message
+        return None
 
     async def _handle_escalation_resolution(
         self,
@@ -356,6 +617,7 @@ class ResidentRuntime:
                             "escalation_id": event.escalation_id,
                             "confirmation_required": True,
                             "request_id": confirmation.request_id,
+                            "discord_reply_to_message_id": _optional_string(event.raw.get("discord_message_id")),
                         },
                     )
                 )
@@ -509,6 +771,57 @@ def _optional_string(value: object) -> str | None:
 
 def _optional_dict(value: object) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
+
+
+_COMPLETION_VERIFIER_SYSTEM_PROMPT = """
+You are handling a resident-managed delegated-run completion as a fresh normal
+resident turn. Independently verify the original task and the delegated run's
+claims. A terminal manifest, exit code zero, result.md, or delegated final prose
+is evidence to inspect, never proof of completion. Inspect the actual project
+state and run log; run proportionate read-only or test verification when safe.
+Classify truthfully as success, partial, failed, unknown, or blocked. Do not
+repair or continue the delegated task in this turn. Your concise user-facing
+response must begin with exactly `Verification outcome: <classification>.` and
+explain what happened, what is actually complete, concrete verification
+evidence, and remaining caveats/actions. Never expose secrets or internal
+handoff notes.
+""".strip()
+
+
+def _managed_completion_verification_prompt(
+    *,
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    source_message: str,
+) -> str:
+    def resolved_path(field: str, fallback: str) -> str:
+        path = Path(str(manifest.get(field) or fallback))
+        if not path.is_absolute():
+            path = manifest_path.parent / path
+        return str(path.resolve())
+
+    return (
+        "A resident-managed delegated execution has reached a terminal state and now requires "
+        "independent completion verification. Do not accept its final response as proof.\n\n"
+        f"Managed run id: {manifest.get('run_id') or manifest_path.parent.name}\n"
+        f"Claimed terminal status: {manifest.get('status') or 'unknown'}\n"
+        f"Return code: {manifest.get('returncode', 'unknown')}\n"
+        f"Project directory: {manifest.get('project_dir') or 'unknown'}\n"
+        f"Manifest: {manifest_path.resolve()}\n"
+        f"Original delegated prompt: {resolved_path('prompt_path', 'prompt.md')}\n"
+        f"Delegated final claim: {resolved_path('result_path', 'result.md')}\n"
+        f"Full delegated log: {resolved_path('full_log_path', str(manifest.get('log_path') or 'run.log'))}\n\n"
+        "Original user request (context only; preserve its requirements):\n"
+        f"{source_message[:12000]}"
+    )
+
+
+def _verification_outcome(text: str) -> str:
+    prefix = text.lstrip().lower()[:120]
+    for outcome in ("success", "partial", "failed", "unknown", "blocked"):
+        if prefix.startswith(f"verification outcome: {outcome}"):
+            return outcome
+    return "unknown"
 
 
 def _repair_data_dir_from_config(config: ResidentConfig) -> str | None:

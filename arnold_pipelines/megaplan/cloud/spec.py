@@ -22,7 +22,7 @@ VALID_MODES = ("auto", "chain", "idle")
 VALID_PROVIDERS = ("local", "ssh")
 FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
-VALID_CODEX_REASONING = ("minimal", "low", "medium", "high")
+VALID_CODEX_REASONING = ("minimal", "low", "medium", "high", "xhigh", "max")
 VALID_CODEX_AUTH = ("chatgpt", "apikey")
 
 
@@ -36,8 +36,8 @@ class RepoSpec:
 
 @dataclass(frozen=True)
 class CodexSpec:
-    model: str = "gpt-5.4"
-    reasoning: str = "high"
+    model: str = "gpt-5.6-sol"
+    reasoning: str = "medium"
 
 
 @dataclass(frozen=True)
@@ -318,13 +318,13 @@ def load_spec(path: Path) -> CloudSpec:
     extra_repos = _extra_repos(raw.get("extra_repos"), repo)
 
     codex_raw = _mapping(raw.get("codex"), "codex")
-    codex_reasoning = _string(codex_raw.get("reasoning"), "codex.reasoning", default="high")
+    codex_reasoning = _string(codex_raw.get("reasoning"), "codex.reasoning", default="medium")
     if codex_reasoning not in VALID_CODEX_REASONING:
         raise _invalid(
             f"codex.reasoning must be one of {', '.join(VALID_CODEX_REASONING)}; got {codex_reasoning!r}"
         )
     codex = CodexSpec(
-        model=_string(codex_raw.get("model"), "codex.model", default="gpt-5.4"),
+        model=_string(codex_raw.get("model"), "codex.model", default="gpt-5.6-sol"),
         reasoning=codex_reasoning,
     )
 

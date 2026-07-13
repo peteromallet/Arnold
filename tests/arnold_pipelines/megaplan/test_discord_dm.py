@@ -82,6 +82,24 @@ def test_send_discord_dm_degrades_when_config_missing() -> None:
     assert result["missing"] == ["DISCORD_BOT_TOKEN", "DISCORD_DM_USER_ID"]
 
 
+def test_send_discord_dm_suppresses_pytest_fixture_before_network() -> None:
+    def exploding_opener(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("test fixture notification reached the network")
+
+    result = send_discord_dm(
+        {
+            "title": "Megaplan needs human review - demo-chain",
+            "workspace": "/tmp/pytest-of-root/pytest-411/test_gate0/ws",
+        },
+        env={"DISCORD_BOT_TOKEN": "configured", "DISCORD_DM_USER_ID": "123"},
+        opener=exploding_opener,
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "test_execution_suppressed"
+    assert result["suppression_reason"] == "pytest_workspace:workspace"
+
+
 def test_send_discord_dm_posts_dm_channel_then_messages() -> None:
     requests: list[dict[str, Any]] = []
 

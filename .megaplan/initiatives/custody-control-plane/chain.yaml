@@ -1,48 +1,51 @@
 base_branch: main
+merge_policy: review
+prerequisite_policy: required
+validation_policy: required
+review_policy:
+  clean_milestone_pr: manual
 anchors:
   north_star: NORTHSTAR.md
+launch_preconditions:
+  - name: Workflow Boundary Contracts is landed with current completion proof
+    kind: chain_completed
+    chain: .megaplan/initiatives/workflow-boundary-contracts/chain.yaml
+    require_manifest: true
+  - name: post-WBC custody rollout gates are approved
+    path: .megaplan/initiatives/custody-control-plane/decisions/single-authoritative-runtime-history.md
+    check:
+      kind: contains_text
+      text: 'status: approved'
 milestones:
-- label: m1
-  idea: .megaplan/initiatives/custody-control-plane/briefs/m1.md
-  branch: megaplan/custody-control-plane/m1
-  profile: partnered-5
-  vendor: codex
-  robustness: full
-  depth: high
-  with_prep: true
-- label: m2
-  idea: .megaplan/initiatives/custody-control-plane/briefs/m2.md
-  branch: megaplan/custody-control-plane/m2
-  profile: partnered-5
-  vendor: codex
-  robustness: full
-  depth: high
-  with_prep: true
-- label: m3
-  idea: .megaplan/initiatives/custody-control-plane/briefs/m3.md
-  branch: megaplan/custody-control-plane/m3
-  profile: partnered-5
-  vendor: codex
-  robustness: full
-  depth: high
-  with_prep: true
-- label: m4
-  idea: .megaplan/initiatives/custody-control-plane/briefs/m4.md
-  branch: megaplan/custody-control-plane/m4
-  profile: partnered-5
-  vendor: codex
-  robustness: full
-  depth: high
-  with_prep: true
+  - label: m5-post-wbc-custody-convergence
+    idea: .megaplan/initiatives/custody-control-plane/briefs/m5-post-wbc-custody-convergence.md
+    branch: megaplan/custody-control-plane/m5-post-wbc-custody-convergence
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_clarify: false
+    prep_direction: >-
+      Start from the completed Workflow Boundary Contracts manifest, its pinned
+      contract and ledger interfaces, the landed Run Authority views, and the
+      existing custody M1-M4 resolver fixtures. Reconcile only the supported
+      Megaplan cloud-chain custody read and decision path. Do not create another
+      ledger, lifecycle, status authority, writer API, or broad runtime migration.
+    notes: >-
+      Difficulty 5/5; partnered-5/full/high @codex +prep. One roughly two-week
+      follow-up. M1-M4 are completed historical foundation, not pending chain
+      milestones. Production enforcement and mutating repair remain human-gated.
 on_failure:
   abort: stop_chain
 on_escalate:
   abort: stop_chain
-merge_policy: auto
 driver:
   robustness: full
+  vendor: codex
   phase_timeout: 10800
-  auto_approve: true
+  auto_approve: false
+  require_clean_base: true
   on_escalate: abort
   max_iterations: 60
   poll_sleep: 8.0
