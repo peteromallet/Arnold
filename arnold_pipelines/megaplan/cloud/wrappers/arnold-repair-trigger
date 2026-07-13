@@ -482,8 +482,12 @@ def _classify_request(
     resume_cursor = target_plan.get("resume_cursor") if isinstance(target_plan.get("resume_cursor"), Mapping) else {}
     signature = record.get("problem_signature") if isinstance(record.get("problem_signature"), Mapping) else {}
     request_target = record.get("target") if isinstance(record.get("target"), Mapping) else {}
+    # ``milestone_or_plan`` is a compatibility field and human-gate requests
+    # historically store the step name there.  Prefer the explicit target plan
+    # identity whenever it is present so a genuine gate is not terminalized as
+    # stale merely because its step name differs from the current plan name.
     requested_plan_name = str(
-        signature.get("milestone_or_plan") or request_target.get("plan_name") or ""
+        request_target.get("plan_name") or signature.get("milestone_or_plan") or ""
     )
     resolved_plan_name = str(current_refs.get("current_plan_name") or "")
     if requested_plan_name and resolved_plan_name and requested_plan_name != resolved_plan_name:
