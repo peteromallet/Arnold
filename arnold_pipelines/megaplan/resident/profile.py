@@ -352,6 +352,27 @@ def _compact_restart_lifecycle(value: object) -> dict[str, Any]:
     }
 
 
+def _status_hot_orientation(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Legacy status key becomes a directory entry; detail lives at context node status."""
+
+    if value is None:
+        return None
+    orientation = {
+        key: value.get(key)
+        for key in (
+            "schema_version", "generated_at", "source", "watchdog_generated_at", "degraded",
+            "stale_banner", "stale_reason", "summary", "session_count", "completed_session_count",
+        )
+        if value.get(key) is not None
+    } | {
+        "detail_node": "status",
+        "instruction": "Use context_root attention first, then read_context_node('status/...').",
+    }
+    if value.get("stale_banner"):
+        orientation["sessions"] = []
+    return orientation
+
+
 class ActorToolInput(ToolInput):
     actor_user_id: str | None = None
     guild_id: str | None = None
@@ -949,7 +970,8 @@ class MegaplanResidentProfile:
         )
         full_cloud_status_snapshot, snapshot_degraded = snapshot_result
         self._schedule_cloud_status_snapshot_refresh()
-        cloud_status_snapshot = compact_cloud_status_snapshot(full_cloud_status_snapshot)
+        cloud_status_tree_root = compact_cloud_status_snapshot(full_cloud_status_snapshot)
+        cloud_status_snapshot = _status_hot_orientation(cloud_status_tree_root)
         activity_summary = _compact_activity_summary(
             status_snapshot.plan_activity_summary(full_cloud_status_snapshot)
         )
@@ -1076,7 +1098,7 @@ class MegaplanResidentProfile:
             "vp_special_requests_todos": todo_context,
         }
         base["context_root"] = build_context_root(
-            status=cloud_status_snapshot,
+            status=cloud_status_tree_root,
             agents=compact_agents,
             initiatives=initiative_index,
             todos=todo_context,
