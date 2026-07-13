@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any, Mapping
 
@@ -55,6 +56,38 @@ def schema_property_names(
     return frozenset(schema_object_properties(schema, contract=contract))
 
 
+def schema_mapping_at_path(
+    schema: Mapping[str, Any],
+    path: Sequence[str],
+    *,
+    contract: str,
+) -> Mapping[str, Any]:
+    """Resolve a nested schema mapping or fail with its contract path.
+
+    Projection code uses this instead of repeating unchecked
+    ``schema["properties"][...]["items"]`` chains. A schema refactor then
+    fails at import/use time instead of silently reverting to a stale
+    hand-maintained field list.
+    """
+
+    node: Any = schema
+    traversed: list[str] = []
+    for key in path:
+        traversed.append(key)
+        if not isinstance(node, Mapping) or key not in node:
+            location = "/".join(traversed)
+            raise RuntimeError(
+                f"{contract}: expected schema mapping at {location!r}"
+            )
+        node = node[key]
+    if not isinstance(node, Mapping):
+        location = "/".join(path)
+        raise RuntimeError(
+            f"{contract}: expected schema mapping at {location!r}"
+        )
+    return node
+
+
 def require_schema_fields(
     payload: Mapping[str, Any],
     schema: Mapping[str, Any],
@@ -90,6 +123,65 @@ def project_schema_owned_fields(
 
     owned = schema_property_names(schema, contract=contract)
     return {key: value for key, value in payload.items() if key in owned}
+
+
+def schema_owned_field_drops(
+    before: Any,
+    after: Any,
+    schema: Mapping[str, Any],
+    *,
+    pointer: str = "",
+) -> tuple[str, ...]:
+    """Return schema-owned JSON pointers removed by a normalizer.
+
+    Value coercion and alias handling remain the normalizer's job. This guard
+    answers the narrower contract question that caused the incident: did a
+    field already owned by the active schema exist before normalization and
+    disappear afterward?
+    """
+
+    drops: list[str] = []
+    properties = schema.get("properties")
+    if isinstance(before, Mapping) and isinstance(properties, Mapping):
+        after_mapping = after if isinstance(after, Mapping) else {}
+        for key, child_schema in properties.items():
+            if key not in before:
+                continue
+            child_pointer = f"{pointer}/{key}"
+            if key not in after_mapping:
+                drops.append(child_pointer)
+                continue
+            if isinstance(child_schema, Mapping):
+                drops.extend(
+                    schema_owned_field_drops(
+                        before[key],
+                        after_mapping[key],
+                        child_schema,
+                        pointer=child_pointer,
+                    )
+                )
+        return tuple(drops)
+
+    items = schema.get("items")
+    if (
+        isinstance(before, list)
+        and isinstance(after, list)
+        and isinstance(items, Mapping)
+    ):
+        for index, before_item in enumerate(before):
+            if index >= len(after):
+                # The parent array field still exists; element filtering is a
+                # semantic transform and cannot be attributed to one property.
+                break
+            drops.extend(
+                schema_owned_field_drops(
+                    before_item,
+                    after[index],
+                    items,
+                    pointer=f"{pointer}/{index}",
+                )
+            )
+    return tuple(drops)
 
 
 def schema_template_payload(
@@ -128,6 +220,8 @@ __all__ = [
     "closed_object_schema",
     "project_schema_owned_fields",
     "require_schema_fields",
+    "schema_mapping_at_path",
+    "schema_owned_field_drops",
     "schema_object_properties",
     "schema_property_names",
     "schema_template_payload",

@@ -25,6 +25,8 @@ from arnold_pipelines.megaplan.north_star_actions import (
     SEVERITY_BLOCKING,
     read_carried_north_star_actions,
 )
+from arnold_pipelines.megaplan.schema_projection import schema_template_payload
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import PlanState
 
 _CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH = """
@@ -581,12 +583,11 @@ def _write_critique_template(
     """
     import json
 
-    template: dict[str, object] = {
-        "checks": _build_checks_template(plan_dir, state, checks),
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
+    template = schema_template_payload(
+        SCHEMAS["critique.json"],
+        contract="critique scratch template",
+    )
+    template["checks"] = _build_checks_template(plan_dir, state, checks)
 
     output_path = plan_dir / "critique_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
@@ -601,12 +602,11 @@ def write_single_check_template(
 ) -> Path:
     import json
 
-    template: dict[str, object] = {
-        "checks": _build_checks_template(plan_dir, state, (check,)),
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
+    template = schema_template_payload(
+        SCHEMAS["critique.json"],
+        contract="single-check critique scratch template",
+    )
+    template["checks"] = _build_checks_template(plan_dir, state, (check,))
 
     output_path = plan_dir / output_name
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
