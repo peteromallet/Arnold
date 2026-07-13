@@ -8,9 +8,10 @@ from dataclasses import dataclass, field
 from io import StringIO
 import json
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Literal, Mapping, Protocol
 
 from arnold_pipelines.megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
+from .provenance import provenance_scope
 
 CloudClassification = Literal["running", "blocked", "failed", "gate-needed", "completed", "unknown"]
 CloudOperation = Literal[
@@ -29,6 +30,7 @@ class CloudToolRequest:
     target_id: str | None = None
     arguments: dict[str, str] = field(default_factory=dict)
     confirmed: bool = False
+    launch_provenance: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ class CloudCliBackend:
         args = parser.parse_args(["cloud", *argv])
         stdout = StringIO()
         stderr = StringIO()
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        with provenance_scope(request.launch_provenance), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = run_cloud_cli(root, args)
         output = stdout.getvalue().strip()
         error_output = stderr.getvalue().strip()

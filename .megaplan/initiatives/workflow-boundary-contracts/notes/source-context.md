@@ -1,5 +1,9 @@
 # Source Context
 
+> Historical source note. Its incident evidence remains useful, but milestone
+> numbering and sequencing are superseded by the 2026-07-10 corrective reshape
+> decision and C1-C6 chain.
+
 This epic merges conclusions from the July 2026 cloud prep-state incident and
 the existing boundary/transition plans.
 

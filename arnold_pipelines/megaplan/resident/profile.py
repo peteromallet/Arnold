@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 
 from pydantic import Field
 
+from agentbox.redaction import redact_text
+from agentbox.services import DISCORD_RESIDENT_RESTART_COMMAND
 from arnold_pipelines.megaplan.control import ControlTargetResolver
 from arnold_pipelines.megaplan.editorial import body as editorial_body
 from arnold_pipelines.megaplan.editorial import checklist as editorial_checklist
@@ -29,6 +31,7 @@ from arnold_pipelines.megaplan.store import (
 )
 from arnold_pipelines.megaplan.store.export import collect_epic_export, write_epic_export_tar
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
 from arnold_pipelines.megaplan.cloud import status_snapshot
 from arnold_pipelines.megaplan.layout import (
     ALLOWED_INITIATIVE_SUBDIRS,
@@ -45,6 +48,7 @@ from arnold_pipelines.megaplan.layout import (
 )
 
 from .auth import ActionKind, AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
+from .agent_loop import current_tool_runtime_context
 from .cloud import (
     CloudCliBackend,
     CloudOperation,
@@ -58,12 +62,22 @@ from .config import ResidentConfig
 from .tool_registry import ToolRegistration, ToolRegistry
 from .tool_schemas import ToolInput, ToolResult
 from . import vp_todo
-from .subagent import launch_subagent_task
+from .subagent import (
+    DELEGATED_TASK_KINDS,
+    MANAGED_RUN_SCHEMA,
+    DelegatedTaskKind,
+    launch_subagent_task,
+    list_managed_resident_agents,
+)
+from .provenance import normalize_delegation_provenance
 
-MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v1"
+MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v4"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
 # of staleness before treating broad status as degraded.
 _SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
+_VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT = 3
+_VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS = 240
+_VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS = 160
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
 
 
@@ -91,6 +105,118 @@ def _sanitize_stale_snapshot(snapshot: Mapping[str, Any], reason: str) -> dict[s
         "sessions": [],
         "stale_banner": banner,
         "stale_reason": reason,
+    }
+
+
+def _conversation_history_context(
+    store: Store,
+    *,
+    conversation_id: str,
+) -> dict[str, Any]:
+    """Describe the durable, complete user-visible history without loading it all."""
+
+    backend = type(store).__name__
+    location: dict[str, Any] = {
+        "backend": backend,
+        "description": "the Store instance backing this resident runtime",
+    }
+
+    root = getattr(store, "root", None)
+    if root is not None:
+        store_root = Path(root).expanduser().resolve()
+        location.update(
+            {
+                "store_root": str(store_root),
+                "conversation_record": str(
+                    store_root / "resident_conversations" / f"{conversation_id}.json"
+                ),
+                "message_collection": str(store_root / "messages"),
+                "message_selector": {"conversation_id": conversation_id},
+            }
+        )
+
+    return {
+        "authority": (
+            "All resident-persisted inbound and outbound user-visible messages for this "
+            "conversation. The conversation record is metadata/cursors; the complete transcript "
+            "is the matching records in the message collection, ordered by sent_at."
+        ),
+        "conversation_id": conversation_id,
+        "location": location,
+        "ordering_field": "sent_at",
+        "discord_provenance_fields": ["discord_message_id", "bot_turn_id"],
+        "search": {
+            "tool": "search_messages",
+            "arguments": {
+                "conversation_id": conversation_id,
+                "query": "<target words or empty string>",
+                "limit": 50,
+            },
+            "note": (
+                "Always pass this conversation_id. Results are bounded, so use targeted repeated "
+                "queries for a complete audit."
+            ),
+        },
+        "hot_context_caveat": (
+            "recent_messages and the model history window are bounded excerpts, not the full history"
+        ),
+        "discord_caveat": (
+            "This is the authoritative resident transcript, not a scrape of Discord's rendered UI; "
+            "reactions, later edits, deletions, embeds, and other unstored UI state may be absent."
+        ),
+    }
+
+
+def _bounded_redacted_text(value: object, *, limit: int) -> str:
+    """Return a compact display value without carrying credentials into hot context."""
+    text = redact_text(str(value).strip())
+    return text if len(text) <= limit else f"{text[: limit - 1]}…"
+
+
+def _vp_todo_hot_context(path: Path) -> dict[str, Any]:
+    """Build the deliberately small VP special-request to-do context projection.
+
+    The file's model records only ``pending``/terminal status and an optional
+    natural-language ``when`` condition. It cannot truthfully say whether a
+    conditional item is due, so this projection uses pending terminology only.
+    """
+    pending = vp_todo.pending_items(path)
+    preview = [
+        {
+            "id": item["id"],
+            "task": _bounded_redacted_text(
+                item["task"], limit=_VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS
+            ),
+            "status": item["status"],
+            "when": (
+                _bounded_redacted_text(
+                    item["when"], limit=_VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS
+                )
+                if item["when"]
+                else None
+            ),
+        }
+        for item in pending[:_VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT]
+    ]
+    return {
+        "schema_version": "vp-special-requests-todo-hot-context-v1",
+        "pending_count": len(pending),
+        "pending_preview": preview,
+        "preview_limit": _VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT,
+        "preview_omitted_count": max(0, len(pending) - len(preview)),
+        "pending_semantics": (
+            "This count and preview include items whose status is pending. An item with a "
+            "non-empty when condition remains pending until its condition is verified; it is "
+            "not thereby known to be due."
+        ),
+        "full_list_retrieval": {
+            "tool": "read_todo_list",
+            "arguments": {},
+            "instruction": (
+                "Call read_todo_list with no arguments to retrieve the full VP special-requests "
+                "to-do list, including pending items beyond this preview and retained failed items."
+            ),
+        },
     }
 
 
@@ -412,8 +538,16 @@ class AddTodoItemInput(ToolInput):
 
 class LaunchSubagentInput(ToolInput):
     task: str
+    task_kind: DelegatedTaskKind = "routine"
+    difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     project_dir: str | None = None
+    backend: str = "codex"
+    background: bool = True
+    model: str | None = None
+    reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    request_id: str | None = None
+    retry_of_run_id: str | None = None
 
 
 @dataclass
@@ -459,7 +593,36 @@ class MegaplanResidentProfile:
             "When the user asks you to queue a recurring task or special request, add it with "
             "`add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use "
             "`read_todo_list` to show what's queued. In conversation you add and read items — a "
-            "scheduled sweep picks up pending items and executes them with `launch_subagent`."
+            "scheduled sweep picks up pending items and executes them with the resident-owned "
+            "`launch_subagent` managed Codex lifecycle. Hot context's `vp_special_requests_todos` "
+            "is only a bounded pending-item orientation summary: a pending item with a `when` "
+            "condition is not known to be due until you verify that condition. Use its stable item "
+            "IDs when referring to previewed work, and call `read_todo_list` with no arguments "
+            "whenever you need the full list (including retained failed items). For normal "
+            "delegated work, keep its defaults (`backend=codex`, `background=true`) and report "
+            "the returned durable paths. "
+            "Always classify delegated work with `task_kind` and D1-D10 `difficulty`. Use Luna/low "
+            "only for bounded lookup, extraction, or mechanical D1-D3 work; routine coding, "
+            "debugging, and research default to Terra/medium; ambiguous, cross-cutting, high-risk, "
+            "or D7-D10 work uses Sol/high. Do not request xhigh/max by default. "
+            "For launches caused by an inbound Discord message, the managed manifest retains only "
+            "non-secret reply provenance and the terminal sweep automatically replies to that exact "
+            "message with the subagent's concise final summary. Delivery state and evidence are visible "
+            "in `resident_agents`; surface retry, failed, or unknown delivery states honestly. "
+            "Default to `launch_subagent` for any user-requested execution work, and make that "
+            "tool call before replying so the work is durably started rather than merely acknowledged. "
+            "Do not babysit normal delegated work or Megaplan/cloud chains. Durable agents, chain "
+            "runners, watchdogs, and bounded automatic repair own continued progress by default. "
+            "Babysitting should be exceptionally rare: use it only when the user explicitly requests "
+            "recurring hands-on monitoring and the ordinary durable lifecycle is demonstrably "
+            "insufficient; never infer it from requests such as 'push it forward', 'keep it moving', "
+            "or 'finish the work'. Prefer a one-time durable operator launch or repair action instead. "
+            "Only defer the launch when required human input, an approval gate, or material ambiguity "
+            "makes execution unsafe or impossible; in that case, ask for the blocking input explicitly."
+            " For conversation-history questions, use `conversation_history` in hot context as the "
+            "authority map. `recent_messages` and the model history window are bounded excerpts, not the "
+            "full history; search the authoritative resident message store with `search_messages` and the "
+            "current conversation id before concluding that a prior thread or delivery is absent."
             " For broad status questions ('how's it going?', 'what is active?', 'is it cooking?', "
             "'why did it not reply?'), answer from `cloud_status_snapshot` / `plan_activity_summary` "
             "in hot context FIRST. That snapshot is the canonical shared-runner view produced by the "
@@ -474,9 +637,13 @@ class MegaplanResidentProfile:
             "epic's overall percent — e.g. 'Epic X: <progress.percent>% (A/B sprints done), currently "
             "on <current_plan>'. `progress.percent` already folds the in-flight plan's stage fraction "
             "in, so it advances as the current plan progresses rather than freezing between milestones. "
-            "When `progress.plan_percent` is present, also append the in-flight plan's stage estimate, "
-            "e.g. '...; in-flight <plan_percent>% (<plan_state>)'; if `plan_state` is present without "
-            "a `plan_percent` (e.g. 'blocked'), show that state instead. When `epic_delta_1h` / "
+            "When `progress.plan_percent` is present, also append the in-flight plan's stage estimate. "
+            "Use `progress.display_state` as its canonical status label when available, falling back "
+            "to `progress.plan_state` only when `display_state` is absent — e.g. '...; in-flight "
+            "<plan_percent>% (<display_state>)'. This preserves paused, blocked, failed, completed, "
+            "and idle-finalized truth while showing an active execute step as `executing`. If the "
+            "chosen status label is present without a `plan_percent` (e.g. 'blocked'), show that state "
+            "instead. When `epic_delta_1h` / "
             "`epic_delta_5h` are present, append the recent rate — e.g. '(+<d1>% in the past hour, "
             "+<d5>% in the past 5h)' — and omit any window whose delta is null (the epic is younger "
             "than that window). When `progress.stage_changes_1h` is a non-empty list, add one line of "
@@ -484,10 +651,16 @@ class MegaplanResidentProfile:
             "in the past hour)'; omit it when the list is empty (no ladder progress in the window). "
             "When `epic_started_at` / `plan_started_at` are present, add 'epic "
             "started <relative time>, plan started <relative time>'. Use the pre-calculated fields as "
-            "given; do not recompute them or invent other sub-plan percentages — `plan_percent` is a "
-            "coarse completed-stages/total-stages estimate, so present it as approximate. "
+            "given; do not recompute them or invent other sub-plan percentages — `plan_percent` "
+            "reserves 30% for pre-execute stages and weights execute progress by the finalized "
+            "task inventory's authoritative complexity scores. "
             "Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
-            "without labeling it degraded. Targeted per-plan questions may still use the cloud tools."
+            "without labeling it degraded. Targeted per-plan questions may still use the cloud tools. "
+            "For a Discord resident restart, use only the canonical command in hot context under "
+            "`resident_runtime.restart`; never use pkill, killall, a cgroup-wide stop, or tmux cleanup. "
+            "The command must fail closed unless the installed unit proves its main-process-only "
+            "stop boundary. Be explicit that the current Discord turn can be interrupted even though "
+            "durable resident agents and Megaplan/cloud chains are preserved."
         )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
@@ -520,8 +693,82 @@ class MegaplanResidentProfile:
                 "trusted_container": status_snapshot.is_trusted_container(),
                 "has_local_markers": status_snapshot.has_local_markers(),
                 "status_snapshot_path": str(self.config.status_snapshot_path),
+                "restart": {
+                    "canonical_command": DISCORD_RESIDENT_RESTART_COMMAND,
+                    "procedure": (
+                        "Run the canonical AgentBox command. On a host it reads the installed "
+                        "systemd unit's effective stop policy and refuses the restart unless "
+                        "KillMode is exactly `process` with no ExecStop or ExecStopPost hooks. "
+                        "Inside the resident container where systemctl is unavailable, it instead "
+                        "verifies and respawns only the dedicated Discord resident tmux pane."
+                    ),
+                    "stop_scope": "Discord resident process/pane only",
+                    "safety_guarantees": [
+                        "resident-managed detached subagents are not signaled",
+                        "tmux-backed Megaplan and cloud chains are not stopped or cleaned up",
+                        "the command fails closed if the installed unit or tmux pane is stale or unsafe",
+                    ],
+                    "operational_caveat": (
+                        "The in-flight Discord resident turn is interrupted. On a systemd host, "
+                        "installing or refreshing the unit remains an explicit operator action."
+                    ),
+                    "forbidden_shortcuts": [
+                        "pkill/killall",
+                        "systemctl kill --kill-whom=all",
+                        "tmux kill-server or session cleanup",
+                    ],
+                },
+                "subagent_launch": {
+                    "standard": MANAGED_RUN_SCHEMA,
+                    "codex_sandbox": "danger-full-access",
+                    "stdin": "sealed",
+                    "lifecycle": "detached with durable manifest, log, and result",
+                    "completion_delivery": (
+                        "terminal Discord-origin launches reply to the original inbound message; "
+                        "manifest status is idempotent and retry-aware"
+                    ),
+                    "run_root": ".megaplan/plans/resident-subagents",
+                    "resident_tool": "launch_subagent",
+                    "codex_usage": {
+                        "backend": "codex",
+                        "background": True,
+                        "default_task_kind": "routine",
+                        "default_difficulty": 4,
+                        "default_model": "gpt-5.6-terra",
+                        "default_reasoning_effort": "medium",
+                        "task_kinds": list(DELEGATED_TASK_KINDS),
+                        "routing": {
+                            "bounded_mechanical_d1_d3": "gpt-5.6-luna:low",
+                            "routine": "gpt-5.6-terra:medium",
+                            "ambiguous_high_risk_or_d7_d10": "gpt-5.6-sol:high",
+                        },
+                    },
+                },
             },
             "configured_cloud_yaml": str(self.config.cloud_yaml_path),
+            "cloud_launch_guidance": {
+                "canonical_command": (
+                    "python -m arnold_pipelines.megaplan cloud chain "
+                    ".megaplan/initiatives/<initiative>/chain.yaml "
+                    "--cloud-yaml .megaplan/initiatives/<initiative>/cloud.yaml --fresh"
+                ),
+                "on_box_command": (
+                    "python -m arnold_pipelines.megaplan cloud chain "
+                    ".megaplan/initiatives/<initiative>/chain.yaml "
+                    "--cloud-yaml .megaplan/initiatives/<initiative>/cloud.yaml --fresh --on-box"
+                ),
+                "transport_choice": (
+                    "When the resident is already inside the target agentbox/container, use --on-box. "
+                    "It performs the normal cloud canonicalization, workspace/session setup, tmux launch, "
+                    "watchdog marker registration, and launch verification without SSH. Use the default "
+                    "SSH transport only from an external control machine."
+                ),
+                "requirements": (
+                    "Use an initiative-specific cloud.yaml with provider ssh, mode chain, and unique "
+                    "repo.workspace and chain_session. Launch the canonical initiative chain.yaml; "
+                    "do not start an unregistered local chain when cloud execution was requested."
+                ),
+            },
             # Canonical broad-status snapshot — the first source for "how's it
             # going?" / "what is active?" questions. Produced by the watchdog
             # from local observation only; never requires SSH from the resident.
@@ -532,6 +779,8 @@ class MegaplanResidentProfile:
             # Supplemental detail only; NOT the canonical shared-runner view.
             "local_epic_chain_state": local_epic_chain_state,
             "live_cloud_chain": live_cloud_chain,
+            "resident_agents": list_managed_resident_agents(project_root=Path.cwd()),
+            "vp_special_requests_todos": _vp_todo_hot_context(self._todo_path()),
         }
         if self.store is None:
             return base
@@ -551,6 +800,10 @@ class MegaplanResidentProfile:
         base.update(
             {
                 "conversation": conversation.model_dump(mode="json"),
+                "conversation_history": _conversation_history_context(
+                    self.store,
+                    conversation_id=conversation.id,
+                ),
                 "active_epic": context.epic.model_dump(mode="json") if context and context.epic else None,
                 "active_initiative": (
                     initiative_metadata(Path.cwd(), active_initiative_slug)
@@ -730,11 +983,11 @@ class MegaplanResidentProfile:
             ToolRegistration("schedule_cloud_check", "Schedule a durable cloud status check.", "control", ScheduleCloudCheckInput, ToolResult, self._schedule_cloud_check),
             ToolRegistration("cancel_cloud_check", "Cancel a durable cloud status check.", "control", CancelCloudCheckInput, ToolResult, self._cancel_cloud_check),
             ToolRegistration("list_cloud_checks", "List durable cloud status checks.", "cloud_read", ListCloudChecksInput, ToolResult, self._list_cloud_checks),
-            ToolRegistration("read_todo_list", "Read the VP special-requests to-do list (pending + retained items).", "read", ReadTodoListInput, ToolResult, self._read_todo_list),
+            ToolRegistration("read_todo_list", "Read the full VP special-requests to-do list, including pending, conditional, and retained failed items.", "read", ReadTodoListInput, ToolResult, self._read_todo_list),
             ToolRegistration("complete_todo_item", "Mark a to-do item done and clear it from the list; pass a short result summary.", "write", CompleteTodoItemInput, ToolResult, self._complete_todo_item),
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
-            ToolRegistration("launch_subagent", "Launch a sub-agent to execute an arbitrary task with file/web/terminal tools and return its final response.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, full log, and result path. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -1754,18 +2007,51 @@ class MegaplanResidentProfile:
         task = payload.task.strip()
         if not task:
             return _fail("task is required")
-        item = vp_todo.add_item(self._todo_path(), task, when=payload.when)
+        runtime_context = current_tool_runtime_context()
+        item = vp_todo.add_item(
+            self._todo_path(),
+            task,
+            when=payload.when,
+            launch_provenance=(
+                runtime_context.launch_origin if runtime_context is not None else None
+            ),
+        )
         return _ok("todo item added", item=vp_todo.public_item(item))
 
     async def _launch_subagent(self, payload: LaunchSubagentInput) -> ToolResult:
         task = payload.task.strip()
         if not task:
             return _fail("task is required")
+        runtime_context = current_tool_runtime_context()
+        launch_origin = runtime_context.launch_origin if runtime_context is not None else None
+        if (
+            (not isinstance(launch_origin, Mapping) or launch_origin.get("applicability") == "not_applicable")
+            and payload.request_id
+        ):
+            todo_item = next(
+                (
+                    item
+                    for item in vp_todo.load_items(self._todo_path())
+                    if item["id"] == payload.request_id
+                ),
+                None,
+            )
+            if todo_item is not None and isinstance(todo_item.get("launch_provenance"), dict):
+                launch_origin = todo_item["launch_provenance"]
         result = await launch_subagent_task(
             self.config,
             task=task,
             toolsets=payload.toolsets,
             project_dir=payload.project_dir,
+            backend=payload.backend,
+            background=payload.background,
+            model=payload.model,
+            reasoning_effort=payload.reasoning_effort,
+            task_kind=payload.task_kind,
+            difficulty=payload.difficulty,
+            request_id=payload.request_id,
+            launch_origin=launch_origin,
+            retry_of_run_id=payload.retry_of_run_id,
         )
         if not result.ok:
             return ToolResult(
@@ -1775,8 +2061,17 @@ class MegaplanResidentProfile:
             )
         return ToolResult(
             ok=True,
-            message="subagent completed",
-            data={"final_text": result.final_text, "returncode": result.returncode},
+            message=("subagent launched" if result.status == "running" else "subagent completed"),
+            data={
+                "final_text": result.final_text,
+                "returncode": result.returncode,
+                "run_id": result.run_id,
+                "status": result.status,
+                "manifest_path": result.manifest_path,
+                "log_path": result.log_path,
+                "result_path": result.result_path,
+                "pid": result.pid,
+            },
         )
 
     async def _run_cloud_tool(
@@ -1793,6 +2088,16 @@ class MegaplanResidentProfile:
         action = "cloud_read" if operation in {"cloud_status", "cloud_status_chain", "cloud_logs"} else "admin"
         if denied := self._denied(payload, action):
             return denied
+        runtime_context = current_tool_runtime_context()
+        launch_provenance = normalize_delegation_provenance(
+            runtime_context.launch_origin
+            if runtime_context is not None and runtime_context.launch_origin is not None
+            else {
+                "transport": "non_discord",
+                "applicability": "not_applicable",
+                "source_kind": "resident_internal_cloud_call",
+            }
+        )
         try:
             repo_args = resolved_repo_args if resolved_repo_args is not None else self._repo_arguments_for_payload(payload)
             run = self._load_or_create_cloud_run(
@@ -1819,6 +2124,7 @@ class MegaplanResidentProfile:
                     target_id=target_id,
                     arguments={key: str(value) for key, value in request_args.items() if value is not None},
                     confirmed=operation in {"cloud_start_chain", "cloud_bootstrap"},
+                    launch_provenance=launch_provenance,
                 )
             )
         except Exception as exc:
@@ -1896,6 +2202,17 @@ class MegaplanResidentProfile:
         status: str,
         metadata: dict[str, Any],
     ) -> Any:
+        runtime_context = current_tool_runtime_context()
+        launch_provenance = normalize_delegation_provenance(
+            runtime_context.launch_origin
+            if runtime_context is not None and runtime_context.launch_origin is not None
+            else {
+                "transport": "non_discord",
+                "applicability": "not_applicable",
+                "source_kind": "resident_internal_cloud_call",
+            }
+        )
+        metadata = {**metadata, "resident_delegation": launch_provenance}
         idempotency_key = deterministic_idempotency_key(
             "resident-cloud-run",
             operation,
@@ -1906,6 +2223,8 @@ class MegaplanResidentProfile:
             target_id,
             command_summary,
             payload.actor_user_id or self.actor_id,
+            launch_provenance.get("correlation_id"),
+            launch_provenance.get("delegation_id"),
         )
         run = self._store().create_cloud_run(
             CloudRunInput(
@@ -2334,12 +2653,18 @@ def _summarize_plan_state(work_dir: Path, plan_name: str) -> dict[str, Any] | No
         if not path.exists():
             continue
         data = _read_json_object(path)
+        active_step = _summarize_active_step(data.get("active_step"))
+        presentation = plan_status_presentation(
+            data.get("current_state") or data.get("state"),
+            active_step=active_step,
+        )
         return {
             "path": str(path),
             "mtime": _path_mtime(path),
             "current_state": data.get("current_state") or data.get("state"),
             "iteration": data.get("iteration"),
-            "active_step": _summarize_active_step(data.get("active_step")),
+            "active_step": active_step,
+            **presentation,
             "last_gate": _summarize_last_gate(data.get("last_gate")),
             "read_error": data.get("_read_error"),
         }
@@ -2394,6 +2719,9 @@ def _plan_activity_item(row: dict[str, Any]) -> dict[str, Any]:
         "last_state": row.get("last_state"),
         "plan_current_state": plan_state.get("current_state") if isinstance(plan_state, dict) else None,
         "active_step": active_step,
+        "active_phase": plan_state.get("active_phase") if isinstance(plan_state, dict) else None,
+        "execution_state": plan_state.get("execution_state") if isinstance(plan_state, dict) else None,
+        "display_state": plan_state.get("display_state") if isinstance(plan_state, dict) else None,
         "chain_spec_path": row.get("chain_spec_path"),
         "work_dir": row.get("work_dir"),
         "mtime": row.get("mtime"),

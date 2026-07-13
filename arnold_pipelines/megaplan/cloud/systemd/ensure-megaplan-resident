@@ -45,7 +45,7 @@ if docker exec -i "$CONTAINER" bash >>"$LOG" 2>&1 <<'EOS'; then
     echo "resident_already_up"
     exit 0
   fi
-  tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; set +a; export PYTHONPATH=/workspace/arnold:\${PYTHONPATH:-}; echo [resident-start] \$(date -Iseconds) provider=\${MEGAPLAN_RESIDENT_MODEL_PROVIDER} model=\${MEGAPLAN_RESIDENT_MODEL} >> /workspace/megaplan-resident-discord.log; python -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-dev} >> /workspace/megaplan-resident-discord.log 2>&1'"
+  tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; set +a; export PYTHONPATH=/workspace/arnold:\${PYTHONPATH:-}; export MEGAPLAN_RESIDENT_MODE=production MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=production; echo [resident-start] \$(date -Iseconds) provider=\${MEGAPLAN_RESIDENT_MODEL_PROVIDER} model=\${MEGAPLAN_RESIDENT_MODEL} >> /workspace/megaplan-resident-discord.log; python -m arnold_pipelines.megaplan resident discord --mode production --store-root /workspace/arnold/.megaplan/resident >> /workspace/megaplan-resident-discord.log 2>&1'"
   echo "resident_started"
 EOS
   sleep 2

@@ -1,24 +1,59 @@
 base_branch: editible-install
 anchors:
   north_star: NORTHSTAR.md
+merge_policy: auto
 milestones:
-- label: m1
-  idea: .megaplan/initiatives/sequential-model-fallbacks/briefs/m1.md
-  branch: sequential-model-fallbacks/m1
-  profile: partnered-5
-  vendor: codex
-  robustness: full
-  depth: high
-  with_prep: true
+  - label: s1-shared-foundations-and-managed-launch
+    idea: .megaplan/initiatives/sequential-model-fallbacks/briefs/s1-shared-foundations-and-managed-launch.md
+    branch: sequential-model-fallbacks/s1-shared-foundations
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Build one sprint task DAG, not four serial mini-milestones. Start golden scalar/current-state
+      characterization, resolver/profile extraction, fallback classification/mutation gating,
+      immutable custody/schema work, and launcher caller/state-machine inventory concurrently.
+      Freeze shared schema and receipt revisions at an early convergence gate; then complete the
+      managed child-launch foundation against those contracts. Preserve D1-D10/D5 semantics,
+      partnered-5 arrays, scalar/v1 compatibility, affirmative no-mutation fallback, complete
+      content-addressed task custody, immutable provenance, structured results, and root-only delivery.
+    notes: >-
+      Aggressive delivery days 1-6 of the roughly two-week initiative. Difficulty 5/5. Parallel
+      tracks are resolver/profile, fallback safety, custody/schema, and managed-launch foundations;
+      their only serialization is explicit contract convergence before launcher integration.
+
+  - label: s2-enforcement-integration-and-rollout
+    idea: .megaplan/initiatives/sequential-model-fallbacks/briefs/s2-enforcement-integration-and-rollout.md
+    branch: sequential-model-fallbacks/s2-enforcement-integration
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    depends_on: [s1-shared-foundations-and-managed-launch]
+    prep_direction: >-
+      Consume Sprint 1's versioned contracts and run three tracks concurrently: transactional
+      ancestry/authority/tree/root-budget enforcement; Megaplan and resident dispatcher integration
+      with additive v1/v2 migration and restart reconciliation; and adversarial conformance,
+      observability, operator documentation, and staged rollout/rollback preparation. Build fixtures
+      and shadow comparisons while integration lands, then close on one traceability matrix and
+      deterministic cross-dispatcher/fault-injection gate. Coordinate, but do not absorb, Discord
+      provenance and delivery ownership.
+    notes: >-
+      Aggressive delivery days 7-10, with contingency inside a roughly two-week total. Difficulty
+      5/5. Completes enforcement, integration, migration, restart evidence, adversarial conformance,
+      and rollout readiness; production enablement remains human gated.
+
 on_failure:
   abort: stop_chain
 on_escalate:
   abort: stop_chain
-merge_policy: auto
 driver:
   robustness: full
   phase_timeout: 10800
   auto_approve: true
-  on_escalate: abort
-  max_iterations: 60
+  max_iterations: 80
   poll_sleep: 8.0
+  require_anchor: true

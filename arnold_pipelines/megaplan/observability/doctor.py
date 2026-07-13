@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.observability.events import EventKind, read_events
+from arnold_pipelines.megaplan.observability.liveness import unmatched_llm_starts
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -307,24 +308,22 @@ def _check_llm_liveness(plan_dir: Path, *, composition: object | None = None) ->
 
     now = time.time()
     events = list(read_events(plan_dir))
+    unmatched_starts = unmatched_llm_starts(
+        events,
+        start_kind=EventKind.LLM_CALL_START,
+        end_kind=EventKind.LLM_CALL_END,
+    )
 
-    unmatched_starts: list[dict] = []
-    llm_ends: set[str] = set()  # by request_id if available
-
-    for ev in events:
-        kind = ev.get("kind")
-        if kind == EventKind.LLM_CALL_END:
-            rid = ev.get("payload", {}).get("request_id")
-            if rid:
-                llm_ends.add(str(rid))
-        elif kind == EventKind.LLM_CALL_START:
-            unmatched_starts.append(ev)
+    active_step: dict[str, Any] = {}
+    state_path = plan_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if isinstance(state.get("active_step"), dict):
+            active_step = state["active_step"]
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
 
     for ev in unmatched_starts:
-        rid = ev.get("payload", {}).get("request_id")
-        if rid and str(rid) in llm_ends:
-            continue
-
         # Check for recent heartbeat
         ts = _parse_iso(ev.get("ts_utc", ""))
         if ts is None:
@@ -338,6 +337,18 @@ def _check_llm_liveness(plan_dir: Path, *, composition: object | None = None) ->
                 and _parse_iso(e.get("ts_utc", "")) > ts
                 for e in events
             )
+            active_last_activity = _parse_iso(str(active_step.get("last_activity_at") or ""))
+            active_matches = (
+                active_step.get("phase") == ev.get("phase")
+                and active_step.get("model") == ev.get("payload", {}).get("model")
+            )
+            if (
+                active_matches
+                and active_last_activity is not None
+                and active_last_activity > ts
+                and now - active_last_activity <= 60
+            ):
+                has_heartbeat = True
             if not has_heartbeat:
                 return _check_status(
                     f"LLM call started {age:.0f}s ago with no heartbeat",

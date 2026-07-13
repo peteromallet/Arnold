@@ -60,6 +60,77 @@ NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
 REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"
 REPAIR_LOCK_DIR="${CLOUD_WATCHDOG_REPAIR_LOCK_DIR:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.lock}"
 
+load_resident_delegation_context() {
+  local encoded rc
+  encoded="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_PATH" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.resident.provenance import (
+    DELEGATION_CONTEXT_ENV,
+    encoded_provenance,
+    normalize_delegation_provenance,
+)
+
+raw = os.environ.get(DELEGATION_CONTEXT_ENV)
+if raw:
+    try:
+        payload = json.loads(raw)
+        print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+    except Exception as exc:
+        print(f"invalid inherited resident delegation provenance: {exc}", file=sys.stderr)
+        raise SystemExit(65)
+    raise SystemExit(0)
+
+path = Path(sys.argv[1])
+try:
+    marker = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    raise SystemExit(3)
+payload = marker.get("resident_delegation") if isinstance(marker, dict) else None
+if payload is None:
+    raise SystemExit(3)
+try:
+    print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+except Exception as exc:
+    print(f"invalid marker resident delegation provenance: {exc}", file=sys.stderr)
+    raise SystemExit(65)
+PY
+)"
+  rc=$?
+  if [[ "$rc" == "3" ]]; then
+    return 0
+  fi
+  if [[ "$rc" != "0" ]]; then
+    echo "repair launch refused: resident delegation provenance validation failed" >&2
+    return "$rc"
+  fi
+  if [[ -n "$encoded" ]]; then
+    export ARNOLD_RESIDENT_DELEGATION_CONTEXT="$encoded"
+  fi
+}
+
+load_resident_delegation_context || exit $?
+
+if PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REMOTE_SPEC" <<'PY'
+import sys
+from pathlib import Path
+from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+from arnold_pipelines.megaplan.chain.spec import load_chain_state
+
+try:
+    paused = is_paused(load_chain_state(Path(sys.argv[1])))
+except Exception:
+    paused = False
+raise SystemExit(0 if paused else 1)
+PY
+then
+  echo "[repair-loop] durable operator pause active; automatic repair skipped session=$SESSION" >&2
+  exit 0
+fi
+
 if ! [[ "$REPAIR_BUDGET_SECS" =~ ^[0-9]+$ ]] || (( REPAIR_BUDGET_SECS <= 0 )); then
   REPAIR_BUDGET_SECS=7200
 fi
@@ -1150,6 +1221,34 @@ resume_plan_relaunch_command() {
 chain_resume_plan_relaunch_command_if_needed() {
   local workspace="$1"
   local plan_name="$2"
+  local remote_spec="${3:-}"
+  if [[ -z "$plan_name" && -n "$remote_spec" ]]; then
+    plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || true
+import hashlib
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+spec_path = pathlib.Path(sys.argv[2])
+if not spec_path.is_absolute():
+    spec_path = workspace / spec_path
+try:
+    spec_path = spec_path.resolve()
+except OSError:
+    pass
+digest = hashlib.sha1(str(spec_path).encode("utf-8")).hexdigest()[:12]
+state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+try:
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+plan_name = payload.get("current_plan_name") if isinstance(payload, dict) else ""
+if isinstance(plan_name, str) and plan_name and "/" not in plan_name:
+    print(plan_name)
+PY
+)"
+  fi
   [[ -n "$plan_name" ]] || return 1
   local plan_state_file="$workspace/.megaplan/plans/$plan_name/state.json"
   [[ -f "$plan_state_file" ]] || return 1
@@ -1272,6 +1371,12 @@ resolve_relaunch_command() {
   local run_kind="${4:-chain}"
   local plan_name="${5:-}"
   local relaunch_command="${6:-}"
+  # A chain marker commonly preserves its original `chain start` command and
+  # omits plan_name. Once the active plan records explicit resume authority,
+  # that current state must outrank the stale launch-time marker command.
+  if [[ "$run_kind" != "plan" ]] && chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name" "$remote_spec"; then
+    return 0
+  fi
   if [[ -n "$relaunch_command" ]] && ! stale_marker_relaunch_command "$relaunch_command"; then
     printf '%s' "$relaunch_command"
     return 0
@@ -1279,9 +1384,6 @@ resolve_relaunch_command() {
   if [[ "$run_kind" == "plan" ]]; then
     [[ -n "$plan_name" ]] || return 1
     default_plan_relaunch_command "$plan_name" "$workspace"
-    return 0
-  fi
-  if chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name"; then
     return 0
   fi
   default_chain_relaunch_command "$session" "$workspace" "$remote_spec"
@@ -2573,6 +2675,156 @@ def _state_mismatch_analysis(
     }
 
 
+def _provider_profile_viability(
+    plan_state: dict[str, object],
+) -> dict[str, object]:
+    config = plan_state.get("config") if isinstance(plan_state.get("config"), dict) else {}
+    if not isinstance(config, dict) or not config:
+        return {}
+
+    profile_name = str(config.get("profile") or "").strip()
+    vendor = str(config.get("vendor") or "").strip()
+    history = plan_state.get("history") if isinstance(plan_state.get("history"), list) else []
+    phase_models = [
+        item for item in (config.get("phase_model") or [])
+        if isinstance(item, str) and "=" in item
+    ]
+    if not profile_name and not phase_models:
+        return {}
+
+    try:
+        from arnold_pipelines.megaplan.profiles import (
+            apply_available_model_floor,
+            effective_premium_vendor,
+            load_profiles,
+            profile_to_phase_models,
+            resolve_profile,
+        )
+        from arnold_pipelines.megaplan.profiles.policy import (
+            _deepseek_credential_configured,
+            _premium_credential_configured,
+        )
+    except Exception:
+        return {}
+
+    codex_available = bool(_premium_credential_configured("codex"))
+    claude_available = bool(_premium_credential_configured("claude"))
+    deepseek_available = bool(_deepseek_credential_configured())
+
+    quota_in_history = False
+    for item in history[-8:]:
+        if not isinstance(item, dict):
+            continue
+        text = "\n".join(
+            str(item.get(key) or "")
+            for key in ("message", "error", "details", "stderr", "stdout")
+        ).lower()
+        if "usage limit" in text or "quota" in text:
+            quota_in_history = True
+            break
+
+    selected_specs: dict[str, str] = {}
+    for entry in phase_models:
+        try:
+            phase, chain = decode_phase_model_value(entry)
+        except Exception:
+            continue
+        selected_specs.setdefault(phase, chain.selected())
+
+    resolved_specs: dict[str, str] = {}
+    floored_specs: dict[str, str] = {}
+    floor_changed = False
+    if profile_name:
+        try:
+            profiles = load_profiles(project_dir=Path(config.get("project_dir") or "."))
+            resolved = resolve_profile(profile_name, profiles)
+            resolved = apply_available_model_floor(dict(resolved))
+            floored_phase_models = profile_to_phase_models(resolved)
+            for entry in floored_phase_models:
+                phase, chain = decode_phase_model_value(entry)
+                floored_specs.setdefault(phase, chain.selected())
+        except Exception:
+            floored_specs = {}
+
+    for phase in ("plan", "execute", "critique"):
+        selected = selected_specs.get(phase)
+        floored = floored_specs.get(phase)
+        if selected:
+            resolved_specs[phase] = selected
+        if floored:
+            floor_changed = floor_changed or bool(selected and selected != floored)
+
+    selected_agents = {
+        parse_agent_spec(spec).agent
+        for spec in selected_specs.values()
+        if isinstance(spec, str) and spec
+    }
+    selected_requires_claude = (
+        "claude" in selected_agents
+        or vendor == "claude"
+        or profile_name in {"all-claude", "variable-claude"}
+    )
+    selected_requires_codex = (
+        "codex" in selected_agents
+        or vendor == "codex"
+        or profile_name in {"all-codex", "variable-codex"}
+    )
+    selected_requires_unavailable_vendor = (
+        (selected_requires_claude and not claude_available)
+        or (selected_requires_codex and not codex_available)
+    )
+
+    diagnosis_parts: list[str] = []
+    if selected_requires_claude and not claude_available:
+        diagnosis_parts.append("current profile/phase_model targets Claude, but Claude/Shannon is unavailable on this worker")
+    if selected_requires_codex and not codex_available:
+        diagnosis_parts.append("current profile/phase_model targets Codex, but Codex is unavailable on this worker")
+    if quota_in_history and codex_available:
+        diagnosis_parts.append("recent plan history shows a Codex quota failure")
+    if floor_changed:
+        diagnosis_parts.append("available-model floor would rewrite at least one selected premium phase")
+
+    recommended_action = ""
+    if quota_in_history and not claude_available and deepseek_available:
+        recommended_action = (
+            "If escaping a Codex quota failure, do not switch to all-claude on this worker. "
+            "Prefer a DeepSeek-capable profile such as all-deepseek-pro-direct or partnered-5."
+        )
+    elif selected_requires_claude and not claude_available:
+        recommended_action = (
+            "Do not pick a Claude-only recovery until Claude/Shannon is actually available "
+            "on the worker; choose an available vendor/profile instead."
+        )
+    elif selected_requires_codex and not codex_available and deepseek_available:
+        recommended_action = (
+            "Codex is unavailable here; prefer a DeepSeek-capable profile rather than "
+            "repeating a Codex-only recovery."
+        )
+
+    return {
+        "detected": bool(diagnosis_parts),
+        "current_profile": profile_name,
+        "current_vendor": vendor or effective_premium_vendor(config=config),
+        "codex_available": codex_available,
+        "claude_available": claude_available,
+        "deepseek_available": deepseek_available,
+        "quota_in_history": quota_in_history,
+        "selected_specs": resolved_specs,
+        "floored_specs": {
+            phase: spec
+            for phase, spec in floored_specs.items()
+            if phase in {"plan", "execute", "critique"}
+        },
+        "diagnosis": "; ".join(diagnosis_parts),
+        "recommended_action": recommended_action,
+        "vendor_switch_note": (
+            "`override set-profile` preserves the current premium vendor when it rewrites "
+            "named profiles. If you are changing vendor families, pair it with "
+            "`override set-vendor` / `set-model` or pick a profile whose selected routes are viable."
+        ),
+    }
+
+
 def _collect_signal_values(value: object, prefix: str = "", depth: int = 0) -> list[str]:
     if depth > 4:
         return []
@@ -2754,6 +3006,7 @@ plan_latest_failure = {}
 stale_state = {"classification": "NO LATEST FAILURE", "summary": "no latest_failure is set"}
 user_action_context = {}
 plan_runtime_state = {}
+provider_profile_viability = {}
 preferred_plan_name = marker_plan_name if run_kind == "plan" else str(chain_state_summary.get("current_plan_name") or "")
 plan_state_path = _resolve_plan_state(workspace, preferred_plan_name)
 plan_events_path = None
@@ -2768,6 +3021,7 @@ if plan_state_path is not None:
         plan_events_tail = _events_tail(plan_events_path, limit=12)
         last_gate = _latest_gate_event(plan_events_path)
     stale_state = _stale_state_analysis(plan_state, plan_events_path, latest_failure)
+    provider_profile_viability = _provider_profile_viability(plan_state)
     plan_latest_failure = {
         "plan_name": plan_state.get("name") or plan_state_path.parent.name,
         "state_path": str(plan_state_path),
@@ -3020,6 +3274,16 @@ if (
 ):
     failure_classification = "stale_state"
 elif (
+    stale_state.get("classification") == "NO LATEST FAILURE"
+    and "stale_active_step_dead_pid" in stale_kinds
+    and authoritative_plan_state in {"finalized", "executed"}
+    and not (
+        isinstance(resolver_output.get("active_step_heartbeat"), dict)
+        and bool(resolver_output.get("active_step_heartbeat", {}).get("active"))
+    )
+):
+    failure_classification = "stale_state"
+elif (
     failure_classification == "unknown_failure_mode"
     and run_kind == "chain"
     and stale_state.get("classification") == "NO LATEST FAILURE"
@@ -3060,6 +3324,7 @@ payload = {
     "user_action_context": user_action_context,
     "execute_attempt_context": execute_attempt_context,
     "resume_authority_failure": resume_authority_failure,
+    "provider_profile_viability": provider_profile_viability,
 }
 payload["resolver_output"] = resolver_output
 print(json.dumps(payload, sort_keys=True))
@@ -3100,6 +3365,15 @@ plan_failure = latest_context.get("plan_latest_failure") or {}
 failure_context = latest_context.get("failure_context") if isinstance(latest_context.get("failure_context"), dict) else {}
 execute_attempt_context = latest_context.get("execute_attempt_context") or failure_context.get("execute_attempt_context") or {}
 chain_state = latest_context.get("chain_state_summary") or {}
+provider_profile_viability = (
+    latest_context.get("provider_profile_viability")
+    if isinstance(latest_context.get("provider_profile_viability"), dict)
+    else failure_context.get("provider_profile_viability")
+    if isinstance(failure_context.get("provider_profile_viability"), dict)
+    else initial.get("provider_profile_viability")
+    if isinstance(initial.get("provider_profile_viability"), dict)
+    else {}
+)
 run_kind = (payload.get("run_kind") or latest_context.get("run_kind") or "chain").strip().lower()
 metadata = plan_failure.get("metadata") or {}
 classification = latest_context.get("failure_classification") or "unknown_failure_mode"
@@ -3260,6 +3534,20 @@ if (
     and "stale_chain_state_after_terminal_plan" in stale_kinds
     and authoritative_plan_state in terminal_plan_states
 ):
+    classification = "stale_state"
+elif (
+    state_classification == "NO LATEST FAILURE"
+    and "stale_active_step_dead_pid" in stale_kinds
+    and authoritative_plan_state in {"finalized", "executed"}
+    and not (
+        isinstance(resolver_output.get("active_step_heartbeat"), dict)
+        and bool(resolver_output.get("active_step_heartbeat", {}).get("active"))
+    )
+):
+    # A finalized/executed plan with no live worker and no latest_failure is a
+    # stale mechanical-custody gap, not a live target-code blocker. Route it
+    # through stale-state recovery so the wrapper clears the orphaned execute
+    # custody and mechanically re-drives the plan.
     classification = "stale_state"
 
 signal_text = "\n\n".join(str(item).strip() for item in signals[:4] if str(item).strip()) or "(none captured)"
@@ -3680,6 +3968,50 @@ for item in iterations:
 if not history_lines:
     history_lines.append("- none yet")
 
+provider_lines = []
+if provider_profile_viability:
+    provider_lines = [
+        "",
+        "## Provider/Profile Viability",
+        (
+            f"- current profile={provider_profile_viability.get('current_profile') or '(none)'} "
+            f"vendor={provider_profile_viability.get('current_vendor') or '(unknown)'}"
+        ),
+        (
+            "- available routes: "
+            f"codex={'yes' if provider_profile_viability.get('codex_available') else 'no'}, "
+            f"claude={'yes' if provider_profile_viability.get('claude_available') else 'no'}, "
+            f"deepseek={'yes' if provider_profile_viability.get('deepseek_available') else 'no'}"
+        ),
+    ]
+    selected_specs = provider_profile_viability.get("selected_specs")
+    if isinstance(selected_specs, dict) and selected_specs:
+        selected_bits = [
+            f"{phase}={spec}"
+            for phase, spec in selected_specs.items()
+            if phase in {"plan", "execute", "critique"} and spec
+        ]
+        if selected_bits:
+            provider_lines.append("- selected specs: " + ", ".join(selected_bits))
+    floored_specs = provider_profile_viability.get("floored_specs")
+    if isinstance(floored_specs, dict) and floored_specs:
+        floored_bits = [
+            f"{phase}={spec}"
+            for phase, spec in floored_specs.items()
+            if phase in {"plan", "execute", "critique"} and spec
+        ]
+        if floored_bits:
+            provider_lines.append("- available-model floor: " + ", ".join(floored_bits))
+    diagnosis = str(provider_profile_viability.get("diagnosis") or "").strip()
+    if diagnosis:
+        provider_lines.append(f"- diagnosis: {diagnosis}")
+    recommended = str(provider_profile_viability.get("recommended_action") or "").strip()
+    if recommended:
+        provider_lines.append(f"- recommended action: {recommended}")
+    note = str(provider_profile_viability.get("vendor_switch_note") or "").strip()
+    if note:
+        provider_lines.append(f"- note: {note}")
+
 detail_paths = [f"- repair data: {path}"]
 for label, value in (
     ("plan state", plan_failure.get("state_path")),
@@ -3737,6 +4069,7 @@ summary = "\n".join(
         user_actions_md,
         "```",
         *mismatch_lines,
+        *provider_lines,
         "",
         "## Prior repair attempts",
         *history_lines,
@@ -4583,6 +4916,11 @@ def write_json(path: Path, payload: dict[str, object]) -> None:
 
 try:
     from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+    from arnold_pipelines.megaplan.chain.advancement import (
+        AdvancementPolicy,
+        assess_advancement,
+        policy_for_spec_path,
+    )
 except Exception:
     print("")
     raise SystemExit(0)
@@ -4654,6 +4992,43 @@ if (resume_phase and resume_phase != "execute") or (failure_phase and failure_ph
     print("")
     raise SystemExit(0)
 
+needs_human = target.get("needs_human") if isinstance(target.get("needs_human"), dict) else {}
+stale_kinds = {
+    str(item.get("kind") or "")
+    for item in (target.get("stale_evidence") or [])
+    if isinstance(item, dict)
+}
+explicit_gate = None
+if needs_human.get("present") and "stale_needs_human_plan_ref" not in stale_kinds:
+    explicit_gate = str(needs_human.get("summary") or "needs_human")
+try:
+    policy = policy_for_spec_path(remote_spec) if remote_spec else AdvancementPolicy(
+        merge_policy="auto",
+        clean_milestone_pr="auto",
+        auto_approve=True,
+        source="repair_default",
+    )
+except Exception:
+    policy = AdvancementPolicy(
+        merge_policy="unknown",
+        clean_milestone_pr="unknown",
+        auto_approve=False,
+        source="unreadable_spec",
+    )
+advancement = assess_advancement(
+    policy,
+    current_state="blocked",
+    chain_last_state="blocked",
+    explicit_human_gate=explicit_gate,
+    failure_kind=failure_kind,
+)
+if advancement.action == "await_human":
+    print(f"human gate preserved; blocked recovery not rewritten: {advancement.reason}")
+    raise SystemExit(0)
+if advancement.action != "repair":
+    print("")
+    raise SystemExit(0)
+
 plan_name = str(plan_state.get("name") or plan_path.parent.name or plan_name_hint).strip()
 meta = plan_state.get("meta")
 meta = meta if isinstance(meta, dict) else {}
@@ -4668,6 +5043,7 @@ recoveries.append(
         "previous_state": current_state,
         "previous_retry_strategy": retry_strategy,
         "previous_failure_kind": failure_kind,
+        "advancement_policy": advancement.to_dict(),
     }
 )
 meta["watchdog_dev_fix_recoveries"] = recoveries
@@ -4774,8 +5150,8 @@ mechanical_launch_step() {
 #!/usr/bin/env bash
 set -euo pipefail
 # Unlink only after this child has opened the script.  Removing it in the
-# parent immediately after `tmux new-session -d` races tmux startup and can
-# turn a valid canonical relaunch into a false `failed:stopped` result.
+# parent immediately after tmux new-session -d races tmux startup and can
+# turn a valid canonical relaunch into a false failed:stopped result.
 rm -f -- "\${BASH_SOURCE[0]}"
 cd $(printf '%q' "$workspace")
 exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
@@ -5187,11 +5563,11 @@ write_dev_prompt() {
   canonical_block="$(render_canonical_block)"
   if [[ "$recurrence_mode" == "1" ]]; then
     mode_tasks="$(cat <<EOF
-9. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
-10. Trace the actual mechanism end-to-end: inspect the real stderr/exit code, the actual SHAs, prompt contents, chain/plan state, and any worker inputs the run received versus what it should have received.
-11. Do not stop at a status label. Name the precise mechanism that recreates the symptom before you propose a fix.
-12. Use the extra time in this root-cause attempt; depth matters more than turn-shortness here.
-13. Write a concise JSON report to $report_path with keys:
+10. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
+11. Trace the actual mechanism end-to-end: inspect the real stderr/exit code, the actual SHAs, prompt contents, chain/plan state, and any worker inputs the run received versus what it should have received.
+12. Do not stop at a status label. Name the precise mechanism that recreates the symptom before you propose a fix.
+13. Use the extra time in this root-cause attempt; depth matters more than turn-shortness here.
+14. Write a concise JSON report to $report_path with keys:
     classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
     structural_pattern, other_instantiations, human_review_recommendation,
     findings_doc_path, findings_doc_appended.
@@ -5199,9 +5575,9 @@ EOF
 )"
   else
     mode_tasks="$(cat <<EOF
-9. Use the raw failure signal, run narrative, and prior-attempt history to avoid repeating failed ideas.
-10. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
-11. Write a concise JSON report to $report_path with keys:
+10. Use the raw failure signal, run narrative, and prior-attempt history to avoid repeating failed ideas.
+11. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
+12. Write a concise JSON report to $report_path with keys:
     classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
     structural_pattern, other_instantiations, human_review_recommendation,
     findings_doc_path, findings_doc_appended.
@@ -5251,12 +5627,13 @@ Task:
    - User Action Gate: ATTEMPT to resolve those user actions before treating this as a human stop. Read user_actions.md plus user_action_resolutions.json, inspect the referenced evidence/artifacts/code, make the best defensible judgment call, and record each decision with the CLI instead of hand-writing JSON. Use:
    cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan user-action resolve --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}" --action-id <ACTION_ID> --resolution <satisfied|accepted_blocked|waived|manual_required|rejected> --reason "..." --instructions "..." --tasks "<TASK_ID,...>"
    Prefer satisfied when the evidence clearly answers the action. Use accepted_blocked or waived only when the action itself permits a fallback. Leave unresolved or mark manual_required only when the decision is genuinely ambiguous, unusually difficult, or requires human-only judgment.
-3. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
-4. Apply the narrowest safe root-cause fix at the correct ownership boundary: use $ARNOLD_SRC on branch $SYNC_BRANCH for Arnold engine/superfixer bugs, and use $WORKSPACE for target application code when the blocker is a task implementation failure in that repo. Prefer a general engine fix over a workflow-specific patch only when the evidence points to Arnold itself.
-5. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
-6. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
-7. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
-8. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
+3. When provider/profile settings are implicated, read the Provider/Profile Viability block carefully. Do not switch to a vendor whose route is unavailable on this worker. Remember that override set-profile preserves the current premium vendor when rewriting a named profile; if you actually need to change vendor families, pair it with override set-vendor / set-model or pick a viable non-premium/DeepSeek profile.
+4. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
+5. Apply the narrowest safe root-cause fix at the correct ownership boundary: use $ARNOLD_SRC on branch $SYNC_BRANCH for Arnold engine/superfixer bugs, and use $WORKSPACE for target application code when the blocker is a task implementation failure in that repo. Prefer a general engine fix over a workflow-specific patch only when the evidence points to Arnold itself.
+6. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
+7. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
+8. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
+9. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
 $mode_tasks
 
 Constraints:
@@ -5463,10 +5840,38 @@ PY
 send_discord_escalation() {
   require_repair_lock_held
   ensure_repair_budget_available "discord-escalation"
-  local result_path context_path result_status
+  local result_path context_path result_status suppression_reason
   result_path="$RUN_DIR/discord-result.json"
   context_path="$RUN_DIR/discord-escalation-context.json"
   result_status="helper_unavailable"
+  suppression_reason="$(PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$WORKSPACE" "$SESSION" "$MARKER_PATH" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.notification_safety import classify_user_notification
+
+data_path, workspace, session, marker_path = sys.argv[1:]
+try:
+    payload = json.loads(pathlib.Path(data_path).read_text(encoding="utf-8"))
+except Exception:
+    payload = {"session": session, "workspace": workspace}
+try:
+    marker = json.loads(pathlib.Path(marker_path).read_text(encoding="utf-8"))
+except Exception:
+    marker = None
+if isinstance(payload, dict) and isinstance(marker, dict):
+    payload["session_marker"] = marker
+decision = classify_user_notification(payload=payload, workspace=workspace)
+if not decision.allowed:
+    print(decision.reason)
+PY
+)"
+  if [[ -n "$suppression_reason" ]]; then
+    log "repair Discord escalation suppressed session=$SESSION reason=$suppression_reason"
+    printf '%s' "test_execution_suppressed"
+    return 0
+  fi
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$MARKER_DIR" "$DATA_DIR" "$NEEDS_HUMAN_FILE" "$context_path" "${DISCORD_DM_USER_ID:-}" <<'PY'
 import json
 import pathlib

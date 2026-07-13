@@ -71,6 +71,78 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_LOG="$RUN_DIR/${TS}-${SAFE_SESSION}.log"
 
+load_resident_delegation_context() {
+  local marker_path encoded rc
+  marker_path="$MARKER_DIR/$SESSION.json"
+  encoded="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$marker_path" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.resident.provenance import (
+    DELEGATION_CONTEXT_ENV,
+    encoded_provenance,
+    normalize_delegation_provenance,
+)
+
+raw = os.environ.get(DELEGATION_CONTEXT_ENV)
+if raw:
+    try:
+        print(encoded_provenance(normalize_delegation_provenance(json.loads(raw))), end="")
+    except Exception as exc:
+        print(f"invalid inherited resident delegation provenance: {exc}", file=sys.stderr)
+        raise SystemExit(65)
+    raise SystemExit(0)
+try:
+    marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    raise SystemExit(3)
+payload = marker.get("resident_delegation") if isinstance(marker, dict) else None
+if payload is None:
+    raise SystemExit(3)
+try:
+    print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+except Exception as exc:
+    print(f"invalid marker resident delegation provenance: {exc}", file=sys.stderr)
+    raise SystemExit(65)
+PY
+)"
+  rc=$?
+  if [[ "$rc" == "3" ]]; then
+    return 0
+  fi
+  if [[ "$rc" != "0" ]]; then
+    echo "meta-repair launch refused: resident delegation provenance validation failed" >&2
+    return "$rc"
+  fi
+  if [[ -n "$encoded" ]]; then
+    export ARNOLD_RESIDENT_DELEGATION_CONTEXT="$encoded"
+  fi
+}
+
+load_resident_delegation_context || exit $?
+
+if PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_DIR/$SESSION.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+from arnold_pipelines.megaplan.chain.spec import load_chain_state
+
+try:
+    marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    remote_spec = Path(str(marker.get("remote_spec") or marker.get("spec") or ""))
+    paused = bool(str(remote_spec)) and is_paused(load_chain_state(remote_spec))
+except Exception:
+    paused = False
+raise SystemExit(0 if paused else 1)
+PY
+then
+  echo "[meta-repair] durable operator pause active; superfixer skipped session=$SESSION" >&2
+  exit 0
+fi
+
 mkdir -p "$RUN_DIR" "$REPAIR_DATA_DIR"
 
 log() {
@@ -175,7 +247,6 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     build_meta_repair_prompt,
     evaluate_meta_repair_triggers,
     load_redacted_evidence,
-    stale_repair_evidence_reason,
 )
 
 session, repair_data_dir, repair_data_path, marker_dir, enabled, watchdog_trigger = sys.argv[1:7]
@@ -197,29 +268,21 @@ if trigger is not None:
         marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
     )
-    stale_reason = stale_repair_evidence_reason(
+    evidence["current_target_corroboration"] = current_target_observation
+    classification = MetaRepairClassification(
+        session=session,
+        trigger=trigger,
+        rationale=(
+            f"watchdog preclassified trigger={trigger.value}; "
+            "meta loop preserves bounded trigger custody and treats live target discovery as corroboration",
+        ),
         evidence=evidence,
-        current_target_observation=current_target_observation,
     )
-    if stale_reason:
-        classification = MetaRepairClassification(
-            session=session,
-            trigger=None,
-            rationale=(stale_reason,),
-            evidence=evidence,
-        )
-    else:
-        classification = MetaRepairClassification(
-            session=session,
-            trigger=trigger,
-            rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
-            evidence=evidence,
-        )
-        prompt = build_meta_repair_prompt(
-            classification,
-            repair_data_dir=repair_data_dir,
-            force_emergency=force_emergency,
-        )
+    prompt = build_meta_repair_prompt(
+        classification,
+        repair_data_dir=repair_data_dir,
+        force_emergency=force_emergency,
+    )
 else:
     classification, prompt = evaluate_meta_repair_triggers(
         session,

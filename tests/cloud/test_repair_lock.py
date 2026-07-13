@@ -130,6 +130,40 @@ def test_repair_lock_context_manager_releases_on_success_and_exception(tmp_path:
     assert not lock_dir.exists()
 
 
+def test_repair_lock_owner_fence_is_not_enriched_by_resident_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "ARNOLD_RESIDENT_DELEGATION_CONTEXT",
+        json.dumps(
+            {
+                "applicability": "not_applicable",
+                "transport": "non_discord",
+                "source_kind": "test",
+            }
+        ),
+    )
+    lock_dir = tmp_path / "demo-session.lock"
+
+    acquired = repair_lock.acquire_repair_lock(
+        lock_dir,
+        session="demo-session",
+        pid=557,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        timeout_seconds=300,
+    )
+
+    assert acquired.acquired
+    persisted = json.loads(
+        repair_lock.owner_metadata_path(lock_dir).read_text(encoding="utf-8")
+    )
+    assert persisted == acquired.owner
+    assert "resident_delegation" not in persisted
+    assert repair_lock.release_repair_lock(lock_dir, owner=acquired.owner)
+    assert not lock_dir.exists()
+
+
 def test_acquire_repair_lock_uses_default_pid_liveness_probe(tmp_path: Path) -> None:
     lock_dir = tmp_path / "demo-session.lock"
     lock_dir.mkdir()

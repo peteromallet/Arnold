@@ -1,1 +1,1 @@
-/workspace/vibecomfy-trust-correctness-2026-07/vibecomfy/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/tickets_skill.md
+/workspace/arnold/arnold_pipelines/megaplan/data/tickets_skill.md

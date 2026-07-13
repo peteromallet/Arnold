@@ -151,3 +151,20 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
     assert "/workspace/.secrets/megaplan-resident-discord.env" in entrypoint
     assert "tmux has-session -t megaplan-resident-discord" in entrypoint
     assert "python -m arnold_pipelines.megaplan resident discord" in entrypoint
+    assert "export MEGAPLAN_RESIDENT_MODE=production MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=production" in entrypoint
+    assert "resident discord --mode production" in entrypoint
+    assert "--store-root /workspace/arnold/.megaplan/resident" in entrypoint
+
+
+def test_resident_self_heal_starts_the_production_bot_boundary() -> None:
+    ensure_script = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-resident"
+    ).read_text()
+
+    assert (
+        "export MEGAPLAN_RESIDENT_MODE=production "
+        "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=production"
+    ) in ensure_script
+    assert "resident discord --mode production" in ensure_script
+    assert "--store-root /workspace/arnold/.megaplan/resident" in ensure_script

@@ -754,6 +754,7 @@ def _expected_root_cause_kinds_for_canonical_state(canonical_state: str) -> set[
             "verification",
         },
         "UNKNOWN": set(),
+        "PAUSED": {"operator_pause"},
         "COMPLETED": set(),
         "STALE_DERIVED_STATE": set(),
     }.get(canonical_state, set())
@@ -776,6 +777,7 @@ def _next_action_matches_canonical_state(canonical_state: str, next_action: str)
     valid_actions = {
         "BROKEN_STATE_MACHINE": {"escalate_broken_state_machine"},
         "COMPLETED": {"audit_cycle_complete", "no_action_run_complete"},
+        "PAUSED": {"explicit_operator_resume"},
         "HUMAN_ACTION_REQUIRED": {"await_human_action", "manual_review"},
         "REAL_IMPLEMENTATION_BLOCK": {"machine_repair_or_replan"},
         "RETRYABLE_EXECUTION_BLOCK": {"requeue_or_retry"},

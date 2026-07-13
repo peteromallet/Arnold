@@ -1765,6 +1765,21 @@ def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
     from arnold_pipelines.megaplan.runtime.resume import extract_typed_resume_metadata
 
     plan_dir = find_plan_dir(root, args.plan)
+    if plan_dir is not None and (plan_dir / "state.json").exists():
+        try:
+            persisted_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            persisted_state = {}
+        operator_pause = (
+            persisted_state.get("meta", {}).get("operator_pause")
+            if isinstance(persisted_state.get("meta"), dict)
+            else None
+        )
+        if persisted_state.get("current_state") == "paused" and isinstance(operator_pause, dict):
+            raise CliError(
+                "operator_pause_active",
+                "This plan is under a durable operator pause; use `megaplan chain resume --spec <chain.yaml>`.",
+            )
     typed_meta = (
         extract_typed_resume_metadata(plan_dir) if plan_dir is not None else None
     )

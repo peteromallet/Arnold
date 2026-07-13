@@ -36,7 +36,10 @@ def _extract_report_assembler() -> str:
     """Extract the final report-assembly Python program from the auditor wrapper."""
     text = _wrapper("arnold-progress-auditor")
     # The report assembler is the last python3 - ... <<'PY' block
-    marker = 'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" <<\'PY\''
+    marker = (
+        'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" '
+        '"$TS" "$RECOVERY_EVIDENCE" "$AUDIT_CODEX_MODEL" <<\'PY\''
+    )
     py_start = text.index(marker)
     py_start = text.index("\n", py_start) + 1
     py_end = text.index("\nPY\n", py_start)
@@ -67,6 +70,95 @@ def _extract_auditor_function(name: str) -> str:
     start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + 3
     return text[start:end]
+
+
+def _extract_recovery_assembler() -> str:
+    text = _wrapper("arnold-progress-auditor")
+    marker = '"$watchdog_rc" "$enabled" "$AUDIT_CODEX_MODEL" <<\'PY\''
+    start = text.index(marker)
+    start = text.index("\n", start) + 1
+    end = text.index("\nPY\n", start)
+    return text[start:end]
+
+
+def test_scheduled_recovery_uses_shared_advancement_policy(tmp_path: Path) -> None:
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+    report = tmp_path / "watchdog.json"
+    output = tmp_path / "recovery.json"
+    before.write_text(json.dumps({"generated_at": "before"}), encoding="utf-8")
+    after.write_text(
+        json.dumps(
+            {
+                "generated_at": "after",
+                "sessions": [
+                    {
+                        "session": "manual",
+                        "status": "attention",
+                        "should_run": True,
+                        "workspace": str(tmp_path / "manual"),
+                        "advancement": {
+                            "action": "await_human",
+                            "automatic": False,
+                            "gate": "security_approval",
+                        },
+                    },
+                    {
+                        "session": "terminal",
+                        "status": "attention",
+                        "should_run": True,
+                        "workspace": str(tmp_path / "terminal"),
+                        "advancement": {
+                            "action": "reconcile_terminal",
+                            "automatic": True,
+                            "gate": None,
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report.write_text(
+        json.dumps(
+            {
+                "timestamp_utc": "now",
+                "items": [
+                    {"session": "manual", "status": "needs_human"},
+                    {"session": "terminal", "status": "needs_human"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _extract_recovery_assembler(),
+            str(before),
+            str(after),
+            str(report),
+            str(output),
+            "0",
+            "1",
+            "gpt-5.6-sol",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    decisions = {
+        item["session"]: item
+        for item in json.loads(output.read_text(encoding="utf-8"))["decisions"]
+    }
+    assert decisions["manual"]["disposition"] == "human_gated"
+    assert decisions["manual"]["decision"] == "await_human"
+    assert decisions["terminal"]["decision"] == "reconcile_terminal"
+    assert decisions["terminal"]["disposition"] == "eligible_missing_runner"
 
 
 def _run_gather_program(
@@ -129,8 +221,21 @@ def _run_report_assembler(
     json_out = tmp_path / "audit.json"
     md_out = tmp_path / "audit.md"
     log_path = tmp_path / "audit-report.log"
+    recovery_path = tmp_path / "recovery.json"
 
     findings_path.write_text(json.dumps(findings_data), encoding="utf-8")
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "watchdog_exit_code": 0,
+                "sessions_discovered": 0,
+                "should_run_count": 0,
+                "decisions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     result = subprocess.run(
         [
@@ -139,9 +244,11 @@ def _run_report_assembler(
             str(findings_path),
             str(json_out),
             str(md_out),
-            str(log_path),
-            ts,
-        ],
+                str(log_path),
+                ts,
+                str(recovery_path),
+                "gpt-5.6-sol",
+            ],
         capture_output=True,
         text=True,
         check=False,
@@ -702,8 +809,21 @@ class TestGreenChecksNoFindings:
             json_out = fresh / "audit.json"
             md_out = fresh / "audit.md"
             fresh_log = fresh / "audit-report.log"
+            recovery_path = fresh / "recovery.json"
 
             findings_path.write_text(json.dumps(findings_data), encoding="utf-8")
+            recovery_path.write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "watchdog_exit_code": 0,
+                        "sessions_discovered": 0,
+                        "should_run_count": 0,
+                        "decisions": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             result = subprocess.run(
                 [
@@ -714,6 +834,8 @@ class TestGreenChecksNoFindings:
                     str(md_out),
                     str(fresh_log),
                     "20260702T220000Z",
+                    str(recovery_path),
+                    "gpt-5.6-sol",
                 ],
                 capture_output=True,
                 text=True,

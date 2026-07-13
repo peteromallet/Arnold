@@ -379,6 +379,113 @@ def test_recent_execution_blocked_without_runner_is_attention_not_running(fx):
     assert snap["summary"]["attention"] == 1
 
 
+def test_terminal_plan_with_incomplete_chain_and_dead_runner_needs_reconciliation(fx):
+    fx.add_session("runauthority", plan_name="sprint-1")
+    fx.add_chain_health(
+        "runauthority",
+        chain_complete=False,
+        completed_count=0,
+        milestone_count=3,
+        current_plan_name="sprint-1",
+        last_state="blocked",
+        updated_at=NOW - timedelta(seconds=30),
+        pr_number=207,
+        pr_state="merged",
+    )
+    fx.add_plan_state("runauthority", "sprint-1", current_state="done")
+    watchdog_path = fx.add_watchdog_report(
+        items=[
+            {
+                "session": "runauthority",
+                "status": "alive",
+                "action": "observe",
+                "message": "session already alive",
+            }
+        ]
+    )
+
+    snap = fx.build(
+        watchdog_report_path=watchdog_path,
+        liveness_probe=lambda _marker: {"tmux": False, "process": False},
+    )
+    entry = _by_session(snap, "runauthority")
+
+    assert entry["status"] == "attention"
+    assert entry["should_run"] is True
+    assert entry["watchdog"] == "stale"
+    assert entry["tmux"] is False
+    assert entry["process"] is False
+    assert "relaunch/reconciliation required" in entry["operator_next"]
+    assert snap["summary"]["running"] == 0
+    assert snap["summary"]["attention"] == 1
+
+
+def test_snapshot_projects_shared_auto_continue_policy(fx):
+    workspace = fx.root / "policy-run"
+    spec_path = workspace / ".megaplan" / "initiatives" / "policy" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "merge_policy: auto\n"
+        "review_policy:\n"
+        "  clean_milestone_pr: auto\n"
+        "milestones: []\n",
+        encoding="utf-8",
+    )
+    fx.add_session(
+        "policy-run",
+        workspace=str(workspace),
+        remote_spec=str(spec_path),
+        plan_name="sprint-1",
+    )
+    fx.add_chain_health(
+        "policy-run",
+        chain_complete=False,
+        current_plan_name="sprint-1",
+        last_state="executed",
+    )
+    fx.add_plan_state("policy-run", "sprint-1", current_state="executed")
+
+    entry = _by_session(fx.build(), "policy-run")
+
+    assert entry["advancement"]["action"] == "run_review"
+    assert entry["advancement"]["automatic"] is True
+    assert entry["advancement"]["policy"]["automatic_pr_progression"] is True
+
+
+def test_snapshot_projects_manual_review_gate_without_weakening_it(fx):
+    workspace = fx.root / "manual-review"
+    spec_path = workspace / ".megaplan" / "initiatives" / "policy" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "merge_policy: auto\n"
+        "review_policy:\n"
+        "  clean_milestone_pr: manual\n"
+        "milestones: []\n",
+        encoding="utf-8",
+    )
+    fx.add_session(
+        "manual-review",
+        workspace=str(workspace),
+        remote_spec=str(spec_path),
+        plan_name="sprint-1",
+    )
+    fx.add_chain_health(
+        "manual-review",
+        chain_complete=False,
+        current_plan_name="sprint-1",
+        last_state="awaiting_pr_merge",
+        pr_number=99,
+        pr_state="open",
+    )
+    fx.add_plan_state("manual-review", "sprint-1", current_state="done")
+
+    entry = _by_session(fx.build(), "manual-review")
+
+    assert entry["advancement"]["action"] == "await_human"
+    assert entry["advancement"]["automatic"] is False
+    assert entry["advancement"]["gate"] == "review_policy.clean_milestone_pr"
+
+
 def test_live_process_with_failed_no_next_step_is_attention(fx):
     fx.add_session("alive-no-next", plan_name="planStuck")
     fx.add_chain_health(
@@ -755,7 +862,14 @@ def test_summary_counts_partition_all_sessions(fx):
     summary = snap["summary"]
     total = sum(summary.values())
     assert total == 6, summary
-    assert summary == {"running": 2, "repairing": 1, "blocked": 1, "complete": 1, "attention": 1}
+    assert summary == {
+        "running": 2,
+        "repairing": 1,
+        "blocked": 1,
+        "paused": 0,
+        "complete": 1,
+        "attention": 1,
+    }
 
 
 # --- degraded mode + freshness -------------------------------------------
@@ -976,7 +1090,7 @@ def test_session_entry_carries_progress_block(fx):
     assert entry["chain_complete"] is False
     assert entry["progress"]["completed_milestones"] == 1
     assert entry["progress"]["total_milestones"] == 4
-    assert entry["progress"]["percent"] == 44
+    assert entry["progress"]["percent"] == 50
     assert entry["progress"]["current_plan"] == "s2-front-half-2026"
     statuses = [s["status"] for s in entry["progress"]["sprints"]]
     assert statuses == ["done", "in_progress", "pending", "pending"]
@@ -1109,7 +1223,7 @@ def test_plan_activity_summary_propagates_progress(fx):
     assert summary["degraded"] is False
     active = summary["active_working"]
     assert len(active) == 1
-    assert active[0]["progress"]["percent"] == 88
+    assert active[0]["progress"]["percent"] == 100
     assert active[0]["progress"]["sprints"][1]["status"] == "in_progress"
 
 
@@ -1118,22 +1232,127 @@ def test_detailed_renders_progress_percent(fx):
     fx.add_chain_health("epic-run", current_plan_name="s2-loop", completed_count=1, milestone_count=4)
     snap = fx.build(watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
-    assert "progress=44%" in detailed
+    assert "progress=50%" in detailed
 
 
 # --- per-plan stage % (in-flight plan estimate) ---------------------------
 
 
 def test_plan_stage_percent_maps_ladder_rungs():
-    # completed-stages / total-stages across the 8 rungs; initialized = 0%.
+    # Planning consumes 30%; terminal execution consumes the remainder.
     assert ss._plan_stage_percent("") is None
     assert ss._plan_stage_percent("initialized") == 0
-    assert ss._plan_stage_percent("prepped") == 12
-    assert ss._plan_stage_percent("planned") == 25
-    assert ss._plan_stage_percent("gated") == 50
-    assert ss._plan_stage_percent("executed") == 75
-    assert ss._plan_stage_percent("reviewed") == 88
+    assert ss._plan_stage_percent("prepped") == 6
+    assert ss._plan_stage_percent("planned") == 12
+    assert ss._plan_stage_percent("gated") == 24
+    assert ss._plan_stage_percent("finalized") == 30
+    assert ss._plan_stage_percent("executed") == 100
+    assert ss._plan_stage_percent("reviewed") == 100
     assert ss._plan_stage_percent("done") == 100
+
+
+def test_plan_stage_percent_weights_execute_tasks_by_complexity():
+    # A completed c=9 task out of c=9 + c=1 earns 90% of execute's 70 points.
+    assert ss._plan_stage_percent("finalized", execution_progress=(9, 10, 2)) == 93
+    assert ss._plan_stage_percent("executing", execution_progress=(9, 10, 2)) == 93
+
+
+def test_live_execute_projects_executing_without_mutating_finalized_or_weighted_percent(fx):
+    workspace = fx.add_session("live-execute", plan_name="s1-live")
+    fx.add_chain_health(
+        "live-execute",
+        current_plan_name="s1-live",
+        last_state="finalized",
+    )
+    fx.add_plan_state(
+        "live-execute",
+        "s1-live",
+        current_state="finalized",
+        active_step={"phase": "execute", "agent": "codex"},
+    )
+    finalize_path = workspace / ".megaplan" / "plans" / "s1-live" / "finalize.json"
+    finalize_path.write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"id": "T1", "complexity": 9, "status": "done"},
+                    {"id": "T2", "complexity": 1, "status": "pending"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = fx.build()
+    entry = _by_session(snapshot, "live-execute")
+
+    assert entry["plan_state"] == "finalized"
+    assert entry["active_phase"] == "execute"
+    assert entry["execution_state"] == "executing"
+    assert entry["display_state"] == "executing"
+    assert entry["progress"]["plan_state"] == "finalized"
+    assert entry["progress"]["display_state"] == "executing"
+    assert entry["progress"]["plan_percent"] == 93
+    assert "plan=93% (executing)" in sf.format_cloud_status_detailed(snapshot)
+
+
+def test_finalized_without_live_execute_remains_ready_and_finalized(fx):
+    fx.add_session("ready", plan_name="s1-ready")
+    fx.add_chain_health("ready", current_plan_name="s1-ready", last_state="finalized")
+    fx.add_plan_state("ready", "s1-ready", current_state="finalized")
+
+    entry = _by_session(fx.build(), "ready")
+
+    assert entry["plan_state"] == "finalized"
+    assert entry["active_phase"] is None
+    assert entry["execution_state"] == "ready"
+    assert entry["display_state"] == "finalized"
+    snapshot = fx.build()
+    assert "plan=30% (finalized)" in sf.format_cloud_status_detailed(snapshot)
+    assert "in-flight 30% (finalized)" in "\n".join(
+        sf.format_cloud_status_short(snapshot)
+    )
+
+
+def test_live_execute_at_full_weighted_task_completion_still_renders_executing(fx):
+    workspace = fx.add_session("live-execute-full", plan_name="s1-full")
+    fx.add_chain_health(
+        "live-execute-full",
+        current_plan_name="s1-full",
+        last_state="finalized",
+    )
+    fx.add_plan_state(
+        "live-execute-full",
+        "s1-full",
+        current_state="finalized",
+        active_step={"phase": "execute", "agent": "codex"},
+    )
+    finalize_path = workspace / ".megaplan" / "plans" / "s1-full" / "finalize.json"
+    finalize_path.write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"id": "T1", "complexity": 9, "status": "done"},
+                    {"id": "T2", "complexity": 1, "status": "completed"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = fx.build()
+    entry = _by_session(snapshot, "live-execute-full")
+
+    assert entry["plan_state"] == "finalized"
+    assert entry["display_state"] == "executing"
+    assert entry["progress"]["plan_percent"] == 100
+    assert entry["progress"]["display_state"] == "executing"
+    detailed = sf.format_cloud_status_detailed(snapshot)
+    assert "plan=100% (executing)" in detailed
+    assert "plan=100% (finalized)" not in detailed
+    discord = "\n".join(sf.format_cloud_status_short(snapshot))
+    assert "in-flight 100% (executing)" in discord
+    assert "in-flight 100% (finalized)" not in discord
 
 
 def test_plan_stage_percent_none_for_off_ladder_states():
@@ -1158,11 +1377,11 @@ def test_session_progress_carries_in_flight_plan_percent():
         plan_state="executed",
     )
     assert progress["plan_state"] == "executed"
-    assert progress["plan_percent"] == 75
+    assert progress["plan_percent"] == 100
     in_flight = progress["sprints"][1]
     assert in_flight["status"] == "in_progress"
     assert in_flight["plan_state"] == "executed"
-    assert in_flight["plan_percent"] == 75
+    assert in_flight["plan_percent"] == 100
 
 
 def test_session_progress_state_label_without_percent_when_blocked():
@@ -1215,7 +1434,7 @@ def test_session_entry_carries_plan_percent_from_last_state(fx):
     snap = fx.build()
     entry = _by_session(snap, "epic-run")
     assert entry["progress"]["plan_state"] == "reviewed"
-    assert entry["progress"]["plan_percent"] == 88
+    assert entry["progress"]["plan_percent"] == 100
 
 
 def test_plan_activity_summary_propagates_plan_percent(fx):
@@ -1229,7 +1448,7 @@ def test_plan_activity_summary_propagates_plan_percent(fx):
     )
     snap = fx.build()
     active = ss.plan_activity_summary(snap)["active_working"]
-    assert active[0]["progress"]["plan_percent"] == 75
+    assert active[0]["progress"]["plan_percent"] == 100
     assert active[0]["progress"]["plan_state"] == "executed"
 
 
@@ -1244,8 +1463,8 @@ def test_detailed_renders_plan_percent_and_state(fx):
     )
     snap = fx.build(watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
-    assert "progress=44%" in detailed
-    assert "plan=75% (executed)" in detailed
+    assert "progress=50%" in detailed
+    assert "plan=100% (executed)" in detailed
 
 
 def test_epic_percent_folds_in_flight_plan_fraction():
@@ -1254,12 +1473,12 @@ def test_epic_percent_folds_in_flight_plan_fraction():
     gated = ss._session_progress(
         completed_count=2, milestone_count=8, current_plan="s3-x", complete=False, plan_state="gated"
     )
-    assert gated["plan_percent"] == 50
-    assert gated["percent"] == 31  # (2 + 0.5) / 8 = 31.25 -> 31
+    assert gated["plan_percent"] == 24
+    assert gated["percent"] == 28
     executed = ss._session_progress(
         completed_count=2, milestone_count=8, current_plan="s3-x", complete=False, plan_state="executed"
     )
-    assert executed["percent"] == 34  # (2 + 0.75) / 8 = 34.375 -> 34
+    assert executed["percent"] == 38
     # No plan-stage signal -> plain completed/total (frozen milestone view).
     no_state = ss._session_progress(
         completed_count=2, milestone_count=8, current_plan="s3-x", complete=False
@@ -1346,7 +1565,7 @@ def test_compute_progress_deltas_none_for_unknown_session(tmp_path):
 
 def test_snapshot_enriches_progress_with_deltas(tmp_path, fx):
     history = tmp_path / "ph.jsonl"
-    # completed=1/4 + executed(75%) -> epic 44. Seed history: 24 at 2h ago, 34 at 1h ago.
+    # completed=1/4 + executed(100%) -> epic 50. Seed history: 24 at 2h ago, 34 at 1h ago.
     for offset_min, pct in ((120, 24), (60, 34)):
         ss.append_progress_history(
             {"sessions": [{"session": "epic-run", "progress": {"percent": pct, "current_plan": "s2-loop"}}]},
@@ -1359,8 +1578,8 @@ def test_snapshot_enriches_progress_with_deltas(tmp_path, fx):
     )
     snap = fx.build(history_path=history)
     progress = _by_session(snap, "epic-run")["progress"]
-    assert progress["percent"] == 44
-    assert progress["epic_delta_1h"] == 10  # 44 - 34 (sample ~1h ago)
+    assert progress["percent"] == 50
+    assert progress["epic_delta_1h"] == 16  # 50 - 34 (sample ~1h ago)
     assert progress["epic_delta_5h"] is None
     assert progress["plan_started_at"].startswith("2026-07-04T20")  # first sample ~NOW-2h
 
@@ -1378,7 +1597,7 @@ def test_detailed_renders_epic_deltas(fx, tmp_path):
     )
     snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
-    assert "(+20%/1h)" in detailed  # 44 now - 24 an hour ago
+    assert "(+26%/1h)" in detailed  # 50 now - 24 an hour ago
 
 
 def test_compute_progress_deltas_stage_changes(tmp_path):

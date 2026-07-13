@@ -1249,6 +1249,14 @@ def write_plan_state(
             if mutation_changed is False:
                 should_write = False
         next_state.setdefault("schema_version", 0)
+        from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+        resident_delegation = safe_provenance_projection()
+        if resident_delegation is not None:
+            meta = next_state.get("meta")
+            meta = dict(meta) if isinstance(meta, dict) else {}
+            meta.setdefault("resident_delegation", resident_delegation)
+            next_state["meta"] = meta
         if validate_current_state:
             _validate_plan_state_for_persist(next_state, plan_dir=plan_dir)
         if should_write:
@@ -1694,6 +1702,8 @@ def make_history_entry(
         entry["session_mode"] = mode
         entry["session_id"] = worker.session_id
         entry["agent"] = agent
+        if getattr(worker, "cost_pricing", None) is not None:
+            entry["cost_pricing"] = worker.cost_pricing
         entry.update(
             fallback_observability_fields(
                 getattr(worker, "configured_specs", None) or agent,
