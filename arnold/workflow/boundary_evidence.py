@@ -42,6 +42,39 @@ class BoundaryPhase(StrEnum):
     EXECUTE = "execute"
 
 
+class AuthorityState(StrEnum):
+    """Stable authority state classification for transition provenance.
+
+    These states describe the authority posture of a transition decision
+    so operators and auditors can quickly classify it without inspecting
+    the full evidence chain.  They are intentionally narrow: every state
+    can be derived from the decision's own payload fields.
+    """
+
+    MISSING = "missing"
+    """No authority records or evidence refs found — nothing was checked."""
+
+    DENIED = "denied"
+    """Transition was denied by policy or explicit authority decision."""
+
+    STALE = "stale"
+    """Authority evidence exists but is past its freshness window."""
+
+    WAIVED = "waived"
+    """Authority was explicitly waived by a recognized waiver grant."""
+
+    PARTIAL = "partial"
+    """Some authority refs exist but coverage is incomplete."""
+
+    DEGRADED = "degraded"
+    """Authority evidence is present but provider errors or incomplete
+    checks reduce its reliability."""
+
+    IRREVERSIBLE = "irreversible"
+    """Allowed transition with a complete, fresh authority chain; the
+    decision cannot be rolled back by automated means."""
+
+
 class BoundaryOutcome(StrEnum):
     """Stable boundary outcome codes."""
 
@@ -929,8 +962,99 @@ def boundary_contract_missing_topology_detail_keys(contract: BoundaryContract) -
     return tuple(missing)
 
 
+# ── Transition authority state classification ─────────────────────────────
+
+
+def classify_authority_state(
+    *,
+    allowed: bool,
+    authority_record_refs: tuple[str, ...],
+    checked_evidence_refs: tuple[str, ...],
+    advisory: tuple[str, ...] = (),
+    has_waiver: bool = False,
+    provider_errors: bool = False,
+    denial_reasons: tuple[str, ...] = (),
+) -> AuthorityState:
+    """Classify the authority posture of a review-to-done transition decision.
+
+    Derives one of seven stable :class:`AuthorityState` values from the
+    decision's own payload fields.  The classification is deterministic
+    and does not inspect external state.
+
+    Priority order (first match wins):
+
+    1. *denied* — transition was denied by policy.
+    2. *missing* — no authority refs and no evidence refs.
+    3. *waived* — explicit waiver grant detected.
+    4. *stale* — evidence is stale (advisory freshness warning present).
+    5. *degraded* — evidence present but provider errors degrade it.
+    6. *partial* — some authority refs exist but coverage incomplete.
+    7. *irreversible* — allowed with complete fresh authority chain.
+    """
+    if not allowed:
+        return AuthorityState.DENIED
+
+    has_any_authority = bool(authority_record_refs)
+    has_any_evidence = bool(checked_evidence_refs)
+
+    if not has_any_authority and not has_any_evidence:
+        return AuthorityState.MISSING
+
+    if has_waiver:
+        return AuthorityState.WAIVED
+
+    advisory_text = " ".join(str(a).lower() for a in advisory)
+    if "stale" in advisory_text or "could not prove" in advisory_text:
+        return AuthorityState.STALE
+
+    if provider_errors:
+        return AuthorityState.DEGRADED
+
+    if has_any_authority and not has_any_evidence:
+        return AuthorityState.PARTIAL
+
+    # Evidence present, no staleness, no degradation, no denial.
+    return AuthorityState.IRREVERSIBLE
+
+
+def compile_authority_view(
+    *,
+    boundary_id: str | None = None,
+    authority_state: AuthorityState | str,
+    authority_record_refs: tuple[str, ...] = (),
+    checked_evidence_refs: tuple[str, ...] = (),
+    status: str = "",
+    would_block_reasons: tuple[str, ...] = (),
+    operator_summary: str | None = None,
+) -> dict[str, Any]:
+    """Build a compact operator/auditor-friendly authority view dict.
+
+    The returned dict is suitable for embedding in ``routing_provenance``
+    as ``authority_view`` so operators and auditors can classify a
+    transition decision at a glance without inspecting the full evidence
+    chain.
+    """
+    state = authority_state.value if isinstance(authority_state, AuthorityState) else str(authority_state)
+    view: dict[str, Any] = {
+        "authority_state": state,
+        "status": status,
+    }
+    if boundary_id is not None:
+        view["boundary_id"] = boundary_id
+    if authority_record_refs:
+        view["authority_record_refs"] = list(authority_record_refs)
+    if checked_evidence_refs:
+        view["checked_evidence_refs"] = list(checked_evidence_refs)
+    if would_block_reasons:
+        view["would_block_reasons"] = list(would_block_reasons)
+    if operator_summary is not None:
+        view["operator_summary"] = operator_summary
+    return view
+
+
 __all__ = [
     "AuthorityRecord",
+    "AuthorityState",
     "BoundaryContract",
     "BoundaryEvidence",
     "BoundaryGraph",
@@ -945,4 +1069,6 @@ __all__ = [
     "TemporalPolicy",
     "boundary_contract_missing_topology_detail_keys",
     "check_template_compatibility",
+    "classify_authority_state",
+    "compile_authority_view",
 ]
