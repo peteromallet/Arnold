@@ -55,10 +55,23 @@ class ToolRegistry:
         ]
 
     def as_compact_catalog(self) -> list[dict[str, Any]]:
-        """Return CLI orientation without embedding every nested JSON Schema."""
+        """Return a directory, not fifty repeated descriptions and schemas."""
 
+        tools = self.list()
+        essential_names = {
+            "read_context_node",
+            "search_context",
+            "launch_subagent",
+            "read_reply_chain",
+            "read_todo_list",
+            "cloud_status_chain",
+        }
         catalog: list[dict[str, Any]] = []
-        for tool in self.list():
+        grouped: dict[str, list[str]] = {}
+        for tool in tools:
+            if len(tools) > 12 and tool.name not in essential_names:
+                grouped.setdefault(str(tool.operation_kind), []).append(tool.name)
+                continue
             schema = tool.input_model.model_json_schema()
             properties = schema.get("properties") or {}
             catalog.append(
@@ -70,4 +83,12 @@ class ToolRegistry:
                     "required": list(schema.get("required") or []),
                 }
             )
+        catalog.extend(
+            {
+                "group": operation_kind,
+                "tools": names,
+                "detail": "Use context node capabilities or the corresponding constrained CLI help when needed.",
+            }
+            for operation_kind, names in sorted(grouped.items())
+        )
         return catalog

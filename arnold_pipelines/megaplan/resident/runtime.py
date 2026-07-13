@@ -21,6 +21,7 @@ from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorize
 from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
+from .context_tree import classify_intent_packs
 from .escalations import EscalationAnswerDecision, authorize_escalation_answer, confirm_escalation_resolution
 from .profile import MegaplanResidentProfile
 from .reply_chain import build_reply_provenance, render_reply_context
@@ -401,8 +402,15 @@ class ResidentRuntime:
             raise RuntimeError("managed completion provenance does not match the inbound reply target")
 
         hot_context = await self.profile.load_hot_context(conversation.id)
+        if isinstance(hot_context.get("context_root"), dict):
+            hot_context["context_root"]["intent_packs"] = ["delegation", "conversation"]
+        prompt_for = getattr(self.profile, "system_prompt_for", None)
         system_prompt = (
-            self.profile.system_prompt()
+            (
+                prompt_for("delegated terminal result verification")
+                if callable(prompt_for)
+                else self.profile.system_prompt()
+            )
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
             + "\n\n"
@@ -433,7 +441,7 @@ class ResidentRuntime:
                     "message_count": 1,
                     "turn_kind": "managed_delegation_completion_verification",
                     "managed_agent_run_id": run_id,
-                    "tool_catalog": self.profile.tools().as_schema_catalog(),
+                    "tool_catalog": self.profile.tools().as_compact_catalog(),
                 },
                 prompt_version=(hot_context.get("prompt_version") if isinstance(hot_context, dict) else None),
                 state_at_turn=hot_context,
@@ -603,9 +611,15 @@ class ResidentRuntime:
             return
         conversation = self.store.load_resident_conversation(batch.key) or items[-1].conversation
         active_epic_id = conversation.active_epic_id
+        request_text = "\n".join(item.message.content for item in items if item.message.content)
         hot_context = await self.profile.load_hot_context(conversation.id)
+        if isinstance(hot_context.get("context_root"), dict):
+            hot_context["context_root"]["intent_packs"] = list(
+                classify_intent_packs(request_text)
+            )
+        prompt_for = getattr(self.profile, "system_prompt_for", None)
         system_prompt = (
-            self.profile.system_prompt()
+            (prompt_for(request_text) if callable(prompt_for) else self.profile.system_prompt())
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
         )
@@ -616,7 +630,7 @@ class ResidentRuntime:
             prompt_snapshot={
                 "system_prompt": system_prompt,
                 "message_count": len(items),
-                "tool_catalog": self.profile.tools().as_schema_catalog(),
+                "tool_catalog": self.profile.tools().as_compact_catalog(),
             },
             prompt_version=hot_context.get("prompt_version") if isinstance(hot_context, dict) else None,
             state_at_turn=hot_context,
@@ -648,7 +662,11 @@ class ResidentRuntime:
             {"role": "user", "content": self._message_content_with_discord_reply_context(item)}
             for item in items
         )
-        history = self._build_history(conversation.id, exclude_ids=message_ids)
+        history = self._build_history(
+            conversation.id,
+            exclude_ids=message_ids,
+            discord_only=bool(processing_message_ids),
+        )
         request_messages = (*history, *burst)
         model_seam_metadata = self._model_seam_metadata(
             conversation_id=conversation.id,
@@ -1031,7 +1049,13 @@ class ResidentRuntime:
             release_repair_lock(lock_dir, owner=lock.owner)
         return True
 
-    def _build_history(self, conversation_id: str, *, exclude_ids: Sequence[str]) -> tuple[dict[str, Any], ...]:
+    def _build_history(
+        self,
+        conversation_id: str,
+        *,
+        exclude_ids: Sequence[str],
+        discord_only: bool = False,
+    ) -> tuple[dict[str, Any], ...]:
         """Reconstruct the last N prior messages as user/assistant turns for context.
 
         ``exclude_ids`` drops the current burst, which is already persisted before
@@ -1046,12 +1070,32 @@ class ResidentRuntime:
         )
         history: list[dict[str, Any]] = []
         for message in rows:
+            if (
+                discord_only
+                and message.direction == "inbound"
+                and not getattr(message, "discord_message_id", None)
+            ):
+                # Scheduler and maintenance inputs are not Discord-user speech.
+                # Including them in later human turns bloats context and changes
+                # the apparent conversation history.
+                continue
             content = message.content
             if not (content and content.strip()):
                 continue
+            content = content.strip()
+            if len(content) > 4_000:
+                content = content[:3_999] + "…"
             role = "user" if message.direction == "inbound" else "assistant"
             history.append({"role": role, "content": content})
-        return tuple(history)
+        selected: list[dict[str, Any]] = []
+        used = 0
+        for item in reversed(history):
+            size = len(item["content"])
+            if selected and used + size > 16_000:
+                break
+            selected.append(item)
+            used += size
+        return tuple(reversed(selected))
 
     def _model_seam_metadata(
         self,
