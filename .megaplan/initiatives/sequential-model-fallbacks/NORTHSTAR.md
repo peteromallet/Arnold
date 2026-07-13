@@ -4,7 +4,7 @@ anchor_type: north_star
 slug: sequential-model-fallbacks
 title: 'North Star: Unified Managed-Agent Profiles and Sequential Fallbacks'
 created_at: '2026-07-04T02:08:44.561159+00:00'
-updated_at: '2026-07-11'
+updated_at: '2026-07-13'
 ---
 
 # North Star: Unified Managed-Agent Profiles and Sequential Fallbacks
@@ -17,7 +17,7 @@ Ordered model fallback remains an availability mechanism built on the existing `
 
 ## Delivery Contract
 
-Reach this end state through exactly two aggressive executable sprints in roughly two weeks total. Sprint 1 establishes the shared resolver/profile, fallback-safety, immutable custody/schema, and durable managed-launch/result foundations through concurrent workstreams and an explicit interface convergence gate. Sprint 2 concurrently completes tree authority/root budgets, cross-dispatcher integration and additive migration/resume, and adversarial conformance/rollout readiness before one deterministic final gate. The two-sprint chain preserves every invariant below; it does not serialize the former seven work packages inside either sprint.
+Reach this end state through exactly two executable sprints, each sized to roughly two human-weeks. Sprint 1 establishes the shared resolver/profile, fallback-safety, immutable custody/schema, and durable managed-launch/result foundations through concurrent workstreams and an explicit interface convergence gate. It emits a machine-readable handoff that identifies the frozen contract and fixture revisions. Sprint 2 consumes that handoff, then concurrently completes tree authority/root budgets, cross-dispatcher integration and additive migration/resume, and adversarial conformance/rollout readiness before one deterministic final gate. The two-sprint chain preserves every invariant below; it does not serialize the former seven work packages inside either sprint.
 
 ## Resolution Invariants
 
@@ -48,11 +48,12 @@ Reach this end state through exactly two aggressive executable sprints in roughl
 
 ## Migration and Evidence Invariants
 
-1. Introduce an additive managed-run/child-result schema revision with strict validation and canonical hashing. Existing `arnold-resident-agent-run-v1`, legacy scalar profile/state, and current Megaplan plan records remain dual-readable through an explicit backfill/cutover/rollback sequence.
+1. Evolve the existing `arnold-managed-agent-run-v2` lifecycle and child-result contract through strict validation and canonical hashing. Extend v2 only when compatible; otherwise introduce the next additive revision. Existing `arnold-resident-agent-run-v1`, legacy scalar profile/state, current managed v2 records, and current Megaplan plan records remain dual-readable through an explicit backfill/cutover/rollback sequence.
 2. V1 records may be projected into a conservative root-only tree but cannot be fabricated into complete brief custody or expanded privileges. Operations requiring missing proof fail closed or stay on the legacy path.
 3. Observability exposes deterministic resolution receipts, ancestry, immutable content hashes, fallback attempts/classifications, mutation-gate evidence, budget reservations/consumption, limit denials, structured child-result state, and restart/resume transitions without storing secrets or full Discord content beyond existing policy.
 4. Time, token, cost, attempt, depth, fanout, and descendant limits are machine-enforced and tested under concurrency, crash, replay, and resume—not merely prompt instructions.
-5. Acceptance evidence proves scalar compatibility, all D1–D10 routes, D5 default/explicit/high-risk behavior, identical classification across dispatchers, no post-mutation fallback, complete brief hashes, immutable custody/provenance, root-only delivery, bounded trees and budgets, no privilege expansion, schema dual-read compatibility, and deterministic restart/resume.
+5. Acceptance evidence proves scalar compatibility, all D1-D10 routes, D5 default/explicit/high-risk behavior, identical classification across dispatchers, no post-mutation fallback, complete brief hashes, immutable custody/provenance, root-only delivery, bounded trees and budgets, no privilege expansion, schema dual-read compatibility, and deterministic restart/resume.
+6. Resident-code changes begin only after reconciling the execution checkout with the pinned resident runtime revision recorded in the Sprint 1 baseline. Runtime-only bounded context routes, task/prompt size guards, immutable provenance, and completion-delivery behavior are preserved or deliberately superseded with explicit compatibility evidence.
 
 ## Ownership Boundary with Discord Corrective
 

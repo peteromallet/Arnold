@@ -1,6 +1,6 @@
 # Managed-Agent Contract Decisions and Ownership Boundaries
 
-Date: 2026-07-11  
+Date: 2026-07-13
 Status: locked for epic planning
 
 ## Decisions
@@ -15,8 +15,9 @@ Status: locked for epic planning
 8. **Non-expanding inheritance.** Descendant authority is the intersection of system, root/operator, parent, profile, and requested ceilings. Missing evidence never widens a child.
 9. **Root-scoped accounting.** Attempts, visited specs, time, tokens, cost, and tree counts are durable root-tree state with reservation/fencing semantics.
 10. **Default bounds.** Depth is limited to two levels below root, direct fanout to four per parent, and total descendants to eight per root. These defaults balance useful decomposition (a root can delegate and a child can subdivide) against exponential spend/custody risk. They are configurable downward. Raising them is an explicit operator/root policy action recorded in the receipt, not a child override.
-11. **Additive migration.** Introduce a new managed-run/result schema revision with v1 dual read, conservative projection, shadow comparison, backfill, cutover, and rollback. Never fabricate missing custody or delete legacy evidence during this epic.
-12. **Two-sprint delivery.** Deliver the full contract in exactly two aggressive sprints over roughly two weeks. Sprint 1 runs resolver/profile, fallback safety, custody/schema, and launcher-foundation tracks concurrently, serializing only their interface convergence. Sprint 2 runs authority/budget enforcement, dispatcher migration/resume, and conformance/rollout tracks concurrently, then closes them through one deterministic traceability gate. The chain-level dependency is only Sprint 2 on Sprint 1; the former seven-milestone decomposition is superseded, not nested behind two labels.
+11. **Additive migration.** `arnold-managed-agent-run-v2` already exists and is an input contract. Extend it only compatibly or introduce the next additive revision after characterization, with resident-v1/current-v2 dual read, conservative projection, shadow comparison, backfill, cutover, and rollback. Never reuse a schema name for incompatible meaning, fabricate missing custody, or delete legacy evidence during this epic.
+12. **Two-sprint delivery.** Deliver the full contract in exactly two sprints of roughly two human-weeks each. Sprint 1 runs resolver/profile, fallback safety, custody/schema, and launcher-foundation tracks concurrently, serializing only their interface convergence. It emits `docs/managed-agents/s1-contract-handoff.yaml`, which identifies and hashes the frozen contracts, fixtures, and reconciled source/runtime baseline. Sprint 2 validates that handoff, then runs authority/budget enforcement, dispatcher migration/resume, and conformance/rollout tracks concurrently before one deterministic traceability gate. The chain-level dependency is only Sprint 2 on Sprint 1; the former seven-milestone decomposition is superseded, not nested behind two labels.
+13. **Resident runtime reconciliation.** The project checkout and deployed/pinned resident runtime may differ. Before resident-code changes, inventory both revisions and preserve runtime-only bounded context routes, task/prompt limits, immutable provenance, and delivery behavior unless a documented compatible replacement is proven.
 
 ## Discord coordination boundary
 

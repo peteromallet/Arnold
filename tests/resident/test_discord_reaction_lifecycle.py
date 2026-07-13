@@ -25,10 +25,12 @@ class _Message:
         self.id = message_id
         self.reactions: list[str] = []
         self.add_calls: list[str] = []
+        self.reaction_calls: list[tuple[str, str]] = []
         self.fail_add_once: set[str] = set()
 
     async def add_reaction(self, emoji: str) -> None:
         self.add_calls.append(emoji)
+        self.reaction_calls.append(("add", emoji))
         if emoji in self.fail_add_once:
             self.fail_add_once.remove(emoji)
             raise ConnectionError(f"{emoji} reaction unavailable")
@@ -36,6 +38,7 @@ class _Message:
             self.reactions.append(emoji)
 
     async def remove_reaction(self, emoji: str, _actor: object = None) -> None:
+        self.reaction_calls.append(("remove", emoji))
         if emoji in self.reactions:
             self.reactions.remove(emoji)
 
@@ -179,6 +182,51 @@ def test_reaction_failure_is_durable_and_restart_replay_is_idempotent(tmp_path) 
         assert sum(result.applied for result in duplicate) == 0
         assert source.reactions == ["⏳"]
         assert source.add_calls.count("⏳") == 2  # one failed call, one replay
+
+    asyncio.run(run_case())
+
+
+def test_terminal_completion_is_confirmed_before_working_reaction_is_removed(tmp_path) -> None:
+    async def run_case() -> None:
+        root = tmp_path / "reaction-effects"
+        channel = _Channel()
+        source = channel.get_partial_message(1001)
+        sink = DiscordOutboundSink(_Client(channel), reaction_effect_root=root)
+        await sink.mark_processing(
+            conversation_key="discord:dm:42", message_ids=["1001"], turn_id="turn-1"
+        )
+        source.fail_add_once.add("☑️")
+
+        await sink.send(
+            OutboundMessage(
+                conversation_key="discord:dm:42",
+                content="terminal reply",
+                metadata={
+                    "discord_reply_to_message_id": "1001",
+                    "discord_processing_message_ids": ["1001"],
+                    "discord_processing_turn_id": "turn-1",
+                },
+            )
+        )
+
+        assert source.reactions == ["⏳"]
+        effects = [json.loads(path.read_text()) for path in (root / "effects").glob("*.json")]
+        completion = next(effect for effect in effects if effect["phase"] == "completion")
+        cleanup = next(effect for effect in effects if effect["phase"] == "terminal_cleanup")
+        assert completion["status"] == "pending"
+        assert cleanup["status"] == "pending"
+        assert cleanup["depends_on"] == [completion["effect_id"]]
+
+        await sink.reconcile_reactions()
+
+        assert source.add_calls == ["⏳", "☑️", "☑️"]
+        assert source.reaction_calls == [
+            ("add", "⏳"),
+            ("add", "☑️"),
+            ("add", "☑️"),
+            ("remove", "⏳"),
+        ]
+        assert source.reactions == ["☑️"]
 
     asyncio.run(run_case())
 

@@ -21,8 +21,8 @@ _CLAIM_LEASE_S = 60
 _PHASE_ORDER = {
     "working": 0,
     "interrupted_cleanup": 1,
-    "terminal_cleanup": 1,
-    "completion": 2,
+    "completion": 1,
+    "terminal_cleanup": 2,
 }
 
 
@@ -74,6 +74,18 @@ class DiscordReactionEffectLedger:
         with self._locked():
             existing = self._load_unlocked(effect_id)
             if existing is not None:
+                # Effect identity deliberately excludes dependencies so a
+                # replay cannot create duplicate Discord effects.  Update an
+                # unclaimed legacy/pending intent in place, allowing a new
+                # ordering guarantee to repair persisted terminal work safely.
+                if existing.get("status") == "pending":
+                    normalized_dependencies = list(
+                        dict.fromkeys(str(value) for value in depends_on if str(value))
+                    )
+                    if existing.get("depends_on") != normalized_dependencies:
+                        existing["depends_on"] = normalized_dependencies
+                        existing["updated_at"] = now
+                        self._write_unlocked(existing)
                 return existing
             effect = {
                 "schema_version": REACTION_EFFECT_SCHEMA,
