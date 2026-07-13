@@ -2491,7 +2491,7 @@ def _megaplan_refresh_command(
 ) -> str:
     src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     repo = (spec.megaplan.repo or "") if spec is not None else ""
-    ref = _EDITABLE_INSTALL_BRANCH
+    ref = spec.megaplan.ref if spec is not None else _EDITABLE_INSTALL_BRANCH
     lines = [
         "set -e",
         "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
@@ -3721,7 +3721,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
             force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
         ),
-        "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
+        "editable_source_branch": launch_spec.megaplan.ref,
         "editable_source_head": (
             editable_install_sync.get("editable_head")
             or editable_install_sync.get("launch_head")
@@ -4071,7 +4071,7 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         "chain_slug": launch_ctx.slug,
         "run_kind": "epic_chain",
         "relaunch_command": relaunch_command,
-        "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
+        "editable_source_branch": launch_spec.megaplan.ref,
         "editable_source_head": (
             editable_install_sync.get("editable_head")
             or editable_install_sync.get("launch_head")

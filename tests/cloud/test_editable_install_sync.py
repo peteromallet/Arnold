@@ -11,6 +11,13 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _refresh_then_chain_start_command,
     _sync_launch_head_to_editable_install_branch,
 )
+from arnold_pipelines.megaplan.cloud.spec import (
+    CloudSpec,
+    CodexSpec,
+    MegaplanSpec,
+    RepoSpec,
+    ResourcesSpec,
+)
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -48,6 +55,27 @@ def test_cloud_refresh_uses_editible_install_branch() -> None:
     assert 'git -C "$SRC" push origin "$REF"' in command
     assert 'refusing editable install refresh: $SRC has unpushed local commits' in command
     assert 'git -C "$SRC" pull --ff-only origin "$REF"' in command
+
+
+def test_cloud_refresh_honors_explicit_megaplan_ref() -> None:
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(
+            ref="main",
+            repo="https://github.com/example/Arnold.git",
+        ),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+
+    command = _megaplan_refresh_command(spec)
+
+    assert "REF=main" in command
+    assert "REF=editible-install" not in command
 
 
 def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
