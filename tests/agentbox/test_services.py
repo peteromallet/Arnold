@@ -5,14 +5,44 @@ import signal
 import shutil
 import subprocess
 import sys
+import time
+from pathlib import Path
+
+import pytest
 
 from agentbox.reset_notifications import list_reset_notifications
 from agentbox.services import (
+    DISCORD_RESIDENT_TMUX_COMMAND_MARKER,
     DISCORD_RESIDENT_RESTART_COMMAND,
+    _resident_descendant_pid,
     list_services,
     restart_service,
     service_logs,
 )
+
+
+def test_resident_health_accepts_exec_replaced_tmux_root_process() -> None:
+    if not Path("/proc").is_dir():
+        pytest.skip("procfs health detection is Linux-specific")
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+            DISCORD_RESIDENT_TMUX_COMMAND_MARKER,
+        ]
+    )
+    try:
+        observed = None
+        for _ in range(50):
+            observed = _resident_descendant_pid(process.pid)
+            if observed is not None:
+                break
+            time.sleep(0.01)
+        assert observed == process.pid
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
 
 
 def test_list_services_returns_expected_service_names() -> None:
