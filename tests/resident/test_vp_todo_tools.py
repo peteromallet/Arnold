@@ -134,7 +134,14 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
 
     context = asyncio.run(profile.load_hot_context("missing-conversation"))
 
-    assert context["resident_agents"] == expected
+    agents = context["resident_agents"]
+    assert agents["schema_version"] == expected["schema_version"]
+    assert agents["running_count"] == 1
+    assert agents["running"] == [
+        {"run_id": "resident-1", "completion_delivery": None}
+    ]
+    assert agents["recent"] == []
+    assert "manifest_path" not in agents["running"][0]
     assert context["resident_runtime"]["subagent_launch"]["standard"] == (
         "arnold-managed-agent-run-v2"
     )
