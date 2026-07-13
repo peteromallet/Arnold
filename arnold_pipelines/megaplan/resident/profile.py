@@ -232,6 +232,139 @@ def _vp_todo_hot_context(path: Path) -> dict[str, Any]:
     }
 
 
+def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep lifecycle orientation in hot context without embedding manifests."""
+
+    def compact(row: Mapping[str, Any]) -> dict[str, Any]:
+        delivery = row.get("completion_delivery")
+        return {
+            key: row.get(key)
+            for key in (
+                "run_id",
+                "run_kind",
+                "status",
+                "live",
+                "pid",
+                "backend",
+                "model",
+                "task_kind",
+                "difficulty",
+                "task_excerpt",
+                "created_at",
+                "started_at",
+                "finished_at",
+                "terminal_outcome",
+                "parent_run_id",
+            )
+            if row.get(key) is not None
+        } | {
+            "completion_delivery": {
+                key: delivery.get(key)
+                for key in ("status", "attempt_count", "delivered_at", "last_error_category")
+                if delivery.get(key) is not None
+            }
+            if isinstance(delivery, Mapping)
+            else None
+        }
+
+    running = [
+        compact(row)
+        for row in list(value.get("running") or [])[:_RESIDENT_AGENT_RUNNING_LIMIT]
+        if isinstance(row, Mapping)
+    ]
+    recent = [
+        compact(row)
+        for row in list(value.get("recent") or [])[:_RESIDENT_AGENT_RECENT_LIMIT]
+        if isinstance(row, Mapping)
+    ]
+    return {
+        "schema_version": value.get("schema_version"),
+        "scope": value.get("scope"),
+        "running_count": value.get("running_count", len(running)),
+        "running": running,
+        "running_omitted_count": max(0, int(value.get("running_count") or 0) - len(running)),
+        "recent_count": value.get("recent_count", len(recent)),
+        "recent": recent,
+        "recent_preview_limit": _RESIDENT_AGENT_RECENT_LIMIT,
+        "delivery_status_counts": value.get("delivery_status_counts", {}),
+        "terminal_delivery_status_counts": value.get("terminal_delivery_status_counts", {}),
+        "delivery_attention_count": value.get("delivery_attention_count", 0),
+    }
+
+
+def _compact_activity_summary(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep active/attention status; finished history is a three-row preview."""
+
+    result = {
+        key: value.get(key)
+        for key in ("schema_version", "generated_at", "degraded", "degraded_reason", "summary")
+        if key in value
+    }
+    for key in ("active_working", "active_blocked", "attention", "paused"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            result[key] = rows[:8]
+    completed = value.get("recently_completed")
+    if isinstance(completed, list):
+        result["recently_completed"] = completed[:3]
+        result["recently_completed_omitted_count"] = max(0, len(completed) - 3)
+    return result
+
+
+def _compact_restart_lifecycle(value: object) -> dict[str, Any]:
+    """Summarize durable reset receipts without embedding their full payloads."""
+
+    if isinstance(value, Mapping):
+        raw_rows = value.get("records")
+        rows = list(raw_rows) if isinstance(raw_rows, list) else []
+        record_count = int(value.get("count") or len(rows))
+    else:
+        rows = list(value) if isinstance(value, list) else []
+        record_count = len(rows)
+    compact: list[dict[str, Any]] = []
+    for row in rows[:2]:
+        if not isinstance(row, Mapping):
+            continue
+        restart = row.get("restart") if isinstance(row.get("restart"), Mapping) else {}
+        delivery = row.get("delivery") if isinstance(row.get("delivery"), Mapping) else {}
+        initiator = row.get("initiator") if isinstance(row.get("initiator"), Mapping) else {}
+        compact.append({
+            "reset_id": row.get("notification_id"),
+            "restart_status": restart.get("status"),
+            "delivery_status": delivery.get("status"),
+            "requested_at": restart.get("requested_at"),
+            "completed_at": restart.get("completed_at"),
+            "delivered_at": delivery.get("delivered_at"),
+            "source_record_id": initiator.get("source_record_id"),
+        })
+    return {
+        "record_count": record_count,
+        "latest": compact,
+        "detail_route": "runtime/restart",
+    }
+
+
+def _status_hot_orientation(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Legacy status key becomes a directory entry; detail lives at context node status."""
+
+    if value is None:
+        return None
+    orientation = {
+        key: value.get(key)
+        for key in (
+            "schema_version", "generated_at", "source", "watchdog_generated_at", "degraded",
+            "stale_banner", "stale_reason", "summary", "session_count", "completed_session_count",
+        )
+        if value.get(key) is not None
+    } | {
+        "detail_node": "status",
+        "instruction": "Use context_root attention first, then read_context_node('status/...').",
+    }
+    if value.get("stale_banner"):
+        orientation["sessions"] = []
+    return orientation
+
+
 class ActorToolInput(ToolInput):
     actor_user_id: str | None = None
     guild_id: str | None = None

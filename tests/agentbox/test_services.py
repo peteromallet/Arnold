@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import shutil
@@ -124,6 +125,96 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
     assert calls[2] == ["tmux", "respawn-pane", "-k", "-t", "%39"]
     state = list_reset_notifications(notification_root=tmp_path)["records"][0]
     assert state["restart"]["status"] == "succeeded"
+
+
+def test_replayed_discord_restart_does_not_launch_second_supervisor(
+    monkeypatch, tmp_path
+) -> None:
+    provenance = {
+        "schema_version": "arnold-resident-delegation-provenance-v1",
+        "applicability": "applicable",
+        "transport": "discord",
+        "resident_conversation_id": "rconv-source",
+        "resident_turn_id": "turn-source",
+        "source_record_id": "msg-source",
+        "conversation_key": "discord:dm:301463647895683072",
+        "discord_message_id": "1525445255711952977",
+        "reply_to_message_id": "1525445255711952977",
+        "dm_user_id": "301463647895683072",
+        "source_kind": "discord_inbound_message",
+    }
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(provenance))
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: None if name == "systemctl" else f"/usr/bin/{name}",
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=(
+                "%39\t1989952\t0\tbash\t"
+                "python -m arnold_pipelines.megaplan resident discord --mode dev\n"
+            ),
+            stderr="",
+        ),
+    )
+    launches = []
+
+    def fake_popen(*args, **kwargs):
+        launches.append((args, kwargs))
+        return _DetachedProcess()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    first = restart_service("agentbox-discord-resident", notification_root=tmp_path)
+    replay = restart_service("agentbox-discord-resident", notification_root=tmp_path)
+
+    assert first["accepted"] is True
+    assert replay["ok"] is True
+    assert replay["accepted"] is False
+    assert replay["duplicate"] is True
+    assert replay["already_processed"] is True
+    assert replay["notification"]["notification_id"] == first["notification"]["notification_id"]
+    assert len(launches) == 1
+    assert len(list(tmp_path.glob("reset-*.json"))) == 1
+
+
+def test_resident_tmux_restart_marks_notification_failed_when_supervisor_cannot_launch(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: None if name == "systemctl" else f"/usr/bin/{name}",
+    )
+
+    def fake_run(argv, **kwargs):
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=(
+                "%39\t1989952\t0\tbash\t"
+                "python -m arnold_pipelines.megaplan resident discord --mode dev\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cannot fork")),
+    )
+
+    result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
+
+    assert result["ok"] is False
+    state = list_reset_notifications(notification_root=tmp_path)
+    assert state["delivery_status_counts"] == {"pending": 1}
 
 
 def test_resident_tmux_restart_refuses_unrecognized_pane_command(monkeypatch) -> None:

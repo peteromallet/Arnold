@@ -331,41 +331,27 @@ class ResidentRuntime:
                 )
                 recovered += 1
                 continue
+            # The claimed source is the command that initiated this restart.
+            # Re-running it would repeat the same side effect and can create an
+            # unbounded restart loop.  The durable terminal restart receipt is
+            # the response; keep the inbound message consumed and never invoke
+            # the model again for this turn.
             self.store.update_turn(
                 turn.id,
                 status="abandoned",
                 warnings_issued=list(turn.warnings_issued or [])
-                + [f"interrupted by restart transaction {claim.notification_id}; replayed"],
+                + [
+                    f"restart transaction {claim.notification_id} consumed this "
+                    "side-effectful turn; automatic model replay suppressed"
+                ],
                 idempotency_key=deterministic_idempotency_key(
-                    "resident-turn-restart-interrupted", turn.id, claim.notification_id
+                    "resident-turn-restart-consumed", turn.id, claim.notification_id
                 ),
             )
-            for item in persisted:
-                self.store.update_message(
-                    item.message.id,
-                    bot_turn_id=None,
-                    idempotency_key=deterministic_idempotency_key(
-                        "resident-message-restart-requeue",
-                        item.message.id,
-                        claim.notification_id,
-                    ),
-                )
-            try:
-                await self._handle_batch(
-                    BurstBatch(key=persisted[-1].conversation.id, items=tuple(persisted))
-                )
-            except Exception as exc:
-                finish_restart_interrupted_turn(
-                    claim.notification_id,
-                    status="pending",
-                    error_class=exc.__class__.__name__,
-                )
-                continue
-            replacement = self.store.load_message(persisted[-1].message.id)
             finish_restart_interrupted_turn(
                 claim.notification_id,
                 status="complete",
-                replacement_turn_id=(replacement.bot_turn_id if replacement else None),
+                replacement_turn_id=turn.id,
             )
             recovered += 1
         return recovered

@@ -46,6 +46,7 @@ class ResetNotificationReservation:
     notification_id: str
     path: Path
     provenance_mode: str
+    reused: bool = False
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,18 @@ def prepare_reset_notification(
         record["delivery"]["fallback_target"] = fallback
     try:
         with _root_lock(root):
+            if source_record_id:
+                existing = _restart_record_for_source(root, source_record_id)
+                if existing is not None:
+                    existing_path, existing_record = existing
+                    return ResetNotificationReservation(
+                        notification_id=str(existing_record["notification_id"]),
+                        path=existing_path,
+                        provenance_mode=str(
+                            existing_record.get("provenance_mode") or provenance_mode
+                        ),
+                        reused=True,
+                    )
             active = _active_restart_record(root)
             if active is not None:
                 raise ResetNotificationError(
@@ -173,6 +186,16 @@ def prepare_reset_notification(
     except OSError as exc:
         raise ResetNotificationError("cannot persist resident reset outbox record") from exc
     return ResetNotificationReservation(notification_id, path, provenance_mode)
+
+
+def reset_notification_record(
+    reservation: ResetNotificationReservation,
+) -> dict[str, Any]:
+    """Return the bounded durable projection for one restart transaction."""
+
+    with _locked_record(reservation.path) as record:
+        _assert_record(record, reservation)
+        return _public_record(record)
 
 
 def mark_reset_supervisor_started(
@@ -988,6 +1011,30 @@ def _active_restart_record(root: Path) -> dict[str, Any] | None:
     return None
 
 
+def _restart_record_for_source(
+    root: Path, source_record_id: str
+) -> tuple[Path, dict[str, Any]] | None:
+    """Find the one durable restart consumed by an inbound source message.
+
+    A Discord message is an immutable command identity.  Once it has prepared
+    a restart, startup recovery or duplicate execution must reuse that receipt
+    forever rather than minting another restart transaction.
+    """
+
+    for path in sorted(root.glob("reset-*.json"), reverse=True):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        initiator = payload.get("initiator") if isinstance(payload, Mapping) else None
+        if (
+            isinstance(initiator, Mapping)
+            and str(initiator.get("source_record_id") or "") == source_record_id
+        ):
+            return path, dict(payload)
+    return None
+
+
 def _assert_record(record: Mapping[str, Any], reservation: ResetNotificationReservation) -> None:
     if (
         record.get("schema_version") != RESET_NOTIFICATION_SCHEMA
@@ -1327,6 +1374,7 @@ __all__ = [
     "prepare_reset_notification",
     "reconcile_prepared_reset_notifications",
     "reset_notification_root",
+    "reset_notification_record",
     "reset_transaction_request",
     "sweep_reset_notifications",
 ]
