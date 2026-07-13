@@ -53,3 +53,21 @@ class ToolRegistry:
             }
             for tool in self.list()
         ]
+
+    def as_compact_catalog(self) -> list[dict[str, Any]]:
+        """Return CLI orientation without embedding every nested JSON Schema."""
+
+        catalog: list[dict[str, Any]] = []
+        for tool in self.list():
+            schema = tool.input_model.model_json_schema()
+            properties = schema.get("properties") or {}
+            catalog.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "operation_kind": tool.operation_kind,
+                    "arguments": list(properties),
+                    "required": list(schema.get("required") or []),
+                }
+            )
+        return catalog

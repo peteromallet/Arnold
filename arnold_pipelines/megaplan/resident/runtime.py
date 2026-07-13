@@ -675,19 +675,64 @@ class ResidentRuntime:
         try:
             response = await self.runner.run(request, self.profile.tools())
         except Exception as exc:
+            warning = _bounded_failure_warning(exc)
+            safe_text = _resident_turn_failure_reply(exc)
+            outbound = self.store.create_message(
+                epic_id=active_epic_id,
+                conversation_id=conversation.id,
+                direction="outbound",
+                content=safe_text,
+                bot_turn_id=turn.id,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-outbound", turn.id, "model-failure"
+                ),
+            )
             self.store.update_turn(
                 turn.id,
                 status="failed",
-                warnings_issued=[f"{exc.__class__.__name__}: {exc}"],
+                final_output_message_id=outbound.id,
+                message_sent=False,
+                warnings_issued=[warning],
                 idempotency_key=deterministic_idempotency_key("resident-turn-failed", turn.id),
             )
-            await self._invoke_transport_lifecycle(
-                "mark_processing_interrupted",
-                conversation_key=conversation.conversation_key,
-                message_ids=processing_message_ids,
-                turn_id=turn.id,
+            await self.outbound.send(
+                OutboundMessage(
+                    conversation_key=conversation.conversation_key,
+                    content=safe_text,
+                    idempotency_key=outbound.idempotency_key,
+                    metadata={
+                        "conversation_id": conversation.id,
+                        "message_id": outbound.id,
+                        "turn_id": turn.id,
+                        "discord_reply_to_message_id": _optional_string(
+                            items[-1].event.raw.get("discord_message_id")
+                        ),
+                        "discord_processing_message_ids": processing_message_ids,
+                        "discord_processing_turn_id": turn.id,
+                        "discord_processing_continues": False,
+                    },
+                )
             )
-            raise
+            self.store.update_resident_conversation(
+                conversation.id,
+                last_outbound_message_id=outbound.id,
+                delivery_cursor=outbound.id,
+                last_active_at=utc_now(),
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-conversation-outbound", conversation.id, outbound.id
+                ),
+            )
+            self.store.update_turn(
+                turn.id,
+                status="failed",
+                final_output_message_id=outbound.id,
+                message_sent=True,
+                warnings_issued=[warning],
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-turn-failure-delivered", turn.id
+                ),
+            )
+            return
         self._record_tool_calls(turn.id, response)
         processing_continues = _response_has_detached_subagent(response)
         final_message_id = None
@@ -1081,6 +1126,24 @@ def _timezone_name_from_hot_context(hot_context: Mapping[str, Any]) -> str:
         if name:
             return name
     return "UTC"
+
+
+def _bounded_failure_warning(exc: Exception) -> str:
+    warning = redact_text(f"{exc.__class__.__name__}: {exc}").strip()
+    return warning if len(warning) <= 1200 else f"{warning[:1199]}…"
+
+
+def _resident_turn_failure_reply(exc: Exception) -> str:
+    detail = str(exc).lower()
+    if "prompt exceeds" in detail or "input_too_large" in detail or "maximum length" in detail:
+        return (
+            "I couldn't process this message because the resident's internal context exceeded "
+            "the model input limit. The failure was recorded and no requested action was taken."
+        )
+    return (
+        "I couldn't complete this resident turn because the model invocation failed. "
+        "The failure was recorded and no requested action was taken."
+    )
 
 
 def _timezone_instruction_from_hot_context(hot_context: Mapping[str, Any]) -> str:

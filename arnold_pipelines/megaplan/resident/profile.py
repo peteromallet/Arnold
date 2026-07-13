@@ -80,6 +80,12 @@ from .reply_chain import (
     decode_reply_cursor,
     reply_chain_page,
 )
+from .status_tree import (
+    DEFAULT_NODE_LIMIT,
+    MAX_NODE_LIMIT,
+    compact_cloud_status_snapshot,
+    read_cloud_status_node,
+)
 
 MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v6"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
@@ -90,6 +96,9 @@ _SNAPSHOT_BACKGROUND_REFRESH_MIN_INTERVAL_S = 60.0
 _VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT = 3
 _VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS = 240
 _VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS = 160
+_INITIATIVE_HOT_CONTEXT_LIMIT = 15
+_RESIDENT_AGENT_RUNNING_LIMIT = 12
+_RESIDENT_AGENT_RECENT_LIMIT = 6
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
 
 
@@ -229,6 +238,66 @@ def _vp_todo_hot_context(path: Path) -> dict[str, Any]:
                 "to-do list, including pending items beyond this preview and retained failed items."
             ),
         },
+    }
+
+
+def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep lifecycle orientation in hot context without embedding manifests."""
+
+    def compact(row: Mapping[str, Any]) -> dict[str, Any]:
+        delivery = row.get("completion_delivery")
+        return {
+            key: row.get(key)
+            for key in (
+                "run_id",
+                "run_kind",
+                "status",
+                "live",
+                "pid",
+                "backend",
+                "model",
+                "task_kind",
+                "difficulty",
+                "task_excerpt",
+                "created_at",
+                "started_at",
+                "finished_at",
+                "terminal_outcome",
+                "parent_run_id",
+            )
+            if row.get(key) is not None
+        } | {
+            "completion_delivery": {
+                key: delivery.get(key)
+                for key in ("status", "attempt_count", "delivered_at", "last_error_category")
+                if delivery.get(key) is not None
+            }
+            if isinstance(delivery, Mapping)
+            else None
+        }
+
+    running = [
+        compact(row)
+        for row in list(value.get("running") or [])[:_RESIDENT_AGENT_RUNNING_LIMIT]
+        if isinstance(row, Mapping)
+    ]
+    recent = [
+        compact(row)
+        for row in list(value.get("recent") or [])[:_RESIDENT_AGENT_RECENT_LIMIT]
+        if isinstance(row, Mapping)
+    ]
+    return {
+        "schema_version": value.get("schema_version"),
+        "scope": value.get("scope"),
+        "running_count": value.get("running_count", len(running)),
+        "running": running,
+        "running_omitted_count": max(0, int(value.get("running_count") or 0) - len(running)),
+        "recent_count": value.get("recent_count", len(recent)),
+        "recent": recent,
+        "recent_preview_limit": _RESIDENT_AGENT_RECENT_LIMIT,
+        "delivery_status_counts": value.get("delivery_status_counts", {}),
+        "terminal_delivery_status_counts": value.get("terminal_delivery_status_counts", {}),
+        "delivery_attention_count": value.get("delivery_attention_count", 0),
     }
 
 
@@ -541,6 +610,12 @@ class ReadTodoListInput(ToolInput):
     """Read the VP special-requests to-do list (no arguments)."""
 
 
+class ReadCloudStatusNodeInput(ToolInput):
+    node_id: str = "root"
+    cursor: int = Field(default=0, ge=0)
+    limit: int = Field(default=DEFAULT_NODE_LIMIT, ge=1, le=MAX_NODE_LIMIT)
+
+
 class CompleteTodoItemInput(ToolInput):
     id: str
     result: str = ""
@@ -683,8 +758,9 @@ class MegaplanResidentProfile:
             "call `read_reply_chain` with the supplied cursor to page through older store-backed ancestry; "
             "the tool is bounded, cycle-safe, and restricted to this DM/channel/thread conversation."
             " For broad status questions ('how's it going?', 'what is active?', 'is it cooking?', "
-            "'why did it not reply?'), answer from `cloud_status_snapshot` / `plan_activity_summary` "
-            "in hot context FIRST. That snapshot is the canonical shared-runner view produced by the "
+            "'why did it not reply?'), answer from the compact `cloud_status_snapshot` / "
+            "`plan_activity_summary` in hot context FIRST. This is a bounded root projection of the "
+            "canonical shared-runner snapshot produced by the "
             "watchdog; cite its generated_at timestamp. If `cloud_status_snapshot.stale_banner` is "
             "present, you MUST emit that banner VERBATIM as your first line and you MUST NOT quote "
             "any percent, sprint, summary, or progress number from that snapshot — those have been "
@@ -714,7 +790,11 @@ class MegaplanResidentProfile:
             "reserves 30% for pre-execute stages and weights execute progress by the finalized "
             "task inventory's authoritative complexity scores. "
             "Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
-            "without labeling it degraded. Targeted per-plan questions may still use the cloud tools. "
+            "without labeling it degraded. For deeper status questions, navigate only the relevant "
+            "child node with `read_cloud_status_node`. In the Codex CLI runner, use "
+            "`python -P -m arnold_pipelines.megaplan resident status-tree --node '<node_id>'`; "
+            "never load the complete cloud-status JSON into the prompt. Targeted per-plan questions "
+            "may still use the constrained cloud tools. "
             "For a Discord resident restart, use only the canonical command in hot context under "
             "`resident_runtime.restart`; never use pkill, killall, a cgroup-wide stop, or tmux cleanup. "
             "The command must fail closed unless the installed unit proves its main-process-only "
@@ -747,15 +827,20 @@ class MegaplanResidentProfile:
             live_cloud_chain,
         ) = await asyncio.gather(
             asyncio.to_thread(self._load_local_epic_chain_state_context),
-            asyncio.to_thread(initiative_compact_index, Path.cwd(), limit=40),
+            asyncio.to_thread(
+                initiative_compact_index, Path.cwd(), limit=_INITIATIVE_HOT_CONTEXT_LIMIT
+            ),
             asyncio.to_thread(list_managed_resident_agents, project_root=Path.cwd()),
             asyncio.to_thread(_vp_todo_hot_context, self._todo_path()),
             asyncio.to_thread(list_reset_notifications, limit=5),
             asyncio.to_thread(self._load_cloud_status_snapshot),
             bounded_live_cloud(),
         )
-        cloud_status_snapshot, snapshot_degraded = snapshot_result
+        full_cloud_status_snapshot, snapshot_degraded = snapshot_result
         self._schedule_cloud_status_snapshot_refresh()
+        cloud_status_snapshot = compact_cloud_status_snapshot(full_cloud_status_snapshot)
+        activity_summary = status_snapshot.plan_activity_summary(full_cloud_status_snapshot)
+        compact_agents = _compact_resident_agents(resident_agents)
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
@@ -863,13 +948,18 @@ class MegaplanResidentProfile:
             # going?" / "what is active?" questions. Produced by the watchdog
             # from local observation only; never requires SSH from the resident.
             "cloud_status_snapshot": cloud_status_snapshot,
-            "plan_activity_summary": status_snapshot.plan_activity_summary(cloud_status_snapshot),
+            "plan_activity_summary": activity_summary,
             "cloud_status_degraded": snapshot_degraded,
             "epic_chain_visibility": _summarize_epic_chain_visibility(local_epic_chain_state, live_cloud_chain),
-            # Supplemental detail only; NOT the canonical shared-runner view.
-            "local_epic_chain_state": local_epic_chain_state,
+            # The broad snapshot root is sufficient when fresh. Keep the much
+            # larger local scan only as an explicitly degraded fallback.
+            "local_epic_chain_state": (
+                local_epic_chain_state
+                if full_cloud_status_snapshot is None or snapshot_degraded
+                else {"available_as_degraded_fallback": True, "embedded": False}
+            ),
             "live_cloud_chain": live_cloud_chain,
-            "resident_agents": resident_agents,
+            "resident_agents": compact_agents,
             "vp_special_requests_todos": todo_context,
         }
         if self.store is None:
@@ -1093,6 +1183,7 @@ class MegaplanResidentProfile:
             ToolRegistration("schedule_cloud_check", "Schedule a durable cloud status check.", "control", ScheduleCloudCheckInput, ToolResult, self._schedule_cloud_check),
             ToolRegistration("cancel_cloud_check", "Cancel a durable cloud status check.", "control", CancelCloudCheckInput, ToolResult, self._cancel_cloud_check),
             ToolRegistration("list_cloud_checks", "List durable cloud status checks.", "cloud_read", ListCloudChecksInput, ToolResult, self._list_cloud_checks),
+            ToolRegistration("read_cloud_status_node", "Read one bounded branch of the canonical cloud status tree. Start from node IDs in hot context and paginate event branches; raw snapshots are never returned.", "cloud_read", ReadCloudStatusNodeInput, ToolResult, self._read_cloud_status_node),
             ToolRegistration("read_todo_list", "Read the full VP special-requests to-do list, including pending, conditional, and retained failed items.", "read", ReadTodoListInput, ToolResult, self._read_todo_list),
             ToolRegistration("get_timezone_preference", "Read the current Discord user's durable IANA timezone preference and effective presentation timezone.", "read", GetTimezonePreferenceInput, ToolResult, self._get_timezone_preference),
             ToolRegistration("set_timezone_preference", "Set the current Discord user's durable IANA timezone preference. The update applies on the next message.", "write", SetTimezonePreferenceInput, ToolResult, self._set_timezone_preference),
@@ -1103,6 +1194,22 @@ class MegaplanResidentProfile:
         )
         for registration in registrations:
             self.tool_registry.register(registration)
+
+    def _read_cloud_status_node(self, payload: ReadCloudStatusNodeInput) -> ToolResult:
+        snapshot, degraded_reason = self._load_cloud_status_snapshot()
+        result = read_cloud_status_node(
+            snapshot,
+            node_id=payload.node_id,
+            cursor=payload.cursor,
+            limit=payload.limit,
+        )
+        if not result.get("success"):
+            return _fail(str(result.get("error") or "status-tree node read failed"))
+        return _ok(
+            "cloud status node read",
+            node=result["node"],
+            degraded_reason=degraded_reason,
+        )
 
     def _timezone_tool_subject(self) -> AuthorizationSubject | None:
         context = current_tool_runtime_context()

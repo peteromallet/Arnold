@@ -99,6 +99,10 @@ class AgentLoopError(RuntimeError):
     """Deterministic resident agent-loop failure."""
 
 
+class AgentPromptTooLargeError(AgentLoopError):
+    """The resident request exceeded its safe budget before model launch."""
+
+
 class ResidentCredentialError(AgentLoopError):
     """A configured resident API call has no usable credential."""
 
@@ -407,9 +411,9 @@ class CodexCliAgentRunner(DispatchProtocol):
             "hot_context": request.hot_context,
             "messages": request.messages,
             "launch_provenance": request.launch_origin,
-            "available_resident_tools": tools.as_schema_catalog(),
+            "available_resident_tools": tools.as_compact_catalog(),
         }
-        return (
+        prompt = (
             f"{request.system_prompt}\n\n"
             "You are running through the Codex CLI resident runner in the project repository. "
             "Use the local filesystem and Megaplan CLI for durable project actions. "
@@ -437,6 +441,12 @@ class CodexCliAgentRunner(DispatchProtocol):
             "Resident request JSON:\n"
             + json.dumps(payload, sort_keys=True, default=str)
         )
+        if len(prompt) > self.config.max_prompt_chars:
+            raise AgentPromptTooLargeError(
+                "resident prompt exceeds the safe pre-dispatch budget: "
+                f"{len(prompt)} > {self.config.max_prompt_chars} characters"
+            )
+        return prompt
 
 
 async def _await_maybe(value: Any) -> Any:
