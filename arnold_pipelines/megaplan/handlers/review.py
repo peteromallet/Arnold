@@ -1836,6 +1836,7 @@ def _finalize_review_outcome(
         attach_agent_fallback(response, args)
         return response
     atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
+    criteria = worker.payload.get("criteria", [])
     force_proceed_blocked = (
         result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED
     )
@@ -1899,7 +1900,6 @@ def _finalize_review_outcome(
     )
     save_state_merge_meta(plan_dir, state)
 
-    criteria = worker.payload.get("criteria", [])
     if force_proceed_blocked:
         summary = next(
             (
