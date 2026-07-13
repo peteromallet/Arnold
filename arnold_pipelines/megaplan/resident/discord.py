@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+import hashlib
 import json
 import logging
 import os
@@ -14,18 +15,28 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
+from agentbox.redaction import redact_text
 from arnold_pipelines.megaplan.store import ScheduledJobInput, deterministic_idempotency_key
 
 from .auth import AuthorizationSubject
+from .discord_reactions import DiscordReactionEffectLedger, ReactionEffectSweepResult
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
+from .reply_chain import (
+    REPLY_CAPTURE_MAX_ANCESTORS,
+    bounded_reply_content,
+)
 from .scheduler import ScheduledJobWorker
 from .subagent import sweep_managed_agent_deliveries
 from .transcription import AudioTranscriptionError, OpenAICompatibleAudioTranscriber
+from .timezone import InvalidTimezone, TimezoneService
 
 LOGGER = logging.getLogger(__name__)
 DISCORD_MESSAGE_LIMIT = 2000
 DISCORD_SAFE_MESSAGE_LIMIT = 1900
 DISCORD_REPLY_REACTION = "☑️"
+# Hourglass is a Unicode emoji supported by Discord and intentionally differs
+# from the terminal checkbox.  Keep both transport UI conventions here.
+DISCORD_WORKING_REACTION = "⏳"
 ESCALATION_TAG_RE = re.compile(r"\[escalation:([A-Za-z0-9._:-]+)\]", re.IGNORECASE)
 SUPPORTED_AUDIO_EXTENSIONS = frozenset(
     {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg", ".opus"}
@@ -153,6 +164,7 @@ class DiscordInboundMessage:
     referenced_message_id: str | None = None
     referenced_message_author_id: str | None = None
     referenced_message_content: str | None = None
+    reply_chain: dict[str, Any] | None = None
     escalation_id: str | None = None
     was_voice_message: bool = False
     transcription_metadata: dict[str, Any] | None = None
@@ -216,6 +228,7 @@ class DiscordInboundMessage:
                 "discord_reference_message_id": self.referenced_message_id,
                 "discord_reference_author_id": self.referenced_message_author_id,
                 "discord_reference_content": self.referenced_message_content,
+                "discord_reply_chain": self.reply_chain,
                 "escalation_id": self.escalation_id,
                 "thread_id": self.target.thread_id,
                 "dm_user_id": self.target.dm_user_id,
@@ -242,10 +255,17 @@ class DiscordOutboundSink(OutboundSink):
         *,
         delivery_environment: str = "test",
         bot_role: str = "test",
+        reaction_effect_root: Path | None = None,
     ) -> None:
         self.client = client
         self.delivery_environment = str(delivery_environment).strip().lower()
         self.bot_role = str(bot_role).strip().lower()
+        self.reaction_effects = (
+            DiscordReactionEffectLedger(reaction_effect_root)
+            if reaction_effect_root is not None
+            else None
+        )
+        self._reaction_sweep_lock = asyncio.Lock()
 
     def bind_client(self, client: Any) -> None:
         self.client = client
@@ -270,8 +290,10 @@ class DiscordOutboundSink(OutboundSink):
             if isinstance(message.metadata, dict)
             else ""
         )
-        if reply_to_message_id:
-            await _add_reply_reaction(channel, reply_to_message_id)
+        if not nonce_base and message.idempotency_key:
+            nonce_base = hashlib.sha256(
+                f"resident-discord-delivery:{message.idempotency_key}".encode()
+            ).hexdigest()[:20]
         for index, chunk in enumerate(split_discord_message(message.content)):
             kwargs: dict[str, Any] = {}
             if nonce_base:
@@ -292,6 +314,253 @@ class DiscordOutboundSink(OutboundSink):
             ids = [str(getattr(sent, "id", "")) for sent in sent_messages]
             message.metadata["discord_message_ids"] = ids
             message.metadata["discord_message_id"] = ids[0] if ids else ""
+        if reply_to_message_id and not bool(message.metadata.get("discord_processing_continues")):
+            # Reply acceptance is the terminal delivery boundary. Reaction
+            # intents are committed only after it, and reaction failures are
+            # retried independently so an accepted reply is never re-sent just
+            # because Discord's reaction endpoint was unavailable.
+            try:
+                await self._queue_terminal_reactions(message, reply_to_message_id)
+            except Exception:
+                # The reply is already accepted. Never turn a reaction-ledger
+                # problem into a duplicate reply attempt.
+                LOGGER.exception(
+                    "Discord terminal reaction intent could not be committed message_id=%s",
+                    reply_to_message_id,
+                )
+
+    async def _queue_terminal_reactions(
+        self, message: OutboundMessage, reply_to_message_id: str
+    ) -> None:
+        working_ids = _reaction_message_ids(
+            message.metadata.get("discord_processing_message_ids"),
+            fallback=reply_to_message_id,
+        )
+        lifecycle_key = _reaction_lifecycle_key(message, fallback=reply_to_message_id)
+        working_dependencies = self._supersede_pending_working(
+            message.conversation_key, working_ids
+        )
+        terminal_effect_ids: set[str] = set()
+        cleanup_ids: list[str] = []
+        for source_message_id in working_ids:
+            effect = self._ensure_reaction_effect(
+                conversation_key=message.conversation_key,
+                message_id=source_message_id,
+                operation="remove",
+                emoji=DISCORD_WORKING_REACTION,
+                phase="terminal_cleanup",
+                lifecycle_key=lifecycle_key,
+                turn_id=_optional_text(message.metadata.get("discord_processing_turn_id")),
+                depends_on=working_dependencies.get(source_message_id, []),
+            )
+            cleanup_ids.append(str(effect["effect_id"]))
+            terminal_effect_ids.add(str(effect["effect_id"]))
+        completion = self._ensure_reaction_effect(
+            conversation_key=message.conversation_key,
+            message_id=reply_to_message_id,
+            operation="add",
+            emoji=DISCORD_REPLY_REACTION,
+            phase="completion",
+            lifecycle_key=lifecycle_key,
+            turn_id=_optional_text(message.metadata.get("discord_processing_turn_id")),
+            depends_on=cleanup_ids,
+        )
+        terminal_effect_ids.add(str(completion["effect_id"]))
+        await self.reconcile_reactions(only=terminal_effect_ids)
+
+    async def mark_processing(
+        self,
+        *,
+        conversation_key: str,
+        message_ids: list[str],
+        turn_id: str | None = None,
+    ) -> None:
+        """Commit then apply working markers after durable turn creation."""
+
+        effect_ids: set[str] = set()
+        lifecycle_key = turn_id or "resident-processing"
+        for message_id in _reaction_message_ids(message_ids):
+            effect = self._ensure_reaction_effect(
+                conversation_key=conversation_key,
+                message_id=message_id,
+                operation="add",
+                emoji=DISCORD_WORKING_REACTION,
+                phase="working",
+                lifecycle_key=lifecycle_key,
+                turn_id=turn_id,
+            )
+            effect_ids.add(str(effect["effect_id"]))
+        await self.reconcile_reactions(only=effect_ids)
+
+    async def mark_processing_interrupted(
+        self,
+        *,
+        conversation_key: str,
+        message_ids: list[str],
+        turn_id: str | None = None,
+    ) -> None:
+        """Remove stale working markers without ever showing completion."""
+
+        effect_ids: set[str] = set()
+        lifecycle_key = turn_id or "resident-interrupted"
+        normalized_ids = _reaction_message_ids(message_ids)
+        working_dependencies = self._supersede_pending_working(
+            conversation_key, normalized_ids
+        )
+        for message_id in normalized_ids:
+            effect = self._ensure_reaction_effect(
+                conversation_key=conversation_key,
+                message_id=message_id,
+                operation="remove",
+                emoji=DISCORD_WORKING_REACTION,
+                phase="interrupted_cleanup",
+                lifecycle_key=lifecycle_key,
+                turn_id=turn_id,
+                depends_on=working_dependencies.get(message_id, []),
+            )
+            effect_ids.add(str(effect["effect_id"]))
+        await self.reconcile_reactions(only=effect_ids)
+
+    async def reconcile_reactions(
+        self,
+        *,
+        only: set[str] | None = None,
+    ) -> ReactionEffectSweepResult:
+        """Replay pending reaction effects; safe under retries and concurrent sweeps."""
+
+        if self.client is None:
+            pending = self.reaction_effects.pending_count() if self.reaction_effects else 0
+            return ReactionEffectSweepResult(retry_pending=pending)
+        if self.reaction_effects is None:
+            return await self._apply_ephemeral_reactions(only=only)
+
+        scanned = applied = 0
+        async with self._reaction_sweep_lock:
+            while True:
+                claimed = self.reaction_effects.claim_due(only=only)
+                if not claimed:
+                    break
+                scanned += len(claimed)
+                for effect in claimed:
+                    try:
+                        await self._apply_reaction_effect(effect)
+                    except Exception as exc:
+                        self.reaction_effects.finish(effect, error=exc)
+                        LOGGER.warning(
+                            "Discord reaction effect retry pending effect_id=%s operation=%s "
+                            "message_id=%s error_class=%s",
+                            effect.get("effect_id"),
+                            effect.get("operation"),
+                            effect.get("message_id"),
+                            exc.__class__.__name__,
+                        )
+                    else:
+                        self.reaction_effects.finish(effect)
+                        applied += 1
+                # Failures return to pending immediately; avoid a tight retry loop.
+                if applied < scanned:
+                    break
+        pending = self.reaction_effects.pending_count()
+        return ReactionEffectSweepResult(
+            scanned=scanned,
+            applied=applied,
+            retry_pending=pending,
+            skipped=max(0, pending - (scanned - applied)),
+        )
+
+    def _ensure_reaction_effect(self, **intent: Any) -> dict[str, Any]:
+        if self.reaction_effects is not None:
+            return self.reaction_effects.ensure(**intent)
+        # Tests and non-resident notification callers may omit durable state.
+        # Keep their behavior compatible while production injects a ledger.
+        identity = json.dumps(intent, sort_keys=True, default=str)
+        effect_id = "ephemeral-" + hashlib.sha256(identity.encode()).hexdigest()[:20]
+        effect = {"effect_id": effect_id, **intent, "status": "pending"}
+        if not hasattr(self, "_ephemeral_reaction_effects"):
+            self._ephemeral_reaction_effects: dict[str, dict[str, Any]] = {}
+        return self._ephemeral_reaction_effects.setdefault(effect_id, effect)
+
+    def _supersede_pending_working(
+        self, conversation_key: str, message_ids: list[str]
+    ) -> dict[str, list[str]]:
+        if self.reaction_effects is not None:
+            return self.reaction_effects.supersede_pending_working(
+                conversation_key=conversation_key,
+                message_ids=message_ids,
+            )
+        effects = getattr(self, "_ephemeral_reaction_effects", {})
+        targets = set(message_ids)
+        dependencies = {message_id: [] for message_id in targets}
+        for effect in effects.values():
+            if (
+                effect.get("phase") == "working"
+                and effect.get("conversation_key") == conversation_key
+                and effect.get("message_id") in targets
+            ):
+                message_id = str(effect["message_id"])
+                dependencies[message_id].append(str(effect["effect_id"]))
+                if effect.get("status") == "pending":
+                    effect["status"] = "applied"
+                    effect["outcome"] = "superseded_before_apply"
+        return dependencies
+
+    async def _apply_ephemeral_reactions(
+        self, *, only: set[str] | None
+    ) -> ReactionEffectSweepResult:
+        effects = getattr(self, "_ephemeral_reaction_effects", {})
+        applied = scanned = 0
+        for effect in list(effects.values()):
+            if effect.get("status") == "applied":
+                continue
+            if only is not None and effect.get("effect_id") not in only:
+                continue
+            dependencies = [effects.get(value) for value in effect.get("depends_on", [])]
+            if any(value is None or value.get("status") != "applied" for value in dependencies):
+                continue
+            scanned += 1
+            try:
+                await self._apply_reaction_effect(effect)
+            except Exception as exc:
+                effect["last_error"] = redact_text(str(exc))[:500]
+                effect["last_error_class"] = exc.__class__.__name__
+                LOGGER.warning(
+                    "Discord reaction effect retry pending effect_id=%s error_class=%s",
+                    effect.get("effect_id"),
+                    exc.__class__.__name__,
+                )
+            else:
+                effect["status"] = "applied"
+                applied += 1
+        # A completion effect may become eligible after cleanup in this pass.
+        if applied and any(
+            effect.get("status") != "applied"
+            and (only is None or effect.get("effect_id") in only)
+            for effect in effects.values()
+        ):
+            followup = await self._apply_ephemeral_reactions(only=only)
+            scanned += followup.scanned
+            applied += followup.applied
+        pending = sum(1 for effect in effects.values() if effect.get("status") != "applied")
+        return ReactionEffectSweepResult(scanned=scanned, applied=applied, retry_pending=pending)
+
+    async def _apply_reaction_effect(self, effect: Any) -> None:
+        channel = await self._resolve_channel(
+            DiscordDeliveryTarget.from_conversation_key(str(effect["conversation_key"]))
+        )
+        operation = str(effect["operation"])
+        if operation == "add":
+            applied = await _add_reaction(channel, str(effect["message_id"]), str(effect["emoji"]))
+        elif operation == "remove":
+            applied = await _remove_reaction(
+                channel,
+                str(effect["message_id"]),
+                str(effect["emoji"]),
+                actor=getattr(self.client, "user", None),
+            )
+        else:
+            raise RuntimeError(f"unsupported Discord reaction operation: {operation}")
+        if not applied:
+            raise RuntimeError("Discord reaction target does not support the requested operation")
 
     async def _resolve_channel(self, target: DiscordDeliveryTarget) -> Any:
         if target.dm_user_id:
@@ -386,6 +655,127 @@ def _referenced_message_snapshot(message: Any) -> dict[str, str]:
     return snapshot
 
 
+async def _capture_discord_reply_chain(message: Any) -> dict[str, Any]:
+    """Capture exact reply pointers through Discord once, before store persistence."""
+
+    source_id = _optional_snowflake(getattr(message, "id", None))
+    channel = getattr(message, "channel", None)
+    channel_id = _optional_snowflake(getattr(channel, "id", None))
+    ancestors: list[dict[str, Any]] = []
+    seen = {source_id} if source_id else set()
+    child = message
+    termination_reason = "root"
+    chain_complete = True
+    capture_truncated = False
+
+    for depth in range(1, REPLY_CAPTURE_MAX_ANCESTORS + 1):
+        reference = getattr(child, "reference", None)
+        parent_id = _referenced_message_id(child)
+        if not parent_id:
+            termination_reason = "root"
+            break
+        reference_channel_id = _optional_snowflake(getattr(reference, "channel_id", None))
+        if reference_channel_id and channel_id and reference_channel_id != channel_id:
+            ancestors.append(
+                {
+                    "depth": depth,
+                    "message_id": parent_id,
+                    "status": "scope_rejected",
+                    "unavailable_reason": "reference_outside_source_channel_or_thread",
+                }
+            )
+            termination_reason = "scope_rejected"
+            chain_complete = False
+            break
+        if parent_id in seen:
+            ancestors.append(
+                {
+                    "depth": depth,
+                    "message_id": parent_id,
+                    "status": "cycle_detected",
+                    "unavailable_reason": "reply_pointer_cycle",
+                }
+            )
+            termination_reason = "cycle_detected"
+            chain_complete = False
+            break
+        seen.add(parent_id)
+
+        parent = _resolved_reference_message(reference, parent_id)
+        if parent is None:
+            fetch_message = getattr(channel, "fetch_message", None)
+            if callable(fetch_message):
+                try:
+                    parent = await fetch_message(int(parent_id))
+                except Exception:
+                    parent = None
+        if parent is None or not hasattr(parent, "content"):
+            ancestors.append(
+                {
+                    "depth": depth,
+                    "message_id": parent_id,
+                    "status": "unavailable",
+                    "unavailable_reason": "missing_deleted_or_inaccessible",
+                }
+            )
+            termination_reason = "ancestor_unavailable"
+            chain_complete = False
+            break
+        parent_channel_id = _optional_snowflake(
+            getattr(getattr(parent, "channel", None), "id", None)
+        )
+        if parent_channel_id and channel_id and parent_channel_id != channel_id:
+            ancestors.append(
+                {
+                    "depth": depth,
+                    "message_id": parent_id,
+                    "status": "scope_rejected",
+                    "unavailable_reason": "resolved_parent_outside_source_channel_or_thread",
+                }
+            )
+            termination_reason = "scope_rejected"
+            chain_complete = False
+            break
+
+        content, content_truncated = bounded_reply_content(getattr(parent, "content", ""))
+        author = getattr(parent, "author", None)
+        ancestors.append(
+            {
+                "depth": depth,
+                "message_id": parent_id,
+                "author_id": _optional_snowflake(getattr(author, "id", None)),
+                "content": content,
+                "content_truncated": content_truncated,
+                "status": "available",
+                "parent_message_id": _referenced_message_id(parent),
+            }
+        )
+        child = parent
+    else:
+        if _referenced_message_id(child):
+            termination_reason = "capture_depth_limit"
+            chain_complete = False
+            capture_truncated = True
+
+    return {
+        "ancestors": ancestors,
+        "chain_complete": chain_complete,
+        "capture_truncated": capture_truncated,
+        "termination_reason": termination_reason,
+        "capture_limit": REPLY_CAPTURE_MAX_ANCESTORS,
+    }
+
+
+def _resolved_reference_message(reference: Any, expected_id: str) -> Any | None:
+    if reference is None:
+        return None
+    resolved = getattr(reference, "resolved", None)
+    if resolved is None:
+        return None
+    resolved_id = _optional_snowflake(getattr(resolved, "id", None))
+    return resolved if resolved_id == expected_id else None
+
+
 def _partial_message_reference(channel: Any, message_id: str) -> Any | None:
     get_partial_message = getattr(channel, "get_partial_message", None)
     if not callable(get_partial_message):
@@ -396,23 +786,64 @@ def _partial_message_reference(channel: Any, message_id: str) -> Any | None:
         return None
 
 
-async def _add_reply_reaction(channel: Any, message_id: str) -> None:
+def _reaction_message_ids(value: Any, *, fallback: str | None = None) -> list[str]:
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    result = [str(item).strip() for item in values if item is not None and str(item).strip()]
+    if not result and fallback:
+        result = [fallback]
+    return list(dict.fromkeys(result))
+
+
+def _reaction_lifecycle_key(message: OutboundMessage, *, fallback: str) -> str:
+    metadata = message.metadata if isinstance(message.metadata, dict) else {}
+    return str(
+        metadata.get("managed_agent_run_id")
+        or metadata.get("discord_processing_turn_id")
+        or message.idempotency_key
+        or fallback
+    )
+
+
+def _optional_text(value: object) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+async def _reaction_message(channel: Any, message_id: str) -> Any:
     message = _partial_message_reference(channel, message_id)
     if message is None:
         fetch_message = getattr(channel, "fetch_message", None)
         if callable(fetch_message):
             try:
                 message = await fetch_message(int(message_id))
-            except Exception:
-                LOGGER.exception("Failed to fetch Discord message for reply reaction message_id=%s", message_id)
-                return
+            except Exception as exc:
+                raise RuntimeError(f"Discord reaction target unavailable: {message_id}") from exc
+    if message is None:
+        raise RuntimeError(f"Discord reaction target unavailable: {message_id}")
+    return message
+
+
+async def _add_reaction(channel: Any, message_id: str, emoji: str) -> bool:
+    message = await _reaction_message(channel, message_id)
     add_reaction = getattr(message, "add_reaction", None)
     if not callable(add_reaction):
-        return
+        return False
+    await add_reaction(emoji)
+    return True
+
+
+async def _remove_reaction(channel: Any, message_id: str, emoji: str, *, actor: Any) -> bool:
+    message = await _reaction_message(channel, message_id)
+    remove_reaction = getattr(message, "remove_reaction", None)
+    if not callable(remove_reaction):
+        return False
     try:
-        await add_reaction(DISCORD_REPLY_REACTION)
-    except Exception:
-        LOGGER.exception("Failed to add Discord reply reaction message_id=%s", message_id)
+        await remove_reaction(emoji, actor)
+    except TypeError:
+        # discord.py accepts emoji and the reacting member; partial-message
+        # test seams commonly expose the simpler one-argument form.
+        await remove_reaction(emoji)
+    return True
 
 
 def _resolve_escalation_id_from_message_id(message_id: str | None) -> str | None:
@@ -546,6 +977,12 @@ async def _send_voice_failure(message: Any, user_message: str) -> None:
     await send(user_message, **kwargs)
 
 
+async def _send_timezone_reply(message: Any, user_message: str) -> None:
+    """Reply to an authorized preference command without invoking the model."""
+
+    await _send_voice_failure(message, user_message)
+
+
 def _optional_int(value: object) -> int | None:
     try:
         result = int(value) if value is not None else None
@@ -592,11 +1029,31 @@ class ResidentDiscordService:
         async def on_ready() -> None:
             # Imported lazily to avoid making the low-level AgentBox outbox
             # depend on this package's eager public re-exports at import time.
-            from agentbox.reset_notifications import sweep_reset_notifications
+            from agentbox.reset_notifications import (
+                reconcile_prepared_reset_notifications,
+                sweep_reset_notifications,
+            )
+            from agentbox.services import resident_process_identity
 
             outbound = getattr(self.runtime, "outbound", None)
             if isinstance(outbound, DiscordOutboundSink):
                 outbound.bind_client(client)
+            try:
+                process_identity = await asyncio.wait_for(
+                    asyncio.to_thread(resident_process_identity), timeout=3.0
+                )
+                restart_reconciliation = reconcile_prepared_reset_notifications(
+                    current_identity=process_identity
+                )
+            except Exception:
+                process_identity = None
+                restart_reconciliation = {
+                    "scanned": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "in_progress": 0,
+                }
+                LOGGER.exception("Resident restart transaction reconciliation failed")
             if self.runtime.config.allows_operational_discord_delivery:
                 completion_delivery = await sweep_managed_agent_deliveries(
                     outbound=self.runtime.outbound,
@@ -613,12 +1070,22 @@ class ResidentDiscordService:
                 completion_delivery = None
                 reset_delivery = None
             try:
+                restart_replayed = (
+                    await self.runtime.recover_restart_interrupted_turns(process_identity)
+                    if process_identity is not None
+                    else 0
+                )
                 recovered = await self.runtime.recover_abandoned_turns()
             except Exception:
+                restart_replayed = 0
                 recovered = 0
                 LOGGER.exception(
                     "Resident abandoned-turn recovery failed; operational outboxes were swept independently"
                 )
+            if isinstance(outbound, DiscordOutboundSink):
+                reaction_delivery = await outbound.reconcile_reactions()
+            else:
+                reaction_delivery = None
             self._log_transcription_readiness()
             self._ensure_scheduler_started(client)
             self._seed_special_requests_job()
@@ -626,13 +1093,21 @@ class ResidentDiscordService:
             guilds = getattr(client, "guilds", ())
             LOGGER.info(
                 "Resident Discord service ready user_id=%s guild_count=%s recovered_turns=%s "
+                "restart_replayed_turns=%s restart_reconciled_succeeded=%s "
+                "restart_reconciled_failed=%s restart_reconcile_in_progress=%s "
                 "completion_delivery_scanned=%s completion_delivered=%s "
                 "completion_retry_pending=%s completion_failed=%s "
                 "reset_delivery_scanned=%s reset_delivered=%s reset_retry_pending=%s "
-                "reset_waiting_for_target=%s reset_failed=%s",
+                "reset_waiting_for_target=%s reset_failed=%s "
+                "reaction_effects_scanned=%s reaction_effects_applied=%s "
+                "reaction_effects_retry_pending=%s",
                 getattr(user, "id", None),
                 len(guilds),
                 recovered,
+                restart_replayed,
+                restart_reconciliation["succeeded"],
+                restart_reconciliation["failed"],
+                restart_reconciliation["in_progress"],
                 completion_delivery.scanned if completion_delivery is not None else 0,
                 completion_delivery.delivered if completion_delivery is not None else 0,
                 completion_delivery.retry_pending if completion_delivery is not None else 0,
@@ -642,6 +1117,9 @@ class ResidentDiscordService:
                 reset_delivery.retry_pending if reset_delivery is not None else 0,
                 reset_delivery.waiting_for_target if reset_delivery is not None else 0,
                 reset_delivery.failed if reset_delivery is not None else 0,
+                reaction_delivery.scanned if reaction_delivery is not None else 0,
+                reaction_delivery.applied if reaction_delivery is not None else 0,
+                reaction_delivery.retry_pending if reaction_delivery is not None else 0,
             )
 
         @client.event
@@ -677,6 +1155,9 @@ class ResidentDiscordService:
                 authorization_decision=authorization_decision,
             )
             return
+        if await self._handle_timezone_command(message, inbound):
+            return
+        inbound = replace(inbound, reply_chain=await _capture_discord_reply_chain(message))
         try:
             attachment, input_kind = _voice_attachment(message)
             if attachment is not None:
@@ -712,6 +1193,57 @@ class ResidentDiscordService:
                 inbound.to_inbound_event(),
                 authorization_decision=authorization_decision,
             )
+
+    async def _handle_timezone_command(
+        self, message: Any, inbound: DiscordInboundMessage
+    ) -> bool:
+        content = inbound.content.strip()
+        if content != "/timezone" and not content.startswith("/timezone "):
+            return False
+        service = TimezoneService(self.runtime.store, self.runtime.config)
+        conversation = self.runtime.store.get_resident_conversation_by_key(
+            transport="discord",
+            conversation_key=inbound.target.conversation_key,
+        )
+        argument = content[len("/timezone") :].strip()
+        if argument.lower().startswith("set "):
+            argument = argument[4:].strip()
+        if argument:
+            try:
+                preference = service.set_user_timezone(
+                    inbound.author_id,
+                    argument,
+                    idempotency_key=deterministic_idempotency_key(
+                        "resident-user-timezone-command", inbound.message_id
+                    ),
+                )
+            except InvalidTimezone as exc:
+                await _send_timezone_reply(
+                    message,
+                    f"I couldn't update your timezone: {exc}. Use an IANA name such as `America/New_York`.",
+                )
+                return True
+            await _send_timezone_reply(
+                message,
+                f"Timezone set to `{preference.timezone_name}`. It will apply to your next message and delegated result.",
+            )
+            return True
+        preference = service.get_user_preference(inbound.author_id)
+        resolved = service.resolve(
+            user_id=inbound.author_id,
+            conversation=conversation,
+            guild_id=inbound.target.guild_id,
+        )
+        configured = preference.timezone_name if preference is not None else None
+        if configured:
+            text = f"Your timezone is `{configured}` (effective source: {resolved.source})."
+        else:
+            text = (
+                f"No user timezone is set; effective timezone is `{resolved.name}` "
+                f"from {resolved.source}. Set one with `/timezone America/New_York`."
+            )
+        await _send_timezone_reply(message, text)
+        return True
 
     async def _transcribe_attachment(
         self,

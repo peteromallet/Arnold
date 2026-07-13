@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -74,6 +75,8 @@ class ResidentConfig(BaseModel):
     special_requests_subagent_toolsets: str = "file,web,terminal"
     special_requests_subagent_timeout_s: float = Field(default=600.0, gt=0)
     special_requests_subagent_max_tokens: int = Field(default=65536, gt=0)
+    default_timezone: str = "UTC"
+    guild_timezone_defaults: dict[str, str] = Field(default_factory=dict)
 
     @field_validator(
         "allowed_guild_ids",
@@ -195,6 +198,10 @@ class ResidentConfig(BaseModel):
             special_requests_subagent_max_tokens=_env_int(
                 env, "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_MAX_TOKENS", 65536
             ),
+            default_timezone=env.get("MEGAPLAN_RESIDENT_DEFAULT_TIMEZONE", "UTC"),
+            guild_timezone_defaults=_env_json_mapping(
+                env, "MEGAPLAN_RESIDENT_GUILD_TIMEZONES"
+            ),
         )
 
     @property
@@ -228,3 +235,13 @@ def _env_bool(env: dict[str, str], key: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"{key} must be a boolean token")
+
+
+def _env_json_mapping(env: dict[str, str], key: str) -> dict[str, str]:
+    raw = env.get(key)
+    if not raw:
+        return {}
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be a JSON object")
+    return {str(item_key): str(item_value) for item_key, item_value in value.items()}

@@ -25,7 +25,7 @@ from .base import (
     Transaction,
     deterministic_idempotency_key,
 )
-from arnold_pipelines.megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
+from arnold_pipelines.megaplan.schemas import CloudRun, ResidentConversation, ResidentUserPreference, ScheduledJob
 from .blob import BlobMissingError, BlobRef, BlobStat, BlobStore, LocalDirBlobStore, SupabaseStorageBlobStore
 from .capsule import (
     CapsuleBuildResult,
@@ -101,6 +101,7 @@ __all__ = [
     "require_actor_id",
     "ResidentConversation",
     "ResidentConversationInput",
+    "ResidentUserPreference",
     "resolve_actor_id",
     "RevisionConflict",
     "ScheduledJob",

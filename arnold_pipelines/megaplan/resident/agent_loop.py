@@ -147,14 +147,21 @@ class FakeAgentRunner:
             if tool_call_count >= self.max_tool_calls:
                 raise AgentLoopError(f"resident tool-call limit exceeded: {self.max_tool_calls}")
             tool_call_count += 1
-            audit_records.append(
-                await self._execute_tool_call(
-                    step.tool_call,
-                    tools,
-                    tool_call_count,
-                    _context_for_tool_call(runtime_context, f"fake_tool_{tool_call_count:04d}"),
-                )
+            audit = await self._execute_tool_call(
+                step.tool_call,
+                tools,
+                tool_call_count,
+                _context_for_tool_call(runtime_context, f"fake_tool_{tool_call_count:04d}"),
             )
+            audit_records.append(audit)
+            handoff = _durable_launch_handoff_response(
+                request=request,
+                current_tool_calls=(audit,),
+                all_tool_calls=audit_records,
+                steps_executed=step_index,
+            )
+            if handoff is not None:
+                return handoff
 
         raise AgentLoopError("fake agent script ended without final_text")
 
@@ -267,6 +274,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
             if len(audit_records) + len(tool_calls) > self.max_tool_calls:
                 raise AgentLoopError(f"resident tool-call limit exceeded: {self.max_tool_calls}")
             messages.append(_assistant_tool_call_message(message))
+            current_audits: list[ToolCallAuditRecord] = []
             for tool_call in tool_calls:
                 arguments = _tool_call_arguments(tool_call)
                 audit = await _execute_registered_tool(
@@ -283,6 +291,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                     ),
                 )
                 audit_records.append(audit)
+                current_audits.append(audit)
                 messages.append(
                     {
                         "role": "tool",
@@ -290,6 +299,15 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                         "content": json.dumps(audit.result, sort_keys=True),
                     }
                 )
+            handoff = _durable_launch_handoff_response(
+                request=request,
+                current_tool_calls=current_audits,
+                all_tool_calls=audit_records,
+                steps_executed=step_index,
+                model=model_name,
+            )
+            if handoff is not None:
+                return handoff
         raise AgentLoopError("resident model loop ended without final_text")
 
     def _messages(self, request: AgentRequest) -> list[dict[str, Any]]:
@@ -398,6 +416,9 @@ class CodexCliAgentRunner(DispatchProtocol):
             "For initiatives, prefer `python -m arnold_pipelines.megaplan initiative ...`; "
             "initiative creation requires a non-empty description. The resident tool catalog below is "
             "reference material for equivalent CLI capabilities, not a set of callable Codex functions. "
+            "For Discord reply ancestry older than the three ancestors preloaded in the current message, "
+            "use only `python -m arnold_pipelines.megaplan resident read-reply-chain --cursor <cursor>`; "
+            "it is store-backed and restricted by the immutable active conversation envelope. "
             "When native function exposure is absent and delegated work is required, use the supported "
             "local resident seam before replying: write the complete task to a file, then run "
             "`python -m arnold_pipelines.megaplan.resident.subagent launch --task-file <path> "
@@ -615,6 +636,84 @@ def _openai_tool_schema(registration: Any) -> dict[str, Any]:
             "parameters": registration.input_model.model_json_schema(),
         },
     }
+
+
+_DURABLE_LAUNCH_STATUSES = frozenset({"launching", "running", "completed"})
+
+
+def _durable_launch_run_id(record: ToolCallAuditRecord) -> str | None:
+    if record.tool_name != "launch_subagent":
+        return None
+    result = record.result if isinstance(record.result, dict) else {}
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    run_id = str(data.get("run_id") or "").strip()
+    status = str(data.get("status") or "").strip()
+    if result.get("ok") is True and run_id and status in _DURABLE_LAUNCH_STATUSES:
+        return run_id
+    return None
+
+
+def durable_launch_run_ids(
+    tool_calls: list[ToolCallAuditRecord] | tuple[ToolCallAuditRecord, ...],
+) -> tuple[str, ...]:
+    """Return successful managed run ids without consulting mutable manifests."""
+
+    run_ids: list[str] = []
+    for record in tool_calls:
+        run_id = _durable_launch_run_id(record)
+        if run_id is not None:
+            run_ids.append(run_id)
+    return tuple(dict.fromkeys(run_ids))
+
+
+def _durable_launch_handoff_response(
+    *,
+    request: AgentRequest,
+    current_tool_calls: list[ToolCallAuditRecord] | tuple[ToolCallAuditRecord, ...],
+    all_tool_calls: list[ToolCallAuditRecord] | tuple[ToolCallAuditRecord, ...],
+    steps_executed: int,
+    model: str | None = None,
+) -> AgentResponse | None:
+    """End a Discord turn once its remaining work has durable agent custody.
+
+    The policy is deliberately based on the registered tool result and the
+    immutable request launch envelope.  It never reads or reconstructs a
+    Discord reply target.  Mixed tool batches, launch failures, and an explicit
+    ``continue_turn`` request retain control for same-turn work.
+    """
+
+    origin = request.launch_origin
+    if not isinstance(origin, Mapping) or origin.get("applicability") != "applicable":
+        return None
+    if not current_tool_calls or any(
+        record.tool_name != "launch_subagent" for record in current_tool_calls
+    ):
+        return None
+    if any(bool(record.arguments.get("continue_turn")) for record in current_tool_calls):
+        return None
+    if any(_durable_launch_run_id(record) is None for record in current_tool_calls):
+        # A failed, synchronous, or malformed launch needs an ordinary resident
+        # follow-up; never hide it behind a success acknowledgement.
+        return None
+    run_ids = durable_launch_run_ids(tuple(all_tool_calls))
+    rendered_ids = ", ".join(f"`{run_id}`" for run_id in run_ids)
+    noun = "run" if len(run_ids) == 1 else "runs"
+    metadata: dict[str, Any] = {
+        "steps_executed": steps_executed,
+        "tool_calls_executed": len(all_tool_calls),
+        "turn_handoff": "durable_subagents",
+        "launched_run_ids": list(run_ids),
+    }
+    if model:
+        metadata["model"] = model
+    return AgentResponse(
+        final_text=(
+            f"Launched resident-managed {noun} {rendered_ids}. "
+            "Terminal results will reply automatically to this message."
+        ),
+        tool_calls=tuple(all_tool_calls),
+        metadata=metadata,
+    )
 
 
 def _message_content_text(content: Any) -> str:

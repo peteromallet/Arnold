@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.cloud.repair_lock import (
     acquire_repair_lock,
     inspect_repair_lock,
     release_repair_lock,
+    owner_metadata_path,
 )
 from arnold_pipelines.megaplan.cloud.repair_recurrence import PROBLEM_SIGNATURE_FIELDS
 
@@ -466,6 +467,72 @@ def release_active_repair_request_claim(
     )
 
 
+def bind_managed_run_to_active_claim(
+    queue_dir: str | Path,
+    *,
+    blocker_id: str,
+    request_id: str,
+    managed_run_id: str,
+    managed_manifest_path: str,
+    expected_owner_pid: int | None,
+    new_owner_pid: int,
+) -> bool:
+    """Fence an already-authorized claim to the process that really executes it.
+
+    The watchdog remains the authority that wins the blocker-scoped mkdir
+    claim.  Immediately before the managed supervisor launches the worker, it
+    transfers PID custody and adds the durable run identity.  All identity
+    fields are checked under a claim-local flock, so an observer or duplicate
+    dispatcher cannot attach a different run to the accepted request.
+    """
+
+    normalized_blocker_id = _normalize_claim_identity(blocker_id, "blocker_id")
+    normalized_request_id = _normalize_claim_identity(request_id, "request_id")
+    normalized_run_id = _normalize_claim_identity(managed_run_id, "managed_run_id")
+    lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
+    owner_path = owner_metadata_path(lock_dir)
+    bind_lock = lock_dir.with_name(lock_dir.name + ".managed-run-bind")
+    try:
+        handle = bind_lock.open("a+b")
+    except OSError:
+        return False
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        owner = repair_contract.load_json(owner_path, default={})
+        if not isinstance(owner, dict):
+            return False
+        if str(owner.get("request_id") or "") != normalized_request_id:
+            return False
+        if str(owner.get("blocker_id") or "") != normalized_blocker_id:
+            return False
+        owner_run_id = str(owner.get("managed_agent_run_id") or "")
+        if owner_run_id and owner_run_id != normalized_run_id:
+            return False
+        if expected_owner_pid is not None and owner.get("pid") not in {
+            expected_owner_pid,
+            new_owner_pid,
+        }:
+            return False
+        owner.update(
+            {
+                "pid": int(new_owner_pid),
+                "managed_agent_run_id": normalized_run_id,
+                "managed_manifest_path": str(managed_manifest_path),
+                "managed_agent_bound_at": utc_now(),
+            }
+        )
+        repair_contract.atomic_write_json(
+            owner_path,
+            owner,
+            include_resident_provenance=False,
+        )
+        return True
+    finally:
+        handle.close()
+
+
 def record_malformed_file(queue_dir: str | Path, path: str | Path, reason: str) -> dict[str, Any]:
     return write_decision(
         queue_dir,
@@ -676,6 +743,7 @@ __all__ = [
     "active_claims_dir",
     "active_repair_claim_lock_dir",
     "claim_active_repair_request",
+    "bind_managed_run_to_active_claim",
     "enqueue_human_gate_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",

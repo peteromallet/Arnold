@@ -48,6 +48,7 @@ from arnold_pipelines.megaplan.schemas import (
     Plan,
     ProgressEvent,
     ResidentConversation,
+    ResidentUserPreference,
     ScheduledJob,
     SecondOpinion,
     Sprint,
@@ -392,6 +393,9 @@ class FileStore(
     def _resident_conversations_dir(self) -> Path:
         return self.root / "resident_conversations"
 
+    def _resident_user_preferences_dir(self) -> Path:
+        return self.root / "resident_user_preferences"
+
     def _scheduled_jobs_dir(self) -> Path:
         return self.root / "scheduled_jobs"
 
@@ -461,6 +465,10 @@ class FileStore(
 
     def _resident_conversation_path(self, conversation_id: str) -> Path:
         return self._resident_conversations_dir() / f"{conversation_id}.json"
+
+    def _resident_user_preference_path(self, transport: str, user_id: str) -> Path:
+        key = hashlib.sha256(f"{transport}\0{user_id}".encode("utf-8")).hexdigest()
+        return self._resident_user_preferences_dir() / f"{key}.json"
 
     def _scheduled_job_path(self, job_id: str) -> Path:
         return self._scheduled_jobs_dir() / f"{job_id}.json"
