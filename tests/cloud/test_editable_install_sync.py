@@ -88,7 +88,8 @@ def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
     assert 'source checkout dirty; using clean runtime mirror at $RUNTIME_SRC' in command
     assert 'git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"' in command
     assert 'git -C "$RUNTIME_SRC" remote set-url origin "$MIRROR_REMOTE"' in command
-    assert 'git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"' in command
+    assert 'git -C "$RUNTIME_SRC" fetch origin "+refs/heads/$REF:refs/remotes/origin/$REF"' in command
+    assert 'git -C "$RUNTIME_SRC" checkout --detach "refs/remotes/origin/$REF"' in command
     assert 'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"' in command
     assert 'pip install -e "$MEGAPLAN_RUNTIME_SRC"' in command
     assert "arnold_pipelines.megaplan.cloud.runtime_provenance" in command
