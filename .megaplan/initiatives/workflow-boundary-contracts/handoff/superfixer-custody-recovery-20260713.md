@@ -87,7 +87,10 @@ deployed source; source and installed hashes matched after deployment.
 - The canonical retrigger reused the original marker/session and PID lineage.
   C1 reached `done`; chain `chain-06e4c6966e36.json` advanced to milestone index
   1 and created S2. The original chain PID `1854068` remained live with fresh S2
-  gate activity through the post-fix audit.
+  gate activity through the post-fix audit. A later canonical watchdog refresh
+  adopted the same session as PID `2009128` with runtime provenance at
+  `cd3128fcd4`; S2 continued with a fresh live gate heartbeat rather than an
+  orphaned sidecar.
 - The legacy request was not backfilled. Decision
   `20260713T155826Z-183a2c54fe9a6b8af2591ad97dd7e7da521ce7d042fac5e566493b4468a2c2fe.json`
   marks it `stale` because the target advanced from C1 to S2.
@@ -96,13 +99,15 @@ deployed source; source and installed hashes matched after deployment.
   `RUNNING`, `human_required=false`, no dead active step, no accepted-unclaimed
   current request, and `preserve_live_no_duplicate`. It also retains the
   historical incident and escalates the unreconciled external publication
-  handoff instead of erasing the repair churn.
+  handoff instead of erasing the repair churn. The canonical publication step
+  then appended incident event 457 (`github_sync.issue_published`) and opened
+  GitHub issue 214 for `problem-3bc7a5eaa27e`.
 
 ## Remaining operational caveat
 
-The fixes are pushed on `origin/editible-install`, but the incident ledger still
-has no `github_sync.publish` event or linked external issue for persistent
-problem `problem-3bc7a5eaa27e`; the post-fix auditor correctly reports
-`github_sync_publish_due`. That bookkeeping/publication gap does not block the
-live recovered chain, and no typed human gate is active. It must be reconciled
-through the canonical publication path, not by manually closing the incident.
+The fixes are pushed on `origin/editible-install` and the external publication
+step completed, but problem `problem-3bc7a5eaa27e` intentionally remains open:
+its projection has not yet linked the fix commits or appended terminal repair
+verification. This does not block the live recovered chain, and no typed human
+gate is active. The open issue and incident must be closed only after canonical
+verification reconciles those commits; they must not be manually marked fixed.
