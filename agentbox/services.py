@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ _TMUX_PANE_FORMAT = (
     "#{pane_id}\t#{pane_pid}\t#{pane_dead}\t"
     "#{pane_current_command}\t#{pane_start_command}"
 )
+_TMUX_RESTART_GRACE_SECONDS = 1.0
 
 
 def services_available() -> bool:
@@ -238,40 +240,68 @@ def _restart_discord_resident_tmux(
 
     old_pane_pid = int(safety["pane_pid"])
     pane_id = str(safety["pane_id"])
-    result = subprocess.run(
-        ["tmux", "respawn-pane", "-k", "-t", pane_id],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    helper_argv = [
+        sys.executable,
+        "-m",
+        "agentbox.tmux_restart_worker",
+        "--pane-id",
+        pane_id,
+        "--old-pane-pid",
+        str(old_pane_pid),
+        "--notification-id",
+        reservation.notification_id,
+        "--notification-path",
+        str(reservation.path),
+        "--service-name",
+        service_name,
+        "--unit",
+        unit,
+        "--grace-seconds",
+        str(_TMUX_RESTART_GRACE_SECONDS),
+    ]
+    try:
+        helper = subprocess.Popen(
+            helper_argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+            cwd="/",
+        )
+    except OSError as exc:
         payload = {
             "ok": False,
             "service": service_name,
             "unit": unit,
             "backend": "tmux",
-            "error": "failed to respawn the guarded Discord resident tmux pane",
-            "error_output": result.stderr,
+            "error": "failed to launch the detached Discord resident restart worker",
+            "error_output": exc.__class__.__name__,
             "safety": safety,
         }
         _finalize_reset_notification(payload, reservation)
         return payload
 
-    health = _wait_for_tmux_resident(pane_id, old_pane_pid=old_pane_pid)
-    payload = {
-        "ok": health["ok"],
+    return {
+        "ok": True,
+        "accepted": True,
         "service": service_name,
         "unit": unit,
         "backend": "tmux",
-        "output": result.stdout,
-        "error_output": result.stderr,
+        "restart_status": "scheduled",
+        "helper_pid": helper.pid,
         "safety": safety,
-        "health": health,
+        "notification": {
+            "ok": True,
+            "notification_id": reservation.notification_id,
+            "restart": {"status": "prepared"},
+            "delivery": {"status": "prepared"},
+        },
+        "detail": (
+            "detached restart worker accepted the request; the replacement resident "
+            "will deliver the durable Discord confirmation after health verification"
+        ),
     }
-    if not health["ok"]:
-        payload["error"] = health["error"]
-    _finalize_reset_notification(payload, reservation)
-    return payload
 
 
 def _finalize_reset_notification(

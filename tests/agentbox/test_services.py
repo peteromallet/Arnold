@@ -70,16 +70,16 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        "agentbox.services._wait_for_tmux_resident",
-        lambda pane_id, *, old_pane_pid: {
-            "ok": True,
-            "pane_id": pane_id,
-            "old_pane_pid": old_pane_pid,
-            "pane_pid": 2000001,
-            "resident_pid": 2000002,
-        },
-    )
+    popen_calls = []
+
+    class _Helper:
+        pid = 2000000
+
+    def fake_popen(argv, **kwargs):
+        popen_calls.append((argv, kwargs))
+        return _Helper()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
 
     result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
 
@@ -88,8 +88,9 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
     assert result["safety"]["stop_scope"] == (
         "canonical Discord resident tmux pane only"
     )
-    assert result["health"]["resident_pid"] == 2000002
-    assert result["notification"]["delivery"]["status"] == "pending"
+    assert result["restart_status"] == "scheduled"
+    assert result["helper_pid"] == 2000000
+    assert result["notification"]["delivery"]["status"] == "prepared"
     assert calls[0][:5] == [
         "tmux",
         "list-panes",
@@ -97,7 +98,49 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
         "=megaplan-resident-discord",
         "-F",
     ]
-    assert calls[1] == ["tmux", "respawn-pane", "-k", "-t", "%39"]
+    assert len(calls) == 1
+    argv, kwargs = popen_calls[0]
+    assert argv[:3] == [sys.executable, "-m", "agentbox.tmux_restart_worker"]
+    assert argv[argv.index("--pane-id") + 1] == "%39"
+    assert argv[argv.index("--old-pane-pid") + 1] == "1989952"
+    assert kwargs["start_new_session"] is True
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.DEVNULL
+
+
+def test_resident_tmux_restart_marks_notification_failed_when_worker_cannot_launch(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: None if name == "systemctl" else f"/usr/bin/{name}",
+    )
+
+    def fake_run(argv, **kwargs):
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=(
+                "%39\t1989952\t0\tbash\t"
+                "python -m arnold_pipelines.megaplan resident discord --mode dev\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cannot fork")),
+    )
+
+    result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
+
+    assert result["ok"] is False
+    state = list_reset_notifications(notification_root=tmp_path)
+    assert state["delivery_status_counts"] == {"restart_failed": 1}
 
 
 def test_resident_tmux_restart_refuses_unrecognized_pane_command(monkeypatch) -> None:
