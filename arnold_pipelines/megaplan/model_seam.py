@@ -78,6 +78,9 @@ from arnold.pipeline.model_seam import (
 )
 
 from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.schema_projection import (
+    closed_object_schema,
+)
 from arnold_pipelines.megaplan.orchestration.plan_structure import (
     PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
     validate_plan_structure,
@@ -89,30 +92,6 @@ from arnold_pipelines.megaplan.step_contracts import (
     build_compatibility_mode_by_step,
     contract_to_invocation,
 )
-
-_GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS = frozenset(
-    {
-        "recommendation",
-        "rationale",
-        "signals_assessment",
-        "warnings",
-        "settled_decisions",
-        "flag_resolutions",
-        "accepted_tradeoffs",
-        "north_star_actions",
-        "tiebreaker_question",
-        "tiebreaker_flag_ids",
-        "tiebreaker_fuzzy_group_id",
-    }
-)
-_gate_schema_properties = SCHEMAS["gate.json"].get("properties")
-if not isinstance(_gate_schema_properties, Mapping):
-    raise RuntimeError("gate.json schema must declare top-level properties")
-if _GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS != frozenset(_gate_schema_properties):
-    raise RuntimeError(
-        "Gate capture normalizer field allowlist drifted from gate.json schema properties"
-    )
-
 
 # --------------------------------------------------------------------------- #
 # Megaplan render helpers
@@ -350,6 +329,11 @@ def _audit_capture_payload(
         schema = _capture_schema_for_invocation(invocation)
     normalized_payload: Mapping[str, Any] = payload
     if isinstance(schema, Mapping):
+        if step == "gate":
+            # Match the recursively closed object contract materialized in
+            # .megaplan/schemas/gate.json. This prevents nested unknown fields
+            # from being accepted locally but rejected by the executing worker.
+            schema = closed_object_schema(schema)
         normalized_payload = _normalize_native_capture_payload(invocation, dict(payload))
         result = validate_payload_against_schema(normalized_payload, schema)
     else:
@@ -724,73 +708,11 @@ def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_gate_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    normalized = {
-        key: value
-        for key, value in payload.items()
-        if key in _GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS
-    }
-
-    resolutions = [
-        item
-        for item in normalized.get("flag_resolutions", [])
-        if isinstance(item, Mapping)
-    ]
-    accept_tradeoff_resolutions = [
-        item for item in resolutions if item.get("action") == "accept_tradeoff"
-    ]
-
-    tradeoffs: list[Any] = []
-    for index, item in enumerate(_as_sequence(normalized.get("accepted_tradeoffs"))):
-        resolution = (
-            accept_tradeoff_resolutions[index]
-            if index < len(accept_tradeoff_resolutions)
-            else {}
-        )
-        if isinstance(item, str):
-            text = item.strip()
-            if not text:
-                continue
-            tradeoffs.append(
-                {
-                    "flag_id": _optional_str(resolution.get("flag_id")) or f"accepted-tradeoff-{index + 1}",
-                    "concern": text,
-                    "subsystem": "",
-                    "rationale": _optional_str(resolution.get("rationale")) or "",
-                }
-            )
-            continue
-        if not isinstance(item, Mapping):
-            tradeoffs.append(item)
-            continue
-        tradeoff = dict(item)
-        tradeoff_text = _optional_str(tradeoff.pop("tradeoff", None))
-        if "flag_id" not in tradeoff:
-            tradeoff["flag_id"] = _optional_str(resolution.get("flag_id")) or f"accepted-tradeoff-{index + 1}"
-        if "concern" not in tradeoff:
-            tradeoff["concern"] = (
-                _optional_str(tradeoff.get("concern_brief"))
-                or tradeoff_text
-                or _optional_str(resolution.get("rationale"))
-                or ""
-            )
-        if "subsystem" not in tradeoff:
-            tradeoff["subsystem"] = ""
-        if "rationale" not in tradeoff:
-            tradeoff["rationale"] = (
-                _optional_str(tradeoff.get("rationale_brief"))
-                or _optional_str(resolution.get("rationale"))
-                or tradeoff_text
-                or ""
-            )
-        tradeoffs.append(
-            {
-                key: tradeoff[key]
-                for key in ("flag_id", "concern", "subsystem", "rationale")
-                if key in tradeoff
-            }
-        )
-    normalized["accepted_tradeoffs"] = tradeoffs
-    return normalized
+    # Keep capture lossless: validation must see both missing required fields
+    # and undeclared fields. Projecting before validation would turn a schema
+    # mismatch into silent data loss. Schema-owned projection is reserved for
+    # already-validated persistence boundaries.
+    return dict(payload)
 
 
 def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:

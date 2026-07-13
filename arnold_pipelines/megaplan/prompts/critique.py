@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_ACTION_TYPES,
     SEVERITY_BLOCKING,
+    read_carried_north_star_actions,
 )
 from arnold_pipelines.megaplan.types import PlanState
 
@@ -308,25 +309,7 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
 
     # Read carried North Star actions from gate_carry.json (normalized,
     # carried form). Fall back to gate.json when no carry file exists.
-    north_star_actions: list[dict[str, Any]] = []
-    gate_carry_path = plan_dir / "gate_carry.json"
-    if gate_carry_path.exists():
-        try:
-            carry = read_json(gate_carry_path)
-            if isinstance(carry, dict):
-                raw_actions = carry.get("north_star_actions")
-                if isinstance(raw_actions, list):
-                    north_star_actions = [
-                        a for a in raw_actions if isinstance(a, dict)
-                    ]
-        except Exception:
-            pass
-    if not north_star_actions:
-        ns_from_gate = gate.get("north_star_actions")
-        if isinstance(ns_from_gate, list):
-            north_star_actions = [
-                a for a in ns_from_gate if isinstance(a, dict)
-            ]
+    north_star_actions = read_carried_north_star_actions(plan_dir)
     north_star_block = _build_north_star_actions_block(north_star_actions)
 
     return textwrap.dedent(
