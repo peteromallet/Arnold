@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
 import tarfile
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,6 +36,8 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _remote_chain_workspace_path,
     _resolve_resume_workspace,
     _run_cloud_chains,
+    _run_chain_wrapper,
+    _run_epic_chain_wrapper,
     _run_preflight,
     _run_sync_megaplan,
     _run_launch_epic_wrapper,
@@ -42,6 +46,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _tmux_chain_launch_command,
     _tmux_chain_stop_for_fresh_command,
     _validate_chain_spec_location,
+    _verify_configured_megaplan_ref_advertised,
     build_cloud_parser,
     cloud_chain_status_payload,
     run_cloud_cli,
@@ -141,7 +146,7 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
         identity_digest="abc123",
     )
 
-    marker_json = re.search(r"printf %s '([^']+)'", command)
+    marker_json = re.search(r"payload = json.loads\('([^']+)'\)", command)
 
     assert marker_json is not None
     marker = json.loads(marker_json.group(1))
@@ -329,10 +334,7 @@ class _LaunchEpicProvider:
             }
             return subprocess.CompletedProcess([], 0, json.dumps(result) + "\n", "")
         if "tmux new-session" in command or "session already running for this chain" in command:
-            marker_match = re.search(r"printf %s ('(?:[^']|'\"'\"')*') > ([^;]+);", command)
-            assert marker_match, command
-            marker_payload = json.loads(shlex_split_one(marker_match.group(1)))
-            marker_path = shlex_split_one(marker_match.group(2))
+            marker_path, marker_payload = _parse_marker_write(command)
             self.markers[marker_path] = marker_payload
             return subprocess.CompletedProcess([], 0, "started session\n", "")
         return subprocess.CompletedProcess([], 0, "", "")
@@ -344,6 +346,16 @@ def shlex_split_one(value: str) -> str:
     parsed = shlex.split(value)
     assert len(parsed) == 1
     return parsed[0]
+
+
+def _parse_marker_write(command: str) -> tuple[str, dict]:
+    marker_match = re.search(
+        r"path = pathlib\.Path\((?P<path>'(?:\\'|[^'])*')\)\s+payload = json\.loads\((?P<payload>'(?:\\'|[^'])*')\)",
+        command,
+        re.DOTALL,
+    )
+    assert marker_match, command
+    return ast.literal_eval(marker_match.group("path")), json.loads(ast.literal_eval(marker_match.group("payload")))
 
 
 def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
@@ -784,6 +796,363 @@ def test_cloud_preflight_fails_on_stale_remote_import(
     assert rc == 1
     assert payload["success"] is False
     assert "missing modern arnold_pipelines.megaplan import" in payload["errors"]
+
+
+def test_cloud_preflight_reports_engine_ref_check_when_remote_checks_run(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "app"
+    spec_dir = project / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    (spec_dir / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    (spec_dir / "briefs").mkdir()
+    (spec_dir / "briefs" / "m1.md").write_text("idea\n", encoding="utf-8")
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._verify_configured_megaplan_ref_advertised",
+        lambda *_a, **_k: {
+            "status": "ok",
+            "repo": "https://github.com/example/arnold.git",
+            "requested_ref": "editible-install",
+            "advertised_ref": "refs/heads/editible-install",
+            "commit": "abc123",
+            "ref_kind": "branch",
+        },
+    )
+
+    class PreflightProvider:
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            if "MEGAPLAN_IMPORT_CHECK" in command:
+                payload = {
+                    "checks": {
+                        "arnold_pipelines.megaplan": True,
+                        "arnold_pipelines.megaplan.cli": True,
+                        "arnold.pipelines.megaplan": False,
+                    },
+                    "errors": [],
+                }
+                return subprocess.CompletedProcess([], 0, json.dumps(payload) + "\n", "")
+            return subprocess.CompletedProcess([], 0, "\n", "")
+
+    rc = _run_preflight(
+        project,
+        argparse.Namespace(
+            spec=str(spec_path),
+            skip_remote=False,
+            allow_loose_chain_spec=False,
+            cloud_yaml=str(project / "cloud.yaml"),
+        ),
+        replace(
+            _cloud_spec(),
+            megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="editible-install"),
+        ),
+        PreflightProvider(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["remote"]["engine_ref_check"]["advertised_ref"] == "refs/heads/editible-install"
+
+
+def test_verify_configured_megaplan_ref_accepts_full_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._ls_remote_refs",
+        lambda repo, refs: subprocess.CompletedProcess(
+            [],
+            0,
+            "abc123\trefs/heads/editible-install\n",
+            "",
+        ),
+    )
+
+    result = _verify_configured_megaplan_ref_advertised(
+        replace(
+            _cloud_spec(),
+            megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="refs/heads/editible-install"),
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert result["advertised_ref"] == "refs/heads/editible-install"
+    assert result["ref_kind"] == "full_ref"
+
+
+def test_verify_configured_megaplan_ref_accepts_fetchable_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    commit = "a" * 40
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._probe_remote_commit",
+        lambda repo, requested: subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    result = _verify_configured_megaplan_ref_advertised(
+        replace(
+            _cloud_spec(),
+            megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref=commit),
+        )
+    )
+
+    assert result == {
+        "status": "ok",
+        "repo": "https://github.com/example/arnold.git",
+        "requested_ref": commit,
+        "commit": commit,
+        "ref_kind": "commit",
+        "verification": "fetch",
+    }
+
+
+def test_verify_configured_megaplan_ref_rejects_unfetchable_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    commit = "b" * 40
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._probe_remote_commit",
+        lambda repo, requested: subprocess.CompletedProcess([], 128, "", "fatal: not our ref"),
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        _verify_configured_megaplan_ref_advertised(
+            replace(
+                _cloud_spec(),
+                megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref=commit),
+            )
+        )
+
+    assert excinfo.value.code == "engine_commit_unfetchable"
+    assert excinfo.value.extra["engine_ref_check"]["reason"] == "raw_sha_unfetchable"
+
+
+def test_verify_configured_megaplan_ref_rejects_ambiguous_short_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._ls_remote_refs",
+        lambda repo, refs: subprocess.CompletedProcess(
+            [],
+            0,
+            "abc123\trefs/heads/editible-install\n"
+            "def456\trefs/tags/editible-install\n",
+            "",
+        ),
+    )
+
+    spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="editible-install")
+    )
+    with pytest.raises(CliError) as excinfo:
+        _verify_configured_megaplan_ref_advertised(spec)
+
+    assert excinfo.value.code == "engine_ref_ambiguous"
+
+
+class _RefFailureProvider:
+    def __init__(self) -> None:
+        self.uploads: list[tuple[Path, str]] = []
+        self.markers: dict[str, dict] = {}
+
+    def upload_file(self, src: Path, dest: str) -> None:
+        self.uploads.append((src, dest))
+
+    def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        if "MEGAPLAN_MARKER_WRITE" in command:
+            marker_path, marker_payload = _parse_marker_write(command)
+            self.markers[marker_path] = marker_payload
+            return subprocess.CompletedProcess([], 0, "", "")
+        if "MEGAPLAN_PRELAUNCH_MARKER_GUARD" in command:
+            return subprocess.CompletedProcess(
+                [],
+                0,
+                json.dumps(
+                    {
+                        "session_alive": False,
+                        "marker_present": False,
+                        "identity_matches": False,
+                        "marker_read_error": "",
+                    }
+                )
+                + "\n",
+                "",
+            )
+        raise AssertionError(command)
+
+
+def test_cloud_chain_persists_failed_launch_outcome_when_engine_ref_is_not_advertised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "app"
+    spec_dir = project / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    (spec_dir / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    (spec_dir / "briefs").mkdir()
+    (spec_dir / "briefs" / "m1.md").write_text("idea\n", encoding="utf-8")
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._ensure_repo_checkout", lambda *_a, **_k: None)
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._run_remote_dependency_check", lambda *_a, **_k: [])
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli.seed_codex_oauth", lambda *_a, **_k: {"status": "skipped"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._remote_repo_head", lambda *_a, **_k: {"branch": "main", "head": "abc123"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._relay_output", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._verify_configured_megaplan_ref_advertised",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CliError(
+                "engine_ref_not_advertised",
+                "Configured cloud megaplan.ref 'editible-install' is not advertised by https://github.com/example/arnold.git.",
+                extra={
+                    "engine_ref_check": {
+                        "status": "failed",
+                        "repo": "https://github.com/example/arnold.git",
+                        "requested_ref": "editible-install",
+                    }
+                },
+            )
+        ),
+    )
+
+    provider = _RefFailureProvider()
+    cloud_spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="editible-install")
+    )
+    with pytest.raises(CliError) as excinfo:
+        _run_chain_wrapper(
+            project,
+            argparse.Namespace(
+                spec=str(spec_path),
+                idea_dir=None,
+                fresh=False,
+                no_git_refresh=False,
+                no_editable_install_sync=True,
+                force_clean_editable_install=False,
+                allow_loose_chain_spec=False,
+                allow_template_placeholders=False,
+                allow_human_gates=False,
+                cloud_yaml=str(project / "cloud.yaml"),
+                _canonicalized_epic=True,
+                _generated_canonical_files=[],
+            ),
+            cloud_spec,
+            provider,
+        )
+
+    assert excinfo.value.code == "engine_ref_not_advertised"
+    assert provider.markers
+    marker = next(iter(provider.markers.values()))
+    assert marker["remote_spec"].endswith("/.megaplan/initiatives/demo/chain.yaml")
+    assert marker["launch_outcome"]["status"] == "failed"
+    assert marker["launch_outcome"]["code"] == "engine_ref_not_advertised"
+    assert "not advertised" in marker["launch_outcome"]["detail"]
+
+
+def test_cloud_epic_chain_persists_failed_launch_outcome_when_engine_ref_is_not_advertised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "app"
+    child_dir = project / ".megaplan" / "initiatives" / "child"
+    parent_dir = project / ".megaplan" / "initiatives" / "demo"
+    child_dir.mkdir(parents=True)
+    parent_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    (child_dir / "NORTHSTAR.md").write_text("child north star\n", encoding="utf-8")
+    (child_dir / "briefs").mkdir()
+    (child_dir / "briefs" / "m1.md").write_text("idea\n", encoding="utf-8")
+    child_spec = child_dir / "chain.yaml"
+    child_spec.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/child/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+    (parent_dir / "NORTHSTAR.md").write_text("parent north star\n", encoding="utf-8")
+    epic_spec = parent_dir / "epic-chain.yaml"
+    epic_spec.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "epics:\n"
+        "  - id: child\n"
+        "    spec: ../child/chain.yaml\n"
+        "on_failure:\n"
+        "  abort: stop_epic_chain\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._ensure_repo_checkout", lambda *_a, **_k: None)
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli.seed_codex_oauth", lambda *_a, **_k: {"status": "skipped"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._relay_output", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.cli._verify_configured_megaplan_ref_advertised",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CliError(
+                "engine_ref_not_advertised",
+                "Configured cloud megaplan.ref 'editible-install' is not advertised by https://github.com/example/arnold.git.",
+                extra={
+                    "engine_ref_check": {
+                        "status": "failed",
+                        "repo": "https://github.com/example/arnold.git",
+                        "requested_ref": "editible-install",
+                    }
+                },
+            )
+        ),
+    )
+
+    class EpicRefFailureProvider(_RefFailureProvider):
+        def upload_archive(self, src: Path, dest: str) -> None:
+            self.uploads.append((src, dest))
+
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            if command.startswith("rm -rf "):
+                return subprocess.CompletedProcess([], 0, "", "")
+            return super().ssh_exec(command)
+
+    provider = EpicRefFailureProvider()
+    cloud_spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(repo="https://github.com/example/arnold.git", ref="editible-install"),
+    )
+    with pytest.raises(CliError) as excinfo:
+        _run_epic_chain_wrapper(
+            project,
+            argparse.Namespace(
+                spec=str(epic_spec),
+                fresh=False,
+                no_editable_install_sync=True,
+                one=False,
+                cloud_yaml=str(project / "cloud.yaml"),
+            ),
+            cloud_spec,
+            provider,
+        )
+
+    assert excinfo.value.code == "engine_ref_not_advertised"
+    assert provider.markers
+    marker = next(iter(provider.markers.values()))
+    assert marker["run_kind"] == "epic_chain"
+    assert marker["launch_outcome"]["status"] == "failed"
+    assert marker["launch_outcome"]["code"] == "engine_ref_not_advertised"
 
 
 def test_sync_megaplan_uses_derived_chain_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
