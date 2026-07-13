@@ -476,6 +476,33 @@ def test_trigger_rejects_stale_marker_plan_reference(tmp_path: Path) -> None:
     assert "stale_marker_plan_ref" in stale[0]["reason"]
 
 
+def test_trigger_terminalizes_request_after_chain_advances_to_new_plan(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    queued = _enqueue(marker_dir, workspace)
+    marker_path = marker_dir / "demo.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["plan_name"] = "m4"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    _write_chain_state_for_spec(workspace, spec, current_plan_name="m4")
+
+    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=True)
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "repair-args.json").exists()
+    stale = [
+        item
+        for item in _decisions(marker_dir)
+        if item["decision"] == "stale"
+        and item["request_id"] == queued["request"]["request_id"]
+    ]
+    assert len(stale) == 1
+    assert "target advanced from m3 to m4" in stale[0]["reason"]
+
+
 def test_trigger_rejects_superseded_request_for_live_sibling(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"

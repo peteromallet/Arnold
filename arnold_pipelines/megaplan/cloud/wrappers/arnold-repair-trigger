@@ -481,6 +481,22 @@ def _classify_request(
     target_plan = dict(target.get("plan_state") or {}) if isinstance(target.get("plan_state"), Mapping) else {}
     resume_cursor = target_plan.get("resume_cursor") if isinstance(target_plan.get("resume_cursor"), Mapping) else {}
     signature = record.get("problem_signature") if isinstance(record.get("problem_signature"), Mapping) else {}
+    request_target = record.get("target") if isinstance(record.get("target"), Mapping) else {}
+    requested_plan_name = str(
+        signature.get("milestone_or_plan") or request_target.get("plan_name") or ""
+    )
+    resolved_plan_name = str(current_refs.get("current_plan_name") or "")
+    if requested_plan_name and resolved_plan_name and requested_plan_name != resolved_plan_name:
+        return {
+            "decision": "stale",
+            "reason": (
+                "repair request target advanced from "
+                f"{requested_plan_name} to {resolved_plan_name}"
+            ),
+            "dispatch_decision": "terminal",
+            "dispatch_intent": "queue_only",
+            "custody_bucket": "",
+        }
     current_plan_name = str(
         current_refs.get("current_plan_name")
         or current_refs.get("marker_plan_name")
