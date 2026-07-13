@@ -2823,7 +2823,7 @@ def durable_repair_active(custody: Mapping[str, Any] | None) -> bool:
         attempt = _as_mapping(value)
         if attempt.get("terminal") is not False:
             continue
-        if not _as_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
+        if not _as_scalar_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
             continue
         request_id = _as_text(attempt.get("request_id"))
         if request_id and request_id in active_request_ids:
@@ -2870,7 +2870,10 @@ def _attempts_from_snapshot(
         attempt_id = _as_scalar_text(record.get("attempt_id"))
         if not attempt_id:
             continue
-        if not _problem_signature_matches_fingerprint(record.get("problem_signature"), fingerprint):
+        record_request_id = _as_scalar_text(record.get("request_id"))
+        if not record_request_id and not _problem_signature_matches_fingerprint(
+            record.get("problem_signature"), fingerprint
+        ):
             continue
         attempts.append(
             _build_attempt_record(
@@ -2880,7 +2883,7 @@ def _attempts_from_snapshot(
                 path=str(path),
                 blocker_id=blocker_id,
                 fingerprint=fingerprint,
-                request_id=_as_scalar_text(record.get("request_id")),
+                request_id=record_request_id,
                 state=_attempt_state_from_snapshot(payload, record),
                 outcome=snapshot_outcome,
                 recorded_at=_repair_data_recorded_at(payload),
@@ -2907,8 +2910,6 @@ def _attempts_from_snapshot(
                 else None
             )
         )
-        if not _problem_signature_matches_fingerprint(snapshot_signature, fingerprint):
-            return attempts
         payload_request_id = _as_scalar_text(
             payload.get("request_id")
         ) or _as_scalar_text(
@@ -2916,6 +2917,10 @@ def _attempts_from_snapshot(
             if isinstance(payload.get("current_recurrence"), Mapping)
             else None
         )
+        if not payload_request_id and not _problem_signature_matches_fingerprint(
+            snapshot_signature, fingerprint
+        ):
+            return attempts
         attempts.append(
             _build_attempt_record(
                 attempt_id=current_attempt_id,
@@ -3090,7 +3095,7 @@ def _problem_signature_matches_fingerprint(
 ) -> bool:
     signature = _as_mapping(problem_signature)
     if not signature:
-        return True
+        return False
     current = _as_mapping(fingerprint)
     if not current:
         return False
@@ -3101,12 +3106,15 @@ def _problem_signature_matches_fingerprint(
         ("milestone_or_plan", "milestone_or_plan"),
         ("blocked_task_id", "blocked_task_id"),
     )
+    compared = False
     for sig_key, current_key in comparable:
         sig_value = _as_text(signature.get(sig_key))
         current_value = _as_text(current.get(current_key))
+        if sig_value and current_value:
+            compared = True
         if sig_value and current_value and sig_value != current_value:
             return False
-    return True
+    return compared
 
 
 def _attempt_state_from_snapshot(
@@ -3216,10 +3224,7 @@ def _has_active_repair(
     process_evidence: Mapping[str, Any] | None,
     custody: Mapping[str, Any],
 ) -> bool:
-    attempts = _as_list(custody.get("attempts"))
-    if any(not bool(_as_mapping(item).get("terminal")) for item in attempts if isinstance(item, Mapping)):
-        return True
-    if _as_text(custody.get("custody_bucket")) == CUSTODY_BUCKET_REPAIRING:
+    if durable_repair_active(custody):
         return True
 
     lock_status = _as_text(getattr(lock_evidence, "status", ""))
