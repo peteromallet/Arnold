@@ -9,6 +9,7 @@ import pytest
 from agentbox.reset_notifications import (
     RESET_FALLBACK_CONVERSATION_ENV,
     list_reset_notifications,
+    mark_reset_failed,
     mark_reset_succeeded,
     prepare_reset_notification,
     reconcile_prepared_reset_notifications,
@@ -46,7 +47,38 @@ class _Outbound:
         message.metadata["discord_message_ids"] = [f"reply-{len(self.sent)}"]
 
 
-def test_reset_confirmation_preserves_discord_provenance_and_is_not_duplicated(
+class _IdempotentOutbound:
+    def __init__(self) -> None:
+        self.attempts = []
+        self.visible_by_nonce = {}
+        self.drop_first_response = True
+
+    async def send(self, message) -> None:
+        self.attempts.append(message)
+        nonce = message.metadata["discord_nonce"]
+        message_id = self.visible_by_nonce.setdefault(
+            nonce, f"reply-{len(self.visible_by_nonce) + 1}"
+        )
+        message.metadata["discord_message_ids"] = [message_id]
+        if self.drop_first_response:
+            self.drop_first_response = False
+            raise ConnectionError("response lost after provider acceptance")
+
+
+class _BlockingOutbound:
+    def __init__(self) -> None:
+        self.sent = []
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send(self, message) -> None:
+        self.sent.append(message)
+        self.entered.set()
+        await self.release.wait()
+        message.metadata["discord_message_ids"] = ["reply-concurrent"]
+
+
+def test_restart_delivers_exactly_one_terminal_reply_across_repeated_sweeps(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
@@ -70,20 +102,20 @@ def test_reset_confirmation_preserves_discord_provenance_and_is_not_duplicated(
         )
     )
 
-    assert first.delivered == 2
+    assert first.delivered == 1
     assert second.delivered == 0
-    assert len(outbound.sent) == 2
-    accepted, message = outbound.sent
-    assert accepted.content.startswith("Discord resident restart accepted")
-    assert accepted.metadata["resident_reset_notification_phase"] == "accepted"
+    assert len(outbound.sent) == 1
+    message = outbound.sent[0]
     assert message.conversation_key == "discord:dm:301463647895683072"
     assert message.metadata["discord_reply_to_message_id"] == "1525445255711952977"
     assert message.metadata["resident_reset_notification"] is True
-    assert message.content == "Discord resident reset complete."
+    assert message.metadata["resident_reset_notification_phase"] == "terminal"
+    assert message.metadata["resident_reset_notification_outcome"] == "succeeded"
+    assert message.content == "Discord resident restart complete."
     state = list_reset_notifications(notification_root=tmp_path)
     assert state["delivery_status_counts"] == {"delivered": 1}
-    assert state["records"][0]["acknowledgement"]["discord_message_ids"] == ["reply-1"]
-    assert state["records"][0]["delivery"]["discord_message_ids"] == ["reply-2"]
+    assert state["records"][0]["acknowledgement"] == {}
+    assert state["records"][0]["delivery"]["discord_message_ids"] == ["reply-1"]
 
 
 def test_manual_reset_uses_truthful_non_reply_fallback(tmp_path, monkeypatch) -> None:
@@ -98,27 +130,32 @@ def test_manual_reset_uses_truthful_non_reply_fallback(tmp_path, monkeypatch) ->
         sweep_reset_notifications(outbound=outbound, notification_root=tmp_path, now=now)
     )
 
-    assert result.delivered == 2
-    assert outbound.sent[1].conversation_key == "discord:dm:301463647895683072"
-    assert "discord_reply_to_message_id" not in outbound.sent[1].metadata
-    assert "fallback notification" in outbound.sent[1].content
+    assert result.delivered == 1
+    assert len(outbound.sent) == 1
+    assert outbound.sent[0].conversation_key == "discord:dm:301463647895683072"
+    assert "discord_reply_to_message_id" not in outbound.sent[0].metadata
+    assert outbound.sent[0].metadata["resident_reset_notification_phase"] == "terminal"
+    assert "fallback notification" in outbound.sent[0].content
     state = list_reset_notifications(notification_root=tmp_path)["records"][0]
     assert state["provenance_mode"] == "manual_or_non_discord"
+    assert state["acknowledgement"] == {}
     assert state["delivery"]["status"] == "delivered"
 
 
-def test_reset_delivery_retry_persists_state_and_reuses_nonce(tmp_path, monkeypatch) -> None:
+def test_reset_delivery_retry_is_provider_idempotent_with_stable_nonce(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
     first_now = datetime(2026, 7, 11, tzinfo=UTC)
     reservation = prepare_reset_notification(notification_root=tmp_path, now=first_now)
     mark_reset_succeeded(reservation, restart_evidence={"backend": "tmux"}, now=first_now)
-    outbound = _Outbound(fail_once=True)
+    outbound = _IdempotentOutbound()
 
     first = asyncio.run(
         sweep_reset_notifications(outbound=outbound, notification_root=tmp_path, now=first_now)
     )
     retry_record = list_reset_notifications(notification_root=tmp_path)["records"][0]
-    retry = retry_record["acknowledgement"]
+    retry = retry_record["delivery"]
     second = asyncio.run(
         sweep_reset_notifications(
             outbound=outbound,
@@ -132,12 +169,187 @@ def test_reset_delivery_retry_persists_state_and_reuses_nonce(tmp_path, monkeypa
     assert retry["status"] == "retry_pending"
     assert retry["attempt_count"] == 1
     assert "not-persisted" not in retry["last_error"]
-    assert retry_record["delivery"]["status"] == "pending"
-    assert second.delivered == 2
+    assert second.delivered == 1
     assert delivered["status"] == "delivered"
-    assert delivered["attempt_count"] == 1
-    assert outbound.sent[0].metadata["discord_nonce"] == outbound.sent[1].metadata["discord_nonce"]
-    assert outbound.sent[2].metadata["discord_nonce"] != outbound.sent[1].metadata["discord_nonce"]
+    assert delivered["attempt_count"] == 2
+    assert len(outbound.attempts) == 2
+    assert len(outbound.visible_by_nonce) == 1
+    assert (
+        outbound.attempts[0].metadata["discord_nonce"]
+        == outbound.attempts[1].metadata["discord_nonce"]
+    )
+
+
+def test_concurrent_and_repeated_sweeps_issue_one_terminal_send(
+    tmp_path, monkeypatch
+) -> None:
+    async def run_case() -> None:
+        monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
+        now = datetime(2026, 7, 11, tzinfo=UTC)
+        reservation = prepare_reset_notification(notification_root=tmp_path, now=now)
+        mark_reset_succeeded(
+            reservation, restart_evidence={"backend": "tmux"}, now=now
+        )
+        outbound = _BlockingOutbound()
+
+        first_task = asyncio.create_task(
+            sweep_reset_notifications(
+                outbound=outbound, notification_root=tmp_path, now=now
+            )
+        )
+        await outbound.entered.wait()
+        concurrent = await sweep_reset_notifications(
+            outbound=outbound, notification_root=tmp_path, now=now
+        )
+        assert concurrent.delivered == 0
+        assert len(outbound.sent) == 1
+
+        outbound.release.set()
+        first = await first_task
+        repeated = await sweep_reset_notifications(
+            outbound=outbound,
+            notification_root=tmp_path,
+            now=now + timedelta(minutes=1),
+        )
+
+        assert first.delivered == 1
+        assert repeated.delivered == 0
+        assert len(outbound.sent) == 1
+
+    asyncio.run(run_case())
+
+
+def test_legacy_pending_acceptance_is_suppressed_not_delivered(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
+    now = datetime(2026, 7, 11, tzinfo=UTC)
+    reservation = prepare_reset_notification(notification_root=tmp_path, now=now)
+    legacy = json.loads(reservation.path.read_text())
+    legacy["acknowledgement"] = {
+        "transport": "discord",
+        "status": "pending",
+        "attempt_count": 0,
+        "idempotency_key": f"legacy-accepted:{reservation.notification_id}",
+        "discord_nonce": "legacy-accepted-nonce",
+        "content": "Discord resident restart accepted.",
+        "reply_target": dict(legacy["delivery"]["reply_target"]),
+    }
+    reservation.path.write_text(json.dumps(legacy))
+    mark_reset_succeeded(
+        reservation, restart_evidence={"backend": "tmux"}, now=now
+    )
+    outbound = _Outbound()
+
+    result = asyncio.run(
+        sweep_reset_notifications(outbound=outbound, notification_root=tmp_path, now=now)
+    )
+
+    assert result.delivered == 1
+    assert len(outbound.sent) == 1
+    assert outbound.sent[0].metadata["resident_reset_notification_phase"] == "terminal"
+    state = list_reset_notifications(notification_root=tmp_path)["records"][0]
+    assert state["acknowledgement"]["status"] == "suppressed"
+    assert state["delivery"]["status"] == "delivered"
+
+
+def test_failed_restart_delivers_exactly_one_truthful_terminal_outcome(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
+    now = datetime(2026, 7, 11, tzinfo=UTC)
+    reservation = prepare_reset_notification(notification_root=tmp_path, now=now)
+    mark_reset_failed(
+        reservation,
+        restart_evidence={"backend": "tmux", "error": "replacement unhealthy"},
+        now=now,
+    )
+    outbound = _Outbound()
+
+    first = asyncio.run(
+        sweep_reset_notifications(outbound=outbound, notification_root=tmp_path, now=now)
+    )
+    second = asyncio.run(
+        sweep_reset_notifications(
+            outbound=outbound,
+            notification_root=tmp_path,
+            now=now + timedelta(minutes=1),
+        )
+    )
+
+    assert first.delivered == 1
+    assert second.delivered == 0
+    assert len(outbound.sent) == 1
+    message = outbound.sent[0]
+    assert message.metadata["resident_reset_notification_phase"] == "terminal"
+    assert message.metadata["resident_reset_notification_outcome"] == "failed"
+    assert message.content == (
+        "Discord resident restart failed. The replacement process was not verified."
+    )
+
+
+def test_legacy_non_deliverable_failure_is_migrated_to_terminal_delivery(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
+    now = datetime(2026, 7, 11, tzinfo=UTC)
+    reservation = prepare_reset_notification(notification_root=tmp_path, now=now)
+    mark_reset_failed(
+        reservation,
+        restart_evidence={"backend": "systemd", "error": "identity unchanged"},
+        now=now,
+    )
+    legacy = json.loads(reservation.path.read_text())
+    legacy["delivery"]["status"] = "restart_failed"
+    reservation.path.write_text(json.dumps(legacy))
+    outbound = _Outbound()
+
+    result = asyncio.run(
+        sweep_reset_notifications(outbound=outbound, notification_root=tmp_path, now=now)
+    )
+
+    assert result.delivered == 1
+    assert len(outbound.sent) == 1
+    assert outbound.sent[0].metadata["resident_reset_notification_outcome"] == "failed"
+    state = list_reset_notifications(notification_root=tmp_path)["records"][0]
+    assert state["delivery"]["status"] == "delivered"
+    assert any(
+        item["evidence"] == "legacy_terminal_failure_made_deliverable"
+        for item in state["delivery"]["state_history"]
+    )
+
+
+def test_repeated_failure_finalization_does_not_rearm_delivered_outcome(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
+    now = datetime(2026, 7, 11, tzinfo=UTC)
+    reservation = prepare_reset_notification(notification_root=tmp_path, now=now)
+    evidence = {"backend": "systemd", "error": "replacement unhealthy"}
+    mark_reset_failed(reservation, restart_evidence=evidence, now=now)
+    outbound = _Outbound()
+    first = asyncio.run(
+        sweep_reset_notifications(outbound=outbound, notification_root=tmp_path, now=now)
+    )
+
+    mark_reset_failed(
+        reservation,
+        restart_evidence=evidence,
+        now=now + timedelta(seconds=1),
+    )
+    repeated = asyncio.run(
+        sweep_reset_notifications(
+            outbound=outbound,
+            notification_root=tmp_path,
+            now=now + timedelta(minutes=1),
+        )
+    )
+
+    assert first.delivered == 1
+    assert repeated.delivered == 0
+    assert len(outbound.sent) == 1
+    state = list_reset_notifications(notification_root=tmp_path)["records"][0]
+    assert state["delivery"]["status"] == "delivered"
 
 
 def test_prepared_record_reconciles_from_changed_identity_idempotently(
@@ -201,7 +413,7 @@ def test_prepared_record_with_unchanged_identity_fails_safe_and_releases_fence(
     records = list_reset_notifications(notification_root=tmp_path)["records"]
     failed = next(row for row in records if row["notification_id"] != replacement.notification_id)
     assert failed["restart"]["status"] == "failed"
-    assert failed["delivery"]["status"] == "restart_failed"
+    assert failed["delivery"]["status"] == "pending"
 
 
 def test_duplicate_restart_is_fenced_and_initiator_is_diagnostic(
