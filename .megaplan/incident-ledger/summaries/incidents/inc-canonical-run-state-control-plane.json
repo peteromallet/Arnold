@@ -86,7 +86,7 @@
       "session_id": "canonical-run-state-control-plane"
     }
   ],
-  "generated_at": "2026-07-13T15:39:52.183636+00:00",
+  "generated_at": "2026-07-13T16:00:37.024051+00:00",
   "incident_id": "inc-canonical-run-state-control-plane",
   "kind": "incident_summary",
   "latest_actor": "six_hour_auditor",

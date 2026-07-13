@@ -1,6 +1,24 @@
 {
   "integrity": [
     {
+      "actual": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
+      "code": "index_divergence",
+      "expected": "sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c' != 'sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac'",
+      "projection": "incidents",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
+      "actual": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
+      "code": "index_divergence",
+      "expected": "sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac",
+      "message": "problems projection source metadata diverged for digest: 'sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c' != 'sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac'",
+      "projection": "problems",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -22,15 +40,15 @@
       "first_seen_seq": 350,
       "first_seen_ts": "2026-07-11T22:46:01.923651+00:00",
       "fix_commits": [],
-      "last_seen_seq": 452,
-      "last_seen_ts": "2026-07-13T14:58:45.069745+00:00",
+      "last_seen_seq": 456,
+      "last_seen_ts": "2026-07-13T16:05:16.940142+00:00",
       "linked_incident_ids": [
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "stale active step plan c contract reality state executed phase review pid not live",
-      "occurrence_count": 43,
-      "owner_actor": "watchdog",
+      "occurrence_count": 45,
+      "owner_actor": "six_hour_auditor",
       "problem_id": "problem-3bc7a5eaa27e",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -273,10 +291,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
-    "event_count": 454,
-    "journal_line_count": 454,
-    "last_seq": 454,
+    "digest": "sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac",
+    "event_count": 456,
+    "journal_line_count": 456,
+    "last_seq": 456,
     "malformed_line_count": 0
   }
 }

@@ -10243,9 +10243,193 @@
             "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
           },
           "seq": 453
+        },
+        {
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 4x in 6h (12917->17270 bytes)"
+            ],
+            "hypothesis": "ESCALATE\n\nPipeline friction map: watchdog repeatedly detected the same dead review worker; immediate repair re-dispatched without convergence; meta-repair eventually produced a real `ESCALATE` verdict and retriggered repair, but commit custody rejected its uncommitted changes; the auditor now correctly identifies a missing GitHub publication handoff.\n\nPrimary ledger evidence:\n\n- `problem-3bc7a5eaa27e` remains `open`, with 43 occurrences from July 11\u201313 and no recorded fix commits.\n- The incident contains 24 repair runs, including 19 `repair_exhausted` outcomes, yet still expects `repair_attempt.verification`.\n- The incident audit instead expects `github_sync.publish` and explicitly reports `github_sync_publish_due`; no publication attempt exists.\n- Ledger integrity also reports two findings at `error` severity.\n- The session is not currently deadlocked: chain state names `s2-contract-foundation-and-20260713-1544`, while its live gate heartbeat reports attempt 4 and a live worker. Log activity continues after the structural-output failure at L4750.\n- Historical repair churn must not override that live progress: `between_milestone_cycling=false`, no stale replay exists, and the original `c1-contract-reality-20260711-1433` plan is `done`.\n\nHighest-leverage action: publish or update the GitHub issue for `problem-3bc7a5eaa27e`, then append the corresponding `github_sync.publish` ledger event. Reconcile the problem against commits `25b8181395e2`, `52c764ce45fb`, and `6e6c3234014b`, recording whether they resolve the signature. Do not interrupt the live S2 worker or clear current chain state.",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "layer": "immediate_repair",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_publish_due",
+                "layer": "github_sync",
+                "message": "The persistent problem meets the GitHub sync threshold but no publication attempt was observed.",
+                "recommendation": "github_sync.publish",
+                "severity": "warn",
+                "status": "warn"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "github_sync.publish"
+          },
+          "seq": 455
+        },
+        {
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 4x in 6h (12917->17270 bytes)"
+            ],
+            "hypothesis": "ESCALATE\n\nPipeline friction map: watchdog repeatedly detected the same dead review worker; immediate repair re-dispatched without convergence; meta-repair eventually produced a real `ESCALATE` verdict and retriggered repair, but commit custody rejected its uncommitted changes; the auditor now correctly identifies a missing GitHub publication handoff.\n\nPrimary ledger evidence:\n\n- `problem-3bc7a5eaa27e` remains `open`, with 43 occurrences from July 11\u201313 and no recorded fix commits.\n- The incident contains 24 repair runs, including 19 `repair_exhausted` outcomes, yet still expects `repair_attempt.verification`.\n- The incident audit instead expects `github_sync.publish` and explicitly reports `github_sync_publish_due`; no publication attempt exists.\n- Ledger integrity also reports two findings at `error` severity.\n- The session is not currently deadlocked: chain state names `s2-contract-foundation-and-20260713-1544`, while its live gate heartbeat reports attempt 4 and a live worker. Log activity continues after the structural-output failure at L4750.\n- Historical repair churn must not override that live progress: `between_milestone_cycling=false`, no stale replay exists, and the original `c1-contract-reality-20260711-1433` plan is `done`.\n\nHighest-leverage action: publish or update the GitHub issue for `problem-3bc7a5eaa27e`, then append the corresponding `github_sync.publish` ledger event. Reconcile the problem against commits `25b8181395e2`, `52c764ce45fb`, and `6e6c3234014b`, recording whether they resolve the signature. Do not interrupt the live S2 worker or clear current chain state.",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "layer": "immediate_repair",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_publish_due",
+                "layer": "github_sync",
+                "message": "The persistent problem meets the GitHub sync threshold but no publication attempt was observed.",
+                "recommendation": "github_sync.publish",
+                "severity": "warn",
+                "status": "warn"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "github_sync.publish"
+          },
+          "seq": 456
         }
       ],
-      "event_count": 107,
+      "event_count": 109,
       "events": [
         {
           "actor": "immediate_repair",
@@ -13037,6 +13221,324 @@
           "timestamp": "2026-07-13T15:12:37.116700+00:00",
           "trigger": null,
           "type": "repair_attempt"
+        },
+        {
+          "actor": "six_hour_auditor",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 4x in 6h (12917->17270 bytes)"
+            ],
+            "hypothesis": "ESCALATE\n\nPipeline friction map: watchdog repeatedly detected the same dead review worker; immediate repair re-dispatched without convergence; meta-repair eventually produced a real `ESCALATE` verdict and retriggered repair, but commit custody rejected its uncommitted changes; the auditor now correctly identifies a missing GitHub publication handoff.\n\nPrimary ledger evidence:\n\n- `problem-3bc7a5eaa27e` remains `open`, with 43 occurrences from July 11\u201313 and no recorded fix commits.\n- The incident contains 24 repair runs, including 19 `repair_exhausted` outcomes, yet still expects `repair_attempt.verification`.\n- The incident audit instead expects `github_sync.publish` and explicitly reports `github_sync_publish_due`; no publication attempt exists.\n- Ledger integrity also reports two findings at `error` severity.\n- The session is not currently deadlocked: chain state names `s2-contract-foundation-and-20260713-1544`, while its live gate heartbeat reports attempt 4 and a live worker. Log activity continues after the structural-output failure at L4750.\n- Historical repair churn must not override that live progress: `between_milestone_cycling=false`, no stale replay exists, and the original `c1-contract-reality-20260711-1433` plan is `done`.\n\nHighest-leverage action: publish or update the GitHub issue for `problem-3bc7a5eaa27e`, then append the corresponding `github_sync.publish` ledger event. Reconcile the problem against commits `25b8181395e2`, `52c764ce45fb`, and `6e6c3234014b`, recording whether they resolve the signature. Do not interrupt the live S2 worker or clear current chain state.",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "layer": "immediate_repair",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_publish_due",
+                "layer": "github_sync",
+                "message": "The persistent problem meets the GitHub sync threshold but no publication attempt was observed.",
+                "recommendation": "github_sync.publish",
+                "severity": "warn",
+                "status": "warn"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "github_sync.publish"
+          },
+          "event_id": "sha-1e61db292217",
+          "evidence": [
+            {
+              "kind": "incident_summary",
+              "path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-workflow-boundary-contracts-corrective-20260710.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "problem_summary",
+              "path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/incident-ledger/summaries/problems/problem-3bc7a5eaa27e.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260713T153257Z-audit.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260713T153153Z-audit.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260713T133410Z-audit.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-report.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260713T155828Z.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260713T155514Z.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/928ad038-19fa-4c98-bc35-82b9683c08a1.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "incident_brief",
+              "session_id": "workflow-boundary-contracts-corrective-20260710",
+              "status": "2026-07-13T15:12:37.116700+00:00"
+            }
+          ],
+          "kind": "incident.six_hour_auditor.diagnosis",
+          "next_expected_event": "six_hour_auditor.audit_complete",
+          "outcome": "diagnosed",
+          "parent": [],
+          "problem_id": "problem-3bc7a5eaa27e",
+          "seq": 455,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "Audit found 1 blocking layer(s) for inc-workflow-boundary-contracts-corrective-20260710: github_sync:github_sync_publish_due.",
+          "timestamp": "2026-07-13T16:05:16.936917+00:00",
+          "trigger": null,
+          "type": "six_hour_auditor.diagnosis"
+        },
+        {
+          "actor": "six_hour_auditor",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 4x in 6h (12917->17270 bytes)"
+            ],
+            "hypothesis": "ESCALATE\n\nPipeline friction map: watchdog repeatedly detected the same dead review worker; immediate repair re-dispatched without convergence; meta-repair eventually produced a real `ESCALATE` verdict and retriggered repair, but commit custody rejected its uncommitted changes; the auditor now correctly identifies a missing GitHub publication handoff.\n\nPrimary ledger evidence:\n\n- `problem-3bc7a5eaa27e` remains `open`, with 43 occurrences from July 11\u201313 and no recorded fix commits.\n- The incident contains 24 repair runs, including 19 `repair_exhausted` outcomes, yet still expects `repair_attempt.verification`.\n- The incident audit instead expects `github_sync.publish` and explicitly reports `github_sync_publish_due`; no publication attempt exists.\n- Ledger integrity also reports two findings at `error` severity.\n- The session is not currently deadlocked: chain state names `s2-contract-foundation-and-20260713-1544`, while its live gate heartbeat reports attempt 4 and a live worker. Log activity continues after the structural-output failure at L4750.\n- Historical repair churn must not override that live progress: `between_milestone_cycling=false`, no stale replay exists, and the original `c1-contract-reality-20260711-1433` plan is `done`.\n\nHighest-leverage action: publish or update the GitHub issue for `problem-3bc7a5eaa27e`, then append the corresponding `github_sync.publish` ledger event. Reconcile the problem against commits `25b8181395e2`, `52c764ce45fb`, and `6e6c3234014b`, recording whether they resolve the signature. Do not interrupt the live S2 worker or clear current chain state.",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "layer": "immediate_repair",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_publish_due",
+                "layer": "github_sync",
+                "message": "The persistent problem meets the GitHub sync threshold but no publication attempt was observed.",
+                "recommendation": "github_sync.publish",
+                "severity": "warn",
+                "status": "warn"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "github_sync.publish"
+          },
+          "event_id": "shc-2ce19370e310",
+          "evidence": [
+            {
+              "kind": "incident_summary",
+              "path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-workflow-boundary-contracts-corrective-20260710.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "problem_summary",
+              "path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/incident-ledger/summaries/problems/problem-3bc7a5eaa27e.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260713T153257Z-audit.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260713T153153Z-audit.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260713T133410Z-audit.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-report.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260713T155828Z.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260713T155514Z.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/928ad038-19fa-4c98-bc35-82b9683c08a1.json",
+              "session_id": "workflow-boundary-contracts-corrective-20260710"
+            },
+            {
+              "kind": "incident_brief",
+              "session_id": "workflow-boundary-contracts-corrective-20260710",
+              "status": "2026-07-13T15:12:37.116700+00:00"
+            }
+          ],
+          "kind": "incident.six_hour_auditor.audit_complete",
+          "next_expected_event": "github_sync.publish",
+          "outcome": "escalated",
+          "parent": [
+            "sha-1e61db292217"
+          ],
+          "problem_id": "problem-3bc7a5eaa27e",
+          "seq": 456,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "Audit found 1 blocking layer(s) for inc-workflow-boundary-contracts-corrective-20260710: github_sync:github_sync_publish_due.",
+          "timestamp": "2026-07-13T16:05:16.940142+00:00",
+          "trigger": null,
+          "type": "six_hour_auditor.audit_complete"
         }
       ],
       "evidence_refs": [
@@ -13203,6 +13705,76 @@
         {
           "data": {},
           "kind": "verification_record"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260713T133410Z-audit.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260713T133410Z-audit.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260713T153153Z-audit.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260713T153153Z-audit.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260713T153257Z-audit.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260713T153257Z-audit.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "incident_brief",
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "status": "2026-07-13T15:12:37.116700+00:00"
+        },
+        {
+          "kind": "incident_brief",
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "status": "2026-07-13T15:12:37.116700+00:00"
+        },
+        {
+          "kind": "incident_summary",
+          "path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-workflow-boundary-contracts-corrective-20260710.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "incident_summary",
+          "path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-workflow-boundary-contracts-corrective-20260710.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/928ad038-19fa-4c98-bc35-82b9683c08a1.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/928ad038-19fa-4c98-bc35-82b9683c08a1.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "problem_summary",
+          "path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/incident-ledger/summaries/problems/problem-3bc7a5eaa27e.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "problem_summary",
+          "path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/incident-ledger/summaries/problems/problem-3bc7a5eaa27e.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
         },
         {
           "kind": "watchdog_observation",
@@ -13665,17 +14237,47 @@
           "repair_actor": "immediate_repair",
           "status": "unavailable",
           "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-report.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-report.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260713T155514Z.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260713T155514Z.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260713T155828Z.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260713T155828Z.json",
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
         }
       ],
       "first_seq": 348,
       "first_timestamp": "2026-07-11T15:36:45.288233+00:00",
       "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
-      "last_seq": 454,
-      "last_timestamp": "2026-07-13T15:12:37.116700+00:00",
-      "latest_actor": "immediate_repair",
-      "latest_kind": "incident.repair_attempt",
-      "next_expected_event": "repair_attempt.verification",
-      "outcome": "attempted",
+      "last_seq": 456,
+      "last_timestamp": "2026-07-13T16:05:16.940142+00:00",
+      "latest_actor": "six_hour_auditor",
+      "latest_kind": "incident.six_hour_auditor.audit_complete",
+      "next_expected_event": "github_sync.publish",
+      "outcome": "escalated",
       "placeholders": {
         "install_freshness": "unknown",
         "recurrence": "unknown",
@@ -13692,8 +14294,8 @@
       "session_ids": [
         "workflow-boundary-contracts-corrective-20260710"
       ],
-      "state": "repair_attempt",
-      "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+      "state": "six_hour_auditor.audit_complete",
+      "summary": "Audit found 1 blocking layer(s) for inc-workflow-boundary-contracts-corrective-20260710: github_sync:github_sync_publish_due."
     },
     {
       "actions": [],
@@ -15586,6 +16188,24 @@
   ],
   "integrity": [
     {
+      "actual": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
+      "code": "index_divergence",
+      "expected": "sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c' != 'sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac'",
+      "projection": "incidents",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
+      "actual": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
+      "code": "index_divergence",
+      "expected": "sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac",
+      "message": "problems projection source metadata diverged for digest: 'sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c' != 'sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac'",
+      "projection": "problems",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -15605,10 +16225,10 @@
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
-    "event_count": 454,
-    "journal_line_count": 454,
-    "last_seq": 454,
+    "digest": "sha256:46d805c557b8ff2a428d91c8073397234038393b8ba0e896285125e78530c2ac",
+    "event_count": 456,
+    "journal_line_count": 456,
+    "last_seq": 456,
     "malformed_line_count": 0
   }
 }
