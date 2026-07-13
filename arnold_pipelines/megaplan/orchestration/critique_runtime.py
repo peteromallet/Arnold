@@ -21,6 +21,8 @@ from arnold_pipelines.megaplan.orchestration.critique_status import (
 from arnold_pipelines.megaplan.orchestration.parallel_critique import run_parallel_critique
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
+from arnold_pipelines.megaplan.schema_projection import schema_property_names
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import (
     CliError,
     FLAG_BLOCKING_STATUSES,
@@ -135,9 +137,24 @@ def _prefer_nonempty_evaluator_payload(
 # ── T11: Critique-scoped scratch promotion known keys ──────────────────────
 # The model produces only these keys in the scratch template; unknown
 # top-level keys injected by the model are stripped before promotion.
-_CRITIQUE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
-    {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
+_CRITIQUE_SCRATCH_KNOWN_KEYS: frozenset[str] = schema_property_names(
+    SCHEMAS["critique.json"],
+    contract="critique scratch promotion",
 )
+
+
+def _critique_scratch_known_keys() -> frozenset[str]:
+    return schema_property_names(
+        SCHEMAS["critique.json"],
+        contract="critique scratch promotion",
+    )
+
+
+def _critique_evaluator_scratch_known_keys() -> frozenset[str]:
+    return schema_property_names(
+        SCHEMAS["critique_evaluator.json"],
+        contract="critique evaluator scratch promotion",
+    )
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -496,12 +513,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                         require_scratch_filename_for_phase,
                     )
 
-                    _EVAL_KNOWN_KEYS: frozenset[str] = frozenset({
-                        "selections",
-                        "skipped",
-                        "evaluator_model",
-                        "flag_verifications",
-                    })
+                    _EVAL_KNOWN_KEYS = _critique_evaluator_scratch_known_keys()
                     _scratch_filename = require_scratch_filename_for_phase("critique_evaluator")
                     _seed_path = plan_dir / _scratch_filename
                     _seed_json: str | None = None
@@ -845,7 +857,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             _, _promoted = promote_scratch(
                 plan_dir,
                 _scratch_filename,
-                _CRITIQUE_SCRATCH_KNOWN_KEYS,
+                _critique_scratch_known_keys(),
                 worker,
                 seed_json=_seed_json,
                 file_fill_instructed=_file_fill_instructed,
