@@ -81,16 +81,6 @@ def test_blocker_id_changes_when_v1_fingerprint_changes() -> None:
             "failure_kind": "blocked_recovery_not_resolved",
             "phase_or_step": "execute",
             "milestone_or_plan": "agentic-replay-viewer",
-            "blocked_task_id": "",
-            "target_fingerprint": "sha256:target-proof",
-        },
-        {
-            "schema_version": 1,
-            "current_state": "blocked",
-            "retry_strategy": "manual_review",
-            "failure_kind": "blocked_recovery_not_resolved",
-            "phase_or_step": "execute",
-            "milestone_or_plan": "agentic-replay-viewer",
             "blocked_task_id": "T1",
             "target_fingerprint": 123,
         },
@@ -99,6 +89,34 @@ def test_blocker_id_changes_when_v1_fingerprint_changes() -> None:
 def test_malformed_or_partial_blocker_fingerprints_fail_conservatively(payload: object) -> None:
     assert normalize_blocker_fingerprint_v1(payload) is None
     assert blocker_id_for_fingerprint(payload) is None
+
+
+def test_phase_level_blocker_without_task_has_stable_claimable_identity(tmp_path: Path) -> None:
+    fingerprint = _fingerprint(
+        current_state="critiqued",
+        retry_strategy="rerun_phase",
+        failure_kind="phase_failed",
+        phase_or_step="gate",
+        milestone_or_plan="s2-contract-foundation",
+        blocked_task_id="",
+    )
+
+    normalized = normalize_blocker_fingerprint_v1(fingerprint)
+    blocker_id = blocker_id_for_fingerprint(fingerprint)
+
+    assert normalized == fingerprint
+    assert blocker_id == blocker_id_for_fingerprint(dict(reversed(list(fingerprint.items()))))
+    claim = repair_requests.claim_active_repair_request(
+        tmp_path / ".megaplan" / "repair-queue",
+        blocker_id=blocker_id or "",
+        request_id="gate-request",
+        actor="repair-trigger",
+        session="demo-session",
+        blocker_fingerprint=normalized,
+        pid=4242,
+        is_pid_live=lambda pid: pid == 4242,
+    )
+    assert claim.claimed is True
 
 
 def _plan_state() -> dict[str, object]:

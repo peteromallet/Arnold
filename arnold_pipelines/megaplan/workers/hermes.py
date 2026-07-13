@@ -2977,6 +2977,7 @@ def _reconstruct_gate_payload(plan_dir: Path, current_payload: dict) -> dict | N
     reconstructed.setdefault("settled_decisions", [])
     reconstructed.setdefault("flag_resolutions", [])
     reconstructed.setdefault("accepted_tradeoffs", [])
+    reconstructed.setdefault("north_star_actions", [])
     # Strip placeholder/empty tradeoff objects.
     reconstructed["accepted_tradeoffs"] = [
         item

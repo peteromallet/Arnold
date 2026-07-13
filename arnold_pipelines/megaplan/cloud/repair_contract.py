@@ -208,7 +208,11 @@ def normalize_blocker_fingerprint_v1(
         if not isinstance(value, str):
             return None
         cleaned = value.strip()
-        if not cleaned:
+        # Phase-level failures (for example a gate structural-audit failure)
+        # legitimately have no task.  The remaining fields still provide a
+        # complete, stable identity; requiring a fabricated task id would make
+        # typed L1 custody impossible for those failures.
+        if not cleaned and field != "blocked_task_id":
             return None
         normalized[field] = cleaned
     return cast(BlockerFingerprintV1, normalized)

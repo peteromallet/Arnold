@@ -828,6 +828,7 @@ _GATE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
         "flag_resolutions",
         "accepted_tradeoffs",
         "settled_decisions",
+        "north_star_actions",
     }
 )
 # ────────────────────────────────────────────────────────────────────────────

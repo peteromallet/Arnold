@@ -174,6 +174,7 @@ DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES = 3
 # retrying the same binding cannot make progress and should not spend the
 # global max_iterations budget.
 DEFAULT_MAX_INVALID_TRANSITION_ATTEMPTS = 2
+DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS = 3
 # Auto-ESCALATE-up: after this many consecutive execute failures with no
 # forward progress, the driver pins execute to the next *more capable* tier
 # model and retries with a fresh session. It keeps climbing on further
@@ -3761,6 +3762,8 @@ def drive(
     repeated_failure_signature_count = 0
     invalid_transition_signature: str | None = None
     invalid_transition_signature_count = 0
+    deterministic_phase_failure_signature: str | None = None
+    deterministic_phase_failure_count = 0
 
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
@@ -5045,6 +5048,13 @@ def drive(
             code, out, err, result = _run_phase(cmd, next_step)
             _clear_completed_phase_active_step(next_step, result)
 
+        if result is None or getattr(result, "exit_kind", None) not in {
+            ExitKind.internal_error.value,
+            ExitKind.malformed_model_output.value,
+        }:
+            deterministic_phase_failure_signature = None
+            deterministic_phase_failure_count = 0
+
         # Timeout detection: read from PhaseResult.exit_kind, not exit code.
         if result is not None and getattr(result, "exit_kind", None) == ExitKind.timeout.value:
             log(f"phase '{next_step}' timed out — stall detection will enforce the cap")
@@ -5214,11 +5224,15 @@ def drive(
             # auto drivers raced into the same phase. Treat as a no-op; the next
             # iteration's status() will see the lock released.
             if "plan_locked" in ((err or "") + (out or "")):
+                deterministic_phase_failure_signature = None
+                deterministic_phase_failure_count = 0
                 log(f"phase '{next_step}' hit plan_locked — transient contention, retrying next iteration")
             elif (
                 next_step == "execute"
                 and _recover_completed_execute_artifacts_after_failure(plan_dir)
             ):
+                deterministic_phase_failure_signature = None
+                deterministic_phase_failure_count = 0
                 log("phase 'execute' failed after writing complete artifacts — recovered to executed")
                 events.append(
                     {
@@ -5228,6 +5242,59 @@ def drive(
                     }
                 )
             else:
+                signature = json.dumps(
+                    [next_step, exit_kind, failure_detail],
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+                if signature == deterministic_phase_failure_signature:
+                    deterministic_phase_failure_count += 1
+                else:
+                    deterministic_phase_failure_signature = signature
+                    deterministic_phase_failure_count = 1
+                if (
+                    deterministic_phase_failure_count
+                    >= DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS
+                ):
+                    reason = (
+                        f"phase '{next_step}' repeated the same {exit_kind} "
+                        f"{deterministic_phase_failure_count} times: {failure_detail}"
+                    )
+                    _record_failure(
+                        plan_dir=plan_dir,
+                        kind="deterministic_phase_failure",
+                        message=reason,
+                        current_state=STATE_BLOCKED,
+                        phase=next_step,
+                        resume_cursor={
+                            "phase": next_step,
+                            "retry_strategy": "repair_phase_contract",
+                        },
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action=(
+                            "Repair or change the deterministic phase contract before resuming; "
+                            "re-running the same phase output cannot make progress."
+                        ),
+                        metadata={
+                            "signature": signature,
+                            "count": deterministic_phase_failure_count,
+                            "max_attempts": DEFAULT_MAX_DETERMINISTIC_PHASE_FAILURE_ATTEMPTS,
+                            "exit_code": code,
+                            "stderr": filtered_stderr,
+                            "stderr_raw": redacted_stderr,
+                            "stdout": out.strip()[-400:],
+                            "iteration": iteration,
+                            **diagnostic_metadata,
+                        },
+                    )
+                    return _outcome(
+                        "blocked",
+                        final_state=STATE_BLOCKED,
+                        iterations=iteration,
+                        reason=reason,
+                        last_phase=next_step,
+                        blocking_reasons=["deterministic_phase_failure"],
+                    )
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="phase_failed",

@@ -1891,6 +1891,74 @@ def _event_timestamp(event):
                 return when
     return None
 
+def _deterministic_retry_evidence(events_path, minimum_count=3):
+    """Find a recent identical LLM failure that has crossed the retry cap."""
+    buckets = {}
+    for event in _load_events(events_path):
+        kind = str(event.get("kind") or event.get("event_type") or "").strip().lower()
+        if kind != "llm_call_error":
+            continue
+        when = _event_timestamp(event)
+        if when is None or when < cutoff:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        message = re.sub(r"\s+", " ", str(payload.get("message") or event.get("message") or "").strip())[:500]
+        if not message:
+            continue
+        phase = str(event.get("phase") or payload.get("phase") or "unknown").strip().lower()
+        signature = f"{kind}|{phase}|{message}"
+        bucket = buckets.setdefault(
+            signature,
+            {
+                "signature": signature,
+                "kind": kind,
+                "phase": phase,
+                "message": message,
+                "count": 0,
+                "first_at": "",
+                "last_at": "",
+                "source": str(events_path),
+            },
+        )
+        bucket["count"] += 1
+        timestamp = when.isoformat()
+        if not bucket["first_at"]:
+            bucket["first_at"] = timestamp
+        bucket["last_at"] = timestamp
+    repeated = [item for item in buckets.values() if int(item.get("count") or 0) >= minimum_count]
+    if not repeated:
+        return {}
+    return max(repeated, key=lambda item: (int(item.get("count") or 0), item.get("last_at") or ""))
+
+def _deterministic_phase_history_evidence(history, minimum_count=3):
+    """Find identical recent phase errors when no llm_call_error event exists."""
+    buckets = {}
+    for item in history if isinstance(history, list) else []:
+        if not isinstance(item, dict) or str(item.get("result") or "").lower() != "error":
+            continue
+        when = _parse_iso(item.get("timestamp") or item.get("completed_at") or "")
+        if when is None or when < cutoff:
+            continue
+        message = re.sub(r"\s+", " ", str(item.get("message") or "").strip())[:500]
+        if not message:
+            continue
+        phase = str(item.get("step") or item.get("phase") or "unknown").strip().lower()
+        signature = f"phase_error|{phase}|{message}"
+        bucket = buckets.setdefault(signature, {
+            "signature": signature, "kind": "phase_error", "phase": phase,
+            "message": message, "count": 0, "first_at": "", "last_at": "",
+            "source": "state.history",
+        })
+        bucket["count"] += 1
+        timestamp = when.isoformat()
+        if not bucket["first_at"]:
+            bucket["first_at"] = timestamp
+        bucket["last_at"] = timestamp
+    repeated = [item for item in buckets.values() if int(item.get("count") or 0) >= minimum_count]
+    if not repeated:
+        return {}
+    return max(repeated, key=lambda item: (int(item.get("count") or 0), item.get("last_at") or ""))
+
 def _event_seq(event):
     for key in ("seq", "event_seq", "sequence"):
         value = event.get(key)
@@ -3082,6 +3150,16 @@ def _active_step_ghost_worker_reason(ev):
         f"phase={liveness.get('phase') or 'unknown'} worker_pid={pid} is not live"
     )
 
+def _deterministic_retry_exhaustion_reason(ev):
+    evidence = ev.get("deterministic_retry_evidence") if isinstance(ev, dict) else {}
+    if not isinstance(evidence, dict) or int(evidence.get("count") or 0) < 3:
+        return ""
+    return (
+        "deterministic_retry_exhaustion: identical "
+        f"{evidence.get('kind') or 'failure'} repeated {evidence.get('count')}x "
+        f"in phase={evidence.get('phase') or 'unknown'}: {evidence.get('message') or 'unknown'}"
+    )
+
 def _workflow_cursor_mismatch_reason(ev):
     failure = ev.get("plan_latest_failure") if isinstance(ev, dict) else {}
     if not isinstance(failure, dict):
@@ -3501,6 +3579,7 @@ def _plan_evidence(entry):
         except OSError:
             continue
     events_size = events_path.stat().st_size if events_path.exists() else 0
+    deterministic_retry = _deterministic_retry_evidence(events_path)
     last_gate = state.get("last_gate") or {}
     latest_failure = state.get("latest_failure") or {}
     latest_failure_metadata = latest_failure.get("metadata") if isinstance(latest_failure.get("metadata"), dict) else {}
@@ -3510,6 +3589,8 @@ def _plan_evidence(entry):
     counts = meta.get("significant_counts") or []
 
     history = state.get("history") or []
+    if not deterministic_retry:
+        deterministic_retry = _deterministic_phase_history_evidence(history)
     recent_history = []
     for item in history:
         ts = item.get("timestamp") or item.get("completed_at") or ""
@@ -3651,6 +3732,7 @@ def _plan_evidence(entry):
         "plan_v_sizes": sizes,
         "events_size": events_size,
         "events_mtime_age_min": int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
+        "deterministic_retry_evidence": deterministic_retry,
         "last_gate_recommendation": last_gate.get("recommendation"),
         "last_gate_score": scores[-1] if scores else None,
         "score_trajectory": scores,
@@ -3780,6 +3862,7 @@ for entry in plans:
         _repair_data_ghost_running_reason(ev),
         _repair_complete_incomplete_chain_reason(ev),
         _active_step_ghost_worker_reason(ev),
+        _deterministic_retry_exhaustion_reason(ev),
         _workflow_cursor_mismatch_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
@@ -3838,6 +3921,17 @@ for f in findings:
             bucket["plans"].add(plan_name)
         if session:
             bucket["sessions"].add(session)
+    event_repeat = f.get("deterministic_retry_evidence") if isinstance(f, dict) else {}
+    if isinstance(event_repeat, dict):
+        sig = (event_repeat.get("signature") or "")[:600]
+        count = int(event_repeat.get("count") or 0)
+        if sig and count >= 3:
+            bucket = failure_sig_agg.setdefault(sig, {"count": 0, "plans": set(), "sessions": set()})
+            bucket["count"] += count
+            if plan_name:
+                bucket["plans"].add(plan_name)
+            if session:
+                bucket["sessions"].add(session)
 repeated_failure_patterns = sorted(
     [
         {

@@ -44,6 +44,7 @@ _CODEX_LAUNCH_FAILURE_NEEDLES = (
     "Input exceeds the maximum length",
     "input_too_large",
 )
+_MAX_COMMIT_CUSTODY_FAILURE_RETRIES = 2
 
 
 def _is_unrecordable_launch_failure(data: dict) -> bool:
@@ -120,6 +121,7 @@ def check_meta_repair_recursion(
 
     # Collect meta-repair record IDs for this session
     matching_ids: list[str] = []
+    commit_custody_failure_ids: list[str] = []
     for record_file in sorted(meta_dir.glob("*.json")):
         try:
             data = load_json(record_file, default={})
@@ -127,10 +129,20 @@ def check_meta_repair_recursion(
                 if _is_unrecordable_launch_failure(data):
                     continue
                 record_id = record_file.stem
+                if str(data.get("outcome") or "") == "commit_custody_failed":
+                    commit_custody_failure_ids.append(record_id)
+                    continue
                 matching_ids.append(record_id)
         except Exception:
             # Corrupt/unreadable file — still counts as evidence
             matching_ids.append(record_file.stem)
+
+    # A meta-repair that could not establish commit custody never deployed its
+    # fix, so one such record must not poison the session forever.  Permit one
+    # bounded retry (often after repository custody is repaired); the second
+    # identical failure is then counted and trips the normal human backstop.
+    if len(commit_custody_failure_ids) >= _MAX_COMMIT_CUSTODY_FAILURE_RETRIES:
+        matching_ids.extend(commit_custody_failure_ids)
 
     recursing = len(matching_ids) >= max_meta_repair_attempts
 
