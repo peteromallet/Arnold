@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any
@@ -145,13 +146,54 @@ def enqueue_audit_repair_request(
     code = str(primary.get("code") or "six_hour_audit_finding").strip()
     layer = str(primary.get("layer") or "six_hour_auditor").strip()
     recommendation = str(primary.get("recommendation") or "").strip()
+    incident_id = str(incident_audit.get("incident_id") or "").strip()
+    problem_id = str(incident_audit.get("problem_id") or "").strip()
+    accepted_request_ids = sorted(
+        {
+            str(value).strip()
+            for value in deterministic.get("accepted_unclaimed_request_ids") or []
+            if str(value).strip()
+        }
+    )
+    root_cause_identity = "audit:" + sha256(
+        json.dumps(
+            {
+                "session": session,
+                "plan": plan,
+                "incident_id": incident_id,
+                "problem_id": problem_id,
+                "layer": layer,
+                "code": code,
+                "accepted_request_ids": accepted_request_ids,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    evidence_cursor = {
+        "incident_id": incident_id,
+        "problem_id": problem_id,
+        "accepted_request_ids": accepted_request_ids,
+        "layer": layer,
+        "code": code,
+    }
+    retry_budget = (
+        dict(deterministic.get("retry_budget") or {})
+        if isinstance(deterministic.get("retry_budget"), dict)
+        else {}
+    )
     signature = {
         "failure_kind": code,
-        "current_state": str((audit_item.get("incident_projection") or {}).get("state") or ""),
+        "current_state": str(
+            audit_item.get("current_state")
+            or (audit_item.get("incident_projection") or {}).get("state")
+            or deterministic.get("canonical_state")
+            or "machine_action_required"
+        ).strip(),
         "phase_or_step": layer,
         "milestone_or_plan": plan,
         "gate_recommendation": "",
-        "blocked_task_id": "",
+        "blocked_task_id": root_cause_identity,
         "event_signature": f"six_hour_auditor:{layer}:{code}",
     }
     diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
@@ -167,9 +209,14 @@ def enqueue_audit_repair_request(
         source="six_hour_auditor",
         target={
             "plan": plan,
-            "incident_id": incident_audit.get("incident_id"),
-            "problem_id": incident_audit.get("problem_id"),
+            "plan_name": plan,
+            "incident_id": incident_id,
+            "problem_id": problem_id,
             "workspace": workspace,
+            "root_cause_identity": root_cause_identity,
+            "evidence_cursor": evidence_cursor,
+            "retry_budget": retry_budget,
+            "retry_strategy": "meta_repair",
             "deterministic_superfixer_evidence": deterministic if deterministic_actionable else {},
         },
         workspace=workspace,

@@ -374,6 +374,11 @@ def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspa
     assert request["target"]["workspace"] == str(workspace)
     assert request["target"]["deterministic_superfixer_evidence"] == evidence
     assert request["problem_signature"]["failure_kind"] == "stale_l1_l2_cycle"
+    assert request["problem_signature"]["blocked_task_id"].startswith("audit:")
+    assert request["target"]["root_cause_identity"] == request["problem_signature"]["blocked_task_id"]
+    assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["7473fa42"]
+    assert request["target"]["retry_budget"] == evidence["retry_budget"]
+    assert request["target"]["retry_strategy"] == "meta_repair"
     assert not (workspace / ".megaplan" / "repair-queue").exists()
 
 
