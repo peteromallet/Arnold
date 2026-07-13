@@ -1,0 +1,722 @@
+"""Durable post-reset Discord notifications for the canonical resident restart.
+
+The restart command cannot send a confirmation before it restarts the resident:
+doing so both lies about failed restarts and loses the reply when the resident is
+replaced.  This module persists a small outbox record before the guarded action,
+marks it delivery-eligible only after the supervisor reports success, and lets
+the freshly connected resident deliver (and retry) the confirmation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import tempfile
+from typing import Any
+from uuid import uuid4
+
+RESET_NOTIFICATION_SCHEMA = "agentbox-resident-reset-notification-v1"
+RESET_NOTIFICATION_ENV = "AGENTBOX_RESET_NOTIFICATION_ROOT"
+RESET_FALLBACK_CONVERSATION_ENV = "AGENTBOX_DISCORD_RESET_FALLBACK_CONVERSATION"
+DEFAULT_NOTIFICATION_ROOT = Path("/workspace/.megaplan/resident/reset_notifications")
+_RETRY_BASE_SECONDS = 30
+_RETRY_MAX_SECONDS = 60 * 60
+_MAX_ATTEMPTS = 8
+_TERMINAL_DELIVERY_STATES = frozenset({"delivered", "failed", "restart_failed"})
+
+
+class ResetNotificationError(RuntimeError):
+    """The notification lifecycle cannot be made durable enough to restart."""
+
+
+@dataclass(frozen=True)
+class ResetNotificationReservation:
+    """Opaque identity of a reset outbox record prepared before a restart."""
+
+    notification_id: str
+    path: Path
+    provenance_mode: str
+
+
+@dataclass(frozen=True)
+class ResetNotificationSweepResult:
+    scanned: int = 0
+    delivered: int = 0
+    retry_pending: int = 0
+    failed: int = 0
+    waiting_for_target: int = 0
+    skipped: int = 0
+
+
+def reset_notification_root(
+    workspace_root: str | Path | None = None,
+) -> Path:
+    """Return the common host/container outbox root.
+
+    A host operator may explicitly override the root, while the normal AgentBox
+    workspace maps both the CLI and the container resident to ``/workspace``.
+    """
+
+    configured = os.environ.get(RESET_NOTIFICATION_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if workspace_root is not None:
+        return Path(workspace_root).expanduser().resolve() / ".megaplan" / "resident" / "reset_notifications"
+    return DEFAULT_NOTIFICATION_ROOT
+
+
+def prepare_reset_notification(
+    *,
+    notification_root: str | Path | None = None,
+    now: datetime | None = None,
+) -> ResetNotificationReservation:
+    """Persist an ineligible reset outbox record before touching the resident.
+
+    The record deliberately starts as ``prepared``.  A later failed restart is
+    therefore visible but can never produce a false success confirmation.
+    """
+
+    now = now or datetime.now(UTC)
+    root = Path(notification_root) if notification_root is not None else reset_notification_root()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ResetNotificationError("cannot create durable resident reset outbox") from exc
+
+    provenance, provenance_mode, provenance_error = _current_provenance()
+    notification_id = f"reset-{uuid4().hex}"
+    path = root / f"{notification_id}.json"
+    record: dict[str, Any] = {
+        "schema_version": RESET_NOTIFICATION_SCHEMA,
+        "notification_id": notification_id,
+        "created_at": _timestamp(now),
+        "updated_at": _timestamp(now),
+        "provenance_mode": provenance_mode,
+        "provenance": provenance,
+        "restart": {"status": "prepared"},
+        "delivery": {
+            "transport": "discord",
+            "status": "prepared",
+            "attempt_count": 0,
+            "idempotency_key": f"agentbox-resident-reset:{notification_id}",
+            "discord_nonce": _nonce(notification_id),
+            "state_history": [
+                {
+                    "status": "prepared",
+                    "at": _timestamp(now),
+                    "evidence": "outbox_committed_before_guarded_restart",
+                }
+            ],
+        },
+    }
+    if provenance_error:
+        # The bad envelope is intentionally not copied into durable state.
+        record["provenance_error"] = provenance_error
+    if provenance is not None:
+        record["delivery"]["reply_target"] = {
+            "conversation_key": provenance["conversation_key"],
+            "message_id": provenance["reply_to_message_id"],
+            "source_record_id": provenance["source_record_id"],
+            "kind": "reply",
+        }
+    else:
+        record["delivery"]["fallback_target"] = os.environ.get(
+            RESET_FALLBACK_CONVERSATION_ENV
+        ) or None
+    try:
+        _atomic_json(path, record)
+    except OSError as exc:
+        raise ResetNotificationError("cannot persist resident reset outbox record") from exc
+    return ResetNotificationReservation(notification_id, path, provenance_mode)
+
+
+def mark_reset_succeeded(
+    reservation: ResetNotificationReservation,
+    *,
+    restart_evidence: Mapping[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Make a previously prepared record deliverable after a successful reset."""
+
+    now = now or datetime.now(UTC)
+    with _locked_record(reservation.path) as record:
+        _assert_record(record, reservation)
+        delivery = dict(record.get("delivery") or {})
+        if delivery.get("status") == "prepared":
+            history = list(delivery.get("state_history") or [])
+            history.append(
+                {
+                    "status": "pending",
+                    "at": _timestamp(now),
+                    "evidence": "guarded_restart_reported_success",
+                }
+            )
+            delivery.update(
+                {
+                    "status": "pending",
+                    "updated_at": _timestamp(now),
+                    "state_history": history[-20:],
+                }
+            )
+        record["restart"] = {
+            "status": "succeeded",
+            "completed_at": _timestamp(now),
+            "evidence": _restart_evidence(restart_evidence),
+        }
+        record["delivery"] = delivery
+        record["updated_at"] = _timestamp(now)
+        _atomic_json(reservation.path, record)
+        return _public_record(record)
+
+
+def mark_reset_failed(
+    reservation: ResetNotificationReservation,
+    *,
+    restart_evidence: Mapping[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist a failed reset without making its confirmation deliverable."""
+
+    now = now or datetime.now(UTC)
+    with _locked_record(reservation.path) as record:
+        _assert_record(record, reservation)
+        delivery = dict(record.get("delivery") or {})
+        history = list(delivery.get("state_history") or [])
+        history.append(
+            {
+                "status": "restart_failed",
+                "at": _timestamp(now),
+                "evidence": "guarded_restart_reported_failure",
+            }
+        )
+        delivery.update(
+            {
+                "status": "restart_failed",
+                "updated_at": _timestamp(now),
+                "state_history": history[-20:],
+            }
+        )
+        record["restart"] = {
+            "status": "failed",
+            "completed_at": _timestamp(now),
+            "evidence": _restart_evidence(restart_evidence),
+        }
+        record["delivery"] = delivery
+        record["updated_at"] = _timestamp(now)
+        _atomic_json(reservation.path, record)
+        return _public_record(record)
+
+
+async def sweep_reset_notifications(
+    *,
+    outbound: Any,
+    store: Any | None = None,
+    notification_root: str | Path | None = None,
+    now: datetime | None = None,
+) -> ResetNotificationSweepResult:
+    """Deliver all due successful-reset confirmations exactly once per outbox item."""
+
+    from arnold_pipelines.megaplan.resident.runtime import OutboundMessage
+
+    now = now or datetime.now(UTC)
+    root = Path(notification_root) if notification_root is not None else reset_notification_root()
+    paths = sorted(root.glob("reset-*.json")) if root.is_dir() else []
+    delivered = retry_pending = failed = waiting_for_target = skipped = 0
+    fallback = _fallback_conversation(store)
+    for path in paths:
+        claim = _claim_delivery(path, now=now, fallback_conversation=fallback)
+        if claim is None:
+            state = _delivery_status(path)
+            if state == "awaiting_fallback_target":
+                waiting_for_target += 1
+            elif state == "failed":
+                failed += 1
+            else:
+                skipped += 1
+            continue
+        record, target = claim
+        delivery = dict(record["delivery"])
+        metadata: dict[str, Any] = {
+            "resident_reset_notification": True,
+            "resident_reset_notification_id": record["notification_id"],
+            "discord_nonce": delivery["discord_nonce"],
+        }
+        if target.get("kind") == "reply":
+            metadata["discord_reply_to_message_id"] = target["message_id"]
+        try:
+            await outbound.send(
+                OutboundMessage(
+                    conversation_key=target["conversation_key"],
+                    content=_confirmation_content(target),
+                    idempotency_key=delivery["idempotency_key"],
+                    metadata=metadata,
+                )
+            )
+        except Exception as exc:
+            state = _record_delivery_failure(path, now=now, exc=exc)
+            retry_pending += int(state == "retry_pending")
+            failed += int(state == "failed")
+            continue
+        message_ids = [str(item) for item in metadata.get("discord_message_ids", []) if str(item)]
+        _record_delivery_success(path, now=now, message_ids=message_ids)
+        delivered += 1
+    return ResetNotificationSweepResult(
+        scanned=len(paths),
+        delivered=delivered,
+        retry_pending=retry_pending,
+        failed=failed,
+        waiting_for_target=waiting_for_target,
+        skipped=skipped,
+    )
+
+
+def list_reset_notifications(
+    *,
+    notification_root: str | Path | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Return bounded, non-secret reset outbox state for operators and tests."""
+
+    root = Path(notification_root) if notification_root is not None else reset_notification_root()
+    records: list[dict[str, Any]] = []
+    if root.is_dir():
+        for path in sorted(root.glob("reset-*.json"), reverse=True):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                continue
+            if isinstance(payload, dict):
+                records.append(_public_record(payload))
+    records.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("notification_id") or "")), reverse=True)
+    counts: dict[str, int] = {}
+    for row in records:
+        status = str(row.get("delivery", {}).get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return {
+        "notification_root": str(root),
+        "count": len(records),
+        "delivery_status_counts": counts,
+        "records": records[:max(0, limit)],
+    }
+
+
+def _current_provenance() -> tuple[dict[str, Any] | None, str, str | None]:
+    # Import only when a reset is actually requested.  Importing a resident
+    # submodule initializes its public package, whose profile imports the
+    # AgentBox service constants; eager imports would therefore be circular.
+    from arnold_pipelines.megaplan.resident.provenance import (
+        DelegationProvenanceError,
+        safe_provenance_projection,
+    )
+
+    try:
+        provenance = safe_provenance_projection()
+    except DelegationProvenanceError:
+        return None, "invalid_or_ambiguous", "delegation provenance was invalid or ambiguous"
+    if provenance is None:
+        return None, "manual_or_non_discord", None
+    if provenance.get("applicability") == "applicable" and provenance.get("transport") == "discord":
+        return provenance, "discord_reply", None
+    return None, "manual_or_non_discord", None
+
+
+def _claim_delivery(
+    path: Path,
+    *,
+    now: datetime,
+    fallback_conversation: str | None,
+) -> tuple[dict[str, Any], dict[str, str]] | None:
+    try:
+        with _locked_record(path) as record:
+            if record.get("schema_version") != RESET_NOTIFICATION_SCHEMA:
+                return None
+            restart = record.get("restart")
+            delivery = dict(record.get("delivery") or {})
+            if not isinstance(restart, Mapping) or restart.get("status") != "succeeded":
+                return None
+            status = str(delivery.get("status") or "prepared")
+            if status in _TERMINAL_DELIVERY_STATES:
+                return None
+            due_at = _parse_timestamp(delivery.get("next_attempt_at"))
+            if status == "retry_pending" and due_at is not None and due_at > now:
+                return None
+            if status == "sending":
+                _append_state(
+                    delivery,
+                    status="unknown",
+                    now=now,
+                    evidence="resident_restarted_during_provider_attempt",
+                    attempt_id=delivery.get("attempt_id"),
+                )
+            target = _target_from_delivery(delivery)
+            if target is None:
+                candidate = str(delivery.get("fallback_target") or fallback_conversation or "").strip()
+                if not candidate:
+                    delivery.update(
+                        {"status": "awaiting_fallback_target", "updated_at": _timestamp(now)}
+                    )
+                    _append_state(
+                        delivery,
+                        status="awaiting_fallback_target",
+                        now=now,
+                        evidence="no_safe_discord_fallback_conversation_available",
+                    )
+                    record["delivery"] = delivery
+                    record["updated_at"] = _timestamp(now)
+                    _atomic_json(path, record)
+                    return None
+                target = {"kind": "fallback", "conversation_key": candidate}
+                delivery["fallback_target"] = candidate
+            attempt = int(delivery.get("attempt_count") or 0) + 1
+            if attempt > _MAX_ATTEMPTS:
+                delivery.update(
+                    {
+                        "status": "failed",
+                        "updated_at": _timestamp(now),
+                        "last_error": "Discord delivery failed: retry budget exhausted",
+                        "last_error_class": "DeliveryRetryExhausted",
+                        "last_error_category": "retry_exhausted",
+                    }
+                )
+                _append_state(delivery, status="failed", now=now, evidence="retry_budget_exhausted")
+                record["delivery"] = delivery
+                record["updated_at"] = _timestamp(now)
+                _atomic_json(path, record)
+                return None
+            delivery.update(
+                {
+                    "status": "sending",
+                    "claim_state": "sending",
+                    "attempt_count": attempt,
+                    "attempt_id": f"{record['notification_id']}:{attempt}",
+                    "last_attempt_at": _timestamp(now),
+                    "updated_at": _timestamp(now),
+                }
+            )
+            delivery.pop("next_attempt_at", None)
+            _append_state(
+                delivery,
+                status="sending",
+                now=now,
+                evidence="provider_attempt_claimed",
+                attempt_id=delivery["attempt_id"],
+            )
+            record["delivery"] = delivery
+            record["updated_at"] = _timestamp(now)
+            _atomic_json(path, record)
+            return record, target
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _record_delivery_success(path: Path, *, now: datetime, message_ids: list[str]) -> None:
+    with _locked_record(path) as record:
+        delivery = dict(record.get("delivery") or {})
+        _append_state(
+            delivery,
+            status="delivered",
+            now=now,
+            evidence="provider_message_ids_persisted",
+            attempt_id=delivery.get("attempt_id"),
+        )
+        delivery.update(
+            {
+                "status": "delivered",
+                "delivered_at": _timestamp(now),
+                "discord_message_ids": message_ids,
+                "updated_at": _timestamp(now),
+            }
+        )
+        delivery.pop("claim_state", None)
+        delivery.pop("next_attempt_at", None)
+        record["delivery"] = delivery
+        record["updated_at"] = _timestamp(now)
+        _atomic_json(path, record)
+
+
+def _record_delivery_failure(path: Path, *, now: datetime, exc: Exception) -> str:
+    with _locked_record(path) as record:
+        delivery = dict(record.get("delivery") or {})
+        attempt = max(1, int(delivery.get("attempt_count") or 1))
+        evidence = _delivery_error_evidence(exc)
+        permanent = evidence["last_error_category"] in {
+            "invalid_reply_target",
+            "unauthorized",
+            "forbidden",
+            "not_found",
+            "client_error",
+        }
+        status = "failed" if permanent or attempt >= _MAX_ATTEMPTS else "retry_pending"
+        errors = list(delivery.get("error_history") or [])
+        errors.append(
+            {
+                "attempt_id": delivery.get("attempt_id"),
+                "attempted_at": delivery.get("last_attempt_at") or _timestamp(now),
+                **evidence,
+            }
+        )
+        delivery.update(
+            {
+                "status": status,
+                "updated_at": _timestamp(now),
+                "error_history": errors[-10:],
+                **evidence,
+            }
+        )
+        _append_state(
+            delivery,
+            status=status,
+            now=now,
+            evidence=("permanent_provider_rejection" if permanent else "retryable_provider_failure"),
+            attempt_id=delivery.get("attempt_id"),
+        )
+        delivery.pop("claim_state", None)
+        if status == "retry_pending":
+            delay = min(_RETRY_MAX_SECONDS, _RETRY_BASE_SECONDS * (2 ** min(attempt - 1, 7)))
+            delivery["next_attempt_at"] = _timestamp(now + timedelta(seconds=delay))
+        else:
+            delivery.pop("next_attempt_at", None)
+        record["delivery"] = delivery
+        record["updated_at"] = _timestamp(now)
+        _atomic_json(path, record)
+        return status
+
+
+def _target_from_delivery(delivery: Mapping[str, Any]) -> dict[str, str] | None:
+    target = delivery.get("reply_target")
+    if not isinstance(target, Mapping):
+        return None
+    conversation_key = str(target.get("conversation_key") or "").strip()
+    message_id = str(target.get("message_id") or "").strip()
+    if not conversation_key.startswith("discord:") or not message_id.isdigit() or int(message_id) <= 0:
+        return None
+    return {"kind": "reply", "conversation_key": conversation_key, "message_id": message_id}
+
+
+def _fallback_conversation(store: Any | None) -> str | None:
+    configured = os.environ.get(RESET_FALLBACK_CONVERSATION_ENV)
+    if configured and configured.strip():
+        return configured.strip()
+    if store is None:
+        return None
+    try:
+        conversations = store.list_resident_conversations(transport="discord", limit=100)
+    except Exception:
+        return None
+    candidates = [
+        row
+        for row in conversations
+        if isinstance(getattr(row, "conversation_key", None), str)
+        and row.conversation_key.startswith("discord:")
+    ]
+    if not candidates:
+        return None
+    latest = max(
+        candidates,
+        key=lambda row: (
+            _timestamp(getattr(row, "last_active_at", None)) if getattr(row, "last_active_at", None) else "",
+            _timestamp(getattr(row, "updated_at", None)) if getattr(row, "updated_at", None) else "",
+            str(getattr(row, "id", "")),
+        ),
+    )
+    return str(latest.conversation_key)
+
+
+def _confirmation_content(target: Mapping[str, str]) -> str:
+    if target.get("kind") == "reply":
+        return "Discord resident reset complete."
+    return (
+        "Discord resident reset complete. This is a fallback notification for a "
+        "manual/non-Discord reset, not a reply to an initiating message."
+    )
+
+
+def _delivery_status(path: Path) -> str | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        delivery = payload.get("delivery") if isinstance(payload, Mapping) else None
+        return str(delivery.get("status")) if isinstance(delivery, Mapping) else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+@contextmanager
+def _locked_record(path: Path) -> Iterator[dict[str, Any]]:
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("a+b") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("reset notification record is not an object")
+            yield payload
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def _assert_record(record: Mapping[str, Any], reservation: ResetNotificationReservation) -> None:
+    if (
+        record.get("schema_version") != RESET_NOTIFICATION_SCHEMA
+        or record.get("notification_id") != reservation.notification_id
+    ):
+        raise ResetNotificationError("reset notification outbox record changed unexpectedly")
+
+
+def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+        temporary = Path(handle.name)
+    try:
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _restart_evidence(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep restart proof useful without persisting arbitrary command output."""
+
+    evidence: dict[str, Any] = {}
+    for key in ("service", "unit", "backend", "error"):
+        item = value.get(key)
+        if item is not None:
+            evidence[key] = str(item)
+    for key in ("safety", "health"):
+        item = value.get(key)
+        if isinstance(item, Mapping):
+            evidence[key] = dict(item)
+    return evidence
+
+
+def _delivery_error_evidence(exc: Exception) -> dict[str, Any]:
+    status = _optional_http_status(exc)
+    detail = str(exc).lower()
+    if "reply target" in detail or "snowflake" in detail:
+        category = "invalid_reply_target"
+    elif status == 429:
+        category = "rate_limited"
+    elif status == 401:
+        category = "unauthorized"
+    elif status == 403:
+        category = "forbidden"
+    elif status == 404:
+        category = "not_found"
+    elif status is not None and status >= 500:
+        category = "server_error"
+    elif status is not None and status >= 400:
+        category = "client_error"
+    elif isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        category = "timeout"
+    elif isinstance(exc, (ConnectionError, OSError)):
+        category = "network_error"
+    else:
+        category = "runtime_error"
+    return {
+        "last_error": f"Discord delivery failed: {category}",
+        "last_error_class": exc.__class__.__name__,
+        "last_error_category": category,
+        "last_http_status": status,
+    }
+
+
+def _optional_http_status(exc: Exception) -> int | None:
+    for value in (
+        getattr(exc, "status", None),
+        getattr(exc, "status_code", None),
+        getattr(getattr(exc, "response", None), "status", None),
+        getattr(getattr(exc, "response", None), "status_code", None),
+    ):
+        try:
+            status = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 100 <= status <= 599:
+            return status
+    return None
+
+
+def _append_state(
+    delivery: dict[str, Any],
+    *,
+    status: str,
+    now: datetime,
+    evidence: str,
+    attempt_id: object | None = None,
+) -> None:
+    history = list(delivery.get("state_history") or [])
+    item: dict[str, Any] = {"status": status, "at": _timestamp(now), "evidence": evidence}
+    if attempt_id:
+        item["attempt_id"] = str(attempt_id)
+    history.append(item)
+    delivery["state_history"] = history[-20:]
+
+
+def _nonce(notification_id: str) -> str:
+    return hashlib.sha256(f"agentbox-resident-reset:{notification_id}".encode("utf-8")).hexdigest()[:20]
+
+
+def _timestamp(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _public_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose lifecycle evidence but never command output or credentials."""
+
+    return {
+        "notification_id": record.get("notification_id"),
+        "created_at": record.get("created_at"),
+        "updated_at": record.get("updated_at"),
+        "provenance_mode": record.get("provenance_mode"),
+        "restart": dict(record.get("restart") or {}),
+        "delivery": dict(record.get("delivery") or {}),
+    }
+
+
+__all__ = [
+    "DEFAULT_NOTIFICATION_ROOT",
+    "RESET_FALLBACK_CONVERSATION_ENV",
+    "RESET_NOTIFICATION_ENV",
+    "RESET_NOTIFICATION_SCHEMA",
+    "ResetNotificationError",
+    "ResetNotificationReservation",
+    "ResetNotificationSweepResult",
+    "list_reset_notifications",
+    "mark_reset_failed",
+    "mark_reset_succeeded",
+    "prepare_reset_notification",
+    "reset_notification_root",
+    "sweep_reset_notifications",
+]

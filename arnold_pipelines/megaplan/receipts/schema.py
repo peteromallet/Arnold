@@ -34,6 +34,7 @@ class Receipt(TypedDict):
     canonicalization_version: int
     upstream_artifact_hashes: list[str]
     cost_usd: float
+    cost_pricing: str | None
     duration_ms: int
     prompt_tokens: int
     completion_tokens: int

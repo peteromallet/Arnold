@@ -112,6 +112,10 @@ def test_sweep_dispatches_when_pending(tmp_path) -> None:
     assert "launch_subagent" in event.content
     assert "complete_todo_item" in event.content
     assert "fail_todo_item" in event.content
+    assert "backend=codex" in event.content
+    assert "background=true" in event.content
+    assert "request_id" in event.content
+    assert "Never use the legacy Hermes" in event.content
     assert "2 pending" in event.content
     # rescheduled exactly once
     assert len(store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending")) == 1

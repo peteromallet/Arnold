@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -72,8 +73,11 @@ def _resident_config(args: argparse.Namespace) -> ResidentConfig:
 
 
 def _resident_store(root: Path, args: argparse.Namespace) -> Store:
-    if getattr(args, "store_root", None):
-        return FileStore(Path(args.store_root).expanduser().resolve())
+    store_root = getattr(args, "store_root", None) or os.environ.get(
+        "MEGAPLAN_RESIDENT_STORE_ROOT"
+    )
+    if store_root:
+        return FileStore(Path(store_root).expanduser().resolve())
     config = _resident_config(args)
     if config.is_production:
         return DBStore(actor_id="resident")
@@ -151,7 +155,12 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
     if token is None:
         raise CliError("missing_discord_token", f"{config.discord_bot_token_env} is required")
     authorizer = ResidentAuthorizer(config)
-    outbound = DiscordOutboundSink()
+    # Dev/test residents may handle interactive test traffic, but durable
+    # operational outboxes belong exclusively to the production bot boundary.
+    outbound = DiscordOutboundSink(
+        delivery_environment=config.mode,
+        bot_role=config.discord_bot_role,
+    )
     confirmation_manager = StoreBackedConfirmationManager(config, store)
     runtime = ResidentRuntime(
         config=config,

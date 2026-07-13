@@ -10,6 +10,60 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
+def unmatched_llm_starts(
+    events: list[dict[str, Any]],
+    *,
+    start_kind: str = "llm_call_start",
+    end_kind: str = "llm_call_end",
+) -> list[dict[str, Any]]:
+    """Return LLM starts that have no later matching completion event.
+
+    Some providers do not know their request id when the start event is
+    emitted, but do include it on the end event.  In that case request-id-only
+    correlation leaves every historical start looking in-flight forever.
+    Match exact ids when possible, then pair an end with the oldest unkeyed
+    start in the same phase.  The latter preserves the conservative count of
+    concurrent calls without turning completed sequential calls into wedges.
+    """
+    pending: list[dict[str, Any]] = []
+    for event in events:
+        kind = event.get("kind")
+        if kind == start_kind:
+            pending.append(event)
+            continue
+        if kind != end_kind:
+            continue
+
+        payload = event.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        request_id = payload.get("request_id")
+        match_index: int | None = None
+        if request_id:
+            request_id = str(request_id)
+            for index, start in enumerate(pending):
+                start_payload = start.get("payload")
+                start_payload = start_payload if isinstance(start_payload, dict) else {}
+                if str(start_payload.get("request_id") or "") == request_id:
+                    match_index = index
+                    break
+
+        if match_index is None:
+            phase = event.get("phase")
+            for index, start in enumerate(pending):
+                start_payload = start.get("payload")
+                start_payload = start_payload if isinstance(start_payload, dict) else {}
+                if start_payload.get("request_id"):
+                    continue
+                if start.get("phase") == phase:
+                    match_index = index
+                    break
+
+        if match_index is not None:
+            pending.pop(match_index)
+
+    return pending
+
+
 def _active_identity(state: dict[str, Any] | None) -> tuple[str | None, str | None]:
     if not isinstance(state, dict):
         return None, None
@@ -45,20 +99,12 @@ def has_active_in_flight_llm(
     if active_phase is None or active_model is None:
         return False
 
-    ended_ids: set[str] = set()
-    for event in events:
-        if event.get("kind") == end_kind:
-            request_id = event.get("payload", {}).get("request_id")
-            if request_id:
-                ended_ids.add(str(request_id))
-
-    for event in events:
-        if event.get("kind") != start_kind:
-            continue
+    for event in unmatched_llm_starts(
+        events,
+        start_kind=start_kind,
+        end_kind=end_kind,
+    ):
         payload = event.get("payload", {})
-        request_id = payload.get("request_id")
-        if request_id and str(request_id) in ended_ids:
-            continue
         if event.get("phase") != active_phase or payload.get("model") != active_model:
             continue
         start_ts = parse_timestamp(str(event.get("ts_utc", "")))

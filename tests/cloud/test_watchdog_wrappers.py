@@ -279,6 +279,7 @@ def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subp
         "DISCORD_WEBHOOK_URL",
         "REPORT_WEBHOOK",
         "SLACK_WEBHOOK_URL",
+        "PYTEST_CURRENT_TEST",
     ):
         env.pop(name, None)
     env["DISCORD_DM_BIN"] = "/bin/false"
@@ -1397,6 +1398,165 @@ def test_repair_loop_collects_state_meta_user_action_resolutions(tmp_path: Path)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["user_action_context"]["unresolved_user_actions"] == []
+
+
+def test_repair_loop_collects_provider_profile_viability_for_unavailable_claude(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+
+    empty_path = tmp_path / "empty-bin"
+    empty_path.mkdir()
+    monkeypatch.setenv("PATH", str(empty_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
+
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "blocked",
+                "resume_cursor": {"phase": "plan", "retry_strategy": "check_provider_and_retry"},
+                "latest_failure": {
+                    "kind": "external_error_resume_required",
+                    "phase": "recover-blocked",
+                    "message": (
+                        "recover-blocked is for explicit task or quality blockers. "
+                        "This blocked plan stopped on an external provider error; "
+                        "fix provider/profile settings if needed, then run "
+                        "`megaplan resume --plan demo-plan`."
+                    ),
+                },
+                "history": [
+                    {"step": "prep", "result": "success", "timestamp": "2026-07-11T01:38:14Z"},
+                    {
+                        "step": "plan",
+                        "result": "error",
+                        "message": "Codex usage limit reached. Re-run the same step on Codex once before changing agent.",
+                        "timestamp": "2026-07-11T01:38:26Z",
+                    },
+                ],
+                "config": {
+                    "project_dir": str(workspace),
+                    "profile": "all-claude",
+                    "vendor": "claude",
+                    "phase_model": [
+                        "plan=claude:high",
+                        "critique=claude",
+                        "execute=claude",
+                    ],
+                },
+                "meta": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("recover-blocked:phase_start\n", encoding="utf-8")
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+
+    collect_program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(collect_program, str(workspace), "demo", "chain", "")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    viability = payload["provider_profile_viability"]
+    assert viability["detected"] is True
+    assert viability["current_profile"] == "all-claude"
+    assert viability["claude_available"] is False
+    assert viability["codex_available"] is True
+    assert viability["deepseek_available"] is True
+    assert viability["quota_in_history"] is True
+    assert "Claude/Shannon is unavailable" in viability["diagnosis"]
+    assert "all-deepseek-pro-direct" in viability["recommended_action"]
+    assert "set-profile" in viability["vendor_switch_note"]
+
+
+def test_repair_loop_summary_renders_provider_profile_viability_block(tmp_path: Path) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "initial_facts": {},
+                "iterations": [
+                    {
+                        "failure_classification": "blocked_state_or_recovery_error",
+                        "raw_failure_signals": ["latest_failure.message: external provider error"],
+                        "run_log_tail": "resume failed",
+                        "plan_events_tail": "recover-blocked:phase_start",
+                        "plan_latest_failure": {
+                            "current_state": "blocked",
+                            "phase": "recover-blocked",
+                            "kind": "external_error_resume_required",
+                            "message": "external provider error",
+                            "recorded_at": "2026-07-11T01:38:34Z",
+                            "metadata": {"exit_code": 1},
+                        },
+                        "chain_state_summary": {
+                            "last_state": "blocked",
+                            "current_state": "",
+                            "current_plan_name": "demo-plan",
+                        },
+                        "provider_profile_viability": {
+                            "current_profile": "all-claude",
+                            "current_vendor": "claude",
+                            "codex_available": True,
+                            "claude_available": False,
+                            "deepseek_available": True,
+                            "selected_specs": {
+                                "plan": "claude:high",
+                                "execute": "claude",
+                            },
+                            "floored_specs": {
+                                "plan": "codex:high",
+                                "execute": "codex",
+                            },
+                            "diagnosis": (
+                                "current profile/phase_model targets Claude, but Claude/Shannon "
+                                "is unavailable on this worker; recent plan history shows a "
+                                "Codex quota failure"
+                            ),
+                            "recommended_action": (
+                                "If escaping a Codex quota failure, do not switch to all-claude "
+                                "on this worker. Prefer a DeepSeek-capable profile such as "
+                                "all-deepseek-pro-direct or partnered-5."
+                            ),
+                            "vendor_switch_note": (
+                                "`override set-profile` preserves the current premium vendor "
+                                "when it rewrites named profiles."
+                            ),
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    summary = result.stdout
+    assert "## Provider/Profile Viability" in summary
+    assert "current profile=all-claude vendor=claude" in summary
+    assert "available routes: codex=yes, claude=no, deepseek=yes" in summary
+    assert "selected specs: plan=claude:high, execute=claude" in summary
+    assert "available-model floor: plan=codex:high, execute=codex" in summary
+    assert "all-deepseek-pro-direct or partnered-5" in summary
+    assert "set-profile` preserves the current premium vendor" in summary
 
 
 def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(tmp_path: Path) -> None:
@@ -4627,6 +4787,8 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
     script = "\n\n".join(
         [
             _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("resume_plan_relaunch_command"),
+            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
             _extract_wrapper_function("stale_marker_relaunch_command"),
             _extract_wrapper_function("default_chain_relaunch_command"),
             _extract_wrapper_function("resolve_relaunch_command"),
@@ -4655,6 +4817,8 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
     script = "\n\n".join(
         [
             _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("resume_plan_relaunch_command"),
+            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
             _extract_wrapper_function("stale_marker_relaunch_command"),
             _extract_wrapper_function("default_chain_relaunch_command"),
             _extract_wrapper_function("resolve_relaunch_command"),
@@ -4670,7 +4834,7 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert "source checkout dirty; using clean runtime mirror at $RUNTIME_SRC" in result.stdout
+    assert "source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror" in result.stdout
     assert "MEGAPLAN_RUNTIME_SRC" in result.stdout
     assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
@@ -4681,6 +4845,8 @@ def test_watchdog_nonstale_marker_relaunch_command_is_preserved() -> None:
     script = "\n\n".join(
         [
             _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("resume_plan_relaunch_command"),
+            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
             _extract_wrapper_function("stale_marker_relaunch_command"),
             _extract_wrapper_function("default_chain_relaunch_command"),
             _extract_wrapper_function("resolve_relaunch_command"),
@@ -4692,6 +4858,66 @@ def test_watchdog_nonstale_marker_relaunch_command_is_preserved() -> None:
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout == "echo marker-command"
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_chain_resume_authority_outranks_marker_command_and_discovers_plan(
+    tmp_path: Path,
+    wrapper_kind: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_name = "resume-required-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "plan",
+                    "retry_strategy": "check_provider_and_retry",
+                },
+                "latest_failure": {
+                    "kind": "external_error_resume_required",
+                    "phase": "recover-blocked",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    (chain_dir / f"chain-{digest}.json").write_text(
+        json.dumps({"current_plan_name": plan_name, "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+
+    extract = _extract_wrapper_function if wrapper_kind == "watchdog" else _extract_repair_function
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(workspace)!r} "
+                f"{str(spec_path)!r} chain '' 'echo marker-chain-start'"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert f"megaplan resume --plan {plan_name}" in result.stdout
+    assert "marker-chain-start" not in result.stdout
 
 
 def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command() -> None:
@@ -4708,6 +4934,8 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     script = "\n\n".join(
         [
             _extract_repair_function("default_plan_relaunch_command"),
+            _extract_repair_function("resume_plan_relaunch_command"),
+            _extract_repair_function("chain_resume_plan_relaunch_command_if_needed"),
             _extract_repair_function("stale_marker_relaunch_command"),
             _extract_repair_function("default_chain_relaunch_command"),
             _extract_repair_function("resolve_relaunch_command"),
@@ -4723,11 +4951,91 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert "source checkout dirty; using clean runtime mirror at $RUNTIME_SRC" in result.stdout
+    assert "source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror" in result.stdout
     assert "MEGAPLAN_RUNTIME_SRC" in result.stdout
     assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
+
+
+def test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_required(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+    (workspace / ".megaplan" / "cloud-logs").mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "resume_cursor": {"phase": "plan", "retry_strategy": "check_provider_and_retry"},
+                "latest_failure": {
+                    "kind": "external_error_resume_required",
+                    "phase": "recover-blocked",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("resume_plan_relaunch_command"),
+            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
+            _extract_wrapper_function("stale_marker_relaunch_command"),
+            _extract_wrapper_function("default_chain_relaunch_command"),
+            _extract_wrapper_function("resolve_relaunch_command"),
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {shlex.quote(str(workspace))} "
+                f"/tmp/chain.yaml chain demo-plan ''"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "python3 -P -m arnold_pipelines.megaplan resume --plan demo-plan" in result.stdout
+    assert "chain start" not in result.stdout
+
+
+def test_repair_loop_chain_relaunch_prefers_plan_resume_for_external_resume_required(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+    (workspace / ".megaplan" / "cloud-logs").mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "resume_cursor": {"phase": "plan", "retry_strategy": "check_provider_and_retry"},
+                "latest_failure": {
+                    "kind": "external_error_resume_required",
+                    "phase": "recover-blocked",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("default_plan_relaunch_command"),
+            _extract_repair_function("resume_plan_relaunch_command"),
+            _extract_repair_function("chain_resume_plan_relaunch_command_if_needed"),
+            _extract_repair_function("stale_marker_relaunch_command"),
+            _extract_repair_function("default_chain_relaunch_command"),
+            _extract_repair_function("resolve_relaunch_command"),
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {shlex.quote(str(workspace))} "
+                f"/tmp/chain.yaml chain demo-plan ''"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "python3 -P -m arnold_pipelines.megaplan resume --plan demo-plan" in result.stdout
+    assert "chain start" not in result.stdout
 
 
 def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path: Path) -> None:
@@ -6828,6 +7136,94 @@ PLAN_STATUS_PUSHED_COMMITS='abc123def456, fedcba654321'
     assert "needs-human webhook delivered" not in log_path.read_text(encoding="utf-8")
 
 
+def test_watchdog_needs_human_fixture_workspace_cannot_reach_delivery(tmp_path: Path) -> None:
+    dm_helper = tmp_path / "arnold-discord-dm"
+    dm_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        f"echo called > {str(tmp_path / 'dm-called')!r}\n",
+        encoding="utf-8",
+    )
+    dm_helper.chmod(dm_helper.stat().st_mode | stat.S_IXUSR)
+    curl_path = tmp_path / "curl"
+    curl_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"echo called > {str(tmp_path / 'webhook-called')!r}\n",
+        encoding="utf-8",
+    )
+    curl_path.chmod(curl_path.stat().st_mode | stat.S_IXUSR)
+    fixture_workspace = tmp_path / "ws"
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISCORD_DM_BIN={str(dm_helper)!r}",
+            "REPORT_WEBHOOK='https://example.test/watchdog'",
+            "report_item() { printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"$1\" \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" \"$7\" >> \"$1\"; }",
+            "log() { printf '%s\\n' \"$*\" >> \"$LOG\"; }",
+            (
+                f"notify_needs_human {str(report_path)!r} demo-chain "
+                f"{str(fixture_workspace)!r} /tmp/spec.yaml chain stopped 'manual review'"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "dm-called").exists()
+    assert not (tmp_path / "webhook-called").exists()
+    assert "test_notification_suppressed" in report_path.read_text(encoding="utf-8")
+    assert "pytest_workspace" in log_path.read_text(encoding="utf-8")
+
+
+def test_repair_escalation_fixture_workspace_cannot_reach_discord(tmp_path: Path) -> None:
+    fixture_workspace = tmp_path / "ws"
+    fixture_workspace.mkdir()
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps({"session": "demo-chain", "workspace": str(fixture_workspace)}),
+        encoding="utf-8",
+    )
+    dm_helper = tmp_path / "arnold-discord-dm"
+    dm_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        f"echo called > {str(tmp_path / 'dm-called')!r}\n",
+        encoding="utf-8",
+    )
+    dm_helper.chmod(dm_helper.stat().st_mode | stat.S_IXUSR)
+    log_path = tmp_path / "repair.log"
+    repair_text = _repair_wrapper()
+    function_start = repair_text.index("send_discord_escalation() {")
+    function_end = repair_text.index('\n}\n\nlog "starting session=', function_start) + 3
+    script = "\n\n".join(
+        [
+            repair_text[function_start:function_end],
+            "require_repair_lock_held() { :; }",
+            "ensure_repair_budget_available() { :; }",
+            "log() { printf '%s\\n' \"$*\" >> \"$LOG\"; }",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"WORKSPACE={str(fixture_workspace)!r}",
+            "SESSION=demo-chain",
+            f"MARKER_PATH={str(tmp_path / 'missing-marker.json')!r}",
+            f"RUN_DIR={str(tmp_path)!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISCORD_DM_BIN={str(dm_helper)!r}",
+            "send_discord_escalation",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "test_execution_suppressed"
+    assert not (tmp_path / "dm-called").exists()
+    assert "pytest_workspace" in log_path.read_text(encoding="utf-8")
+
+
 def test_watchdog_needs_human_missing_discord_config_skips_webhook_fallback(tmp_path: Path) -> None:
     dm_helper = tmp_path / "arnold-discord-dm"
     dm_helper.write_text(
@@ -6889,6 +7285,7 @@ def test_arnold_discord_dm_wrapper_redacts_payload_before_rendering(tmp_path: Pa
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
     env.pop("DISCORD_BOT_TOKEN", None)
     env.pop("DISCORD_DM_USER_ID", None)
+    env.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(
         ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
         stdin=payload_path.open("r", encoding="utf-8"),
@@ -10419,6 +10816,15 @@ def test_watchdog_exposes_serialized_audit_recovery_and_paused_guard() -> None:
     assert '"QUOTA", "CREDENTIAL_ACCOUNT"' in text
     assert '"${PLAN_STATUS_CURRENT_STATE:-}" == "paused"' in text
     assert '"paused" "durable plan state is paused; no runner expected until explicit resume"' in text
+
+
+def test_all_recovery_wrappers_fail_closed_for_durable_operator_pause() -> None:
+    repair = _wrapper("arnold-repair-loop")
+    meta = _wrapper("arnold-meta-repair-loop")
+    auditor = _wrapper("arnold-progress-auditor")
+    assert "durable operator pause active; automatic repair skipped" in repair
+    assert "durable operator pause active; superfixer skipped" in meta
+    assert 'decision = "skip_paused"' in auditor
 
 
 def test_watchdog_audit_recovery_routes_typed_quota_gate_to_one_retry() -> None:

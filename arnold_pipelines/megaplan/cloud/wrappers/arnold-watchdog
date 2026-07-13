@@ -796,7 +796,36 @@ notify_needs_human() {
   local run_kind="${5:-chain}"
   local health="${6:-stopped}"
   local summary="$7"
-  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir
+  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir suppression_reason
+  suppression_reason="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$workspace" "$session" "$remote_spec" "$MARKER_DIR" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.notification_safety import classify_user_notification
+
+workspace, session, remote_spec, marker_dir = sys.argv[1:]
+payload = {"session": session, "workspace": workspace, "remote_spec": remote_spec}
+try:
+    marker = json.loads((pathlib.Path(marker_dir) / f"{session}.json").read_text(encoding="utf-8"))
+except Exception:
+    marker = None
+if isinstance(marker, dict):
+    payload["session_marker"] = marker
+decision = classify_user_notification(
+    workspace=workspace,
+    payload=payload,
+)
+if not decision.allowed:
+    print(decision.reason)
+PY
+)"
+  if [[ -n "$suppression_reason" ]]; then
+    log "needs-human user notification suppressed session=$session reason=$suppression_reason"
+    report_item "$report_items" "$session" "observe" "needs_human" "$summary" "$workspace" "$remote_spec"
+    report_item "$report_items" "$session" "notify" "test_notification_suppressed" "user notification suppressed: $suppression_reason" "$workspace" "$remote_spec"
+    return 0
+  fi
   payload_tmp="$(mktemp)"
   dm_result_tmp="$(mktemp)"
   escalation_context_tmp="$(mktemp)"
@@ -3581,6 +3610,34 @@ resume_plan_relaunch_command() {
 chain_resume_plan_relaunch_command_if_needed() {
   local workspace="$1"
   local plan_name="$2"
+  local remote_spec="${3:-}"
+  if [[ -z "$plan_name" && -n "$remote_spec" ]]; then
+    plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || true
+import hashlib
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+spec_path = pathlib.Path(sys.argv[2])
+if not spec_path.is_absolute():
+    spec_path = workspace / spec_path
+try:
+    spec_path = spec_path.resolve()
+except OSError:
+    pass
+digest = hashlib.sha1(str(spec_path).encode("utf-8")).hexdigest()[:12]
+state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+try:
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+plan_name = payload.get("current_plan_name") if isinstance(payload, dict) else ""
+if isinstance(plan_name, str) and plan_name and "/" not in plan_name:
+    print(plan_name)
+PY
+)"
+  fi
   [[ -n "$plan_name" ]] || return 1
   local plan_state_file="$workspace/.megaplan/plans/$plan_name/state.json"
   [[ -f "$plan_state_file" ]] || return 1
@@ -3704,6 +3761,12 @@ resolve_relaunch_command() {
   local plan_name="${5:-}"
   local relaunch_command="${6:-}"
 
+  # A chain marker commonly preserves its original `chain start` command and
+  # omits plan_name. Once the active plan records explicit resume authority,
+  # that current state must outrank the stale launch-time marker command.
+  if [[ "$run_kind" != "plan" ]] && chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name" "$remote_spec"; then
+    return 0
+  fi
   if [[ -n "$relaunch_command" ]] && ! stale_marker_relaunch_command "$relaunch_command"; then
     printf '%s' "$relaunch_command"
     return 0
@@ -3713,10 +3776,6 @@ resolve_relaunch_command() {
     default_plan_relaunch_command "$plan_name" "$workspace"
     return 0
   fi
-  if chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name"; then
-    return 0
-  fi
-
   default_chain_relaunch_command "$session" "$workspace" "$remote_spec"
 }
 
@@ -5662,18 +5721,20 @@ def load_json(path: pathlib.Path) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def merge_policy() -> str:
+def advancement_policy() -> tuple[bool, str]:
     if remote_spec is None:
-        return ""
+        return False, "chain spec is missing"
     try:
-        for raw_line in remote_spec.read_text(encoding="utf-8").splitlines():
-            line = raw_line.split("#", 1)[0].strip()
-            if line.startswith("merge_policy:"):
-                value = line.split(":", 1)[1].strip().strip("'\"")
-                return "review" if value == "manual" else value
-    except Exception:
-        return ""
-    return ""
+        from arnold_pipelines.megaplan.chain.advancement import policy_for_spec_path
+
+        policy = policy_for_spec_path(remote_spec)
+    except Exception as exc:
+        return False, f"chain advancement policy unreadable: {exc}"
+    return (
+        policy.automatic_pr_progression,
+        f"merge_policy={policy.merge_policy} "
+        f"clean_milestone_pr={policy.clean_milestone_pr} source={policy.source}",
+    )
 
 
 def chain_state_paths() -> list[pathlib.Path]:
@@ -5751,8 +5812,9 @@ def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> 
         return f"queue_error:{exc}"
 
 
-if merge_policy() != "auto":
-    emit("review_policy", "merge policy is not auto")
+automatic_progression, policy_reason = advancement_policy()
+if not automatic_progression:
+    emit("review_policy", policy_reason)
     raise SystemExit(0)
 
 for path in chain_state_paths():

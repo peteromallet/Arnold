@@ -42,3 +42,35 @@ The "derived-state-drift" failure class is mechanically impossible: custody laye
 - Drift is suppressed (not emitted) — operators lose visibility.
 - L3 can't audit the resolver/L2 (no backstop for the backstop).
 - The 3 duplicate initiatives get re-launched as separate chains.
+
+## Definitive migration extension
+
+The resolver and custody work are necessary substrate, not the final authority
+model. The deepest practical end state is one append-only causal history for
+workflow attempts, effects, transitions, custody, and decisions. Every record
+is bound to an exact workflow/contract version, run and attempt identity,
+coordinator fence, idempotency key, coherent evidence snapshot, and causal
+parents. Mutable JSON, markers, process probes, logs, receipts, status files,
+and provider facts are evidence or rebuildable projections only.
+
+All supported writers must append through the fenced history API before an
+effect or transition is considered accepted. All authority-increasing readers
+must consume a version-matched reducer view, return `UNKNOWN` for incomplete or
+incoherent evidence, and reread after mutation. Recovery closes only after an
+independent verifier proves both blocker clearance and resumed authoritative
+progress. Legacy bypasses fail closed, then are deleted behind machine-readable
+conformance and zero-reader gates.
+
+## Initiative lineage and bounded follow-up
+
+M1-M4 are completed historical foundation: resolver/read coherence, status and
+dispatch integration, watchdog/repair verification, and auditor coverage. Their
+briefs remain under `briefs/` as lineage and acceptance context; they are not
+pending executable milestones.
+
+Workflow Boundary Contracts owns the shared boundary declarations and durable
+attempt/effect evidence needed by the next custody step. The only pending
+initiative milestone is a bounded post-WBC convergence of the Megaplan
+cloud-chain custody read and decision path. It consumes WBC and Run Authority by
+exact version, preserves the North Star above, and must not recreate their
+ledgers, decisions, lifecycle, or conformance programs.

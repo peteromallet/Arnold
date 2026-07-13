@@ -1,0 +1,39 @@
+provider: ssh
+
+repo:
+  url: https://github.com/peteromallet/Arnold.git
+  branch: main
+  workspace: /workspace/workflow-boundary-contracts-corrective-20260710/Arnold
+
+agents:
+  default: codex
+
+codex:
+  model: gpt-5.6-sol
+  reasoning: high
+
+chain_session: workflow-boundary-contracts-corrective-20260710
+mode: chain
+
+chain:
+  spec: /workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml
+
+megaplan:
+  ref: editible-install
+  codex_auth: chatgpt
+  repo: https://github.com/peteromallet/Arnold.git
+  src_path: /workspace/arnold
+
+resources:
+  volume: agent-volume
+  port: 8080
+
+ssh:
+  host: 159.69.51.216
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent
+
+secrets: []

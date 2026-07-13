@@ -199,6 +199,17 @@ def classify_chain_status(
         "sync_state": sync.get("sync_state"),
     }
 
+    if chain_state is not None:
+        from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+
+        if is_paused(chain_state):
+            return _classification(
+                OperationState.SUSPENDED,
+                "paused",
+                "operator_pause",
+                base_metadata,
+            )
+
     if spec is not None and chain_state is not None:
         current_index = chain_state.current_milestone_index
         milestone_count = len(spec.milestones)

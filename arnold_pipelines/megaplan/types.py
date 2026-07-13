@@ -157,6 +157,7 @@ class HistoryEntry(TypedDict, total=False):
     timestamp: str
     duration_ms: int
     cost_usd: float
+    cost_pricing: str
     result: str
     session_mode: str
     session_id: str
@@ -360,9 +361,8 @@ _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 # Canonical per-vendor valid effort sets — the SINGLE source of truth for
 # what an effort token may be in an agent spec. These are the *spec-layer*
 # effort tokens (the thinking-depth ladder applied by --depth / --phase-model),
-# NOT the narrower codex-CLI reasoning-effort set in
-# megaplan.workers._impl (_VALID_CODEX_EFFORTS), which is a downstream concern
-# where xhigh/max get clamped before the codex binary is invoked.
+# The Codex CLI dispatch layer accepts the same full ladder and passes explicit
+# xhigh/max requests through unchanged; it must not silently clamp them.
 #
 # Both premium vendors accept the full depth ladder at the spec layer because
 # --depth (VALID_DEPTH_CHOICES) can produce e.g. ``codex:max`` / ``claude:minimal``.

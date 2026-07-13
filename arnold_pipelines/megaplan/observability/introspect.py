@@ -21,8 +21,12 @@ from typing import Any, Optional, Tuple
 from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
 from arnold_pipelines.megaplan.observability.events import EventKind, read_events
-from arnold_pipelines.megaplan.observability.liveness import has_active_in_flight_llm
+from arnold_pipelines.megaplan.observability.liveness import (
+    has_active_in_flight_llm,
+    unmatched_llm_starts,
+)
 from arnold.runtime.outcome import RunOutcome
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
 
 # Default phase timeout (overridable from state)
 _DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
@@ -590,19 +594,11 @@ def build_introspect_payload(plan_dir: Path) -> dict:
     }
 
     # ── In-flight LLM ───────────────────────────────────────────────────
-    llm_starts_no_end: list[dict] = []
-    llm_end_rids: set[str] = set()
-    for ev in events:
-        if ev.get("kind") == EventKind.LLM_CALL_END:
-            rid = ev.get("payload", {}).get("request_id")
-            if rid:
-                llm_end_rids.add(str(rid))
-    for ev in events:
-        if ev.get("kind") == EventKind.LLM_CALL_START:
-            rid = ev.get("payload", {}).get("request_id")
-            if rid and str(rid) in llm_end_rids:
-                continue
-            llm_starts_no_end.append(ev)
+    llm_starts_no_end = unmatched_llm_starts(
+        events,
+        start_kind=EventKind.LLM_CALL_START,
+        end_kind=EventKind.LLM_CALL_END,
+    )
     in_flight_llm: Optional[dict] = llm_starts_no_end[-1] if llm_starts_no_end else None
 
     # ── Cost ────────────────────────────────────────────────────────────
@@ -635,11 +631,18 @@ def build_introspect_payload(plan_dir: Path) -> dict:
         if isinstance(it, int):
             iteration = it
 
+    presentation = plan_status_presentation(
+        plan_state,
+        active_phase=active_phase.get("phase"),
+    )
+
     # ── Assemble payload ────────────────────────────────────────────────
     payload: dict = {
         "now_utc": now.isoformat(),
         "plan": plan_name,
         "plan_state": plan_state,
+        "display_state": presentation["display_state"],
+        "execution_state": presentation["execution_state"],
         "iteration": iteration,
         "plan_dir": str(plan_dir),
         "anchors": anchor_summary(state or {}, plan_dir),

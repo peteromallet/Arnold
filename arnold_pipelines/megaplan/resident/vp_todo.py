@@ -15,8 +15,11 @@ from datetime import UTC, datetime
 import json
 import os
 import secrets
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
+
+from .provenance import normalize_delegation_provenance
 
 PENDING = "pending"
 DONE = "done"
@@ -32,6 +35,7 @@ class TodoItem(TypedDict):
     reason: str
     updated_at: str
     when: str
+    launch_provenance: NotRequired[dict[str, Any]]
 
 
 def _now_iso() -> str:
@@ -86,7 +90,7 @@ def _coerce_item(item: Any) -> TodoItem:
     status = str(item.get("status", PENDING)).strip() or PENDING
     if status not in _STATUSES:
         status = PENDING
-    return {
+    coerced: TodoItem = {
         "id": str(item.get("id") or _new_id()),
         "task": task,
         "status": status,
@@ -95,6 +99,15 @@ def _coerce_item(item: Any) -> TodoItem:
         "updated_at": str(item.get("updated_at", "") or _now_iso()),
         "when": str(item.get("when", "") or "").strip(),
     }
+    provenance = item.get("launch_provenance")
+    if isinstance(provenance, Mapping):
+        try:
+            coerced["launch_provenance"] = normalize_delegation_provenance(provenance)
+        except ValueError:
+            # A malformed legacy item stays visible but can never smuggle an
+            # ambiguous reply target into a later scheduled launch.
+            pass
+    return coerced
 
 
 def public_item(item: TodoItem) -> dict[str, Any]:
@@ -139,7 +152,13 @@ def fail_item(path: Path, item_id: str, reason: str) -> TodoItem | None:
     return None
 
 
-def add_item(path: Path, task: str, when: str = "") -> TodoItem:
+def add_item(
+    path: Path,
+    task: str,
+    when: str = "",
+    *,
+    launch_provenance: Mapping[str, Any] | None = None,
+) -> TodoItem:
     items = load_items(path)
     item: TodoItem = {
         "id": _new_id(),
@@ -150,6 +169,8 @@ def add_item(path: Path, task: str, when: str = "") -> TodoItem:
         "updated_at": _now_iso(),
         "when": (when or "").strip(),
     }
+    if launch_provenance is not None:
+        item["launch_provenance"] = normalize_delegation_provenance(launch_provenance)
     items.append(item)
     save_items(path, items)
     return item

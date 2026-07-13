@@ -50,6 +50,25 @@ def assert_contract_invariants(result: CanonicalRunState) -> None:
     assert "root_cause_fingerprint" in fingerprint_kinds, (
         f"resolver evidence missing root_cause_fingerprint item; kinds={sorted(fingerprint_kinds)}"
     )
+
+
+def test_operator_pause_outranks_live_worker_and_active_repair() -> None:
+    result = resolve_run_state(
+        {
+            "plan_state": {"current_state": "paused", "active_step": {"phase": "execute"}},
+            "chain_state": {
+                "last_state": "paused",
+                "metadata": {"operator_pause": {"active": True}},
+            },
+            "tmux_process": {"alive": True},
+            "repair_progress": {"status": "repairing"},
+        }
+    )
+    assert result.canonical_state is CanonicalState.PAUSED
+    assert result.repairable is False
+    assert result.running is False
+    assert result.next_action == "explicit_operator_resume"
+    assert_contract_invariants(result)
     assert isinstance(result.next_action, str) and result.next_action, (
         f"resolver returned an empty next_action for {result.canonical_state.name}"
     )

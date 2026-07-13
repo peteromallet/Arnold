@@ -44,6 +44,18 @@ if [[ ! -d /workspace/arnold ]]; then
     "$CONTAINER" bash -lc '/usr/local/bin/arnold-progress-auditor "$@"' _ "$@"
 fi
 
+# Keep the installed container entrypoint tiny and load-bearing only as a
+# trampoline.  The editable checkout is the deployed recovery implementation
+# and is what the watchdog already treats as its current source of truth.
+SOURCE_AUDITOR=/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor
+if [[ -x "$SOURCE_AUDITOR" ]]; then
+  self_real="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
+  source_real="$(readlink -f "$SOURCE_AUDITOR" 2>/dev/null || printf '%s' "$SOURCE_AUDITOR")"
+  if [[ "$self_real" != "$source_real" ]]; then
+    exec "$SOURCE_AUDITOR" "$@"
+  fi
+fi
+
 # ---- in-container audit -----------------------------------------------------
 
 if [[ -f /workspace/.cloud-hot-env ]]; then
@@ -69,11 +81,15 @@ SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
 SUBAGENT_MAX_TOKENS="${MEGAPLAN_AUDIT_SUBAGENT_MAX_TOKENS:-8192}"
 SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
 DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"
+AUDIT_CODEX_MODEL="${MEGAPLAN_AUDIT_CODEX_MODEL:-gpt-5.6-sol}"
 CODEX_TIMEOUT="${MEGAPLAN_AUDIT_CODEX_TIMEOUT_SECS:-1800}"
 SUBAGENT_SKILL="${MEGAPLAN_AUDIT_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 AUDIT_GITHUB_REPO="${MEGAPLAN_AUDIT_GITHUB_REPO:-}"
 AUDIT_GITHUB_REPO_PATH="${MEGAPLAN_AUDIT_GITHUB_REPO_PATH:-}"
 AUDIT_GITHUB_LABELS="${MEGAPLAN_AUDIT_GITHUB_LABELS:-incident-control-plane,persistent-problem}"
+RECOVERY_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_ENABLED:-1}"
+RECOVERY_SYNC_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_SYNC_ENABLED:-0}"
+WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog}"
 
 # Legacy direct DeepSeek launcher contract retained here for watchdog contract
 # tests and operator reference:
@@ -90,6 +106,7 @@ JSON_OUT="$REPORT_DIR/${TS}-audit.json"
 MD_OUT="$REPORT_DIR/${TS}-audit.md"
 WORKLIST="$(mktemp)"
 GATHER_DIR="$(mktemp -d)"
+RECOVERY_EVIDENCE="$GATHER_DIR/recovery-sweep.json"
 trap 'rm -rf "$WORKLIST" "$GATHER_DIR"' EXIT
 
 log() {
@@ -187,6 +204,190 @@ AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"
 AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"
 export ARNOLD_META_REPAIR_ENABLED="${ARNOLD_META_REPAIR_ENABLED:-1}"
 export ARNOLD_META_REPAIR_COMMIT_ENABLED="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
+
+capture_recovery_snapshot() {
+  local output_path="$1"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$output_path" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.status_snapshot import build_cloud_status_snapshot
+
+path = pathlib.Path(sys.argv[1])
+path.write_text(json.dumps(build_cloud_status_snapshot(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+assemble_recovery_evidence() {
+  local before_path="$1" after_path="$2" watchdog_rc="$3" enabled="$4"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+    "$before_path" "$after_path" "$WATCHDOG_REPORT" "$RECOVERY_EVIDENCE" \
+    "$watchdog_rc" "$enabled" "$AUDIT_CODEX_MODEL" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import re
+import sys
+
+before_path, after_path, report_path, output_path, watchdog_rc, enabled, codex_model = sys.argv[1:]
+
+
+def load(path: str) -> dict:
+    try:
+        value = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+before = load(before_path)
+after = load(after_path)
+report = load(report_path)
+report_items: dict[str, list[dict]] = {}
+for item in report.get("items") or []:
+    if not isinstance(item, dict):
+        continue
+    session = str(item.get("session") or "")
+    if session:
+        report_items.setdefault(session, []).append(item)
+
+provider_pattern = re.compile(
+    r"usage[ _-]?limit|rate[ _-]?limit|capacity|quota|credit balance|"
+    r"authentication|authorization|credential|login required|token expired",
+    re.IGNORECASE,
+)
+decisions = []
+for session_entry in after.get("sessions") or []:
+    if not isinstance(session_entry, dict):
+        continue
+    session = str(session_entry.get("session") or "")
+    workspace = pathlib.Path(str(session_entry.get("workspace") or ""))
+    current_plan = str(session_entry.get("current_plan") or "")
+    state_path = workspace / ".megaplan" / "plans" / current_plan / "state.json"
+    state = load(str(state_path)) if current_plan else {}
+    current_state = str(state.get("current_state") or "").strip().lower()
+    latest_failure = state.get("latest_failure") if isinstance(state.get("latest_failure"), dict) else {}
+    failure_kind = str(latest_failure.get("kind") or "")
+    failure_text = " ".join(
+        str(latest_failure.get(key) or "") for key in ("kind", "message", "phase")
+    )
+    provider_failure = bool(provider_pattern.search(failure_text))
+    items = report_items.get(session, [])
+    statuses = [str(item.get("status") or "") for item in items]
+    evidence = session_entry.get("evidence") if isinstance(session_entry.get("evidence"), dict) else {}
+    superseded_by = evidence.get("superseded_by")
+    status = str(session_entry.get("status") or "")
+    live = bool(session_entry.get("tmux") or session_entry.get("process"))
+    should_run = bool(session_entry.get("should_run"))
+    advancement = session_entry.get("advancement") if isinstance(session_entry.get("advancement"), dict) else {}
+    advancement_action = str(advancement.get("action") or "")
+    advancement_automatic = bool(advancement.get("automatic"))
+
+    if superseded_by:
+        disposition = "superseded"
+        decision = "skip_superseded"
+    elif status == "complete":
+        disposition = "completed"
+        decision = "skip_completed"
+    elif current_state == "paused" or "paused" in statuses:
+        disposition = "paused"
+        decision = "skip_paused"
+        should_run = False
+    elif advancement_action == "await_human" or status == "blocked":
+        disposition = "human_gated"
+        decision = "await_human"
+        should_run = False
+    elif live:
+        disposition = "running"
+        decision = "preserve_live_no_duplicate"
+    elif "restarted" in statuses:
+        disposition = "eligible_missing_runner"
+        decision = "relaunched"
+    elif any(value in statuses for value in ("repair_dispatched", "repair_running")):
+        disposition = "genuinely_failed"
+        decision = "repair_dispatched"
+    elif provider_failure and "provider_retry_selected" in statuses:
+        disposition = "provider_transient_failure"
+        decision = "provider_retry_selected"
+    elif should_run and (latest_failure or "failed" in str(session_entry.get("operator_next") or "")):
+        disposition = "genuinely_failed"
+        decision = "eligible_but_not_recovered"
+    elif should_run and advancement_automatic:
+        disposition = "eligible_missing_runner"
+        decision = advancement_action or "eligible_but_not_recovered"
+    elif should_run:
+        disposition = "eligible_missing_runner"
+        decision = "eligible_but_not_recovered"
+    else:
+        disposition = "inactive"
+        decision = "skip_inactive"
+
+    decisions.append(
+        {
+            "session": session,
+            "status_after": status,
+            "should_run": should_run,
+            "live_after": live,
+            "disposition": disposition,
+            "decision": decision,
+            "provider_transient_failure": provider_failure,
+            "failure_kind": failure_kind,
+            "advancement": advancement,
+            "watchdog_statuses": statuses,
+            "evidence": {
+                "marker": evidence.get("marker"),
+                "plan_state": str(state_path) if current_plan else None,
+                "watchdog_report": report_path,
+                "superseded_by": superseded_by,
+            },
+        }
+    )
+
+payload = {
+    "schema_version": 1,
+    "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "enabled": enabled.strip().lower() not in {"0", "false", "no", "off"},
+    "watchdog_exit_code": int(watchdog_rc),
+    "watchdog_report_timestamp": report.get("timestamp_utc"),
+    "before_generated_at": before.get("generated_at"),
+    "after_generated_at": after.get("generated_at"),
+    "sessions_discovered": len(decisions),
+    "should_run_count": sum(1 for item in decisions if item["should_run"]),
+    "codex_model": codex_model,
+    "decisions": decisions,
+}
+pathlib.Path(output_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+run_recovery_sweep() {
+  local before_path="$GATHER_DIR/recovery-before.json"
+  local after_path="$GATHER_DIR/recovery-after.json"
+  local watchdog_rc=0
+  capture_recovery_snapshot "$before_path"
+  case "${RECOVERY_ENABLED,,}" in
+    0|false|no|off)
+      log "recovery sweep disabled by MEGAPLAN_AUDIT_RECOVERY_ENABLED"
+      ;;
+    *)
+      if [[ ! -x "$WATCHDOG_BIN" ]]; then
+        log "recovery sweep unavailable; watchdog binary missing path=$WATCHDOG_BIN"
+        watchdog_rc=127
+      else
+        log "recovery sweep starting watchdog=$WATCHDOG_BIN provider_retry_once=1"
+        CLOUD_WATCHDOG_SYNC_ENABLED="$RECOVERY_SYNC_ENABLED" \
+        CLOUD_WATCHDOG_PROVIDER_RETRY_ONCE=1 \
+          "$WATCHDOG_BIN" --audit-sweep || watchdog_rc=$?
+        log "recovery sweep finished watchdog_exit_code=$watchdog_rc"
+      fi
+      ;;
+  esac
+  capture_recovery_snapshot "$after_path"
+  assemble_recovery_evidence "$before_path" "$after_path" "$watchdog_rc" "$RECOVERY_ENABLED"
+}
+
+run_recovery_sweep
 
 # Build the plan worklist from marker, tmux, and workspace-activity discovery.
 python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "/workspace" "$ARNOLD_SRC" <<'PY'
@@ -3677,7 +3878,7 @@ EOF
       export PYENV_VERSION=3.11.11
       export MEGAPLAN_DEFAULT_PROFILE="$SUBAGENT_PROFILE"
       export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
-      timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$brief"
+      timeout "$CODEX_TIMEOUT" codex exec --model "$AUDIT_CODEX_MODEL" --sandbox danger-full-access - < "$brief"
     ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" || true
     redact_file_in_place "$resp_path"
     redact_file_in_place "$GATHER_DIR/resp-${plan}.err"
@@ -4058,7 +4259,7 @@ fi
 record_incident_audits "$GATHER_DIR/findings.json"
 
 # Final report assembly: JSON + Markdown + one-line log append.
-python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" <<'PY'
+python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" "$RECOVERY_EVIDENCE" "$AUDIT_CODEX_MODEL" <<'PY'
 import datetime as dt
 import glob
 import json
@@ -4066,8 +4267,18 @@ import os
 import pathlib
 import sys
 
-findings_path, json_out, md_out, log_path, ts = sys.argv[1:6]
+findings_path, json_out, md_out, log_path, ts, recovery_evidence_path, codex_model = sys.argv[1:8]
 data = json.load(open(findings_path, encoding="utf-8"))
+try:
+    recovery_sweep = json.load(open(recovery_evidence_path, encoding="utf-8"))
+except Exception:
+    recovery_sweep = {
+        "enabled": False,
+        "watchdog_exit_code": 127,
+        "sessions_discovered": 0,
+        "should_run_count": 0,
+        "decisions": [],
+    }
 
 # Merge the per-finding subagent responses back in.
 findings = data.get("findings") or []
@@ -4220,6 +4431,8 @@ payload = {
     "finding_count": len(findings),
     "green_checks_count": len(green_checks),
     "deepseek_model": findings[0].get("deepseek_model") if findings else None,
+    "codex_model": codex_model,
+    "recovery_sweep": recovery_sweep,
     "findings": findings,
     "green_checks": green_checks,
     "related_prior_incidents": deduped_prior,
@@ -4245,8 +4458,28 @@ lines = [
     "",
     f"Window: {payload['window_hours']}h · findings: {payload['finding_count']} · green: {len(green_checks)} · watchdog stall flags: {payload['stall_summary']}",
     f"DeepSeek model: {payload.get('deepseek_model') or 'n/a'}",
+    f"Codex model: {payload.get('codex_model') or 'n/a'}",
     "",
 ]
+recovery = payload.get("recovery_sweep") or {}
+lines.extend(
+    [
+        "## Recovery sweep",
+        "",
+        (
+            f"Watchdog exit: `{recovery.get('watchdog_exit_code')}` · "
+            f"sessions discovered: `{recovery.get('sessions_discovered')}` · "
+            f"should run after sweep: `{recovery.get('should_run_count')}`"
+        ),
+        "",
+    ]
+)
+for item in recovery.get("decisions") or []:
+    lines.append(
+        f"- **{item.get('session')}** — `{item.get('disposition')}` → "
+        f"`{item.get('decision')}` · watchdog `{','.join(item.get('watchdog_statuses') or []) or 'none'}`"
+    )
+lines.append("")
 if not findings and not green_checks:
     lines.append("_No plans detected in the audit window._")
 elif not findings:
