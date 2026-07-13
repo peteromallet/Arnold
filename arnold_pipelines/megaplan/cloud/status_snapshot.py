@@ -1160,13 +1160,17 @@ def _build_session_entry(
         # A fresh legacy sidecar is not repair custody.  Once the canonical
         # projection is available, fail closed instead of advertising work
         # that has no active claim/attempt owner.
-        entry["status"] = "attention"
+        runner_live = bool(liveness.get("tmux") or liveness.get("process"))
+        entry["status"] = "running" if runner_live else "attention"
         entry["repairing"] = False
-        entry["operator_next"] = (
-            "repair custody is absent"
-            if not isinstance(dispatch, Mapping)
-            else str(dispatch.get("rationale") or "repair custody is absent")
-        )
+        if runner_live:
+            entry["operator_next"] = "live runner supersedes stale repair sidecar"
+        else:
+            entry["operator_next"] = (
+                "repair custody is absent"
+                if not isinstance(dispatch, Mapping)
+                else str(dispatch.get("rationale") or "repair custody is absent")
+            )
     return entry
 
 
