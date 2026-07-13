@@ -178,7 +178,9 @@ def test_terminal_reaction_failure_is_retryable_without_duplicate_reply(tmp_path
     )
 
     asyncio.run(sink.send(outbound))
-    assert channel.partial_messages[1001].reactions == []
+    # Completion was not accepted, so terminal cleanup remains fenced behind
+    # it and the source never loses both transition indicators.
+    assert channel.partial_messages[1001].reactions == ["⏳"]
     restarted_sink = DiscordOutboundSink(
         client=_FakeClient(channel), reaction_effect_root=tmp_path / "effects"
     )

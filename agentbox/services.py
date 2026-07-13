@@ -20,7 +20,6 @@ from agentbox.reset_notifications import (
     prepare_reset_notification,
     reset_notification_root,
     reset_transaction_request,
-    wait_for_reset_acknowledgement,
 )
 
 
@@ -321,6 +320,7 @@ def _launch_restart_supervisor(
         return payload
     return {
         "ok": True,
+        # This is a synchronous control-plane result, not a Discord outbox item.
         "accepted": True,
         "restart_completed": False,
         "service": service_name,
@@ -389,11 +389,9 @@ def execute_prepared_restart(
         _finalize_reset_notification(payload, reservation)
         return payload
 
-    acknowledgement_status = wait_for_reset_acknowledgement(reservation)
     mark_reset_restarting(
         reservation,
         supervisor_pid=_current_pid(),
-        acknowledgement_status=acknowledgement_status,
     )
     if backend == "tmux":
         pane_id = str(safety["pane_id"])

@@ -341,7 +341,26 @@ class DiscordOutboundSink(OutboundSink):
             message.conversation_key, working_ids
         )
         terminal_effect_ids: set[str] = set()
-        cleanup_ids: list[str] = []
+        # The completion marker is the terminal handoff boundary: Discord must
+        # accept it before any working marker can be removed.  Pending working
+        # adds remain dependencies so a concurrent/replayed add cannot land
+        # after terminal cleanup.
+        completion = self._ensure_reaction_effect(
+            conversation_key=message.conversation_key,
+            message_id=reply_to_message_id,
+            operation="add",
+            emoji=DISCORD_REPLY_REACTION,
+            phase="completion",
+            lifecycle_key=lifecycle_key,
+            turn_id=_optional_text(message.metadata.get("discord_processing_turn_id")),
+            depends_on=[
+                effect_id
+                for dependencies in working_dependencies.values()
+                for effect_id in dependencies
+            ],
+        )
+        completion_id = str(completion["effect_id"])
+        terminal_effect_ids.add(completion_id)
         for source_message_id in working_ids:
             effect = self._ensure_reaction_effect(
                 conversation_key=message.conversation_key,
@@ -351,21 +370,9 @@ class DiscordOutboundSink(OutboundSink):
                 phase="terminal_cleanup",
                 lifecycle_key=lifecycle_key,
                 turn_id=_optional_text(message.metadata.get("discord_processing_turn_id")),
-                depends_on=working_dependencies.get(source_message_id, []),
+                depends_on=[completion_id],
             )
-            cleanup_ids.append(str(effect["effect_id"]))
             terminal_effect_ids.add(str(effect["effect_id"]))
-        completion = self._ensure_reaction_effect(
-            conversation_key=message.conversation_key,
-            message_id=reply_to_message_id,
-            operation="add",
-            emoji=DISCORD_REPLY_REACTION,
-            phase="completion",
-            lifecycle_key=lifecycle_key,
-            turn_id=_optional_text(message.metadata.get("discord_processing_turn_id")),
-            depends_on=cleanup_ids,
-        )
-        terminal_effect_ids.add(str(completion["effect_id"]))
         await self.reconcile_reactions(only=terminal_effect_ids)
 
     async def mark_processing(
@@ -531,7 +538,7 @@ class DiscordOutboundSink(OutboundSink):
             else:
                 effect["status"] = "applied"
                 applied += 1
-        # A completion effect may become eligible after cleanup in this pass.
+        # Terminal cleanup may become eligible after completion in this pass.
         if applied and any(
             effect.get("status") != "applied"
             and (only is None or effect.get("effect_id") in only)

@@ -108,7 +108,7 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
     )
     assert result["accepted"] is True
     assert result["restart_completed"] is False
-    assert result["notification"]["acknowledgement"]["status"] == "pending"
+    assert result["notification"]["acknowledgement"] == {}
     assert calls[0][:5] == [
         "tmux",
         "list-panes",
@@ -232,7 +232,7 @@ def test_resident_restart_targets_only_guarded_service(monkeypatch, tmp_path) ->
         ],
     ]
     assert result["notification"]["restart"]["status"] == "supervisor_started"
-    assert result["notification"]["acknowledgement"]["status"] == "pending"
+    assert result["notification"]["acknowledgement"] == {}
 
 
 def test_failed_guarded_restart_never_enables_a_success_confirmation(
@@ -261,9 +261,9 @@ def test_failed_guarded_restart_never_enables_a_success_confirmation(
     )
     assert finalized["ok"] is False
     assert finalized["notification"]["restart"]["status"] == "failed"
-    assert finalized["notification"]["delivery"]["status"] == "restart_failed"
+    assert finalized["notification"]["delivery"]["status"] == "pending"
     state = list_reset_notifications(notification_root=tmp_path)
-    assert state["delivery_status_counts"] == {"restart_failed": 1}
+    assert state["delivery_status_counts"] == {"pending": 1}
 
 
 def test_resident_restart_refuses_custom_stop_hook(monkeypatch) -> None:
