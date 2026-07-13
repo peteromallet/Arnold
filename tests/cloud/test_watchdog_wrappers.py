@@ -2262,6 +2262,69 @@ def test_repair_clear_stale_state_syncs_chain_for_planned_state_mismatch(tmp_pat
     )
 
 
+def test_repair_clear_stale_state_clears_dead_active_step_and_syncs_executed_chain(
+    tmp_path: Path,
+) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(json.dumps({}), encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "executed",
+                "latest_failure": None,
+                "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+                "active_step": {"phase": "review", "worker_pid": -1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    chain_path = tmp_path / "chain.json"
+    chain_path.write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+    failure_context = {
+        "failure_classification": "stale_state",
+        "stale_state": {
+            "classification": "NO LATEST FAILURE",
+            "summary": "no latest_failure is set",
+        },
+        "state_mismatch": {
+            "detected": True,
+            "plan_state": "executed",
+            "chain_last_state": "blocked",
+            "plan_name": "demo-plan",
+            "chain_plan_name": "demo-plan",
+            "plan_state_path": str(state_path),
+            "chain_state_path": str(chain_path),
+        },
+        "resolver_output": {
+            "stale_evidence": [{"kind": "stale_active_step_dead_pid"}],
+        },
+    }
+
+    failure_context_path = tmp_path / "failure-context.json"
+    failure_context_path.write_text(json.dumps(failure_context), encoding="utf-8")
+    program = _extract_repair_program(
+        "repair_clear_stale_state_if_needed",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$failure_context_file\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path), str(failure_context_path))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("cleared:")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "active_step" not in state
+    chain_state = json.loads(chain_path.read_text(encoding="utf-8"))
+    assert chain_state["last_state"] == "executed"
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    action = payload["stale_state_actions"][0]
+    assert "cleared orphaned active_step for dead worker PID" in action["actions"]
+    assert action["state_mismatch"]["cleared"] is True
+
+
 def test_repair_loop_summary_inlines_error_narrative_and_attempt_history(tmp_path: Path) -> None:
     data_path = tmp_path / "repair-data.json"
     data_path.write_text(
