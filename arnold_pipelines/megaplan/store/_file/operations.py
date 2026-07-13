@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any, Sequence
 
-from arnold_pipelines.megaplan.schemas import AutomationActor, CloudRun, ControlMessage, EpicLock, ExecutionLease, MigrationRun, ProgressEvent, ResidentConversation, ScheduledJob
+from arnold_pipelines.megaplan.schemas import AutomationActor, CloudRun, ControlMessage, EpicLock, ExecutionLease, MigrationRun, ProgressEvent, ResidentConversation, ResidentUserPreference, ScheduledJob
 from arnold_pipelines.megaplan.schemas.base import utc_now
 
 from ..base import CloudRunInput, ControlMessageInput, LeaseConflict, LockConflict, ProgressEventInput, ResidentConversationInput, ScheduledJobInput
@@ -340,6 +340,46 @@ class FileOperationsMixin:
             journal_root=self.root,
             **changes,
         )
+
+    def load_resident_user_preference(
+        self, *, transport: str, user_id: str
+    ) -> ResidentUserPreference | None:
+        return self._load_model(
+            self._resident_user_preference_path(transport, user_id),
+            ResidentUserPreference,
+        )
+
+    def upsert_resident_user_preference(
+        self,
+        *,
+        transport: str,
+        user_id: str,
+        timezone_name: str | None,
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> ResidentUserPreference:
+        path = self._resident_user_preference_path(transport, user_id)
+        existing = self._load_model(path, ResidentUserPreference)
+        now = utc_now()
+        if existing is not None:
+            return self._update_model(
+                path,
+                ResidentUserPreference,
+                journal_root=self.root,
+                timezone_name=timezone_name,
+                metadata=dict(metadata) if metadata is not None else existing.metadata,
+                updated_at=now,
+            )
+        preference = ResidentUserPreference(
+            transport=transport,
+            user_id=user_id,
+            timezone_name=timezone_name,
+            metadata=dict(metadata or {}),
+            created_at=now,
+            updated_at=now,
+        )
+        self._save_model(path, preference, journal_root=self.root)
+        return preference
 
     def create_scheduled_job(
         self,

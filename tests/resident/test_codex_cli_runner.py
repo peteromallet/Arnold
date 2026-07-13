@@ -80,6 +80,22 @@ def test_codex_cli_runner_uses_configured_sandbox(tmp_path: Path) -> None:
     assert runner.sandbox == "danger-full-access"
 
 
+def test_codex_cli_prompt_requires_safe_path_for_resident_commands(tmp_path: Path) -> None:
+    runner = CodexCliAgentRunner(ResidentConfig(model_provider="codex"), cwd=tmp_path)
+    prompt = runner._prompt(
+        AgentRequest(
+            conversation_id="conversation-safe-path",
+            messages=({"role": "user", "content": "launch it"},),
+            system_prompt="system prompt",
+        ),
+        ToolRegistry(),
+    )
+
+    assert "python -P -m arnold_pipelines.megaplan.resident.subagent launch" in prompt
+    assert "python -P -m arnold_pipelines.megaplan resident read-reply-chain" in prompt
+    assert "`-P` isolation flag is mandatory" in prompt
+
+
 def test_codex_cli_compatibility_process_receives_validated_launch_provenance(
     tmp_path: Path, monkeypatch
 ) -> None:

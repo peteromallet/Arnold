@@ -99,6 +99,95 @@ def test_discord_outbound_retry_nonce_deduplicates_reply_accepted_before_respons
     assert outbound.metadata["discord_message_ids"] == ["sent-1"]
 
 
+def test_working_reaction_is_reconciled_to_checkbox_only_after_reply_delivery() -> None:
+    channel = _FakeChannel()
+    sink = DiscordOutboundSink(client=_FakeClient(channel))
+
+    asyncio.run(
+        sink.mark_processing(conversation_key="discord:dm:42", message_ids=["1001", "1001"])
+    )
+    assert channel.partial_messages[1001].reactions == ["⏳"]
+
+    asyncio.run(
+        sink.send(
+            OutboundMessage(
+                conversation_key="discord:dm:42",
+                content="terminal reply",
+                metadata={
+                    "discord_reply_to_message_id": "1001",
+                    "discord_processing_message_ids": ["1001"],
+                    "discord_nonce": "terminal-reaction-nonce",
+                },
+            )
+        )
+    )
+
+    assert channel.sent[0]["content"] == "terminal reply"
+    assert channel.partial_messages[1001].reactions == ["☑️"]
+
+
+def test_failed_reply_does_not_replace_working_reaction_with_completion() -> None:
+    class _FailingChannel(_FakeChannel):
+        async def send(self, content: str, **kwargs: object) -> SimpleNamespace:
+            raise ConnectionError("Discord unavailable")
+
+    channel = _FailingChannel()
+    sink = DiscordOutboundSink(client=_FakeClient(channel))
+    asyncio.run(sink.mark_processing(conversation_key="discord:dm:42", message_ids=["1001"]))
+
+    with pytest.raises(ConnectionError, match="unavailable"):
+        asyncio.run(
+            sink.send(
+                OutboundMessage(
+                    conversation_key="discord:dm:42",
+                    content="terminal reply",
+                    metadata={
+                        "discord_reply_to_message_id": "1001",
+                        "discord_processing_message_ids": ["1001"],
+                    },
+                )
+            )
+        )
+
+    assert channel.partial_messages[1001].reactions == ["⏳"]
+
+
+def test_terminal_reaction_failure_is_retryable_without_duplicate_reply(tmp_path) -> None:
+    class _FailOnceMessage(_FakePartialMessage):
+        def __init__(self, message_id: int) -> None:
+            super().__init__(message_id)
+            self.fail_checkbox_once = True
+
+        async def add_reaction(self, emoji: str) -> None:
+            if emoji == "☑️" and self.fail_checkbox_once:
+                self.fail_checkbox_once = False
+                raise ConnectionError("reaction unavailable")
+            await super().add_reaction(emoji)
+
+    channel = _FakeChannel(message_type=_FailOnceMessage)
+    sink = DiscordOutboundSink(client=_FakeClient(channel), reaction_effect_root=tmp_path / "effects")
+    asyncio.run(sink.mark_processing(conversation_key="discord:dm:42", message_ids=["1001"]))
+    outbound = OutboundMessage(
+        conversation_key="discord:dm:42",
+        content="terminal reply",
+        metadata={
+            "discord_reply_to_message_id": "1001",
+            "discord_processing_message_ids": ["1001"],
+            "discord_nonce": "retryable-reaction-nonce",
+        },
+    )
+
+    asyncio.run(sink.send(outbound))
+    assert channel.partial_messages[1001].reactions == []
+    restarted_sink = DiscordOutboundSink(
+        client=_FakeClient(channel), reaction_effect_root=tmp_path / "effects"
+    )
+    asyncio.run(restarted_sink.reconcile_reactions())
+
+    assert len(channel.sent) == 1
+    assert channel.partial_messages[1001].reactions == ["☑️"]
+
+
 class _FakePartialMessage:
     def __init__(self, message_id: int) -> None:
         self.id = message_id
@@ -107,15 +196,20 @@ class _FakePartialMessage:
     async def add_reaction(self, emoji: str) -> None:
         self.reactions.append(emoji)
 
+    async def remove_reaction(self, emoji: str) -> None:
+        if emoji in self.reactions:
+            self.reactions.remove(emoji)
+
 
 class _FakeChannel:
-    def __init__(self) -> None:
+    def __init__(self, message_type: type[_FakePartialMessage] = _FakePartialMessage) -> None:
         self.sent: list[dict[str, object]] = []
         self.partial_messages: dict[int, _FakePartialMessage] = {}
+        self.message_type = message_type
 
     def get_partial_message(self, message_id: int) -> _FakePartialMessage:
         if message_id not in self.partial_messages:
-            self.partial_messages[message_id] = _FakePartialMessage(message_id)
+            self.partial_messages[message_id] = self.message_type(message_id)
         return self.partial_messages[message_id]
 
     async def send(self, content: str, **kwargs: object) -> SimpleNamespace:

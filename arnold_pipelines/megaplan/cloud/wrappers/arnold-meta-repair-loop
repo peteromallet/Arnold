@@ -664,7 +664,30 @@ elif command -v codex >/dev/null 2>&1; then
     export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
     export ARNOLD_SRC="$ARNOLD_SRC"
     cd "$ARNOLD_SRC" || exit 1
-    timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access - < "$BRIEF_PATH"
+    managed_cmd=(
+      python3 -m arnold_pipelines.megaplan.managed_agent run
+      --run-kind automatic_meta_repair_worker
+      --identity-key "meta-repair-worker:${SESSION}:${TRIGGER_TYPE}"
+      --project-dir "$ARNOLD_SRC"
+      --task-kind root_cause
+      --difficulty 10
+      --model codex-cli-default
+      --reasoning-effort high
+      --route-class meta_repair_l2_worker
+      --backend codex
+      --command-display "Codex meta-repair worker $SESSION"
+      --lineage-key "meta-repair-worker:$SESSION"
+      --stdin-file "$BRIEF_PATH"
+      --link "cloud_session=$SESSION"
+      --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+      --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+      --link "phase=meta_repair_worker"
+    )
+    if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
+      managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
+    fi
+    managed_cmd+=(-- timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access -)
+    "${managed_cmd[@]}"
   ) > "$RESP_PATH" 2>"$ERR_PATH" || true
   redact_file_in_place "$RESP_PATH"
   redact_file_in_place "$ERR_PATH"
@@ -875,7 +898,11 @@ record = MetaRepairRecord(
     session=session,
     trigger=trigger,
     diagnosis=redact_text(resp_text[:4000]),
-    subagent_results={"codex_response": redact_text(resp_text[:4000])},
+    subagent_results={
+        "codex_response": redact_text(resp_text[:4000]),
+        "managed_agent_run_id": str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or ""),
+        "managed_agent_manifest": str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or ""),
+    },
     changes=reported_changes,
     tests=reported_tests,
     retrigger_command=redact_text(str(post_retrigger_verification.get("retrigger_command") or "")),
@@ -900,6 +927,7 @@ if [[ "$VERDICT" == FIXED* ]]; then
 import datetime as dt
 import json, os, subprocess, sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.incident_bridge import (
@@ -911,6 +939,11 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     verify_retrigger_success,
 )
 from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
+from arnold_pipelines.megaplan.managed_agent import (
+    ManagedCommandSpec,
+    run_managed_command,
+    stable_managed_run_id,
+)
 
 session = sys.argv[1]
 repair_loop_bin = sys.argv[2]
@@ -1032,11 +1065,47 @@ if workspace:
     retrigger_command.append(workspace)
     if remote_spec:
         retrigger_command.append(remote_spec)
-completed = subprocess.run(
-    retrigger_command,
-    cwd=str(workspace_root),
-    capture_output=True, text=True, check=False,
-    timeout=3600,
+parent_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip() or None
+request_id = str(os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID") or "").strip()
+blocker_id = str(os.environ.get("CLOUD_WATCHDOG_REPAIR_BLOCKER_ID") or "").strip()
+identity_key = f"meta-retrigger:{session}:{parent_run_id or install_sync_event_id}"
+managed_project = Path(workspace).resolve() if workspace else workspace_root.resolve()
+spec = ManagedCommandSpec(
+    run_kind="automatic_repair_retry",
+    identity_key=identity_key,
+    project_dir=managed_project,
+    argv=tuple(retrigger_command),
+    task_kind="autonomous",
+    difficulty=8,
+    model="control-plane",
+    reasoning_effort="bounded",
+    route_class="meta_repair_retrigger",
+    backend="repair-loop",
+    command_display=f"meta-repair ordinary repair retrigger {session}",
+    links={
+        "repair_request_id": request_id,
+        "blocker_id": blocker_id,
+        "incident_id": incident_id,
+        "cloud_session": session,
+        "chain": remote_spec,
+        "phase": "meta_repair_retrigger",
+    },
+    parent_run_id=parent_run_id,
+    lineage_key=f"repair-retrigger:{request_id or session}",
+    tee_output=False,
+)
+managed_returncode = run_managed_command(spec)
+run_id = stable_managed_run_id(spec.run_kind, spec.identity_key)
+managed_root = managed_project / ".megaplan" / "plans" / "resident-subagents" / run_id
+managed_log = managed_root / "run.log"
+try:
+    managed_stdout = managed_log.read_text(encoding="utf-8", errors="replace")
+except OSError:
+    managed_stdout = ""
+completed = SimpleNamespace(
+    returncode=managed_returncode,
+    stdout=managed_stdout,
+    stderr="",
 )
 
 # Verify retrigger result from the authoritative session repair-data artifact,

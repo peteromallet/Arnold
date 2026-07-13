@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DELEGATION_CONTEXT_ENV = "ARNOLD_RESIDENT_DELEGATION_CONTEXT"
 DELEGATION_CONTEXT_SCHEMA = "arnold-resident-delegation-provenance-v1"
@@ -47,6 +48,7 @@ _ALLOWED_FIELDS = (
     "dm_user_id",
     "root_run_id",
     "source_kind",
+    "timezone_name",
 )
 _ACTIVE_PROVENANCE: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "arnold_resident_delegation_provenance", default=None
@@ -88,6 +90,17 @@ def _snowflake(value: object, *, field: str, required: bool = False) -> str | No
         return None
     if not _SNOWFLAKE.fullmatch(text) or int(text) <= 0:
         raise DelegationProvenanceError(f"{field} must be a Discord snowflake")
+    return text
+
+
+def _timezone_name(value: object) -> str | None:
+    text = _text(value)
+    if text is None:
+        return None
+    try:
+        ZoneInfo(text)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise DelegationProvenanceError("timezone_name must be a valid IANA timezone") from exc
     return text
 
 
@@ -209,6 +222,9 @@ def normalize_delegation_provenance(
         item = _safe_id(value.get(field), field=field)
         if item is not None:
             normalized[field] = item
+    timezone_name = _timezone_name(value.get("timezone_name"))
+    if timezone_name is not None:
+        normalized["timezone_name"] = timezone_name
     return normalized
 
 
@@ -296,6 +312,7 @@ def discord_origin_projection(value: Mapping[str, Any]) -> dict[str, Any]:
         "reply_target_source_record_id": normalized.get("source_record_id"),
         "correlation_id": normalized["correlation_id"],
         "custody_id": normalized["custody_id"],
+        "timezone_name": normalized.get("timezone_name") or "UTC",
     }
 
 

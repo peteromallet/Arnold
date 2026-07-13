@@ -4254,7 +4254,8 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local pgid_path repair_busy claim_status request_id blocker_id
+  local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
+  local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
   if declare -F load_shared_repair_dispatch_env >/dev/null 2>&1; then
     load_shared_repair_dispatch_env \
@@ -4313,15 +4314,51 @@ dispatch_kimi_repair() {
   esac
   pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
+  managed_identity="${request_id:-watchdog-${session}-$(date +%s%N)}"
+  incident_id="$(json_field "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json" incident_id 2>/dev/null || true)"
+  incident_id="${incident_id:-inc-$session}"
+  managed_cmd=(
+    python3 -m arnold_pipelines.megaplan.managed_agent run
+    --run-kind automatic_repair
+    --identity-key "$managed_identity"
+    --project-dir "$workspace"
+    --task-kind autonomous
+    --difficulty 8
+    --model control-plane
+    --reasoning-effort bounded
+    --route-class watchdog_authorized_l1
+    --backend repair-loop
+    --command-display "arnold-repair-loop $session"
+    --lineage-key "repair-request:${request_id:-$session}"
+    --link "repair_request_id=$request_id"
+    --link "blocker_id=$blocker_id"
+    --link "repair_queue_dir=${MARKER_DIR%/*}/repair-queue"
+    --link "incident_id=$incident_id"
+    --link "cloud_session=$session"
+    --link "chain=$remote_spec"
+    --link "plan=${PLAN_STATUS_PLAN_NAME:-}"
+    --link "phase=watchdog_dispatch"
+    --
+    "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec"
+  )
   if command -v setsid >/dev/null 2>&1; then
-    setsid bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; export ARNOLD_REPAIR_QUEUE_ROOT="$9"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" "$$" "$REPAIR_QUEUE_ROOT" \
+    PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+    CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
+    CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
+    CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_QUEUE_ROOT="$REPAIR_QUEUE_ROOT" \
+    setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
-    bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; export ARNOLD_REPAIR_QUEUE_ROOT="$9"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "$request_id" "$blocker_id" "$$" "$REPAIR_QUEUE_ROOT" \
+    PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+    CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
+    CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
+    CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_QUEUE_ROOT="$REPAIR_QUEUE_ROOT" \
+    "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
+  printf '%s\n' "$!" > "$pgid_path"
   log "repair loop background-dispatched session=$session pid=$!"
   REPAIR_DISPATCH_RESULT="dispatched"
   emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop background-dispatched" "dispatched" "immediate_repair"
@@ -4740,7 +4777,8 @@ dispatch_meta_repair() {
   local remote_spec="$3"
   local report_items="$4"
   local trigger_label="${5:-}"
-  local pgid_path repair_busy recursion_result
+  local pgid_path repair_busy recursion_result request_id blocker_id incident_id parent_run_id
+  local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
 
   # Feature-flag gate: META_REPAIR_ENABLED defaults on; explicit "0"/"false"/"no"/"off" disables it.
@@ -4807,16 +4845,51 @@ dispatch_meta_repair() {
   pgid_path="$(meta_pgid_path "$session")"
   meta_dispatch_marker_set "$session"
 
+  request_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" request_id 2>/dev/null || true)"
+  blocker_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" blocker_id 2>/dev/null || true)"
+  incident_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" incident_id 2>/dev/null || true)"
+  incident_id="${incident_id:-inc-$session}"
+  parent_run_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" managed_agent_run_id 2>/dev/null || true)"
+  managed_cmd=(
+    python3 -m arnold_pipelines.megaplan.managed_agent run
+    --run-kind automatic_meta_repair
+    --identity-key "meta-repair:${session}:${trigger_label}"
+    --project-dir "$SRC_DIR"
+    --task-kind root_cause
+    --difficulty 10
+    --model codex-cli-default
+    --reasoning-effort high
+    --route-class meta_repair_l2
+    --backend meta-repair-loop
+    --command-display "arnold-meta-repair-loop $session $trigger_label"
+    --lineage-key "meta-repair:$session"
+    --link "repair_request_id=$request_id"
+    --link "blocker_id=$blocker_id"
+    --link "incident_id=$incident_id"
+    --link "cloud_session=$session"
+    --link "chain=$remote_spec"
+    --link "phase=meta_repair"
+  )
+  if [[ -n "$parent_run_id" ]]; then
+    managed_cmd+=(--parent-run-id "$parent_run_id")
+  fi
+  managed_cmd+=(-- "$META_REPAIR_BIN" "$session" "$trigger_label")
+
   # Background-dispatch meta-repair so it never blocks the watchdog tick
   if command -v setsid >/dev/null 2>&1; then
-    setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4"' \
-      _ "$pgid_path" "$META_REPAIR_BIN" "$session" "$trigger_label" \
+    PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+    CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
+    CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
+    setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
-    bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4"' \
-      _ "$pgid_path" "$META_REPAIR_BIN" "$session" "$trigger_label" \
+    PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+    CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
+    CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
+    "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
+  printf '%s\n' "$!" > "$pgid_path"
   log "meta-repair background-dispatched session=$session pid=$!"
   REPAIR_DISPATCH_RESULT="dispatched"
   emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair background-dispatched" "dispatched" "meta_repair"

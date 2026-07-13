@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/prep_skill.md
+/workspace/wbc-c1-root-corrective-20260711/arnold_pipelines/megaplan/data/prep_skill.md

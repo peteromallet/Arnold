@@ -27,6 +27,16 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
+from arnold_pipelines.megaplan.managed_agent import (
+    ACTIVE_STATUSES as SHARED_ACTIVE_STATUSES,
+    LEGACY_RESIDENT_SCHEMA,
+    MANAGED_AGENT_CUSTODIAN,
+    MANAGED_AGENT_SCHEMA,
+    is_managed_manifest,
+    managed_run_roots,
+    observed_status as shared_observed_status,
+)
+
 from .config import ResidentConfig
 from .provenance import (
     DelegationProvenanceError,
@@ -38,9 +48,9 @@ from .provenance import (
 )
 
 LOGGER = logging.getLogger(__name__)
-MANAGED_RUN_SCHEMA = "arnold-resident-agent-run-v1"
+MANAGED_RUN_SCHEMA = MANAGED_AGENT_SCHEMA
 MANAGED_RUN_KIND = "resident_delegated_agent"
-MANAGED_RUN_CUSTODIAN = "arnold.megaplan.resident"
+MANAGED_RUN_CUSTODIAN = MANAGED_AGENT_CUSTODIAN
 LEGACY_MANAGED_RUN_SCHEMA = "arnold-subagent-run-v1"
 DEFAULT_MANAGED_RUN_ROOT = Path(".megaplan/plans/resident-subagents")
 DEFAULT_DELEGATED_TASK_KIND = "routine"
@@ -80,7 +90,7 @@ _HIGH_RISK_TASK_KINDS = frozenset(
 _VALID_DELEGATED_EFFORTS = frozenset(
     {"minimal", "low", "medium", "high", "xhigh", "max"}
 )
-_ACTIVE_STATUSES = frozenset({"launching", "running"})
+_ACTIVE_STATUSES = SHARED_ACTIVE_STATUSES
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
 _DELIVERY_RETRY_BASE_S = 30
 _DELIVERY_RETRY_MAX_S = 60 * 60
@@ -133,6 +143,10 @@ class ManagedCompletionTurnResult:
     verification_outcome: str
     turn_id: str | None = None
     outbound_message_id: str | None = None
+
+
+class _ProviderAcceptanceEvidenceMissing(RuntimeError):
+    """A send returned, but no durable Discord message identity was exposed."""
 
 
 @dataclass(frozen=True)
@@ -194,6 +208,12 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _delivery_transition_now(fixed_now: datetime | None) -> datetime:
+    """Timestamp a state transition, or preserve an injected deterministic clock."""
+
+    return fixed_now or datetime.now(timezone.utc)
+
+
 def _atomic_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -201,8 +221,16 @@ def _atomic_json(path: Path, payload: dict[str, object]) -> None:
     os.replace(temporary, path)
 
 
-def _delivery_prompt(task: str) -> str:
-    return f"{task.rstrip()}\n\n[Completion delivery contract]\n{FINAL_SUMMARY_INSTRUCTION}\n"
+def _delivery_prompt(task: str, timezone_name: str = "UTC") -> str:
+    return (
+        f"{task.rstrip()}\n\n"
+        "[Completion delivery contract]\n"
+        "[User-time presentation rule]\n"
+        f"Render absolute user-visible times in {timezone_name} with local date/time, timezone "
+        "abbreviation, and numeric UTC offset. Keep stored/control-plane/evidence timestamps in "
+        "UTC and keep relative durations relative.\n\n"
+        f"{FINAL_SUMMARY_INSTRUCTION}\n"
+    )
 
 
 _RESIDENT_MESSAGE_ID_RE = re.compile(r"^msg_[A-Za-z0-9]{8,64}$")
@@ -640,9 +668,10 @@ def launch_codex_subagent_detached(
     manifest_path = run_dir / "manifest.json"
     log_path = run_dir / "run.log"
     result_path = run_dir / "result.md"
-    prompt = _delivery_prompt(task)
+    prompt = _delivery_prompt(task, str(provenance.get("timezone_name") or "UTC"))
     prompt_path.write_text(prompt, encoding="utf-8")
     result_path.touch()
+    created_at = _utc_now()
     manifest: dict[str, object] = {
         "schema_version": MANAGED_RUN_SCHEMA,
         "run_kind": MANAGED_RUN_KIND,
@@ -668,7 +697,15 @@ def launch_codex_subagent_detached(
         "custody_id": provenance.get("custody_id") or stable_identity("resident-custody", run_id),
         "launch_provenance": provenance,
         "status": "launching",
-        "created_at": _utc_now(),
+        "created_at": created_at,
+        "updated_at": created_at,
+        "status_history": [
+            {
+                "status": "launching",
+                "at": created_at,
+                "evidence": "manifest_committed_before_process_launch",
+            }
+        ],
     }
     if retry_of_run_id:
         manifest["retry_of_run_id"] = retry_of_run_id
@@ -741,6 +778,16 @@ def launch_codex_subagent_detached(
     current.setdefault("started_at", _utc_now())
     if current.get("status") == "launching":
         current["status"] = "running"
+        current["updated_at"] = _utc_now()
+        history = list(current.get("status_history") or [])
+        history.append(
+            {
+                "status": "running",
+                "at": current["updated_at"],
+                "evidence": "resident_supervisor_started",
+            }
+        )
+        current["status_history"] = history[-100:]
     _atomic_json(manifest_path, current)
     status = str(current.get("status") or "running")
     return SubagentResult(
@@ -817,8 +864,20 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 "status": "completed" if returncode == 0 else "failed",
                 "returncode": returncode,
                 "finished_at": _utc_now(),
+                "terminal_outcome": "completed" if returncode == 0 else "failed",
             }
         )
+        manifest["updated_at"] = manifest["finished_at"]
+        history = list(manifest.get("status_history") or [])
+        history.append(
+            {
+                "status": manifest["status"],
+                "at": manifest["finished_at"],
+                "evidence": "managed_codex_worker_waited",
+                "returncode": returncode,
+            }
+        )
+        manifest["status_history"] = history[-100:]
         _atomic_json(manifest_path, manifest)
         return returncode
     except BaseException as exc:
@@ -837,8 +896,19 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 "error": "managed Codex worker failed",
                 "error_class": exc.__class__.__name__,
                 "finished_at": _utc_now(),
+                "terminal_outcome": status,
             }
         )
+        manifest["updated_at"] = manifest["finished_at"]
+        history = list(manifest.get("status_history") or [])
+        history.append(
+            {
+                "status": status,
+                "at": manifest["finished_at"],
+                "evidence": "managed_codex_supervisor_exception",
+            }
+        )
+        manifest["status_history"] = history[-100:]
         if interrupted_signal is not None:
             manifest["signal"] = interrupted_signal
             manifest["returncode"] = 128 + interrupted_signal
@@ -872,12 +942,7 @@ def _managed_run_roots(
     project_root: str | Path,
     workspace_root: str | Path | None,
 ) -> set[Path]:
-    roots = {Path(project_root).resolve() / DEFAULT_MANAGED_RUN_ROOT}
-    workspace = Path(workspace_root).resolve() if workspace_root else None
-    if workspace and workspace.is_dir():
-        roots.update(workspace.glob("*/.megaplan/plans/resident-subagents"))
-        roots.update(workspace.glob("*/*/.megaplan/plans/resident-subagents"))
-    return roots
+    return managed_run_roots(project_root=project_root, workspace_root=workspace_root)
 
 
 def _managed_manifest_paths(
@@ -894,9 +959,8 @@ def _managed_manifest_paths(
 
 def _is_managed_manifest(payload: Mapping[str, Any]) -> bool:
     return (
-        payload.get("schema_version") == MANAGED_RUN_SCHEMA
+        is_managed_manifest(payload)
         and payload.get("run_kind") == MANAGED_RUN_KIND
-        and payload.get("custodian") == MANAGED_RUN_CUSTODIAN
     )
 
 
@@ -1389,6 +1453,13 @@ def _delivery_claim(
         outbox_payload = delivery.get("payload")
         if not isinstance(outbox_payload, Mapping):
             content, result_kind = _completion_message(manifest, manifest_path)
+            from .timezone import localize_text_timestamps
+
+            launch_provenance = dict(manifest.get("launch_provenance") or {})
+            content = localize_text_timestamps(
+                content,
+                str(launch_provenance.get("timezone_name") or "UTC"),
+            )
             delivery["payload"] = {
                 "content": content,
                 "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
@@ -1726,7 +1797,9 @@ def _delivery_error_evidence(exc: Exception) -> dict[str, object]:
     status = _optional_http_status(exc)
     discord_code = _optional_discord_error_code(exc)
     detail = str(exc).lower()
-    if "reply target" in detail or "snowflake" in detail:
+    if isinstance(exc, _ProviderAcceptanceEvidenceMissing):
+        category = "provider_acceptance_unknown"
+    elif "reply target" in detail or "snowflake" in detail:
         category = "invalid_reply_target"
     elif status == 429:
         category = "rate_limited"
@@ -1840,12 +1913,14 @@ async def sweep_managed_agent_deliveries(
 
     from .runtime import OutboundMessage
 
-    now = now or datetime.now(timezone.utc)
+    fixed_now = now
     paths = _managed_manifest_paths(project_root=project_root, workspace_root=workspace_root)
     delivered = retry_pending = skipped = failed = 0
     for manifest_path in paths:
         if completion_turn_handler is not None:
-            completion_claim = _completion_turn_claim(manifest_path, now=now)
+            completion_claim = _completion_turn_claim(
+                manifest_path, now=_delivery_transition_now(fixed_now)
+            )
             if completion_claim is not None:
                 try:
                     completion_result = await completion_turn_handler(
@@ -1853,7 +1928,9 @@ async def sweep_managed_agent_deliveries(
                     )
                 except Exception as exc:
                     verification_disposition = _retry_completion_turn(
-                        manifest_path, now=now, exc=exc
+                        manifest_path,
+                        now=_delivery_transition_now(fixed_now),
+                        exc=exc,
                     )
                     retry_pending += int(verification_disposition == "retry_pending")
                     failed += int(verification_disposition == "unknown")
@@ -1864,7 +1941,7 @@ async def sweep_managed_agent_deliveries(
                     continue
                 _finish_completion_turn(
                     manifest_path,
-                    now=now,
+                    now=_delivery_transition_now(fixed_now),
                     result=completion_result,
                 )
             try:
@@ -1894,7 +1971,9 @@ async def sweep_managed_agent_deliveries(
             )
         except (OSError, ValueError, TypeError):
             before_status = ""
-        claim = _delivery_claim(manifest_path, now=now)
+        claim = _delivery_claim(
+            manifest_path, now=_delivery_transition_now(fixed_now)
+        )
         if claim is None:
             try:
                 after_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -1919,7 +1998,7 @@ async def sweep_managed_agent_deliveries(
             # payload as failed custody rather than re-reading mutable output.
             disposition = _retry_delivery(
                 manifest_path,
-                now=now,
+                now=_delivery_transition_now(fixed_now),
                 exc=RuntimeError("durable outbox payload missing"),
             )
             retry_pending += int(disposition == "retry_pending")
@@ -1930,7 +2009,17 @@ async def sweep_managed_agent_deliveries(
         metadata: dict[str, Any] = {
             "managed_agent_run_id": manifest.get("run_id") or manifest_path.parent.name,
             "discord_reply_to_message_id": origin["reply_to_message_id"],
+            # The originating resident turn added this marker after durable
+            # custody.  Terminal outbox delivery removes it before applying
+            # the existing completion reaction, including after restart.
+            "discord_processing_message_ids": [origin["reply_to_message_id"]],
+            "discord_processing_turn_id": str(
+                dict(manifest.get("launch_provenance") or {}).get("resident_turn_id") or ""
+            ),
             "completion_delivery": True,
+            "timezone_name": str(
+                dict(manifest.get("launch_provenance") or {}).get("timezone_name") or "UTC"
+            ),
             "discord_nonce": dict(manifest.get("completion_delivery") or {}).get("discord_nonce"),
             "notification_safety_context": {
                 "project_dir": manifest.get("project_dir"),
@@ -1950,6 +2039,7 @@ async def sweep_managed_agent_deliveries(
                 payload=metadata["notification_safety_context"], env={}
             )
             if not safety.allowed:
+                suppressed_at = _delivery_transition_now(fixed_now)
                 delivery.update(
                     {
                         "status": "suppressed",
@@ -1958,14 +2048,14 @@ async def sweep_managed_agent_deliveries(
                         "last_error_class": "",
                         "last_error_category": "test_execution_suppressed",
                         "suppression_reason": safety.reason,
-                        "updated_at": now.isoformat(),
+                        "updated_at": suppressed_at.isoformat(),
                     }
                 )
                 history = list(delivery.get("state_history") or [])
                 history.append(
                     {
                         "status": "suppressed",
-                        "at": now.isoformat(),
+                        "at": suppressed_at.isoformat(),
                         "evidence": "notification_safety_policy",
                         "reason": safety.reason,
                     }
@@ -1987,7 +2077,11 @@ async def sweep_managed_agent_deliveries(
             )
         except Exception as exc:
             evidence = _delivery_error_evidence(exc)
-            disposition = _retry_delivery(manifest_path, now=now, exc=exc)
+            disposition = _retry_delivery(
+                manifest_path,
+                now=_delivery_transition_now(fixed_now),
+                exc=exc,
+            )
             if disposition == "retry_pending":
                 retry_pending += 1
             else:
@@ -2004,9 +2098,24 @@ async def sweep_managed_agent_deliveries(
             )
             continue
         message_ids = [str(value) for value in metadata.get("discord_message_ids", []) if str(value)]
+        if not message_ids:
+            # A normal return is not by itself provider-acceptance evidence.
+            # Keep the stable nonce and redrive through the normal retry path;
+            # Discord can deduplicate an attempt that was accepted but whose
+            # response was lost, while the manifest remains truthful meanwhile.
+            disposition = _retry_delivery(
+                manifest_path,
+                now=_delivery_transition_now(fixed_now),
+                exc=_ProviderAcceptanceEvidenceMissing(
+                    "Discord send returned without provider message ids"
+                ),
+            )
+            retry_pending += int(disposition == "retry_pending")
+            failed += int(disposition == "failed")
+            continue
         _finish_delivery(
             manifest_path,
-            now=now,
+            now=_delivery_transition_now(fixed_now),
             message_ids=message_ids,
             result_kind=result_kind,
         )
@@ -2026,11 +2135,11 @@ def list_managed_resident_agents(
     workspace_root: str | Path | None = "/workspace",
     recent_limit: int = 10,
 ) -> dict[str, Any]:
-    """Build bounded hot-context status for resident-delegated agents.
+    """Build the unified managed-agent view used by resident hot context.
 
-    Runtime manifests remain under ``plans/`` and are deliberately separate
-    from Arnold workflow-internal subagents. The workspace scan preserves
-    visibility for resident launches targeting sibling checkouts.
+    Automatic repair appears here only when the real worker crossed the shared
+    supervisor.  Legacy resident manifests remain visible; untracked legacy
+    repairs are intentionally not manufactured into this view.
     """
     roots = _managed_run_roots(project_root=project_root, workspace_root=workspace_root)
 
@@ -2044,20 +2153,19 @@ def list_managed_resident_agents(
             except (OSError, ValueError, TypeError):
                 continue
             schema = payload.get("schema_version")
-            if schema not in {MANAGED_RUN_SCHEMA, LEGACY_MANAGED_RUN_SCHEMA}:
-                continue
-            if schema == MANAGED_RUN_SCHEMA and (
-                payload.get("run_kind") != MANAGED_RUN_KIND
-                or payload.get("custodian") != MANAGED_RUN_CUSTODIAN
-            ):
+            very_legacy = schema == LEGACY_MANAGED_RUN_SCHEMA
+            if not very_legacy and not is_managed_manifest(payload):
                 continue
             persisted_status = str(payload.get("status") or "unknown")
             pid = payload.get("pid")
-            process_matches = isinstance(pid, int) and _pid_matches_manifest(pid, manifest_path)
-            live = persisted_status in _ACTIVE_STATUSES and process_matches
-            observed_status = persisted_status
-            if persisted_status in _ACTIVE_STATUSES and not process_matches:
-                observed_status = "interrupted"
+            if schema == MANAGED_RUN_SCHEMA:
+                observed_status, live = shared_observed_status(payload, manifest_path)
+            else:
+                process_matches = isinstance(pid, int) and _pid_matches_manifest(pid, manifest_path)
+                live = persisted_status in _ACTIVE_STATUSES and process_matches
+                observed_status = persisted_status
+                if persisted_status in _ACTIVE_STATUSES and not process_matches:
+                    observed_status = "interrupted"
 
             def artifact_path(field: str, fallback: str) -> str:
                 raw = payload.get(field) or fallback
@@ -2099,6 +2207,13 @@ def list_managed_resident_agents(
                     "discord_origin": payload.get("discord_origin"),
                     "launch_provenance": payload.get("launch_provenance"),
                     "completion_delivery": payload.get("completion_delivery"),
+                    "status_history": payload.get("status_history"),
+                    "terminal_outcome": payload.get("terminal_outcome"),
+                    "worker_pid": payload.get("worker_pid"),
+                    "retry_of_run_id": payload.get("retry_of_run_id"),
+                    "parent_run_id": payload.get("parent_run_id"),
+                    "lineage_key": payload.get("lineage_key"),
+                    "links": payload.get("links"),
                 }
             )
     rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
@@ -2120,7 +2235,7 @@ def list_managed_resident_agents(
             )
     return {
         "schema_version": MANAGED_RUN_SCHEMA,
-        "scope": "resident-delegated agents only; excludes workflow-internal subagents",
+        "scope": "unified resident and automatic-repair managed agents",
         "run_root": str((Path(project_root).resolve() / DEFAULT_MANAGED_RUN_ROOT)),
         "running": running,
         "recent": recent,
@@ -2217,7 +2332,12 @@ async def launch_subagent_task(
     with tempfile.NamedTemporaryFile(
         "w", suffix=".md", delete=False, encoding="utf-8"
     ) as handle:
-        handle.write(_delivery_prompt(task))
+        handle.write(
+            _delivery_prompt(
+                task,
+                str(compatibility_provenance.get("timezone_name") or "UTC"),
+            )
+        )
         query_path = handle.name
     argv += ["--query-file", query_path]
 

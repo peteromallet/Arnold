@@ -23,6 +23,7 @@ class FileConversationMixin:
         direction: str,
         content: str,
         discord_message_id: str | None = None,
+        discord_reply_provenance: dict[str, Any] | None = None,
         bot_turn_id: str | None = None,
         has_code_attachment: bool = False,
         has_image_attachment: bool = False,
@@ -49,6 +50,7 @@ class FileConversationMixin:
             content=content,
             sent_at=utc_now(),
             discord_message_id=discord_message_id,
+            discord_reply_provenance=discord_reply_provenance,
             has_code_attachment=has_code_attachment,
             has_image_attachment=has_image_attachment,
             in_burst_with=list(in_burst_with or []),
@@ -67,8 +69,29 @@ class FileConversationMixin:
         by_id = {message.id: message for message in self._messages()}
         return [by_id[msg_id] for msg_id in message_ids if msg_id in by_id]
 
+    def find_conversation_message_by_discord_id(
+        self, conversation_id: str, discord_message_id: str
+    ) -> Message | None:
+        matches = [
+            message
+            for message in self._messages()
+            if message.conversation_id == conversation_id
+            and message.discord_message_id == discord_message_id
+        ]
+        matches.sort(key=lambda message: (_utc_key(message.sent_at), message.id), reverse=True)
+        return matches[0] if matches else None
+
     def update_message(self, message_id: str, *, idempotency_key: str | None = None,
         **changes: Any) -> Message:
+        current = self.load_message(message_id)
+        if current is not None and current.direction == "inbound":
+            for field in ("discord_message_id", "discord_reply_provenance"):
+                if (
+                    field in changes
+                    and getattr(current, field) is not None
+                    and changes[field] != getattr(current, field)
+                ):
+                    raise ValueError(f"immutable inbound Discord provenance field: {field}")
         return self._update_model(
             self._message_path(message_id),
             Message,

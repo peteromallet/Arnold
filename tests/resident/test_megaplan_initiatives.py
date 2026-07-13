@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -446,13 +447,11 @@ def test_megaplan_resident_hot_context_labels_missing_snapshot_degraded(
     assert context["plan_activity_summary"]["degraded"] is True
 
 
-def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_container(
+def test_megaplan_resident_hot_context_uses_fallback_then_refreshes_in_background(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """In-container, the resident builds a fresh local snapshot each turn instead
-    of reading the (stale, hourly) on-disk file, so newly-started sessions appear
-    immediately and the on-disk file is refreshed."""
+    """Projection rebuilding never blocks the inbound Discord turn."""
     import json
     from arnold_pipelines.megaplan.cloud import status_snapshot
 
@@ -475,11 +474,21 @@ def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_containe
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
     monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
     monkeypatch.setattr(status_snapshot, "DEFAULT_WATCHDOG_REPORT", tmp_path / "absent-report.json")
+    monkeypatch.setattr(
+        status_snapshot,
+        "build_cloud_status_snapshot",
+        lambda: {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "source": "test-background-refresh",
+            "summary": {"running": 1},
+            "sessions": [{"session": "live", "status": "running"}],
+        },
+    )
     on_disk = tmp_path / "cloud-status.json"
 
     profile = MegaplanResidentProfile(
         store=FileStore(tmp_path / "store"),
-        # Points at a nonexistent file; in-container it must be ignored in favor of a fresh build.
+        # The first turn gets a bounded missing-snapshot fallback while refresh runs.
         config=ResidentConfig(status_snapshot_path=on_disk),
         cloud_backend=FakeCloudBackend(),
     )
@@ -487,24 +496,23 @@ def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_containe
 
     context = asyncio.run(profile.load_hot_context("c"))
 
-    snap = context["cloud_status_snapshot"]
-    assert snap is not None
-    assert context["cloud_status_degraded"] is None
-    assert any(s["session"] == "live" for s in snap["sessions"])
-    # The fresh build also refreshed the on-disk file for CLI/laptop consumers.
+    assert context["cloud_status_snapshot"] is None
+    assert context["cloud_status_degraded"] is not None
+    assert profile._snapshot_refresh_thread is not None
+    profile._snapshot_refresh_thread.join(timeout=5)
     assert on_disk.exists()
     written = json.loads(on_disk.read_text(encoding="utf-8"))
     assert any(s["session"] == "live" for s in written["sessions"])
+    refreshed = asyncio.run(profile.load_hot_context("c"))
+    assert refreshed["cloud_status_snapshot"] is not None
+    assert refreshed["cloud_status_degraded"] is None
 
 
-def test_megaplan_resident_hot_context_builds_fresh_with_markers_without_env(
+def test_megaplan_resident_background_refresh_uses_markers_without_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """P0: marker-dir presence (not the trust env var) triggers a fresh build, so
-    a resident that lost MEGAPLAN_TRUSTED_CONTAINER on a manual restart still
-    serves live per-turn data. Without the env var it must NOT clobber the shared
-    cache."""
+    """Marker presence schedules refresh even when the trust env was lost."""
     import json
     from arnold_pipelines.megaplan.cloud import status_snapshot
 
@@ -527,6 +535,16 @@ def test_megaplan_resident_hot_context_builds_fresh_with_markers_without_env(
     monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
     monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
     monkeypatch.setattr(status_snapshot, "DEFAULT_WATCHDOG_REPORT", tmp_path / "absent-report.json")
+    monkeypatch.setattr(
+        status_snapshot,
+        "build_cloud_status_snapshot",
+        lambda: {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "source": "test-background-refresh",
+            "summary": {"running": 1},
+            "sessions": [{"session": "live", "status": "running"}],
+        },
+    )
     on_disk = tmp_path / "cloud-status.json"
 
     profile = MegaplanResidentProfile(
@@ -538,16 +556,63 @@ def test_megaplan_resident_hot_context_builds_fresh_with_markers_without_env(
 
     context = asyncio.run(profile.load_hot_context("c"))
 
-    snap = context["cloud_status_snapshot"]
-    assert snap is not None
-    assert context["cloud_status_degraded"] is None
-    # Fresh build reflects the live marker even without the trust env var...
-    assert any(s["session"] == "live" for s in snap["sessions"])
-    # ...visibility reports the actual trust/marker state.
+    assert context["cloud_status_snapshot"] is None
+    assert context["cloud_status_degraded"] is not None
     assert context["resident_runtime"]["has_local_markers"] is True
     assert context["resident_runtime"]["trusted_container"] is False
-    # Without the trust env var, the shared cache must NOT be written.
-    assert not on_disk.exists()
+    assert profile._snapshot_refresh_thread is not None
+    profile._snapshot_refresh_thread.join(timeout=5)
+    assert on_disk.exists()
+
+
+def test_megaplan_resident_hot_context_never_waits_for_projection_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    import time
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    marker_dir = tmp_path / "cloud-sessions"
+    marker_dir.mkdir()
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_build():
+        started.set()
+        release.wait(timeout=5)
+        return {
+            "generated_at": "2026-07-13T00:00:00Z",
+            "source": "test",
+            "summary": {},
+            "sessions": [],
+        }
+
+    monkeypatch.setattr(status_snapshot, "build_cloud_status_snapshot", slow_build)
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=tmp_path / "snapshot.json"),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    async def run_with_heartbeat():
+        before = time.monotonic()
+        task = asyncio.create_task(profile.load_hot_context("c"))
+        await asyncio.sleep(0.05)
+        heartbeat_elapsed = time.monotonic() - before
+        return await task, heartbeat_elapsed
+
+    context, heartbeat_elapsed = asyncio.run(run_with_heartbeat())
+
+    assert started.wait(timeout=1)
+    assert heartbeat_elapsed < 0.5
+    assert context["cloud_status_snapshot"] is None
+    assert context["cloud_status_degraded"] is not None
+    release.set()
+    assert profile._snapshot_refresh_thread is not None
+    profile._snapshot_refresh_thread.join(timeout=5)
 
 
 def test_megaplan_resident_hot_context_sanitizes_stale_snapshot(

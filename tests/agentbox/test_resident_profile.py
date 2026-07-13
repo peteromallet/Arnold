@@ -324,12 +324,15 @@ def test_agentbox_operator_runs_through_resident_runtime_persistence_and_outboun
             conversation_key="discord:guild:g1:channel:c1",
             content="ticket filed",
             idempotency_key=outbound_message.idempotency_key,
-            metadata={
-                "conversation_id": conversation.id,
-                "message_id": outbound_message.id,
-                "turn_id": turn.id,
-                "discord_reply_to_message_id": "m1",
-            },
+                metadata={
+                    "conversation_id": conversation.id,
+                    "message_id": outbound_message.id,
+                    "turn_id": turn.id,
+                    "discord_reply_to_message_id": "m1",
+                    "discord_processing_message_ids": ["m1"],
+                    "discord_processing_turn_id": turn.id,
+                    "discord_processing_continues": False,
+                },
         )
     ]
 
@@ -405,16 +408,12 @@ def test_resident_runtime_includes_replied_to_discord_message_in_runner_context(
     )
 
     assert runner.captured_request is not None
-    assert runner.captured_request.messages[-1] == {
-        "role": "user",
-        "content": (
-            "[Discord reply context]\n"
-            "The user is replying to Discord message discord-prior from inbound:\n"
-            "prior message body\n\n"
-            "[User message]\n"
-            "answering that"
-        ),
-    }
+    prompt = runner.captured_request.messages[-1]
+    assert prompt["role"] == "user"
+    assert "[Discord reply ancestry — nearest parent first; current message excluded]" in prompt["content"]
+    assert "Discord message id: discord-prior" in prompt["content"]
+    assert "prior message body" in prompt["content"]
+    assert prompt["content"].endswith("Content truncated: no\nanswering that")
     assert outbound.sent[-1].metadata["discord_reply_to_message_id"] == "reply-m1"
 
 
@@ -1452,13 +1451,17 @@ def test_resident_runtime_injects_conversation_history_before_current_burst(
     )
 
     messages = runner.captured_request.messages
-    assert [(message["role"], message["content"]) for message in messages] == [
+    assert [(message["role"], message["content"]) for message in messages[:2]] == [
         ("user", "earlier user message"),
         ("assistant", "earlier bot reply"),
-        ("user", "current burst message"),
     ]
+    assert messages[2]["role"] == "user"
+    assert "No parent message" in messages[2]["content"]
+    assert messages[2]["content"].endswith(
+        "Content truncated: no\ncurrent burst message"
+    )
     # The already-persisted current burst is excluded from history (no double-count).
-    assert sum(1 for m in messages if m["content"] == "current burst message") == 1
+    assert sum(1 for m in messages if m["content"].endswith("\ncurrent burst message")) == 1
 
 
 def test_resident_runtime_skips_history_when_window_is_zero(tmp_path: Path) -> None:
@@ -1511,7 +1514,10 @@ def test_resident_runtime_skips_history_when_window_is_zero(tmp_path: Path) -> N
         )
     )
 
-    assert [m["content"] for m in runner.captured_request.messages] == ["current burst message"]
+    assert len(runner.captured_request.messages) == 1
+    assert runner.captured_request.messages[0]["content"].endswith(
+        "Content truncated: no\ncurrent burst message"
+    )
 
 
 def test_agentbox_search_messages_scopes_to_current_conversation(tmp_path: Path) -> None:
