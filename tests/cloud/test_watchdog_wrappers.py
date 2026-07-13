@@ -146,6 +146,47 @@ def test_capability_missing_reason_does_not_swallow_direct_fallback(tmp_path: Pa
     assert "capability_missing" in text
 
 
+def test_unintended_stop_routes_l1_custody_failure_to_l2_without_direct_relaunch(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.tsv"
+    routed = tmp_path / "meta-routed"
+    relaunched = tmp_path / "relaunch-called"
+    script = "\n".join(
+        [
+            _extract_wrapper_function("repair_unintended_stop"),
+            f"REPORT={shlex.quote(str(report))}",
+            f"ROUTED={shlex.quote(str(routed))}",
+            f"RELAUNCHED={shlex.quote(str(relaunched))}",
+            "repair_loop_busy_state() { echo none; }",
+            (
+                "repair_unhealthy_session() { "
+                "REPAIR_UNHEALTHY_RESULT=custody_missing; return 1; }"
+            ),
+            "report_item() { printf '%s\\t%s\\t%s\\n' \"$3\" \"$4\" \"$5\" >> \"$1\"; }",
+            "route_l1_custody_failure_to_meta() { : > \"$ROUTED\"; return 0; }",
+            "canonical_direct_relaunch() { : > \"$RELAUNCHED\"; return 0; }",
+            "repair_unintended_stop \"$REPORT\" demo /workspace/demo spec 'dead review worker'",
+        ]
+    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert routed.exists()
+    assert not relaunched.exists()
+
+
+def test_launch_tick_routes_unhealthy_l1_custody_failure_before_relaunch() -> None:
+    launch = _extract_wrapper_function("launch_chain_tick")
+    custody_guard = (
+        'if [[ "${REPAIR_UNHEALTHY_RESULT:-}" == "custody_missing" '
+        '\\\n       || "${REPAIR_UNHEALTHY_RESULT:-}" == "claim_denied" ]]'
+    )
+    guard_at = launch.index(custody_guard)
+    route_at = launch.index("route_l1_custody_failure_to_meta", guard_at)
+    trigger_at = launch.index("compute_meta_repair_trigger", route_at)
+    assert guard_at < route_at < trigger_at
+
+
 def _extract_reap_program() -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index("reap_stale_repair_candidates() {")
