@@ -486,6 +486,37 @@ prep_to_plan = BoundaryContract(
     details={"description": "Prep → Plan boundary: research and brief complete"},
 )
 
+# ── S1 prep lifecycle rule (profile/template-driven) ─────────────────────
+# This contract expresses the prep rule as a boundary contract instance that
+# explicitly references the lifecycle_transition profile and template so that
+# semantic-health and downstream evaluators can derive expectations from
+# declared metadata rather than hard-coded field values.
+
+prep_lifecycle_rule = BoundaryContract(
+    boundary_id="prep_lifecycle_rule",
+    workflow_id="megaplan-review",
+    row_id=S2_PREP_ROW_ID,
+    phase=BoundaryPhase.PREP,
+    required_artifacts=("research.md", "brief.md"),
+    expected_state_delta={"current_phase": "prep"},
+    expected_history_entry="prep_completed",
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": (
+            "Prep lifecycle rule: prep→plan transition expressed as a "
+            "profile/template-driven boundary contract instance."
+        ),
+        "profile_kind": "lifecycle_transition",
+        "template_ref": "template.lifecycle_transition",
+        "canonical_outputs": ("research.md", "brief.md"),
+        "state_delta_key": "current_phase",
+        "state_delta_value": "prep",
+        "history_entry": "prep_completed",
+    },
+)
+
 plan_to_critique = BoundaryContract(
     boundary_id="plan_to_critique",
     workflow_id="megaplan-review",
@@ -1538,6 +1569,7 @@ __all__ = [
     "list_template_ids",
     "parent_rejoin_promotion",
     "plan_to_critique",
+    "prep_lifecycle_rule",
     "prep_to_plan",
     "reducer_template",
     "replan_authority",
