@@ -61,6 +61,13 @@ of queue and runtime-resolution drift.
   and alert budgets, runner/active-step liveness, and L2 evidence. Typed human
   gates remain excluded; unknown or malformed evidence fails closed but stays
   visible.
+- Actionable deterministic L3 findings now carry a stable root-cause/blocker
+  identity, evidence cursor, and retry budget into that queue. The authorized
+  repair trigger claims the request and routes `broken_superfixer` custody to
+  the bounded L2 meta-repair wrapper; report rendering retains no process-launch
+  authority. Each launch writes an immutable queue-level attempt record linking
+  request, blocker, repair layer, command, and child PID before the request is
+  terminalized as dispatched.
 - Status is process-authoritative when an active PID is recorded; sidecar
   freshness cannot turn a dead worker into `running`.
 - A repair request whose explicit target plan has already advanced is
@@ -69,7 +76,7 @@ of queue and runtime-resolution drift.
   human-gate step names are preserved.
 
 Relevant prevention commits include `598f6ce059`, `52c764ce45`, `c89c3d6516`,
-`25b8181395`, `2165aa2f62`, and `5a522e4e7a`. The installed watchdog, repair,
+`25b8181395`, `2165aa2f62`, `5a522e4e7a`, and `43efef0058`. The installed watchdog, repair,
 meta-repair, auditor, and repair-trigger wrappers were synchronized to the
 deployed source; source and installed hashes matched after deployment.
 
@@ -81,6 +88,9 @@ deployed source; source and installed hashes matched after deployment.
 - Full progress-auditor file: 112 passed.
 - Repair-trigger target advancement plus genuine-human-gate preservation:
   17 passed.
+- The final L3-to-L2 custody matrix passed 9/9, covering stable typed identity,
+  queue claim and immutable launch attempt, authorization fencing, duplicate
+  suppression, already-held claims, and stale-target terminalization.
 - C1's approved review reported 897 scoped review tests and 122 Run Authority /
   launch-safety tests passing. Its full-suite shadow backstop retained the same
   13 baseline collection failures with `newly_failing=[]`; no gate was weakened.
