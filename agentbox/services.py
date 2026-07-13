@@ -18,6 +18,7 @@ from agentbox.reset_notifications import (
     mark_reset_succeeded,
     mark_reset_supervisor_started,
     prepare_reset_notification,
+    reset_notification_record,
     reset_notification_root,
     reset_transaction_request,
 )
@@ -279,6 +280,22 @@ def _launch_restart_supervisor(
     notification_root: str | Path | None,
 ) -> dict[str, Any]:
     """Hand restart custody to a process outside the resident lifecycle."""
+
+    if reservation.reused:
+        notification = reset_notification_record(reservation)
+        restart_status = str(notification.get("restart", {}).get("status") or "unknown")
+        return {
+            "ok": True,
+            "accepted": False,
+            "duplicate": True,
+            "already_processed": True,
+            "restart_completed": restart_status in {"succeeded", "failed"},
+            "service": service_name,
+            "unit": unit,
+            "backend": safety.get("backend"),
+            "safety": safety,
+            "notification": {"ok": True, **notification},
+        }
 
     root = (
         Path(notification_root).resolve()
