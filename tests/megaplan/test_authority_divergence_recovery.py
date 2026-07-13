@@ -357,8 +357,20 @@ def test_recover_blocked_allows_fixed_quality_rerun(
     updated = load_state(local_plan_fixture.plan_dir)
     assert response["success"] is True
     assert response["state"] == "finalized"
-    assert response["next_step"] == "execute"
+    assert response["archived_phase_result"].startswith("phase_result.recovered-")
     assert updated["current_state"] == "finalized"
+    assert not (local_plan_fixture.plan_dir / "phase_result.json").exists()
+    assert len(list(local_plan_fixture.plan_dir.glob("phase_result.recovered-*.json"))) == 1
+
+    status = handle_status(
+        local_plan_fixture.root,
+        argparse.Namespace(plan=local_plan_fixture.plan_name, pending_human=False),
+    )
+
+    assert status["state"] == "finalized"
+    assert status["next_step"] == "execute"
+    assert "blocker_recovery" not in status
+    assert "suggested_recovery_commands" not in status
 
 
 def test_status_hides_recovery_blockers_while_execute_step_is_live(

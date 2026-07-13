@@ -122,6 +122,33 @@ def _route_signal_for_override_action(action: str) -> str | None:
     return ROUTE_SIGNAL_BY_ACTION.get(action)
 
 
+def _archive_stale_phase_result_for_resume(plan_dir: Path) -> str | None:
+    """Move the terminal phase_result aside before resuming a blocked plan.
+
+    ``recover-blocked`` changes ``state.current_state`` back to the predecessor
+    phase. Keeping the old terminal ``phase_result.json`` in place makes status
+    and blocker-recovery read contradictory evidence from the superseded blocked
+    phase.
+    """
+
+    phase_result_path = plan_dir / "phase_result.json"
+    if not phase_result_path.exists():
+        return None
+    stamp = (
+        now_utc()
+        .replace("-", "")
+        .replace(":", "")
+        .replace(".", "")
+    )
+    backup_path = plan_dir / f"phase_result.recovered-{stamp}.json"
+    suffix = 1
+    while backup_path.exists():
+        backup_path = plan_dir / f"phase_result.recovered-{stamp}-{suffix}.json"
+        suffix += 1
+    phase_result_path.replace(backup_path)
+    return backup_path.name
+
+
 def _override_response_owns_next_step(action: str) -> bool:
     try:
         return _override_action_entry(action).family != "terminal_route"
@@ -1344,6 +1371,7 @@ def _override_recover_blocked(
     state["current_state"] = recovered_state
     state.pop("latest_failure", None)
     state.pop("active_step", None)
+    archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
     _append_to_meta(
         state,
         "overrides",
@@ -1355,6 +1383,7 @@ def _override_recover_blocked(
             "to_state": recovered_state,
             "resume_cursor": dict(resume_cursor),
             "blocker_ids": [blocker.blocker_id for blocker in evaluation.blockers],
+            "archived_phase_result": archived_phase_result,
         },
     )
     save_state_merge_meta(plan_dir, state)
@@ -1372,6 +1401,8 @@ def _override_recover_blocked(
         "resume_cursor": resume_cursor,
         "blockers": blocker_details,
     }
+    if archived_phase_result is not None:
+        response["archived_phase_result"] = archived_phase_result
     return response
 
 
