@@ -1914,6 +1914,9 @@ def verify_retrigger_success(
             "recovery_verification": recovery,
             "recovery_status": recovery["status"],
             "unknown_type": recovery["unknown_type"],
+            "original_blocker": dict(original_blocker) if isinstance(original_blocker, Mapping) else {},
+            "observation": observation,
+            "repair_completed_at": verification.get("repair_completed_at"),
         }
     )
     if raw_outcome == "running":

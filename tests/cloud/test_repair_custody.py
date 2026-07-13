@@ -201,6 +201,45 @@ def test_advisory_sidecar_canonical_label_does_not_create_repair_custody(
     assert durable_repair_active(projection) is False
 
 
+def test_identity_free_legacy_attempt_cannot_own_current_request(tmp_path: Path) -> None:
+    """An S2 requestless sidecar must not suppress ordinary L1 for dead S3."""
+
+    custody = {
+        "custody_bucket": CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
+        "active_request_ids": ["current-s3-request"],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "legacy-s2-attempt",
+                "path": "/tmp/legacy-s2-progress.json",
+                "request_id": "",
+                "blocker_id": "",
+                "source": "repair_progress_sidecar",
+                "terminal": False,
+                "raw": {
+                    "problem_signature": {
+                        "current_state": "",
+                        "failure_kind": "",
+                        "phase_or_step": "",
+                        "milestone_or_plan": "",
+                    }
+                },
+            }
+        ],
+    }
+
+    assert durable_repair_active(custody) is False
+    assert repair_contract._problem_signature_matches_fingerprint(
+        custody["attempts"][0]["raw"]["problem_signature"],
+        {"current_state": "finalized", "milestone_or_plan": "s3"},
+    ) is False
+    assert repair_contract._has_active_repair(
+        lock_evidence=None,
+        process_evidence={},
+        custody=custody,
+    ) is False
+
+
 def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcomes(
     tmp_path: Path,
 ) -> None:

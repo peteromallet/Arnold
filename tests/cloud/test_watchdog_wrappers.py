@@ -9670,6 +9670,23 @@ def test_watchdog_scan_once_runs_repair_trigger_before_marker_scan() -> None:
     assert text.index("repair_trigger_scan") < text.index('sync_editable_source_branch "$report_items" || true')
 
 
+def test_watchdog_retries_transient_repair_trigger_bootstrap_failure() -> None:
+    text = _wrapper("arnold-watchdog")
+    section = text[text.index("repair_trigger_scan() {"):text.index("kimi_operator_running() {")]
+    assert "for attempt in 1 2 3; do" in section
+    assert "retrying before watchdog interval sleep" in section
+    assert "PYTHONSAFEPATH=1" in section
+
+
+def test_watchdog_only_reports_dispatch_after_managed_manifest_confirmation() -> None:
+    text = _wrapper("arnold-watchdog")
+    section = text[text.index("dispatch_kimi_repair() {"):text.index("claim_active_repair_launch() {")]
+    assert '--run-id-file "$run_id_path"' in section
+    assert 'payload.get("status") == "running"' in section
+    assert 'REPAIR_DISPATCH_RESULT="launch_failed"' in section
+    assert section.index("managed launch confirmed") < section.index('REPAIR_DISPATCH_RESULT="dispatched"')
+
+
 def test_repair_trigger_path_unit_fires_immediate_error_queue_scan() -> None:
     path_unit = _systemd_file("megaplan-repair-trigger.path")
     service_unit = _systemd_file("megaplan-repair-trigger.service")
