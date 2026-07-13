@@ -3379,7 +3379,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
     assert "\trepair\trepair_running\trepair already running\t" in report
-    assert "DISPATCH" not in result.stderr
+    assert "DISPATCH" not in {line.strip() for line in result.stderr.splitlines()}
     assert "TMUX" not in result.stderr
 
 
@@ -3413,8 +3413,13 @@ def test_watchdog_allows_concurrent_repairs_for_different_sessions(tmp_path: Pat
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
             f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
             f"LOG={str(log_path)!r}",
+            f"REPAIR_QUEUE_ROOT={str(tmp_path / '.megaplan' / 'repair-queue')!r}",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
+PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair
+PLAN_STATUS_REQUEST_ID=req-test
+PLAN_STATUS_BLOCKER_ID=blocker-test
+claim_active_repair_launch() { echo claimed; }
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
 echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
 dispatch_kimi_repair demo-b /tmp/ws /tmp/spec
@@ -3474,8 +3479,13 @@ def test_watchdog_dispatch_skips_duplicate_same_session_repair(
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
             f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
             f"LOG={str(log_path)!r}",
+            f"REPAIR_QUEUE_ROOT={str(tmp_path / '.megaplan' / 'repair-queue')!r}",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
+PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair
+PLAN_STATUS_REQUEST_ID=req-test
+PLAN_STATUS_BLOCKER_ID=blocker-test
+claim_active_repair_launch() { echo claimed; }
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
 echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
 for _ in {1..20}; do
@@ -3502,6 +3512,40 @@ sleep 0.1
     )
 
 
+def test_watchdog_dispatch_refuses_unclaimed_l1_when_custody_identity_is_missing(
+    tmp_path: Path,
+) -> None:
+    launch_log = tmp_path / "repair-launches.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env bash\n" f"printf 'launched\\n' >> {str(launch_log)!r}\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+emit_watchdog_incident_bridge_event() { :; }
+dispatch_kimi_repair demo-session /tmp/ws /tmp/spec || true
+printf '%s\n' "${REPAIR_DISPATCH_RESULT:-unset}"
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "custody_missing"
+    assert not launch_log.exists()
+    assert "lacks canonical request/blocker identity; refusing L1" in log_path.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
@@ -3517,8 +3561,9 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
     repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
     blocker_id = "blocker:v1:test"
     request_id = "req-test"
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
     repair_requests.claim_active_repair_request(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_root,
         blocker_id=blocker_id,
         request_id=request_id,
         actor="other-trigger",
@@ -3545,6 +3590,8 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
             f"LOG={str(log_path)!r}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"REPAIR_QUEUE_ROOT={str(queue_root)!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
             f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
             f"PLAN_STATUS_REQUEST_ID={request_id!r}",
             """
@@ -3579,8 +3626,9 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
     repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
     blocker_id = "blocker:v1:test-stale"
     request_id = "req-live"
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
     repair_requests.claim_active_repair_request(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_root,
         blocker_id=blocker_id,
         request_id="req-stale",
         actor="other-trigger",
@@ -3607,6 +3655,8 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
             f"LOG={str(log_path)!r}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"REPAIR_QUEUE_ROOT={str(queue_root)!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
             f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
             f"PLAN_STATUS_REQUEST_ID={request_id!r}",
             """
@@ -3658,8 +3708,13 @@ def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path)
             f"LOG={str(log_path)!r}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"REPAIR_QUEUE_ROOT={str(tmp_path / '.megaplan' / 'repair-queue')!r}",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
+PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair
+PLAN_STATUS_REQUEST_ID=req-test
+PLAN_STATUS_BLOCKER_ID=blocker-test
+claim_active_repair_launch() { echo claimed; }
 dispatch_kimi_repair demo-session __WORKSPACE__ /tmp/spec.yaml
 echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
 sleep 0.2
@@ -5261,7 +5316,7 @@ EOF
     assert progress_path.exists()
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tcomplete\tplan complete\t" in report
-    assert "DISPATCH" not in result.stderr
+    assert "DISPATCH" not in {line.strip() for line in result.stderr.splitlines()}
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
 
@@ -5327,7 +5382,7 @@ EOF
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tcomplete\tplan complete\t" in report
     assert "spec_missing" not in report
-    assert "DISPATCH" not in result.stderr
+    assert "DISPATCH" not in {line.strip() for line in result.stderr.splitlines()}
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
 
@@ -5388,14 +5443,14 @@ tmux() { echo TMUX >&2; return 1; }
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tneeds_human\tmanual_review halt;" in report
     assert "\tobserve\tcomplete\t" not in report
-    assert "DISPATCH" not in result.stderr
+    assert "DISPATCH" not in {line.strip() for line in result.stderr.splitlines()}
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_blocked_recovery_manual_review_dispatches_repair_before_needs_human(
+def test_watchdog_blocked_recovery_without_canonical_blocker_routes_l2_before_human(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -5426,6 +5481,9 @@ def test_watchdog_blocked_recovery_manual_review_dispatches_repair_before_needs_
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+            f"REPAIR_QUEUE_ROOT={str(tmp_path / '.megaplan' / 'repair-queue')!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
             f"LOG={str(log_path)!r}",
             """
 report_item() {
@@ -5438,6 +5496,10 @@ plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
 repair_loop_busy_state() { echo none; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+route_l1_custody_failure_to_meta() {
+  echo META_DISPATCH >&2
+  report_item "$1" "$2" "meta_repair" "dispatched" "L1 custody failure routed to L2" "$3" "$4"
+}
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
@@ -5450,16 +5512,17 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tblocked_recovery manual_review repair loop dispatched before needs_human\t" in report
+    assert "\tmeta_repair\tdispatched\tL1 custody failure routed to L2\t" in report
     assert "\tobserve\tneeds_human\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "DISPATCH" not in {line.strip() for line in result.stderr.splitlines()}
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_auto_stall_manual_review_dispatches_repair_before_needs_human(
+def test_watchdog_untyped_auto_stall_routes_l2_before_human(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -5491,6 +5554,9 @@ def test_watchdog_auto_stall_manual_review_dispatches_repair_before_needs_human(
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+            f"REPAIR_QUEUE_ROOT={str(tmp_path / '.megaplan' / 'repair-queue')!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
             f"LOG={str(log_path)!r}",
             """
 report_item() {
@@ -5503,6 +5569,10 @@ plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
 repair_loop_busy_state() { echo none; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+route_l1_custody_failure_to_meta() {
+  echo META_DISPATCH >&2
+  report_item "$1" "$2" "meta_repair" "dispatched" "L1 custody failure routed to L2" "$3" "$4"
+}
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
@@ -5515,16 +5585,17 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tauto_stall manual_review repair loop dispatched before needs_human\t" in report
+    assert "\tmeta_repair\tdispatched\tL1 custody failure routed to L2\t" in report
     assert "\tobserve\tneeds_human\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "DISPATCH" not in {line.strip() for line in result.stderr.splitlines()}
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_legacy_stalled_manual_review_dispatches_repair_before_needs_human(
+def test_watchdog_legacy_stalled_manual_review_routes_l2_before_human(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -5557,6 +5628,9 @@ def test_watchdog_legacy_stalled_manual_review_dispatches_repair_before_needs_hu
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+            f"REPAIR_QUEUE_ROOT={str(tmp_path / '.megaplan' / 'repair-queue')!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
             f"LOG={str(log_path)!r}",
             """
 report_item() {
@@ -5569,6 +5643,10 @@ plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
 repair_loop_busy_state() { echo none; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+route_l1_custody_failure_to_meta() {
+  echo META_DISPATCH >&2
+  report_item "$1" "$2" "meta_repair" "dispatched" "L1 custody failure routed to L2" "$3" "$4"
+}
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
@@ -5581,9 +5659,10 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tauto_stall manual_review repair loop dispatched before needs_human\t" in report
+    assert "\tmeta_repair\tdispatched\tL1 custody failure routed to L2\t" in report
     assert "\tobserve\tneeds_human\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "DISPATCH" not in {line.strip() for line in result.stderr.splitlines()}
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
@@ -6292,6 +6371,8 @@ def test_watchdog_manual_review_repairable_fixture_dispatches_l1_without_needs_h
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"REPAIR_QUEUE_ROOT={str(tmp_path / '.megaplan' / 'repair-queue')!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
             f"LOG={str(log_path)!r}",
             """
 report_item() {
@@ -6329,7 +6410,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_execution_blocked_manual_review_dispatches_l1_without_needs_human(
+def test_watchdog_execution_blocked_without_typed_task_routes_l2_without_human(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -6388,6 +6469,8 @@ def test_watchdog_execution_blocked_manual_review_dispatches_l1_without_needs_hu
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"REPAIR_QUEUE_ROOT={str(tmp_path / '.megaplan' / 'repair-queue')!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
             f"LOG={str(log_path)!r}",
             """
 report_item() {
@@ -6402,6 +6485,10 @@ kimi_operator_running() { return 1; }
 repair_loop_busy_state() { echo none; }
 resolve_existing_remote_spec() { printf '%s\n' "$3"; }
 dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+route_l1_custody_failure_to_meta() {
+  echo META_DISPATCH >&2
+  report_item "$1" "$2" "meta_repair" "dispatched" "L1 custody failure routed to L2" "$3" "$4"
+}
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
@@ -6419,9 +6506,10 @@ tmux() { echo TMUX >&2; return 1; }
 
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tmanual_review repair loop dispatched before needs_human\t" in report
+    assert "\tmeta_repair\tdispatched\tL1 custody failure routed to L2\t" in report
     assert "\tobserve\tneeds_human\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "DISPATCH" not in {line.strip() for line in result.stderr.splitlines()}
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 

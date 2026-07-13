@@ -4,7 +4,7 @@ When ordinary repair fails as a system, meta-repair diagnoses the
 repair-system failure, builds a redacted Codex/DeepSeek prompt, and
 prepares evidence for the meta-repair loop to act on.
 
-Trigger types (six specified + explicit non-trigger):
+Trigger types (seven specified + explicit non-trigger):
     1. repair_timeout            – repair took longer than its allotted budget
     2. persistent_recurring_retry – same failure repeats across attempts
     3. state_inspection_failure   – resolver/snapshot failed to read state
@@ -12,6 +12,8 @@ Trigger types (six specified + explicit non-trigger):
     5. partial_liveness_recurrence – partial-liveness across >=2 watchdog ticks
     6. discord_delivery_failure   – Discord delivery failed for a TRUE_BLOCKER
        human escalation
+    7. l1_custody_failure         – L1 could not establish canonical
+       request/blocker/claim custody
 
 Non-trigger: healthy repair, non-system error, stale evidence, etc.
 """
@@ -69,7 +71,7 @@ META_REPAIR_BUDGET_SECS: int = 5400  # 90 minutes, longer than ordinary repair
 
 
 class MetaRepairTrigger(str, Enum):
-    """The six specified meta-repair trigger types."""
+    """The specified meta-repair trigger types."""
 
     REPAIR_TIMEOUT = "repair_timeout"
     PERSISTENT_RECURRING_RETRY = "persistent_recurring_retry"
@@ -77,6 +79,7 @@ class MetaRepairTrigger(str, Enum):
     MODEL_TOOL_LAUNCH_FAILURE = "model_tool_launch_failure"
     PARTIAL_LIVENESS_RECURRENCE = "partial_liveness_recurrence"
     DISCORD_DELIVERY_FAILURE = "discord_delivery_failure"
+    L1_CUSTODY_FAILURE = "l1_custody_failure"
 
 
 # Canonical ordering for display / prompt ordering
@@ -87,6 +90,7 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE: 4,
     MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE: 5,
     MetaRepairTrigger.DISCORD_DELIVERY_FAILURE: 6,
+    MetaRepairTrigger.L1_CUSTODY_FAILURE: 7,
 }
 
 # Outcomes that suppress another meta-repair dispatch.  Fresh activity remains

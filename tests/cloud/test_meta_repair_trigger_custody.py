@@ -84,3 +84,57 @@ def test_preclassified_trigger_survives_live_target_mismatch(tmp_path: Path) -> 
     assert "TRIGGER:partial_liveness_recurrence" in result.stdout
     assert "PROMPT_START" in result.stdout
     assert "NO_TRIGGER" not in result.stdout
+
+
+def test_preclassified_l1_custody_failure_reaches_meta_repair(tmp_path: Path) -> None:
+    repair_root = tmp_path / "repair-data"
+    marker_root = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    repair_root.mkdir()
+    marker_root.mkdir()
+    workspace.mkdir()
+    repair_path = repair_root / "demo.repair-data.json"
+    repair_path.write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(workspace),
+                "outcome": "repair_exhausted",
+                "l1_custody_failure": {
+                    "reason": "missing canonical blocker identity",
+                    "request_id": "7473fa42",
+                    "blocker_id": "",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (marker_root / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "kind": "chain"}),
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _classification_program(),
+            "demo",
+            str(repair_root),
+            str(repair_path),
+            str(marker_root),
+            "1",
+            "l1_custody_failure",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "TRIGGER:l1_custody_failure" in result.stdout
+    assert "PROMPT_START" in result.stdout
+    assert "NO_TRIGGER" not in result.stdout

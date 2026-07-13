@@ -41,6 +41,7 @@ if [[ ! -d /workspace/arnold ]]; then
     -e ARNOLD_AUTONOMY="${ARNOLD_AUTONOMY:-}" \
     -e ARNOLD_AUDIT_AUTOFIX_ENABLED="${ARNOLD_AUDIT_AUTOFIX_ENABLED:-}" \
     -e ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="${ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED:-}" \
+    -e ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}" \
     -e MEGAPLAN_AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-}" \
     "$CONTAINER" bash -lc '/usr/local/bin/arnold-progress-auditor "$@"' _ "$@"
 fi
@@ -71,6 +72,8 @@ WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)
 MARKER_DIR="${MEGAPLAN_AUDIT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_AUDIT_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 export MEGAPLAN_AUDIT_REPAIR_DATA_DIR="$REPAIR_DATA_DIR"
+REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"
+export ARNOLD_REPAIR_QUEUE_ROOT="$REPAIR_QUEUE_ROOT"
 REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"
 REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
@@ -596,6 +599,34 @@ from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
+try:
+    from arnold_pipelines.megaplan.cloud.repair_contract import project_repair_custody
+except ImportError:
+    # An older installed runtime can be visible during a wrapper/source skew.
+    # Preserve the audit and surface the missing projection as broken
+    # control-plane context instead of crashing the six-hour backstop.
+    project_repair_custody = None
+try:
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        iter_repair_decisions,
+        iter_repair_requests,
+        validate_queue_root,
+    )
+    repair_request_runtime_available = True
+except ImportError:
+    repair_request_runtime_available = False
+
+    def validate_queue_root(value):
+        path = pathlib.Path(value)
+        if not path.is_absolute():
+            raise ValueError("repair queue root must be an absolute path")
+        return path
+
+    def iter_repair_requests(_queue_root, *, include_malformed=False):
+        return []
+
+    def iter_repair_decisions(_queue_root, *, include_malformed=False):
+        return []
 import arnold_pipelines.megaplan.cloud.six_hour_auditor as six_hour_auditor
 import arnold_pipelines.megaplan.incident.summaries as incident_summaries
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
@@ -608,6 +639,9 @@ AUDIT_REPORT_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPORT_DIR", "/wo
 PERSISTENT_FINDINGS_DOC = pathlib.Path(os.environ.get("CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC", "/workspace/findings/persistent-problems.md"))
 META_RUN_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_META_RUN_DIR", "/workspace/.megaplan/meta-runs"))
 COMMIT_SOURCE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_COMMIT_SOURCE_DIR", arnold_src))
+REPAIR_QUEUE_ROOT = validate_queue_root(
+    os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT", "/workspace/.megaplan/repair-queue")
+)
 COMMIT_SOURCE_PATHS = (
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
@@ -815,6 +849,7 @@ def _collect_related_artifact_refs(workspace, plan, session, repair_data):
                 "meta_repair_id": _redact_scalar(meta_id),
                 "incident_id": _redact_scalar(payload.get("incident_id") or ""),
                 "path": _redact_scalar(path),
+                "mtime_age_min": int((now.timestamp() - _mtime(path)) // 60) if _mtime(path) else None,
                 "source": "meta_record",
             }
         )
@@ -1757,6 +1792,65 @@ def _repair_data_summary(session):
         "iteration_count": len(iterations),
         "iterations": summarized_iterations,
         "repeated_failure_signatures": repeated[:6],
+    }
+
+def _repair_custody_summary(session, plan_state, current_target):
+    repair_data_dir = pathlib.Path(
+        os.environ.get(
+            "MEGAPLAN_AUDIT_REPAIR_DATA_DIR",
+            "/workspace/.megaplan/cloud-sessions/repair-data",
+        )
+    )
+    target = dict(current_target) if isinstance(current_target, dict) else {}
+    target.setdefault("session", session)
+    target.setdefault("target_session", session)
+    malformed_requests = [
+        item
+        for item in iter_repair_requests(REPAIR_QUEUE_ROOT, include_malformed=True)
+        if item.get("kind") == "malformed_repair_request"
+    ]
+    malformed_decisions = [
+        item
+        for item in iter_repair_decisions(REPAIR_QUEUE_ROOT, include_malformed=True)
+        if item.get("kind") == "malformed_repair_decision"
+    ]
+    if project_repair_custody is None or not repair_request_runtime_available:
+        return {
+            "queue_root": str(REPAIR_QUEUE_ROOT),
+            "projection_error": "installed runtime lacks repair custody projection support",
+            "malformed_request_count": len(malformed_requests),
+            "malformed_decision_count": len(malformed_decisions),
+        }
+    try:
+        projection = project_repair_custody(
+            plan_state=plan_state if isinstance(plan_state, dict) else {},
+            current_target=target,
+            queue_root=REPAIR_QUEUE_ROOT,
+            repair_data_dir=repair_data_dir,
+        )
+    except Exception as exc:
+        return {
+            "queue_root": str(REPAIR_QUEUE_ROOT),
+            "projection_error": _redact_scalar(exc),
+            "malformed_request_count": len(malformed_requests),
+            "malformed_decision_count": len(malformed_decisions),
+        }
+    return {
+        "queue_root": str(REPAIR_QUEUE_ROOT),
+        "blocker_id": projection.get("blocker_id") or "",
+        "active_request_ids": projection.get("active_request_ids") or [],
+        "accepted_unclaimed_request_ids": projection.get("accepted_unclaimed_request_ids") or [],
+        "request_status_counts": projection.get("request_status_counts") or {},
+        "claim_count": projection.get("claim_count") or 0,
+        "attempt_count": projection.get("attempt_count") or 0,
+        "claim_retry_counts": projection.get("claim_retry_counts") or {},
+        "claim_alert_request_ids": projection.get("claim_alert_request_ids") or [],
+        "retry_budget": projection.get("retry_budget") or {},
+        "terminal_outcomes": projection.get("terminal_outcomes") or [],
+        "malformed_request_count": len(malformed_requests),
+        "malformed_decision_count": len(malformed_decisions),
+        "malformed_request_paths": [item.get("path") for item in malformed_requests[:3]],
+        "malformed_decision_paths": [item.get("path") for item in malformed_decisions[:3]],
     }
 
 def _load_events(events_path):
@@ -2994,6 +3088,149 @@ def _workflow_cursor_mismatch_reason(ev):
         "recorded workflow cursor; retryable state-machine contradiction, not completion"
     )
 
+def _superfixer_cycle_evidence(ev):
+    resolver = ev.get("resolver_state") if isinstance(ev, dict) else {}
+    resolver = resolver if isinstance(resolver, dict) else {}
+    canonical_state = str(resolver.get("canonical_state") or "UNKNOWN").strip().upper()
+    if canonical_state == "HUMAN_ACTION_REQUIRED":
+        return {
+            "actionable": False,
+            "excluded_typed_human_gate": True,
+            "canonical_state": canonical_state,
+        }
+
+    custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
+    custody = custody if isinstance(custody, dict) else {}
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    repair = repair if isinstance(repair, dict) else {}
+    meta = ev.get("meta_repair_summary") if isinstance(ev, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    target = ev.get("current_target") if isinstance(ev, dict) else {}
+    target = target if isinstance(target, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev, dict) else {}
+    chain_current = chain_current if isinstance(chain_current, dict) else {}
+
+    accepted_unclaimed = custody.get("accepted_unclaimed_request_ids") or []
+    accepted_unclaimed = accepted_unclaimed if isinstance(accepted_unclaimed, list) else []
+    retry_budget = custody.get("retry_budget") if isinstance(custody.get("retry_budget"), dict) else {}
+    repair_outcome = str(repair.get("outcome") or "").strip().lower()
+    repair_age = repair.get("mtime_age_min")
+    stale_l1 = (
+        repair_outcome in {"repair_timeout", "repair_exhausted"}
+        or (
+            repair.get("exists")
+            and isinstance(repair_age, int)
+            and repair_age > 60
+            and repair_outcome not in {"complete", "completed", "progressed", "live_with_fresh_activity"}
+        )
+    )
+    malformed_count = int(custody.get("malformed_request_count") or 0) + int(
+        custody.get("malformed_decision_count") or 0
+    )
+    unknown_evidence = bool(custody.get("projection_error") or malformed_count)
+    l1_failed = bool(accepted_unclaimed or stale_l1)
+
+    active = ev.get("active_step_liveness") if isinstance(ev, dict) else {}
+    active = active if isinstance(active, dict) else {}
+    tmux_process = target.get("tmux_process") if isinstance(target.get("tmux_process"), dict) else {}
+    tmux_live = (
+        tmux_process.get("pid_live") is True
+        or tmux_process.get("session_live") is True
+        or str(tmux_process.get("live_status") or "").strip().lower() == "alive"
+    )
+    dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
+    explicit_stopped = str(tmux_process.get("live_status") or "").strip().lower() in {
+        "dead", "missing", "stopped", "unavailable"
+    }
+    watchdog_refs = ev.get("prior_watchdog_report_refs") if isinstance(ev, dict) else []
+    watchdog_refs = watchdog_refs if isinstance(watchdog_refs, list) else []
+    watchdog_stopped = any(
+        str(item.get("matched_status") or "").strip().lower()
+        in {"stopped", "dead", "progress_stall", "broken_superfixer"}
+        for item in watchdog_refs
+        if isinstance(item, dict)
+    )
+    runner_dead = bool(not tmux_live and (dead_active_step or explicit_stopped or watchdog_stopped))
+    incomplete_chain = _chain_state_looks_nonterminal(chain_current)
+
+    meta_ages = [
+        item.get("mtime_age_min")
+        for item in (ev.get("meta_repair_refs") or [])
+        if isinstance(item, dict) and isinstance(item.get("mtime_age_min"), int)
+    ]
+    meta_ages.extend(
+        item.get("mtime_age_min")
+        for item in (meta.get("meta_run_refs") or [])
+        if isinstance(item, dict) and isinstance(item.get("mtime_age_min"), int)
+    )
+    failed_l2 = bool(meta.get("failed_meta_run_count") or meta.get("failed_meta_record_count"))
+    current_l2 = bool(meta_ages and min(meta_ages) <= 60 and not failed_l2)
+    absent_or_stale_l2 = not current_l2
+
+    actionable = bool(
+        l1_failed
+        and runner_dead
+        and incomplete_chain
+        and absent_or_stale_l2
+        and not unknown_evidence
+    )
+    return {
+        "actionable": actionable,
+        "excluded_typed_human_gate": False,
+        "canonical_state": canonical_state,
+        "accepted_unclaimed_count": len(accepted_unclaimed),
+        "accepted_unclaimed_request_ids": accepted_unclaimed[:5],
+        "request_status_counts": custody.get("request_status_counts") or {},
+        "claim_count": custody.get("claim_count") or 0,
+        "attempt_count": custody.get("attempt_count") or 0,
+        "claim_retry_counts": custody.get("claim_retry_counts") or {},
+        "claim_alert_request_ids": custody.get("claim_alert_request_ids") or [],
+        "retry_budget": retry_budget,
+        "repair_outcome": repair_outcome,
+        "repair_age_min": repair_age,
+        "runner_dead": runner_dead,
+        "dead_active_step": dead_active_step,
+        "tmux_live_status": tmux_process.get("live_status"),
+        "chain_incomplete": incomplete_chain,
+        "chain_last_state": chain_current.get("last_state"),
+        "chain_completed_count": chain_current.get("completed_count"),
+        "chain_total_milestones": chain_current.get("total_milestones"),
+        "meta_record_count": meta.get("meta_record_count") or 0,
+        "meta_run_log_count": meta.get("meta_run_log_count") or 0,
+        "latest_meta_age_min": min(meta_ages) if meta_ages else None,
+        "failed_l2_evidence": failed_l2,
+        "absent_or_stale_l2": absent_or_stale_l2,
+        "malformed_request_count": custody.get("malformed_request_count") or 0,
+        "malformed_decision_count": custody.get("malformed_decision_count") or 0,
+        "projection_error": custody.get("projection_error") or "",
+        "unknown_evidence": unknown_evidence,
+    }
+
+def _stale_l1_l2_cycle_reason(ev):
+    evidence = _superfixer_cycle_evidence(ev)
+    ev["deterministic_superfixer_evidence"] = evidence
+    if evidence.get("unknown_evidence") and evidence.get("runner_dead") and evidence.get("chain_incomplete"):
+        return (
+            "broken_superfixer_unknown_evidence: runner is stopped and chain is incomplete, "
+            "but malformed or unavailable custody projection evidence forbids automatic repair; "
+            f"projection_error={evidence.get('projection_error') or 'none'} "
+            f"malformed_requests={evidence.get('malformed_request_count')} "
+            f"malformed_decisions={evidence.get('malformed_decision_count')}"
+        )
+    if not evidence.get("actionable"):
+        return ""
+    return (
+        "stale_l1_l2_cycle: incomplete chain has a stopped/dead runner and "
+        "accepted-unclaimed, exhausted, stale, or malformed L1 custody with no current L2 evidence; "
+        f"accepted_unclaimed={evidence.get('accepted_unclaimed_count')} "
+        f"claim_count={evidence.get('claim_count')} attempt_count={evidence.get('attempt_count')} "
+        f"repair_outcome={evidence.get('repair_outcome') or 'unknown'} "
+        f"repair_age_min={evidence.get('repair_age_min')} "
+        f"retry_budget={evidence.get('retry_budget')} "
+        f"claim_alerts={len(evidence.get('claim_alert_request_ids') or [])} "
+        f"latest_meta_age_min={evidence.get('latest_meta_age_min')}"
+    )
+
 def _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_audit):
     findings = incident_audit.get("findings") if isinstance(incident_audit, dict) else []
     for finding in findings if isinstance(findings, list) else []:
@@ -3311,6 +3548,7 @@ def _plan_evidence(entry):
         repo_root=repo_root,
     )
     resolver_state = _resolve_resolver_state_payload(current_target)
+    repair_custody = _repair_custody_summary(session, state, current_target)
     ci_health = _collect_external_ci_health(repo_root)
     engine_tree = _collect_external_engine_tree(repo_root, workspace_path)
     projection_input = audit_input.get("projection_input") if isinstance(audit_input.get("projection_input"), dict) else {}
@@ -3388,6 +3626,7 @@ def _plan_evidence(entry):
         "chain_log": chain_log,
         "chain_state_summary": chain_state,
         "repair_data_summary": repair_data,
+        "repair_custody_summary": repair_custody,
         "plan_latest_failure": plan_latest_failure,
         "stale_state_evidence": stale_state_evidence,
         "latest_failure_is_stale": stale_state_evidence.get("latest_failure_is_stale"),
@@ -3419,6 +3658,8 @@ def _plan_evidence(entry):
         "incident_projection": incident_projection,
         "problem_projection": problem_projection,
         "incident_audit": incident_audit,
+        "current_target": current_target,
+        "resolver_state": resolver_state,
         "incident_handoff_gap_count": len(expired_claims),
         "incident_handoff_gap_refs": incident_handoff_gap_refs,
         "incident_dead_worker_count": dead_worker_count,
@@ -3534,6 +3775,7 @@ for entry in plans:
         _active_step_ghost_worker_reason(ev),
         _workflow_cursor_mismatch_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
+        _stale_l1_l2_cycle_reason(ev),
     ):
         if deterministic_reason:
             reasons.append(deterministic_reason)
@@ -4031,7 +4273,7 @@ PY
 
 record_incident_audits() {
   local findings_path="$1"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$findings_path" "$GATHER_DIR" "$AUDIT_GITHUB_REPO" "$AUDIT_GITHUB_REPO_PATH" "$AUDIT_GITHUB_LABELS" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$findings_path" "$GATHER_DIR" "$AUDIT_GITHUB_REPO" "$AUDIT_GITHUB_REPO_PATH" "$AUDIT_GITHUB_LABELS" "$REPAIR_QUEUE_ROOT" <<'PY'
 import json
 import os
 import subprocess
@@ -4067,6 +4309,7 @@ gather_dir = Path(sys.argv[2])
 explicit_repo = sys.argv[3].strip()
 explicit_repo_path = sys.argv[4].strip()
 labels = tuple(item.strip() for item in sys.argv[5].split(",") if item.strip())
+queue_root = Path(sys.argv[6])
 data = json.loads(findings_path.read_text(encoding="utf-8"))
 findings = data.get("findings") if isinstance(data.get("findings"), list) else []
 green_checks = data.get("green_checks") if isinstance(data.get("green_checks"), list) else []
@@ -4286,6 +4529,7 @@ def _event_evidence(item):
 
 audited = {}
 workspaces_for_sync = {}
+requests_enqueued = set()
 for item in findings + green_checks:
     if not isinstance(item, dict):
         continue
@@ -4295,6 +4539,10 @@ for item in findings + green_checks:
     problem_projection = item.get("problem_projection") if isinstance(item.get("problem_projection"), dict) else {}
     incident_id = incident_audit.get("incident_id") or incident_brief.get("incident_id")
     workspace = item.get("workspace")
+    request_key = (workspace, item.get("session"), item.get("plan"))
+    if workspace and request_key not in requests_enqueued:
+        enqueue_audit_repair_request(item, queue_root=queue_root)
+        requests_enqueued.add(request_key)
     if not incident_id or not workspace:
         continue
     key = (workspace, incident_id)
@@ -4347,11 +4595,6 @@ for item in findings + green_checks:
     # audit event, but it must not mint a needs-human authority marker.
     if github_sync_publication_due(incident_audit):
         workspaces_for_sync[workspace] = True
-    enqueue_audit_repair_request(
-        item,
-        queue_root=Path(workspace) / ".megaplan" / "repair-queue",
-    )
-
 for workspace in sorted(workspaces_for_sync):
     repo, repo_path = _issue_repo_for_workspace(workspace)
     if not repo:

@@ -1603,6 +1603,37 @@ def test_recovery_view_dispatches_repairable_with_request() -> None:
     assert any("recovery view" in r for r in decision.rationale)
 
 
+def test_recovery_view_refuses_l1_when_legacy_request_has_no_blocker_identity() -> None:
+    recovery = _make_recovery_view_dict(
+        custody_bucket="repairable",
+        permitted_actions=[
+            {"action_type": "repair_dispatch", "rationale": "ready", "source": "test"}
+        ],
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["7473fa42"],
+            "blocker_id": "",
+            "current_state": "blocked",
+            "failure_kind": "",
+            "terminal_outcomes": ["repair_exhausted"],
+        },
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+        },
+        current_target={"current_refs": {"current_plan_name": "c1-contract-reality"}},
+    )
+
+    assert decision.decision == repair_contract.DISPATCH_DECISION_BROKEN_SUPERFIXER
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_BROKEN_SUPERFIXER
+    assert decision.request_id == "7473fa42"
+    assert decision.blocker_id == ""
+    assert any("request/blocker identity" in item for item in decision.rationale)
+
+
 def test_recovery_view_dispatches_repairing_custody() -> None:
     """When recovery_view custody is repairing, dispatch REPAIRING."""
     recovery = _make_recovery_view_dict(

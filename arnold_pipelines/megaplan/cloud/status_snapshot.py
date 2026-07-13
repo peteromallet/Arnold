@@ -1044,15 +1044,27 @@ def _build_session_entry(
         and isinstance(plan_state_doc.get("latest_failure"), Mapping)
         else {}
     )
+    active_step_for_advancement = bool(
+        isinstance(plan_state_doc, Mapping) and plan_state_doc.get("active_step")
+    )
+    if active_step_for_advancement:
+        advancement_active_step = plan_state_doc.get("active_step")
+        raw_worker_pid = (
+            advancement_active_step.get("worker_pid")
+            if isinstance(advancement_active_step, Mapping)
+            else None
+        )
+        if raw_worker_pid not in (None, ""):
+            worker_pid = _as_int(raw_worker_pid)
+            if worker_pid is None or not _pid_is_live(worker_pid):
+                active_step_for_advancement = False
     advancement = assess_advancement(
         advancement_policy,
         current_state=plan_current_state,
         chain_last_state=(chain_health.get("last_state") if chain_health else None),
         chain_complete=chain_complete or status == "complete",
         pr_state=(chain_health.get("pr_state") if chain_health else None),
-        active_step=bool(
-            isinstance(plan_state_doc, Mapping) and plan_state_doc.get("active_step")
-        ),
+        active_step=active_step_for_advancement,
         explicit_human_gate=(operator_next if status == "blocked" else None),
         failure_kind=latest_failure.get("kind"),
     )
@@ -1681,6 +1693,25 @@ def _classify_session(
             "terminal plan has no live runner but chain completion is not recorded; "
             "relaunch/reconciliation required",
         )
+
+    active_step = (
+        plan_state.get("active_step")
+        if isinstance(plan_state, Mapping)
+        and isinstance(plan_state.get("active_step"), Mapping)
+        else {}
+    )
+    active_worker_pid = active_step.get("worker_pid") if active_step else None
+    if active_worker_pid not in (None, ""):
+        try:
+            active_worker_dead = not _pid_is_live(int(active_worker_pid))
+        except (TypeError, ValueError):
+            active_worker_dead = True
+        if active_worker_dead:
+            return (
+                "attention",
+                "stale active step has dead worker PID; runner is stopped and "
+                "fresh progress/repair sidecars do not establish liveness",
+            )
 
     if latest_activity_dt is not None and (now - latest_activity_dt).total_seconds() <= STALE_ACTIVITY_S:
         return "running", "recent plan/chain activity"

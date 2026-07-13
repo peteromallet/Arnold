@@ -63,6 +63,99 @@ def _extract_gather_program() -> str:
     return text[py_start:py_end]
 
 
+def _load_superfixer_cycle_functions() -> dict[str, object]:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _superfixer_cycle_evidence(ev):")
+    end = text.index("\ndef _meta_repair_gap_is_primary", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+    }
+    exec(text[start:end], namespace)
+    return namespace
+
+
+def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
+    return {
+        "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},
+        "repair_custody_summary": {
+            "accepted_unclaimed_request_ids": ["7473fa42"],
+            "request_status_counts": {"accepted": 1},
+            "claim_count": 0,
+            "attempt_count": 0,
+            "claim_retry_counts": {"7473fa42": 2},
+            "claim_alert_request_ids": [],
+            "retry_budget": {"claim_retries_remaining": 1},
+        },
+        "repair_data_summary": {
+            "exists": True,
+            "outcome": "repair_exhausted",
+            "mtime_age_min": 180,
+        },
+        "meta_repair_summary": {
+            "meta_record_count": 0,
+            "meta_run_log_count": 0,
+            "failed_meta_run_count": 0,
+            "failed_meta_record_count": 0,
+        },
+        "current_target": {"tmux_process": {"live_status": "stopped"}},
+        "active_step_liveness": {
+            "present": True,
+            "worker_pid_alive": False,
+        },
+        "chain_state_summary": {
+            "current": {
+                "last_state": "blocked",
+                "completed_count": 0,
+                "total_milestones": 4,
+            }
+        },
+        "meta_repair_refs": [],
+        "prior_watchdog_report_refs": [],
+    }
+
+
+def test_superfixer_cycle_detects_wbc_accepted_unclaimed_exhaustion() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is True
+    assert projected["accepted_unclaimed_count"] == 1
+    assert projected["claim_count"] == 0
+    assert projected["attempt_count"] == 0
+    assert projected["runner_dead"] is True
+    assert projected["absent_or_stale_l2"] is True
+
+
+def test_superfixer_cycle_excludes_typed_human_gate() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["resolver_state"] = {"canonical_state": "HUMAN_ACTION_REQUIRED"}
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason == ""
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is False
+    assert projected["excluded_typed_human_gate"] is True
+
+
+def test_superfixer_cycle_fails_closed_on_unknown_custody_evidence() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["repair_custody_summary"]["projection_error"] = "runtime skew"
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("broken_superfixer_unknown_evidence:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is False
+    assert projected["unknown_evidence"] is True
+
+
 def _extract_gather_function(name: str, next_name: str) -> str:
     text = _extract_gather_program()
     start = text.index(f"def {name}(")
@@ -191,6 +284,7 @@ def _run_gather_program(
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(tmp_path / ".megaplan" / "repair-queue")
     if extra_env:
         env.update(extra_env)
 
@@ -364,6 +458,7 @@ def _run_record_incident_audits(tmp_path: Path, findings_data: dict) -> list[dic
             "AUDIT_GITHUB_REPO=''",
             "AUDIT_GITHUB_REPO_PATH=''",
             "AUDIT_GITHUB_LABELS='incident-control-plane,persistent-problem'",
+            f"REPAIR_QUEUE_ROOT={shlex.quote(str(tmp_path / '.megaplan' / 'repair-queue'))}",
             "record_incident_audits " + shlex.quote(str(findings_path)),
         ]
     )
@@ -2060,7 +2155,7 @@ class TestAuditorWrapperBoundary:
         assert events[1]["payload"]["next_expected_event"] is None
         assert events[1]["payload"]["decision"]["reconciler_next_expected_event"] == "auditor_escalate_to_human"
         assert all(event["payload"].get("next_expected_event") != "meta_repair.repair_attempt" for event in events)
-        queue_root = workspace / ".megaplan" / "repair-queue"
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
         requests = [json.loads(path.read_text(encoding="utf-8")) for path in (queue_root / "requests").glob("*.json")]
         assert len(requests) == 1
         assert requests[0]["source"] == "six_hour_auditor"
@@ -2797,6 +2892,153 @@ class TestLiveSignalFiltering:
         reasons = findings["findings"][0]["reasons"]
         assert any("repair_complete_incomplete_chain" in reason for reason in reasons)
         assert any("plan_active_step_ghost_worker" in reason for reason in reasons)
+
+    def test_gather_flags_wbc_accepted_unclaimed_exhausted_cycle_for_l3(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        session = "workflow-boundary-contracts-corrective-20260710"
+        plan = "c1-contract-reality-20260711-1433"
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / plan
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True)
+        chain_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": plan,
+                    "current_state": "executed",
+                    "iteration": 9,
+                    "active_step": {"phase": "execute", "worker_pid": 99999999},
+                    "latest_failure": {
+                        "kind": "blocked_recovery_not_resolved",
+                        "message": "machine repair exhausted without advancement",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-wbc.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": plan,
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "c1"}, {"label": "c2"}],
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / f"{session}.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": session,
+                    "workspace": str(workspace),
+                    "outcome": "repair_exhausted",
+                    "attempt_ids": [],
+                    "iterations": [{"iteration": value} for value in range(1, 10)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        queued = repair_requests.enqueue_repair_request(
+            queue_root=queue_root,
+            session=session,
+            workspace=workspace,
+            source="legacy_watchdog",
+            problem_signature={},
+            target={"plan_name": plan},
+        )
+        assert queued["status"] == "queued"
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": plan,
+                    "session": session,
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        assert any("stale_l1_l2_cycle" in reason for reason in finding["reasons"])
+        evidence = finding["deterministic_superfixer_evidence"]
+        assert evidence["actionable"] is True
+        assert evidence["accepted_unclaimed_count"] == 1
+        assert evidence["claim_count"] == 0
+        assert evidence["attempt_count"] == 0
+        assert evidence["repair_outcome"] == "repair_exhausted"
+        assert evidence["runner_dead"] is True
+        assert evidence["chain_incomplete"] is True
+        assert evidence["absent_or_stale_l2"] is True
+        assert evidence["retry_budget"]["remaining_attempts"] == 3
+
+    def test_superfixer_cycle_excludes_typed_human_gate_and_fails_closed_on_malformed_evidence(
+        self,
+    ) -> None:
+        namespace: dict[str, object] = {}
+        source = "\n\n".join(
+            [
+                _extract_gather_function(
+                    "_chain_state_looks_terminal", "_chain_state_looks_nonterminal"
+                ),
+                _extract_gather_function(
+                    "_chain_state_looks_nonterminal",
+                    "_watchdog_chain_health_disagreement_reason",
+                ),
+                _extract_gather_function(
+                    "_superfixer_cycle_evidence", "_stale_l1_l2_cycle_reason"
+                ),
+            ]
+        )
+        exec(source, namespace)
+        classify = namespace["_superfixer_cycle_evidence"]
+
+        human = classify({"resolver_state": {"canonical_state": "HUMAN_ACTION_REQUIRED"}})
+        assert human == {
+            "actionable": False,
+            "excluded_typed_human_gate": True,
+            "canonical_state": "HUMAN_ACTION_REQUIRED",
+        }
+
+        malformed = classify(
+            {
+                "resolver_state": {"canonical_state": "UNKNOWN"},
+                "repair_custody_summary": {"malformed_request_count": 1},
+                "repair_data_summary": {},
+                "active_step_liveness": {
+                    "present": True,
+                    "worker_pid_alive": False,
+                },
+                "current_target": {"tmux_process": {"live_status": "dead"}},
+                "chain_state_summary": {
+                    "current": {
+                        "last_state": "blocked",
+                        "chain_complete": False,
+                        "total_milestones": 2,
+                        "completed_count": 0,
+                    }
+                },
+            }
+        )
+        assert malformed["actionable"] is False
+        assert malformed["unknown_evidence"] is True
+        assert malformed["canonical_state"] == "UNKNOWN"
+        assert malformed["malformed_request_count"] == 1
+        assert malformed["excluded_typed_human_gate"] is False
 
     def test_meta_repair_summary_ignores_stale_recurring_retry_after_complete_chain(
         self, tmp_path: Path

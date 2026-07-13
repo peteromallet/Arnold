@@ -912,7 +912,7 @@ def _classify_repair_dispatch_canonical(
                 retry_strategy=retry_strategy,
                 failure_kind=failure_kind,
             )
-        if request_id:
+        if request_id and blocker_id:
             return _make_dispatch_decision(
                 decision=DISPATCH_DECISION_L1,
                 dispatch_intent=DISPATCH_INTENT_L1,
@@ -924,6 +924,20 @@ def _classify_repair_dispatch_canonical(
                 retry_strategy=retry_strategy,
                 failure_kind=failure_kind,
             )
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+            rationale=(
+                "terminality contradiction lacks canonical request/blocker identity; "
+                "refusing unclaimed L1 dispatch",
+            ),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
     if state is CanonicalState.COMPLETED:
         return _make_dispatch_decision(
             decision=DISPATCH_DECISION_TERMINAL,
@@ -1000,7 +1014,7 @@ def _classify_repair_dispatch_canonical(
                 retry_strategy=retry_strategy,
                 failure_kind=failure_kind,
             )
-        if request_id:
+        if request_id and blocker_id:
             return _make_dispatch_decision(
                 decision=DISPATCH_DECISION_L1,
                 dispatch_intent=DISPATCH_INTENT_L1,
@@ -1013,11 +1027,14 @@ def _classify_repair_dispatch_canonical(
                 failure_kind=failure_kind,
             )
         return _make_dispatch_decision(
-            decision=DISPATCH_DECISION_NO_ACTION,
-            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-            rationale=("resolver enforcement: canonical machine-actionable block without active request",),
+            decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+            rationale=(
+                "resolver enforcement: canonical machine-actionable block lacks "
+                "canonical request/blocker identity",
+            ),
             blocker_id=blocker_id,
-            request_id="",
+            request_id=request_id,
             custody_bucket=custody_bucket,
             current_state=current_state,
             retry_strategy=retry_strategy,
@@ -1044,7 +1061,7 @@ def _classify_repair_dispatch_canonical(
                     retry_strategy=retry_strategy,
                     failure_kind=failure_kind,
                 )
-            if request_id:
+            if request_id and blocker_id:
                 return _make_dispatch_decision(
                     decision=DISPATCH_DECISION_L1,
                     dispatch_intent=DISPATCH_INTENT_L1,
@@ -1058,6 +1075,20 @@ def _classify_repair_dispatch_canonical(
                     retry_strategy=retry_strategy,
                     failure_kind=failure_kind,
                 )
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+                dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+                rationale=(
+                    "resolver enforcement: known repairable legacy shape lacks "
+                    "canonical request/blocker identity",
+                ),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
         return _make_dispatch_decision(
             decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
             dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
@@ -1179,7 +1210,7 @@ def _classify_repair_dispatch_legacy(
         )
 
     if known_repairable:
-        if request_id:
+        if request_id and blocker_id:
             rationale.append("known repairable blocker has active custody and no competing owner")
             return RepairDispatchDecision(
                 decision=DISPATCH_DECISION_L1,
@@ -1192,13 +1223,16 @@ def _classify_repair_dispatch_legacy(
                 retry_strategy=retry_strategy,
                 failure_kind=failure_kind,
             )
-        rationale.append("known repairable blocker lacks an active request to dispatch")
+        rationale.append(
+            "known repairable blocker lacks canonical request/blocker identity; "
+            "refusing unclaimed L1 dispatch"
+        )
         return RepairDispatchDecision(
-            decision=DISPATCH_DECISION_NO_ACTION,
-            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
             rationale=tuple(rationale),
             blocker_id=blocker_id,
-            request_id="",
+            request_id=request_id,
             custody_bucket=custody_bucket,
             current_state=current_state,
             retry_strategy=retry_strategy,
@@ -1329,22 +1363,26 @@ def _classify_from_recovery_view(
                 decision = DISPATCH_DECISION_REPAIRING
                 dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
                 rationale.append("recovery view: repairable but active repair ownership exists")
-            elif request_id:
+            elif request_id and blocker_id:
                 decision = DISPATCH_DECISION_L1
                 dispatch_intent = DISPATCH_INTENT_L1
                 rationale.append("recovery view: repairable custody with active request")
             else:
-                decision = DISPATCH_DECISION_NO_ACTION
-                dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-                rationale.append("recovery view: repairable but no active repair request")
-        elif request_id:
+                decision = DISPATCH_DECISION_BROKEN_SUPERFIXER
+                dispatch_intent = DISPATCH_INTENT_BROKEN_SUPERFIXER
+                rationale.append(
+                    "recovery view: repairable custody lacks canonical request/blocker identity"
+                )
+        elif request_id and blocker_id:
             decision = DISPATCH_DECISION_L1
             dispatch_intent = DISPATCH_INTENT_L1
             rationale.append("recovery view: repairable custody with active request")
         else:
-            decision = DISPATCH_DECISION_NO_ACTION
-            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-            rationale.append("recovery view: repairable but no active repair request")
+            decision = DISPATCH_DECISION_BROKEN_SUPERFIXER
+            dispatch_intent = DISPATCH_INTENT_BROKEN_SUPERFIXER
+            rationale.append(
+                "recovery view: repairable custody lacks canonical request/blocker identity"
+            )
     elif recovery_custody_bucket == "human_required":
         decision = DISPATCH_DECISION_HUMAN_REQUIRED
         dispatch_intent = DISPATCH_INTENT_HUMAN_REQUIRED
@@ -1386,8 +1424,13 @@ def _classify_from_recovery_view(
     if permitted_actions:
         action_types = {_as_text(item.get("action_type")) for item in permitted_actions}
         # If recovery view explicitly permits repair_dispatch, upgrade
-        # queue_only → dispatch_l1 when we have a request_id.
-        if "repair_dispatch" in action_types and decision == DISPATCH_DECISION_NO_ACTION and request_id:
+        # queue_only → dispatch_l1 only with canonical request/blocker identity.
+        if (
+            "repair_dispatch" in action_types
+            and decision == DISPATCH_DECISION_NO_ACTION
+            and request_id
+            and blocker_id
+        ):
             decision = DISPATCH_DECISION_L1
             dispatch_intent = DISPATCH_INTENT_L1
             rationale.append("recovery view: permitted repair_dispatch overrides no_action")

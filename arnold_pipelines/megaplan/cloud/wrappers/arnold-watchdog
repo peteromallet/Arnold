@@ -4177,12 +4177,90 @@ PY
 # immediately so the watchdog can scan the next session and write its report.
 # Keep the historical dispatch_kimi_repair seam because the watchdog tests and
 # extracted shell harnesses stub that function name directly.
+load_shared_repair_dispatch_env() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local dispatch_env
+
+  dispatch_env="$(manual_review_dispatch_status_env \
+    "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" \
+    2>>"${LOG:-/dev/null}" || true)"
+  [[ -n "$dispatch_env" ]] || return 1
+  eval "$dispatch_env"
+}
+
+record_l1_custody_failure() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local reason="$4"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
+    "$session" "$workspace" "$remote_spec" "$reason" \
+    "${PLAN_STATUS_REQUEST_ID:-}" "${PLAN_STATUS_BLOCKER_ID:-}" \
+    "${PLAN_STATUS_DISPATCH_DECISION:-}" "$REPAIR_QUEUE_ROOT" "$REPAIR_DATA_DIR" <<'PY'
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json, load_json
+from arnold_pipelines.megaplan.cloud.repair_requests import (
+    record_unclaimed_request_failure,
+    validate_queue_root,
+)
+
+(
+    session,
+    workspace,
+    remote_spec,
+    reason,
+    request_id,
+    blocker_id,
+    decision,
+    queue_root_raw,
+    repair_data_dir_raw,
+) = sys.argv[1:]
+queue_root = validate_queue_root(queue_root_raw)
+retry_state = {}
+if request_id:
+    retry_state = record_unclaimed_request_failure(
+        queue_root,
+        request_id=request_id,
+        reason=reason,
+    )
+
+repair_data_path = Path(repair_data_dir_raw) / f"{session}.repair-data.json"
+payload = load_json(repair_data_path, default={})
+if not isinstance(payload, dict):
+    payload = {}
+payload.setdefault("session", session)
+payload.setdefault("workspace", workspace)
+payload["l1_custody_failure"] = {
+    "observed_at": datetime.now(timezone.utc).isoformat(),
+    "reason": reason,
+    "request_id": request_id,
+    "blocker_id": blocker_id,
+    "dispatch_decision": decision,
+    "remote_spec": remote_spec,
+    "retry_state": retry_state,
+}
+atomic_write_json(repair_data_path, payload)
+PY
+}
+
 dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
   local pgid_path repair_busy claim_status request_id blocker_id
   REPAIR_DISPATCH_RESULT="unavailable"
+  if declare -F load_shared_repair_dispatch_env >/dev/null 2>&1; then
+    load_shared_repair_dispatch_env \
+      "$session" "$workspace" "$remote_spec" \
+      "${run_kind:-chain}" "${PLAN_STATUS_PLAN_NAME:-${plan_name:-}}" || true
+  fi
   request_id=""
   blocker_id=""
   if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
@@ -4191,6 +4269,12 @@ dispatch_kimi_repair() {
   fi
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop binary unavailable" "unavailable" "immediate_repair"
+    return 1
+  fi
+  if [[ -z "$request_id" || -z "$blocker_id" ]]; then
+    log "repair dispatch lacks canonical request/blocker identity; refusing L1 session=$session request=${request_id:-missing} blocker=${blocker_id:-missing} decision=${PLAN_STATUS_DISPATCH_DECISION:-missing}"
+    REPAIR_DISPATCH_RESULT="custody_missing"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair dispatch lacks canonical request/blocker identity" "unavailable" "immediate_repair"
     return 1
   fi
   repair_busy="$(repair_loop_busy_state "$session")"
@@ -4203,10 +4287,10 @@ dispatch_kimi_repair() {
   if declare -F claim_active_repair_launch >/dev/null 2>&1; then
     claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec")"
   else
-    claim_status=""
+    claim_status="claim_unavailable"
   fi
   case "$claim_status" in
-    ""|claimed)
+    claimed)
       ;;
     already_claimed|busy)
       log "repair request already claimed; skipping dispatch session=$session request=${request_id:-unknown}"
@@ -4218,7 +4302,7 @@ dispatch_kimi_repair() {
       log "repair request claim is stale; refusing dispatch session=$session request=${request_id:-unknown}"
       REPAIR_DISPATCH_RESULT="claim_denied"
       emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim is stale" "busy" "immediate_repair"
-      return 0
+      return 1
       ;;
     *)
       log "repair request claim failed; refusing dispatch session=$session request=${request_id:-unknown} status=$claim_status"
@@ -4256,7 +4340,7 @@ claim_active_repair_launch() {
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
   fi
   if [[ -z "$blocker_id" || -z "$request_id" ]]; then
-    printf '\n'
+    printf 'missing_identity\n'
     return 0
   fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
@@ -4739,6 +4823,45 @@ dispatch_meta_repair() {
   if [[ -n "$report_items" ]]; then
     report_item "$report_items" "$session" "meta_repair" "dispatched" "meta-repair background-dispatched" "$workspace" "$remote_spec"
   fi
+  return 0
+}
+
+route_l1_custody_failure_to_meta() {
+  local report_items="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local reason="$5"
+  local trigger_label="${6:-l1_custody_failure}"
+  local meta_result
+
+  record_l1_custody_failure \
+    "$session" "$workspace" "$remote_spec" "$reason" \
+    >>"$LOG" 2>&1 || true
+  if dispatch_meta_repair \
+    "$session" "$workspace" "$remote_spec" "$report_items" "$trigger_label"; then
+    meta_result="${REPAIR_DISPATCH_RESULT:-unknown}"
+    case "$meta_result" in
+      dispatched)
+        log "L1 custody failure routed to meta-repair session=$session trigger=$trigger_label reason=$reason"
+        return 0
+        ;;
+      busy)
+        report_item "$report_items" "$session" "meta_repair" "busy" \
+          "L1 custody failed; repair/meta-repair already active" "$workspace" "$remote_spec"
+        return 0
+        ;;
+      paused)
+        return 0
+        ;;
+    esac
+  else
+    meta_result="${REPAIR_DISPATCH_RESULT:-unavailable}"
+  fi
+  log "L1 custody failure could not launch meta-repair session=$session trigger=$trigger_label dispatch=${meta_result:-unknown} reason=$reason"
+  report_item "$report_items" "$session" "meta_repair" "broken_superfixer" \
+    "L1 custody failed and L2 dispatch is ${meta_result:-unavailable}: $reason" \
+    "$workspace" "$remote_spec"
   return 0
 }
 
@@ -7240,6 +7363,7 @@ PY
   fi
   if [[ "$resolver_human_verdict" != provider_retry:* && "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
     local human_summary repair_busy repair_summary manual_review_origin manual_review_dispatch_env manual_review_report_reason
+    local manual_meta_trigger manual_meta_dispatch_result
     manual_review_origin="${PLAN_STATUS_MANUAL_REVIEW_ORIGIN:-}"
     human_summary="manual_review halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; retry=${PLAN_STATUS_RETRY_STRATEGY:-unknown}; failure=${PLAN_STATUS_FAILURE_KIND:-unknown}"
     if [[ -n "$manual_review_origin" ]]; then
@@ -7258,10 +7382,41 @@ PY
       route_resolver_machine_repair "$report_items" "$session" "$workspace" "$remote_spec" "${resolver_human_verdict#suppress:}" "$human_summary"
       return 0
     fi
-    if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "blocked_recovery_not_resolved" \
-       || "${PLAN_STATUS_FAILURE_KIND:-}" == "quality_gate_blocked" \
-       || "${PLAN_STATUS_FAILURE_KIND:-}" == "deterministic_quality_blocked" \
-       || "${PLAN_STATUS_FAILURE_KIND:-}" == "execution_blocked" ]]; then
+    manual_review_dispatch_env="$(manual_review_dispatch_status_env "$session" "$workspace" "$remote_spec_path" "$run_kind" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" 2>>"$LOG" || true)"
+    if [[ -n "$manual_review_dispatch_env" ]]; then
+      eval "$manual_review_dispatch_env"
+    fi
+
+    # L2 owns exhausted/recurring L1 and custody/launch defects.  Check it
+    # before any manual-review L1 branch can spend another attempt.
+    manual_meta_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
+    if [[ "$manual_meta_trigger" == TRIGGER:* ]]; then
+      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${manual_meta_trigger#TRIGGER:}"; then
+        manual_meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-unknown}"
+        if [[ "$manual_meta_dispatch_result" == "dispatched" || "$manual_meta_dispatch_result" == "busy" || "$manual_meta_dispatch_result" == "paused" ]]; then
+          log "manual_review routed existing L1 failure to meta-repair before redispatch session=$session trigger=${manual_meta_trigger#TRIGGER:} dispatch=$manual_meta_dispatch_result"
+          return 0
+        fi
+      fi
+      report_item "$report_items" "$session" "meta_repair" "broken_superfixer" \
+        "L1 failure requires L2 but meta-repair dispatch is ${REPAIR_DISPATCH_RESULT:-unavailable}" \
+        "$workspace" "$remote_spec"
+      return 0
+    fi
+
+    if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "broken_superfixer" \
+       || "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" \
+          && ( -z "${PLAN_STATUS_REQUEST_ID:-}" || -z "${PLAN_STATUS_BLOCKER_ID:-}" ) ]]; then
+      route_l1_custody_failure_to_meta \
+        "$report_items" "$session" "$workspace" "$remote_spec" \
+        "manual_review decision=${PLAN_STATUS_DISPATCH_DECISION:-missing} request=${PLAN_STATUS_REQUEST_ID:-missing} blocker=${PLAN_STATUS_BLOCKER_ID:-missing} custody=${PLAN_STATUS_CUSTODY_BUCKET:-unknown}"
+      return 0
+    fi
+    if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]] \
+       && [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "blocked_recovery_not_resolved" \
+          || "${PLAN_STATUS_FAILURE_KIND:-}" == "quality_gate_blocked" \
+          || "${PLAN_STATUS_FAILURE_KIND:-}" == "deterministic_quality_blocked" \
+          || "${PLAN_STATUS_FAILURE_KIND:-}" == "execution_blocked" ]]; then
       repair_busy="$(repair_loop_busy_state "$session")"
       if [[ "$repair_busy" == "same_session" ]]; then
         log "session manual_review has unresolved quality blockers; repair already running session=$session summary=$human_summary"
@@ -7287,15 +7442,12 @@ PY
         fi
         return 0
       fi
-      log "session manual_review has machine-repairable blockers but repair loop is unavailable; broken superfixer session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
-      report_item "$report_items" "$session" "repair" "broken_superfixer" "accepted repair could not be claimed or launched" "$workspace" "$remote_spec"
+      route_l1_custody_failure_to_meta \
+        "$report_items" "$session" "$workspace" "$remote_spec" \
+        "manual_review machine-repairable L1 launch/claim failed result=${REPAIR_DISPATCH_RESULT:-unavailable}"
       return 0
     fi
-    manual_review_dispatch_env="$(manual_review_dispatch_status_env "$session" "$workspace" "$remote_spec_path" "$run_kind" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" 2>>"$LOG" || true)"
-    if [[ -n "$manual_review_dispatch_env" ]]; then
-      eval "$manual_review_dispatch_env"
-    fi
-    if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" || "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
+    if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         local stale_marker_plans
         stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" 2>/dev/null)" || {
@@ -7343,7 +7495,10 @@ PY
         fi
         return 0
       fi
-      log "session manual_review classified for repair dispatch but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+      route_l1_custody_failure_to_meta \
+        "$report_items" "$session" "$workspace" "$remote_spec" \
+        "manual_review L1 launch/claim failed result=${REPAIR_DISPATCH_RESULT:-unavailable}"
+      return 0
     fi
     log "session requires human review session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"

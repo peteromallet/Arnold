@@ -593,6 +593,35 @@ def test_plan_live_activity_sidecar_does_not_count_as_live_process_without_pid(f
     assert "stalled" in entry["operator_next"]
 
 
+def test_fresh_sidecar_cannot_make_dead_active_step_runner_running(fx):
+    fx.add_session("wbc", plan_name="c1-contract-reality-20260711-1433")
+    fx.add_chain_health(
+        "wbc",
+        current_plan_name="c1-contract-reality-20260711-1433",
+        last_state="executed",
+        updated_at=NOW - timedelta(seconds=30),
+    )
+    fx.add_plan_state(
+        "wbc",
+        "c1-contract-reality-20260711-1433",
+        current_state="executed",
+        active_step={
+            "phase": "execute",
+            "worker_pid": 99999999,
+            "last_activity_at": (NOW - timedelta(seconds=20)).isoformat(),
+        },
+    )
+
+    snap = fx.build()
+    entry = _by_session(snap, "wbc")
+
+    assert entry["tmux"] is False
+    assert entry["process"] is False
+    assert entry["status"] == "attention"
+    assert "dead worker PID" in entry["operator_next"]
+    assert entry["advancement"]["action"] != "preserve_live"
+
+
 
 def test_live_activity_supersedes_stale_needs_human_and_chain_health_plan(fx):
     spec = fx.root / "native" / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
