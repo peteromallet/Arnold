@@ -71,6 +71,78 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_LOG="$RUN_DIR/${TS}-${SAFE_SESSION}.log"
 
+load_resident_delegation_context() {
+  local marker_path encoded rc
+  marker_path="$MARKER_DIR/$SESSION.json"
+  encoded="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$marker_path" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.resident.provenance import (
+    DELEGATION_CONTEXT_ENV,
+    encoded_provenance,
+    normalize_delegation_provenance,
+)
+
+raw = os.environ.get(DELEGATION_CONTEXT_ENV)
+if raw:
+    try:
+        print(encoded_provenance(normalize_delegation_provenance(json.loads(raw))), end="")
+    except Exception as exc:
+        print(f"invalid inherited resident delegation provenance: {exc}", file=sys.stderr)
+        raise SystemExit(65)
+    raise SystemExit(0)
+try:
+    marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    raise SystemExit(3)
+payload = marker.get("resident_delegation") if isinstance(marker, dict) else None
+if payload is None:
+    raise SystemExit(3)
+try:
+    print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+except Exception as exc:
+    print(f"invalid marker resident delegation provenance: {exc}", file=sys.stderr)
+    raise SystemExit(65)
+PY
+)"
+  rc=$?
+  if [[ "$rc" == "3" ]]; then
+    return 0
+  fi
+  if [[ "$rc" != "0" ]]; then
+    echo "meta-repair launch refused: resident delegation provenance validation failed" >&2
+    return "$rc"
+  fi
+  if [[ -n "$encoded" ]]; then
+    export ARNOLD_RESIDENT_DELEGATION_CONTEXT="$encoded"
+  fi
+}
+
+load_resident_delegation_context || exit $?
+
+if PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_DIR/$SESSION.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+from arnold_pipelines.megaplan.chain.spec import load_chain_state
+
+try:
+    marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    remote_spec = Path(str(marker.get("remote_spec") or marker.get("spec") or ""))
+    paused = bool(str(remote_spec)) and is_paused(load_chain_state(remote_spec))
+except Exception:
+    paused = False
+raise SystemExit(0 if paused else 1)
+PY
+then
+  echo "[meta-repair] durable operator pause active; superfixer skipped session=$SESSION" >&2
+  exit 0
+fi
+
 mkdir -p "$RUN_DIR" "$REPAIR_DATA_DIR"
 
 log() {
@@ -103,11 +175,6 @@ from arnold_pipelines.megaplan.cloud.redact import redact_text
 path = Path(sys.argv[1])
 path.write_text(redact_text(path.read_text(encoding="utf-8")), encoding="utf-8")
 PY
-}
-
-l2_mutation_authorized() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -c \
-    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L2, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L2) else 1)'
 }
 
 # ---- early gate: feature flag -----------------------------------------------
@@ -180,7 +247,6 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     build_meta_repair_prompt,
     evaluate_meta_repair_triggers,
     load_redacted_evidence,
-    stale_repair_evidence_reason,
 )
 
 session, repair_data_dir, repair_data_path, marker_dir, enabled, watchdog_trigger = sys.argv[1:7]
@@ -202,29 +268,21 @@ if trigger is not None:
         marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
     )
-    stale_reason = stale_repair_evidence_reason(
+    evidence["current_target_corroboration"] = current_target_observation
+    classification = MetaRepairClassification(
+        session=session,
+        trigger=trigger,
+        rationale=(
+            f"watchdog preclassified trigger={trigger.value}; "
+            "meta loop preserves bounded trigger custody and treats live target discovery as corroboration",
+        ),
         evidence=evidence,
-        current_target_observation=current_target_observation,
     )
-    if stale_reason:
-        classification = MetaRepairClassification(
-            session=session,
-            trigger=None,
-            rationale=(stale_reason,),
-            evidence=evidence,
-        )
-    else:
-        classification = MetaRepairClassification(
-            session=session,
-            trigger=trigger,
-            rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
-            evidence=evidence,
-        )
-        prompt = build_meta_repair_prompt(
-            classification,
-            repair_data_dir=repair_data_dir,
-            force_emergency=force_emergency,
-        )
+    prompt = build_meta_repair_prompt(
+        classification,
+        repair_data_dir=repair_data_dir,
+        force_emergency=force_emergency,
+    )
 else:
     classification, prompt = evaluate_meta_repair_triggers(
         session,
@@ -434,14 +492,7 @@ log "commit_allowed=$COMMIT_ALLOWED push_allowed=$PUSH_ALLOWED"
 RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.txt"
 ERR_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.err"
 
-if ! l2_mutation_authorized; then
-  log "observed: L2 Codex dispatch blocked (requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED)"
-  printf '%s\n' \
-    "NO_FIX" \
-    "Meta-repair trigger observed; mutation blocked by the master-plus-path authorization gate." \
-    > "$RESP_PATH"
-  : > "$ERR_PATH"
-elif command -v codex >/dev/null 2>&1; then
+if command -v codex >/dev/null 2>&1; then
   log "dispatching Codex meta-repair session=$SESSION deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
   (
     if [[ -f /workspace/.cloud-hot-env ]]; then
@@ -456,7 +507,30 @@ elif command -v codex >/dev/null 2>&1; then
     export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
     export ARNOLD_SRC="$ARNOLD_SRC"
     cd "$ARNOLD_SRC" || exit 1
-    timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access - < "$BRIEF_PATH"
+    managed_cmd=(
+      python3 -m arnold_pipelines.megaplan.managed_agent run
+      --run-kind automatic_meta_repair_worker
+      --identity-key "meta-repair-worker:${SESSION}:${TRIGGER_TYPE}"
+      --project-dir "$ARNOLD_SRC"
+      --task-kind root_cause
+      --difficulty 10
+      --model codex-cli-default
+      --reasoning-effort high
+      --route-class meta_repair_l2_worker
+      --backend codex
+      --command-display "Codex meta-repair worker $SESSION"
+      --lineage-key "meta-repair-worker:$SESSION"
+      --stdin-file "$BRIEF_PATH"
+      --link "cloud_session=$SESSION"
+      --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+      --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+      --link "phase=meta_repair_worker"
+    )
+    if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
+      managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
+    fi
+    managed_cmd+=(-- timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access -)
+    "${managed_cmd[@]}"
   ) > "$RESP_PATH" 2>"$ERR_PATH" || true
   redact_file_in_place "$RESP_PATH"
   redact_file_in_place "$ERR_PATH"
@@ -617,7 +691,10 @@ try:
 except Exception:
     pass
 
-verification_raw = os.environ.get("META_REPAIR_VERIFICATION_JSON", "{}")
+verification_raw = os.environ.get(
+    "META_REPAIR_VERIFICATION_JSON",
+    os.environ.get("POST_RETRIGGER_VERIFICATION_JSON", "{}"),
+)
 verification_info = {}
 try:
     verification_info = json.loads(verification_raw)
@@ -641,10 +718,14 @@ record = MetaRepairRecord(
     session=session,
     trigger=trigger,
     diagnosis=redact_text(resp_text[:4000]),
-    subagent_results={"codex_response": redact_text(resp_text[:4000])},
+    subagent_results={
+        "codex_response": redact_text(resp_text[:4000]),
+        "managed_agent_run_id": str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or ""),
+        "managed_agent_manifest": str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or ""),
+    },
     changes=[],
     tests=[],
-    retrigger_command="redacted",
+    retrigger_command=redact_text(str(post_retrigger_verification.get("retrigger_command") or "")),
     post_retrigger_verification=post_retrigger_verification,
     outcome=effective_outcome,
 )
@@ -662,11 +743,12 @@ if [[ "$VERDICT" == FIXED* ]]; then
   else
     log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
 
-    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" <<'PY'
+    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" <<'PY'
+import datetime as dt
 import json, os, subprocess, sys
 from pathlib import Path
+from types import SimpleNamespace
 
-from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_repair_retriggered,
     append_verified_recovered,
@@ -676,12 +758,18 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     verify_retrigger_success,
 )
 from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
+from arnold_pipelines.megaplan.managed_agent import (
+    ManagedCommandSpec,
+    run_managed_command,
+    stable_managed_run_id,
+)
 
 session = sys.argv[1]
 repair_loop_bin = sys.argv[2]
 workspace_root = Path(sys.argv[3])
 install_sync_event_id = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
 repair_data_path = Path(sys.argv[5])
+marker_dir = Path(sys.argv[6]) if len(sys.argv) > 6 else repair_data_path.parent.parent
 
 VERIFIER_REJECTION_RETURNCODE = 73
 
@@ -689,12 +777,8 @@ VERIFIER_REJECTION_RETURNCODE = 73
 def load_authoritative_post_retrigger_verification(
     session_id: str,
     repair_data_path: Path,
-) -> dict[str, str]:
-    """Read the canonical session repair-data outcome after retrigger.
-
-    Fail closed if the artifact is missing, invalid, or does not contain a
-    usable outcome for the expected session.
-    """
+) -> dict[str, object]:
+    """Read outcome plus a fresh, ground-truth post-retrigger snapshot."""
 
     payload = validate_repair_data(repair_data_path)
     payload_session = str(payload.get("session") or "").strip()
@@ -706,14 +790,68 @@ def load_authoritative_post_retrigger_verification(
     outcome = str(payload.get("outcome") or "").strip().lower()
     if not outcome:
         raise ValueError("authoritative repair-data outcome missing")
-    return {"outcome": outcome}
+    marker = {}
+    marker_path = marker_dir / f"{session_id}.json"
+    if marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"session marker unreadable: {exc}") from exc
+    workspace = Path(str(marker.get("workspace") or ""))
+    if not workspace.exists():
+        raise ValueError("session workspace unavailable for authoritative snapshot")
+    chain_candidates = sorted(
+        (workspace / ".megaplan" / "plans" / ".chains").glob("*.json"),
+        key=lambda item: item.stat().st_mtime,
+    )
+    if not chain_candidates:
+        raise ValueError("chain state unavailable for authoritative snapshot")
+    try:
+        chain = json.loads(chain_candidates[-1].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"chain state unreadable: {exc}") from exc
+    plan_name = str(chain.get("current_plan_name") or "").strip()
+    plan_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+    if not plan_name or not plan_path.exists():
+        plan_candidates = sorted(
+            (workspace / ".megaplan" / "plans").glob("*/state.json"),
+            key=lambda item: item.stat().st_mtime,
+        )
+        if not plan_candidates:
+            raise ValueError("current plan state unavailable for authoritative snapshot")
+        plan_path = plan_candidates[-1]
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"current plan state unreadable: {exc}") from exc
+    milestones = chain.get("milestones") if isinstance(chain.get("milestones"), list) else []
+    completed = chain.get("completed") if isinstance(chain.get("completed"), list) else []
+    active_step = plan.get("active_step") if isinstance(plan.get("active_step"), dict) else {}
+    worker_pid = active_step.get("worker_pid")
+    worker_pid_alive = None
+    if worker_pid not in (None, ""):
+        try:
+            os.kill(int(worker_pid), 0)
+        except (OSError, ValueError):
+            worker_pid_alive = False
+        else:
+            worker_pid_alive = True
+    snapshot = {
+        "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "workspace": str(workspace),
+        "chain_path": str(chain_candidates[-1]),
+        "plan_path": str(plan_path),
+        "milestone_total": len(milestones),
+        "completed_count": len(completed),
+        "chain_last_state": str(chain.get("last_state") or "").strip().lower(),
+        "plan_current_state": str(plan.get("current_state") or plan.get("state") or "").strip().lower(),
+        "active_step_present": bool(active_step),
+        "worker_pid": worker_pid,
+        "worker_pid_alive": worker_pid_alive,
+    }
+    return {"outcome": outcome, "post_snapshot": snapshot}
 
 incident_id = f"inc-{session}"
-
-if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L2):
-    raise SystemExit(
-        "L2 retrigger blocked: ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED are required"
-    )
 
 # Emit repair_retriggered
 parent_ids = []
@@ -730,11 +868,58 @@ retrigger_event = append_repair_retriggered(
 print(f"RETRIGGER_EVENT_ID={retrigger_event.get('event_id', '')}")
 
 # Retrigger ordinary repair
-completed = subprocess.run(
-    [repair_loop_bin, session],
-    cwd=str(workspace_root),
-    capture_output=True, text=True, check=False,
-    timeout=3600,
+retrigger_command = [repair_loop_bin, session]
+try:
+    marker = json.loads((marker_dir / f"{session}.json").read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    marker = {}
+workspace = str(marker.get("workspace") or "").strip()
+remote_spec = str(marker.get("remote_spec") or "").strip()
+if workspace:
+    retrigger_command.append(workspace)
+    if remote_spec:
+        retrigger_command.append(remote_spec)
+parent_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip() or None
+request_id = str(os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID") or "").strip()
+blocker_id = str(os.environ.get("CLOUD_WATCHDOG_REPAIR_BLOCKER_ID") or "").strip()
+identity_key = f"meta-retrigger:{session}:{parent_run_id or install_sync_event_id}"
+managed_project = Path(workspace).resolve() if workspace else workspace_root.resolve()
+spec = ManagedCommandSpec(
+    run_kind="automatic_repair_retry",
+    identity_key=identity_key,
+    project_dir=managed_project,
+    argv=tuple(retrigger_command),
+    task_kind="autonomous",
+    difficulty=8,
+    model="control-plane",
+    reasoning_effort="bounded",
+    route_class="meta_repair_retrigger",
+    backend="repair-loop",
+    command_display=f"meta-repair ordinary repair retrigger {session}",
+    links={
+        "repair_request_id": request_id,
+        "blocker_id": blocker_id,
+        "incident_id": incident_id,
+        "cloud_session": session,
+        "chain": remote_spec,
+        "phase": "meta_repair_retrigger",
+    },
+    parent_run_id=parent_run_id,
+    lineage_key=f"repair-retrigger:{request_id or session}",
+    tee_output=False,
+)
+managed_returncode = run_managed_command(spec)
+run_id = stable_managed_run_id(spec.run_kind, spec.identity_key)
+managed_root = managed_project / ".megaplan" / "plans" / "resident-subagents" / run_id
+managed_log = managed_root / "run.log"
+try:
+    managed_stdout = managed_log.read_text(encoding="utf-8", errors="replace")
+except OSError:
+    managed_stdout = ""
+completed = SimpleNamespace(
+    returncode=managed_returncode,
+    stdout=managed_stdout,
+    stderr="",
 )
 
 # Verify retrigger result from the authoritative session repair-data artifact,
@@ -750,7 +935,7 @@ except Exception as exc:
     lookup_error = f"{type(exc).__name__}: {exc}"
 
 retrigger_result = RetriggerExecutionResult(
-    command=(repair_loop_bin, session),
+    command=tuple(retrigger_command),
     returncode=int(completed.returncode),
     stdout=str(completed.stdout or ""),
     stderr=str(completed.stderr or ""),
@@ -784,7 +969,6 @@ if accepted:
             f"outcome={verification.get('outcome', '')} "
             f"returncode={retrigger_result.returncode}"
         ),
-        recovery_verification=verification,
         evidence=[
             {
                 "kind": "retrigger_result",

@@ -4,7 +4,7 @@ When ordinary repair fails as a system, meta-repair diagnoses the
 repair-system failure, builds a redacted Codex/DeepSeek prompt, and
 prepares evidence for the meta-repair loop to act on.
 
-Trigger types (six specified + explicit non-trigger):
+Trigger types (seven specified + explicit non-trigger):
     1. repair_timeout            – repair took longer than its allotted budget
     2. persistent_recurring_retry – same failure repeats across attempts
     3. state_inspection_failure   – resolver/snapshot failed to read state
@@ -12,6 +12,8 @@ Trigger types (six specified + explicit non-trigger):
     5. partial_liveness_recurrence – partial-liveness across >=2 watchdog ticks
     6. discord_delivery_failure   – Discord delivery failed for a TRUE_BLOCKER
        human escalation
+    7. l1_custody_failure         – L1 could not establish canonical
+       request/blocker/claim custody
 
 Non-trigger: healthy repair, non-system error, stale evidence, etc.
 """
@@ -23,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Callable, Mapping, Sequence
 
@@ -31,6 +34,7 @@ from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     ALL_OUTCOMES,
+    COMPLETE,
     DISCORD_ESCALATED,
     LIVE_WITH_FRESH_ACTIVITY,
     NEEDS_HUMAN,
@@ -67,7 +71,7 @@ META_REPAIR_BUDGET_SECS: int = 5400  # 90 minutes, longer than ordinary repair
 
 
 class MetaRepairTrigger(str, Enum):
-    """The six specified meta-repair trigger types."""
+    """The specified meta-repair trigger types."""
 
     REPAIR_TIMEOUT = "repair_timeout"
     PERSISTENT_RECURRING_RETRY = "persistent_recurring_retry"
@@ -75,6 +79,7 @@ class MetaRepairTrigger(str, Enum):
     MODEL_TOOL_LAUNCH_FAILURE = "model_tool_launch_failure"
     PARTIAL_LIVENESS_RECURRENCE = "partial_liveness_recurrence"
     DISCORD_DELIVERY_FAILURE = "discord_delivery_failure"
+    L1_CUSTODY_FAILURE = "l1_custody_failure"
 
 
 # Canonical ordering for display / prompt ordering
@@ -85,6 +90,7 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE: 4,
     MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE: 5,
     MetaRepairTrigger.DISCORD_DELIVERY_FAILURE: 6,
+    MetaRepairTrigger.L1_CUSTODY_FAILURE: 7,
 }
 
 # Outcomes that suppress another meta-repair dispatch.  Fresh activity remains
@@ -92,6 +98,189 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
 _META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES | frozenset(
     {LIVE_WITH_FRESH_ACTIVITY}
 )
+
+
+def extract_reported_repair_custody(
+    response: str,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Extract structured change/test claims from a meta-repair response.
+
+    The meta-repair agent returns concise Markdown rather than a schema.  Keep
+    its claims explicitly labelled as reported evidence; downstream consumers
+    can then distinguish them from install-sync and retrigger verification.
+    """
+
+    changes: list[dict[str, str]] = []
+    tests: list[dict[str, str]] = []
+    seen_changes: set[str] = set()
+    seen_tests: set[str] = set()
+
+    for line in response.splitlines():
+        lowered = line.lower()
+        if any(token in lowered for token in ("change made", "changed", "patched", "fixed")):
+            for match in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", line):
+                path = match.group(1).split(":", 1)[0].strip()
+                if path and path not in seen_changes:
+                    seen_changes.add(path)
+                    changes.append({"file": path, "status": "reported"})
+
+        if any(token in lowered for token in ("pytest", "py_compile")):
+            commands = re.findall(r"`([^`]*(?:pytest|py_compile)[^`]*)`", line)
+            for command in commands:
+                command = command.strip()
+                if not command or command in seen_tests:
+                    continue
+                seen_tests.add(command)
+                result = "reported_pass" if any(
+                    token in lowered for token in ("passed", "passes", "validation passed", "tests passed")
+                ) else "reported"
+                tests.append({"command": command, "result": result})
+
+    return changes, tests
+
+
+def verify_meta_repair_commit_custody(
+    repo: str | Path,
+    *,
+    baseline_head: str,
+    verdict: str,
+    push_required: bool,
+    remote: str = "origin",
+) -> dict[str, Any]:
+    """Fail closed unless a meta-repair change has durable git custody.
+
+    ``FIXED`` requires a new, clean commit on a named local branch.  When push
+    policy is enabled, the same commit must already be published at the
+    corresponding remote branch.  Non-fix verdicts must not leave tracked
+    source changes or move HEAD.
+    """
+
+    root = Path(repo)
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    baseline = str(baseline_head or "").strip()
+    normalized_verdict = str(verdict or "").strip()
+    result: dict[str, Any] = {
+        "accepted": False,
+        "outcome": "commit_custody_failed",
+        "reason": "",
+        "baseline_head": baseline,
+        "current_head": "",
+        "branch": "",
+        "local_reachable": False,
+        "remote_reachable": False,
+        "push_required": bool(push_required),
+    }
+
+    current_proc = git("rev-parse", "HEAD")
+    if current_proc.returncode != 0 or not current_proc.stdout.strip():
+        result["reason"] = "meta-repair source HEAD is unavailable"
+        return result
+    current = current_proc.stdout.strip()
+    result["current_head"] = current
+
+    status_proc = git("status", "--porcelain", "--untracked-files=no")
+    if status_proc.returncode != 0 or status_proc.stdout.strip():
+        result["reason"] = "meta-repair left tracked source changes uncommitted"
+        return result
+
+    if not baseline:
+        result["reason"] = "pre-dispatch source HEAD was not captured"
+        return result
+
+    changed = bool(baseline) and current != baseline
+    if not normalized_verdict.startswith("FIXED"):
+        if changed:
+            result["reason"] = "non-FIXED verdict moved source HEAD"
+            return result
+    elif not changed:
+        result["reason"] = "FIXED verdict produced no new source commit"
+        return result
+
+    branch_proc = git("symbolic-ref", "--quiet", "--short", "HEAD")
+    branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+    result["branch"] = branch
+    if not branch:
+        result["reason"] = "source commit is on detached HEAD"
+        return result
+
+    branch_proc = git("rev-parse", f"refs/heads/{branch}")
+    local_reachable = (
+        branch_proc.returncode == 0 and branch_proc.stdout.strip() == current
+    )
+    result["local_reachable"] = local_reachable
+    if not local_reachable:
+        result["reason"] = "new source commit is not the named branch tip"
+        return result
+
+    if push_required:
+        remote_proc = git("ls-remote", "--heads", remote, f"refs/heads/{branch}")
+        remote_head = ""
+        if remote_proc.returncode == 0 and remote_proc.stdout.strip():
+            remote_head = remote_proc.stdout.split()[0]
+        result["remote_reachable"] = remote_head == current
+        if not result["remote_reachable"]:
+            result["reason"] = "new source commit is not published at the remote branch tip"
+            return result
+    else:
+        result["remote_reachable"] = False
+
+    if not normalized_verdict.startswith("FIXED"):
+        result.update(
+            accepted=True,
+            outcome="no_source_change",
+            reason="non-FIXED verdict preserved source custody",
+        )
+        return result
+
+    result.update(
+        accepted=True,
+        outcome="commit_custody_verified",
+        reason="new source commit has durable branch custody",
+    )
+    return result
+
+
+def authoritative_terminal_snapshot_reason(snapshot: Mapping[str, Any] | None) -> str:
+    """Explain why a post-retrigger snapshot cannot close repair custody.
+
+    The repair-data outcome is a claim made by L1.  L2 must independently
+    preserve enough current state to prove that the claim is safe.  This is
+    deliberately strict: a ``finalized`` plan, a past-end milestone index, or
+    a dead worker PID are all contradiction evidence, not completion.
+    """
+    if not isinstance(snapshot, Mapping):
+        return "authoritative post-retrigger snapshot missing"
+    if not str(snapshot.get("captured_at") or "").strip():
+        return "authoritative post-retrigger snapshot has no capture timestamp"
+    try:
+        total = int(snapshot.get("milestone_total"))
+        completed = int(snapshot.get("completed_count"))
+    except (TypeError, ValueError):
+        return "authoritative post-retrigger snapshot has unknown milestone total"
+    if total <= 0:
+        return "authoritative post-retrigger snapshot has unknown milestone total"
+    if completed < total:
+        return f"authoritative post-retrigger snapshot is incomplete ({completed}/{total})"
+    if bool(snapshot.get("active_step_present")):
+        return "authoritative post-retrigger snapshot still has active_step"
+    if snapshot.get("worker_pid_alive") is False:
+        return "authoritative post-retrigger snapshot records a dead worker"
+    chain_state = str(snapshot.get("chain_last_state") or "").strip().lower()
+    plan_state = str(snapshot.get("plan_current_state") or "").strip().lower()
+    if chain_state not in {"done", "complete", "completed"}:
+        return f"authoritative post-retrigger snapshot has nonterminal chain state {chain_state or 'missing'}"
+    if plan_state not in {"done", "complete"}:
+        return f"authoritative post-retrigger snapshot has nonterminal plan state {plan_state or 'missing'}"
+    return ""
 
 
 def trigger_priority(trigger: MetaRepairTrigger) -> int:
@@ -216,9 +405,122 @@ def load_redacted_evidence(
                 ][-max_attempts:]
             except Exception:
                 pass
+    partial_liveness_history = _scope_partial_liveness_history_to_current_attempt(
+        partial_liveness_history,
+        repair_data,
+    )[-max_attempts:]
     evidence["partial_liveness_history"] = partial_liveness_history
 
     return evidence
+
+
+def _repair_data_current_attempt_floor(repair_data: Mapping[str, Any]) -> float | None:
+    """Return the timestamp floor for the currently tracked repair attempt."""
+
+    latest: float | None = None
+
+    def consider(value: Any) -> None:
+        nonlocal latest
+        parsed = _parse_meta_timestamp(value)
+        if parsed is None:
+            return
+        if latest is None or parsed > latest:
+            latest = parsed
+
+    current_recurrence = repair_data.get("current_recurrence")
+    if isinstance(current_recurrence, Mapping):
+        consider(current_recurrence.get("dispatched_at"))
+
+    current_attempt_id = str(repair_data.get("current_attempt_id") or "").strip()
+    for collection_key in ("attempts", "iterations"):
+        records = repair_data.get(collection_key)
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, Mapping):
+                continue
+            record_attempt_id = str(record.get("attempt_id") or "").strip()
+            if current_attempt_id and record_attempt_id != current_attempt_id:
+                continue
+            consider(record.get("dispatched_at"))
+            consider(record.get("recorded_at"))
+            consider(record.get("attempted_at"))
+            consider(record.get("updated_at"))
+    return latest
+
+
+def _repair_data_current_plan_name(repair_data: Mapping[str, Any]) -> str:
+    current_signature = repair_data.get("current_signature")
+    if not isinstance(current_signature, Mapping):
+        current_signature = {}
+    advancement = repair_data.get("current_advancement_snapshot")
+    if not isinstance(advancement, Mapping):
+        advancement = {}
+    failure_context = repair_data.get("current_failure_context")
+    if not isinstance(failure_context, Mapping):
+        failure_context = {}
+    latest_failure = failure_context.get("plan_latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        latest_failure = {}
+    chain_state = failure_context.get("chain_state_summary")
+    if not isinstance(chain_state, Mapping):
+        chain_state = {}
+    return (
+        _meta_safe_text(current_signature.get("milestone_or_plan"))
+        or _meta_safe_text(advancement.get("milestone_or_plan"))
+        or _meta_safe_text(repair_data.get("plan_name"))
+        or _meta_safe_text(latest_failure.get("plan_name"))
+        or _meta_safe_text(chain_state.get("current_plan_name"))
+    )
+
+
+def _repair_data_current_run_kind(repair_data: Mapping[str, Any]) -> str:
+    advancement = repair_data.get("current_advancement_snapshot")
+    if not isinstance(advancement, Mapping):
+        advancement = {}
+    failure_context = repair_data.get("current_failure_context")
+    if not isinstance(failure_context, Mapping):
+        failure_context = {}
+    resolver_output = failure_context.get("resolver_output")
+    if not isinstance(resolver_output, Mapping):
+        resolver_output = {}
+    current_refs = resolver_output.get("current_refs")
+    if not isinstance(current_refs, Mapping):
+        current_refs = {}
+    return (
+        _meta_safe_text(repair_data.get("run_kind"))
+        or _meta_safe_text(advancement.get("run_kind"))
+        or _meta_safe_text(current_refs.get("run_kind"))
+    ).lower()
+
+
+def _scope_partial_liveness_history_to_current_attempt(
+    history: Sequence[Mapping[str, Any] | Any],
+    repair_data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Keep only partial-liveness ticks that belong to the current attempt window."""
+
+    floor = _repair_data_current_attempt_floor(repair_data)
+    current_plan_name = _repair_data_current_plan_name(repair_data)
+    current_run_kind = _repair_data_current_run_kind(repair_data)
+    if floor is None and not current_plan_name and not current_run_kind:
+        return [dict(item) for item in history if isinstance(item, Mapping)]
+
+    filtered: list[dict[str, Any]] = []
+    for item in history:
+        if not isinstance(item, Mapping):
+            continue
+        recorded_at = _parse_meta_timestamp(item.get("recorded_at"))
+        if floor is not None and (recorded_at is None or recorded_at < floor):
+            continue
+        run_kind = _meta_safe_text(item.get("run_kind")).lower()
+        if current_run_kind and run_kind and run_kind != current_run_kind:
+            continue
+        plan_name = _meta_safe_text(item.get("plan_name"))
+        if current_plan_name and plan_name and plan_name != current_plan_name:
+            continue
+        filtered.append(dict(item))
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -1546,6 +1848,9 @@ def verify_retrigger_success(
             post_snapshot=verification.get("post_snapshot"),
         )
 
+    snapshot_reason = authoritative_terminal_snapshot_reason(
+        verification.get("post_snapshot")
+    )
     observation = verification.get("observation")
     if not isinstance(observation, Mapping):
         observation = verification
@@ -1565,7 +1870,8 @@ def verify_retrigger_success(
     accepted = (
         retriggered
         and (retrigger_result is None or retrigger_result.returncode == 0)
-        and normalized_outcome in SUCCESS_OUTCOMES
+        and normalized_outcome == COMPLETE
+        and not snapshot_reason
         and recovery["authorizes_verified_recovered"] is True
     )
 
@@ -1577,14 +1883,16 @@ def verify_retrigger_success(
             "ordinary repair retrigger command failed "
             f"(returncode={retrigger_result.returncode})"
         )
+    elif normalized_outcome == COMPLETE and snapshot_reason:
+        rejection_reason = snapshot_reason
     elif recovery["authorizes_verified_recovered"] is not True:
         rejection_reason = str(recovery["reason"])
     elif normalized_outcome == PARTIAL_LIVENESS:
         rejection_reason = "partial_liveness is not a terminal success"
     elif normalized_outcome == REPAIRING:
         rejection_reason = "repairing is not a verified terminal success"
-    elif normalized_outcome not in SUCCESS_OUTCOMES:
-        rejection_reason = f"outcome {normalized_outcome!r} is outside SUCCESS_OUTCOMES"
+    elif normalized_outcome != COMPLETE:
+        rejection_reason = f"outcome {normalized_outcome!r} cannot close repair custody"
 
     verification_record = build_verification_record(
         normalized_outcome,
@@ -1634,13 +1942,16 @@ def derive_meta_repair_effective_outcome(
     """
 
     normalized_verdict = str(verdict or "").strip()
+    verification = dict(post_retrigger_verification or {})
+    commit_custody = verification.get("commit_custody")
+    if isinstance(commit_custody, Mapping) and commit_custody.get("accepted") is False:
+        return "commit_custody_failed"
     if not normalized_verdict.startswith("FIXED"):
         return normalized_verdict or "UNKNOWN"
 
     if str(install_sync_status or "").strip().lower() == "failed":
         return "install_sync_failed"
 
-    verification = dict(post_retrigger_verification or {})
     accepted = bool(verification.get("accepted"))
     outcome = str(verification.get("outcome") or "").strip().lower()
 

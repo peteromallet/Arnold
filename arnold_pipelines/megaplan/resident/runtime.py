@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -16,13 +16,16 @@ from arnold.execution.step_invocation import StepInvocation
 
 from agentbox.redaction import redact_text
 
-from .agent_loop import AgentRequest, AgentResponse, AgentRunner
-from .auth import AuthorizationSubject, ResidentAuthorizer
+from .agent_loop import AgentRequest, AgentResponse, AgentRunner, durable_launch_run_ids
+from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorizer
 from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
+from .context_tree import classify_intent_packs
 from .escalations import EscalationAnswerDecision, authorize_escalation_answer, confirm_escalation_resolution
 from .profile import MegaplanResidentProfile
+from .reply_chain import build_reply_provenance, render_reply_context
+from .timezone import localize_text_timestamps, timezone_prompt_instruction
 
 
 @dataclass(frozen=True)
@@ -109,8 +112,13 @@ class ResidentRuntime:
             max_delay_s=config.burst_max_delay_s,
         )
 
-    async def receive(self, event: InboundEvent) -> None:
-        decision = self.authorizer.authorize_inbound(event.subject)
+    async def receive(
+        self,
+        event: InboundEvent,
+        *,
+        authorization_decision: AuthorizationDecision | None = None,
+    ) -> None:
+        decision = authorization_decision or self.authorizer.authorize_inbound(event.subject)
         if not decision.allowed:
             if decision.audit is not None:
                 self.emitter.log_system_event(
@@ -172,8 +180,348 @@ class ResidentRuntime:
                 warnings_issued=list(turn.warnings_issued or []) + ["recovered as abandoned on resident startup"],
                 idempotency_key=deterministic_idempotency_key("resident-turn-abandoned", turn.id),
             )
+            await self._notify_abandoned_turn(turn.id, turn.triggered_by_message_ids)
             recovered += 1
         return recovered
+
+    async def recover_restart_interrupted_turns(
+        self,
+        process_identity: Mapping[str, Any],
+    ) -> int:
+        """Promptly replay the exact inbound source owned by a completed restart."""
+
+        from agentbox.reset_notifications import (
+            claim_restart_interrupted_turns,
+            finish_restart_interrupted_turn,
+        )
+
+        recovered = 0
+        claims = claim_restart_interrupted_turns(process_identity=process_identity)
+        turns = {turn.id: turn for turn in self.store.list_recent_turns(n=1000)}
+        for claim in claims:
+            turn = turns.get(claim.turn_id)
+            messages = self.store.load_messages(claim.source_record_ids)
+            if (
+                turn is None
+                or turn.status != "in_progress"
+                or not messages
+                or any(message.direction != "inbound" for message in messages)
+            ):
+                finish_restart_interrupted_turn(
+                    claim.notification_id, status="skipped"
+                )
+                continue
+            persisted: list[PersistedInboundEvent] = []
+            for message in messages:
+                if not message.conversation_id or not message.discord_message_id:
+                    continue
+                conversation = self.store.load_resident_conversation(
+                    message.conversation_id
+                )
+                if conversation is None:
+                    continue
+                provenance = (
+                    message.discord_reply_provenance
+                    if isinstance(message.discord_reply_provenance, Mapping)
+                    else {}
+                )
+                author_id = str(
+                    provenance.get("source_author_id")
+                    or conversation.metadata.get("last_subject_user_id")
+                    or ""
+                )
+                if not author_id:
+                    continue
+                raw = {
+                    "discord_message_id": message.discord_message_id,
+                    "thread_id": conversation.thread_id,
+                    "dm_user_id": conversation.dm_user_id,
+                    "restart_replay_of_turn_id": turn.id,
+                    "restart_transaction_id": claim.notification_id,
+                }
+                event = InboundEvent(
+                    idempotency_key=message.idempotency_key
+                    or deterministic_idempotency_key(
+                        "resident-restart-replay-source", message.id
+                    ),
+                    conversation_key=conversation.conversation_key,
+                    subject=AuthorizationSubject(
+                        user_id=author_id,
+                        guild_id=conversation.guild_id,
+                        channel_id=conversation.channel_id,
+                    ),
+                    content=message.content,
+                    raw=raw,
+                )
+                persisted.append(
+                    PersistedInboundEvent(
+                        event=event,
+                        conversation=conversation,
+                        message=message,
+                    )
+                )
+            if not persisted:
+                finish_restart_interrupted_turn(
+                    claim.notification_id, status="skipped"
+                )
+                continue
+            conversation = persisted[-1].conversation
+            existing_outbound = next(
+                (
+                    row
+                    for row in reversed(
+                        self.store.list_conversation_messages(
+                            conversation.id, limit=1000
+                        )
+                    )
+                    if row.direction == "outbound" and row.bot_turn_id == turn.id
+                ),
+                None,
+            )
+            if existing_outbound is not None:
+                source_discord_ids = [
+                    str(item.message.discord_message_id)
+                    for item in persisted
+                    if item.message.discord_message_id
+                ]
+                try:
+                    await self.outbound.send(
+                        OutboundMessage(
+                            conversation_key=conversation.conversation_key,
+                            content=existing_outbound.content,
+                            idempotency_key=existing_outbound.idempotency_key,
+                            metadata={
+                                "conversation_id": conversation.id,
+                                "message_id": existing_outbound.id,
+                                "turn_id": turn.id,
+                                "discord_reply_to_message_id": (
+                                    source_discord_ids[-1]
+                                    if source_discord_ids
+                                    else None
+                                ),
+                                "discord_processing_message_ids": source_discord_ids,
+                                "discord_processing_turn_id": turn.id,
+                                "restart_delivery_replay": True,
+                            },
+                        )
+                    )
+                except Exception as exc:
+                    finish_restart_interrupted_turn(
+                        claim.notification_id,
+                        status="pending",
+                        error_class=exc.__class__.__name__,
+                    )
+                    continue
+                self.store.update_turn(
+                    turn.id,
+                    status="completed",
+                    final_output_message_id=existing_outbound.id,
+                    message_sent=True,
+                    warnings_issued=list(turn.warnings_issued or [])
+                    + ["restart replay reused persisted outbound without model execution"],
+                    idempotency_key=deterministic_idempotency_key(
+                        "resident-restart-existing-outbound-delivered",
+                        turn.id,
+                        existing_outbound.id,
+                    ),
+                )
+                finish_restart_interrupted_turn(
+                    claim.notification_id,
+                    status="complete",
+                    replacement_turn_id=turn.id,
+                )
+                recovered += 1
+                continue
+            # The claimed source is the command that initiated this restart.
+            # Re-running it would repeat the same side effect and can create an
+            # unbounded restart loop.  The durable terminal restart receipt is
+            # the response; keep the inbound message consumed and never invoke
+            # the model again for this turn.
+            self.store.update_turn(
+                turn.id,
+                status="abandoned",
+                warnings_issued=list(turn.warnings_issued or [])
+                + [
+                    f"restart transaction {claim.notification_id} consumed this "
+                    "side-effectful turn; automatic model replay suppressed"
+                ],
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-turn-restart-consumed", turn.id, claim.notification_id
+                ),
+            )
+            finish_restart_interrupted_turn(
+                claim.notification_id,
+                status="complete",
+                replacement_turn_id=turn.id,
+            )
+            recovered += 1
+        return recovered
+
+    async def run_managed_completion_turn(
+        self,
+        manifest_path: Path,
+        manifest: Mapping[str, Any],
+    ) -> Any:
+        """Run a delegated terminal result through the normal resident turn lifecycle.
+
+        The delegated final response is explicitly untrusted evidence.  This
+        turn has its own prompt snapshot, model invocation, canonical turn and
+        outbound message records.  Discord transport remains the responsibility
+        of the manifest's existing durable completion outbox.
+        """
+
+        from .subagent import ManagedCompletionTurnResult, record_completion_turn_id
+
+        provenance = manifest.get("launch_provenance")
+        if not isinstance(provenance, Mapping):
+            raise RuntimeError("managed completion has no immutable launch provenance")
+        source_record_id = str(provenance.get("source_record_id") or "")
+        conversation_id = str(provenance.get("resident_conversation_id") or "")
+        source_message = self.store.load_message(source_record_id)
+        conversation = self.store.load_resident_conversation(conversation_id)
+        if source_message is None or conversation is None:
+            raise RuntimeError("managed completion source message or conversation is unavailable")
+        if source_message.conversation_id != conversation.id:
+            raise RuntimeError("managed completion provenance does not match the source conversation")
+        expected_reply = str(provenance.get("reply_to_message_id") or "")
+        if not expected_reply or source_message.discord_message_id != expected_reply:
+            raise RuntimeError("managed completion provenance does not match the inbound reply target")
+
+        hot_context = await self.profile.load_hot_context(conversation.id)
+        if isinstance(hot_context.get("context_root"), dict):
+            hot_context["context_root"]["intent_packs"] = ["delegation", "conversation"]
+        prompt_for = getattr(self.profile, "system_prompt_for", None)
+        system_prompt = (
+            (
+                prompt_for("delegated terminal result verification")
+                if callable(prompt_for)
+                else self.profile.system_prompt()
+            )
+            + "\n\n"
+            + _timezone_instruction_from_hot_context(hot_context)
+            + "\n\n"
+            + _COMPLETION_VERIFIER_SYSTEM_PROMPT
+        )
+        run_id = str(manifest.get("run_id") or manifest_path.parent.name)
+        completion_state = manifest.get("resident_completion_turn")
+        existing_turn_id = (
+            str(completion_state.get("resident_turn_id") or "")
+            if isinstance(completion_state, Mapping)
+            else ""
+        )
+        if existing_turn_id:
+            turn_id = existing_turn_id
+            self.store.update_turn(
+                turn_id,
+                current_activity="verifying delegated terminal result",
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-completion-turn-resume", run_id, turn_id
+                ),
+            )
+        else:
+            turn = self.store.create_turn(
+                epic_id=conversation.active_epic_id,
+                triggered_by_message_ids=[source_message.id],
+                prompt_snapshot={
+                    "system_prompt": system_prompt,
+                    "message_count": 1,
+                    "turn_kind": "managed_delegation_completion_verification",
+                    "managed_agent_run_id": run_id,
+                    "tool_catalog": self.profile.tools().as_compact_catalog(),
+                },
+                prompt_version=(hot_context.get("prompt_version") if isinstance(hot_context, dict) else None),
+                state_at_turn=hot_context,
+                model_version=self.config.model_name,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-completion-turn", run_id
+                ),
+            )
+            turn_id = turn.id
+            record_completion_turn_id(manifest_path, turn_id)
+
+        verification_prompt = _managed_completion_verification_prompt(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            source_message=source_message.content,
+        )
+        # Completion verification is correlated to one immutable delegation.
+        # Conversation history may contain newer user commands (for example a
+        # resident restart) and must not be allowed to change the incident this
+        # turn verifies.  The verifier prompt already carries the exact source
+        # message and terminal manifest evidence it is authorized to assess.
+        messages = ({"role": "user", "content": verification_prompt},)
+        request = AgentRequest(
+            conversation_id=conversation.id,
+            messages=messages,
+            system_prompt=system_prompt,
+            hot_context=hot_context,
+            model_seam_metadata=self._model_seam_metadata(
+                conversation_id=conversation.id,
+                messages=messages,
+                system_prompt=system_prompt,
+                hot_context=hot_context,
+            ),
+            subject=None,
+            launch_origin=dict(provenance),
+        )
+        try:
+            response = await self.runner.run(request, self.profile.tools())
+            self._record_tool_calls(turn_id, response)
+            safe_text = _localize_user_text(
+                redact_text(response.final_text).strip(), hot_context
+            )
+            outcome = _verification_outcome(safe_text)
+            if not safe_text:
+                safe_text = (
+                    "Verification outcome: unknown. The resident verification turn returned no "
+                    "summary, so the delegated result is not being treated as proof."
+                )
+                outcome = "unknown"
+            elif outcome == "unknown" and "verification outcome:" not in safe_text.lower():
+                safe_text = (
+                    "Verification outcome: unknown. The resident did not provide the required "
+                    "evidence classification.\n\n" + safe_text
+                )
+            turn_status = "completed"
+            warnings = None
+        except Exception as exc:
+            outcome = "unknown"
+            safe_text = (
+                f"Verification outcome: unknown. The delegated run reached terminal status "
+                f"{str(manifest.get('status') or 'unknown')!r}, but the resident verification turn "
+                "failed before it could independently validate the claimed work. The delegated final "
+                "result is therefore not being reported as proof; operator inspection is still required."
+            )
+            turn_status = "failed"
+            warnings = [f"completion verifier {exc.__class__.__name__}"]
+
+        outbound = self.store.create_message(
+            epic_id=conversation.active_epic_id,
+            conversation_id=conversation.id,
+            direction="outbound",
+            content=safe_text,
+            bot_turn_id=turn_id,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-completion-outbound", run_id
+            ),
+        )
+        self.store.update_turn(
+            turn_id,
+            status=turn_status,
+            final_output_message_id=outbound.id,
+            message_sent=False,
+            warnings_issued=warnings,
+            current_activity=None,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-completion-turn-finished", run_id, turn_status
+            ),
+        )
+        return ManagedCompletionTurnResult(
+            final_text=safe_text,
+            verification_outcome=outcome,
+            turn_id=turn_id,
+            outbound_message_id=outbound.id,
+        )
 
     def _persist_inbound_event(self, event: InboundEvent) -> PersistedInboundEvent:
         raw = dict(event.raw)
@@ -190,12 +538,42 @@ class ResidentRuntime:
             ),
             idempotency_key=deterministic_idempotency_key("resident-conversation", event.conversation_key),
         )
+        discord_message_id = _optional_string(raw.get("discord_message_id"))
+        reference_message_id = _optional_string(raw.get("discord_reference_message_id"))
+        stored_parent = (
+            self.store.find_conversation_message_by_discord_id(
+                conversation.id, reference_message_id
+            )
+            if reference_message_id
+            else None
+        )
+        reply_provenance = (
+            build_reply_provenance(
+                source_message_id=discord_message_id,
+                source_author_id=event.subject.user_id,
+                conversation_key=event.conversation_key,
+                scope={
+                    "guild_id": event.subject.guild_id,
+                    "channel_id": event.subject.channel_id,
+                    "thread_id": _optional_string(raw.get("thread_id")),
+                    "dm_user_id": _optional_string(raw.get("dm_user_id")),
+                },
+                raw_chain=raw.get("discord_reply_chain"),
+                reference_message_id=reference_message_id,
+                reference_author_id=_optional_string(raw.get("discord_reference_author_id")),
+                reference_content=_optional_string(raw.get("discord_reference_content")),
+                stored_parent=stored_parent,
+            )
+            if discord_message_id
+            else None
+        )
         message = self.store.create_message(
             epic_id=conversation.active_epic_id,
             conversation_id=conversation.id,
             direction="inbound",
             content=event.content,
-            discord_message_id=_optional_string(raw.get("discord_message_id")),
+            discord_message_id=discord_message_id,
+            discord_reply_provenance=reply_provenance,
             idempotency_key=event.idempotency_key,
             has_code_attachment=bool(raw.get("has_code_attachment", False)),
             has_image_attachment=bool(raw.get("has_image_attachment", False)),
@@ -219,8 +597,18 @@ class ResidentRuntime:
             return
         conversation = self.store.load_resident_conversation(batch.key) or items[-1].conversation
         active_epic_id = conversation.active_epic_id
-        system_prompt = self.profile.system_prompt()
+        request_text = "\n".join(item.message.content for item in items if item.message.content)
         hot_context = await self.profile.load_hot_context(conversation.id)
+        if isinstance(hot_context.get("context_root"), dict):
+            hot_context["context_root"]["intent_packs"] = list(
+                classify_intent_packs(request_text)
+            )
+        prompt_for = getattr(self.profile, "system_prompt_for", None)
+        system_prompt = (
+            (prompt_for(request_text) if callable(prompt_for) else self.profile.system_prompt())
+            + "\n\n"
+            + _timezone_instruction_from_hot_context(hot_context)
+        )
         message_ids = [item.message.id for item in items]
         turn = self.store.create_turn(
             epic_id=active_epic_id,
@@ -228,7 +616,7 @@ class ResidentRuntime:
             prompt_snapshot={
                 "system_prompt": system_prompt,
                 "message_count": len(items),
-                "tool_catalog": self.profile.tools().as_schema_catalog(),
+                "tool_catalog": self.profile.tools().as_compact_catalog(),
             },
             prompt_version=hot_context.get("prompt_version") if isinstance(hot_context, dict) else None,
             state_at_turn=hot_context,
@@ -242,8 +630,29 @@ class ResidentRuntime:
                 in_burst_with=[msg_id for msg_id in message_ids if msg_id != item.message.id] or None,
                 idempotency_key=deterministic_idempotency_key("resident-message-turn", item.message.id, turn.id),
             )
-        burst = tuple({"role": "user", "content": item.event.content} for item in items)
-        history = self._build_history(conversation.id, exclude_ids=message_ids)
+        # Turn and message custody are durable before showing the transient
+        # Discord marker.  Optional so non-Discord/test sinks retain the core
+        # resident contract; transport failure cannot strand accepted work.
+        processing_message_ids = [
+            message_id
+            for item in items
+            if (message_id := _optional_string(item.event.raw.get("discord_message_id")))
+        ]
+        await self._invoke_transport_lifecycle(
+            "mark_processing",
+            conversation_key=conversation.conversation_key,
+            message_ids=processing_message_ids,
+            turn_id=turn.id,
+        )
+        burst = tuple(
+            {"role": "user", "content": self._message_content_with_discord_reply_context(item)}
+            for item in items
+        )
+        history = self._build_history(
+            conversation.id,
+            exclude_ids=message_ids,
+            discord_only=bool(processing_message_ids),
+        )
         request_messages = (*history, *burst)
         model_seam_metadata = self._model_seam_metadata(
             conversation_id=conversation.id,
@@ -261,21 +670,78 @@ class ResidentRuntime:
             escalation_id=items[-1].event.escalation_id,
             resume_handler=items[-1].event.resume_handler,
             target_id=items[-1].event.target_id,
+            launch_origin=self._managed_subagent_launch_origin(
+                items,
+                turn_id=turn.id,
+                timezone_name=_timezone_name_from_hot_context(hot_context),
+            ),
         )
         try:
             response = await self.runner.run(request, self.profile.tools())
         except Exception as exc:
+            warning = _bounded_failure_warning(exc)
+            safe_text = _resident_turn_failure_reply(exc)
+            outbound = self.store.create_message(
+                epic_id=active_epic_id,
+                conversation_id=conversation.id,
+                direction="outbound",
+                content=safe_text,
+                bot_turn_id=turn.id,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-outbound", turn.id, "model-failure"
+                ),
+            )
             self.store.update_turn(
                 turn.id,
                 status="failed",
-                warnings_issued=[f"{exc.__class__.__name__}: {exc}"],
+                final_output_message_id=outbound.id,
+                message_sent=False,
+                warnings_issued=[warning],
                 idempotency_key=deterministic_idempotency_key("resident-turn-failed", turn.id),
             )
-            raise
+            await self.outbound.send(
+                OutboundMessage(
+                    conversation_key=conversation.conversation_key,
+                    content=safe_text,
+                    idempotency_key=outbound.idempotency_key,
+                    metadata={
+                        "conversation_id": conversation.id,
+                        "message_id": outbound.id,
+                        "turn_id": turn.id,
+                        "discord_reply_to_message_id": _optional_string(
+                            items[-1].event.raw.get("discord_message_id")
+                        ),
+                        "discord_processing_message_ids": processing_message_ids,
+                        "discord_processing_turn_id": turn.id,
+                        "discord_processing_continues": False,
+                    },
+                )
+            )
+            self.store.update_resident_conversation(
+                conversation.id,
+                last_outbound_message_id=outbound.id,
+                delivery_cursor=outbound.id,
+                last_active_at=utc_now(),
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-conversation-outbound", conversation.id, outbound.id
+                ),
+            )
+            self.store.update_turn(
+                turn.id,
+                status="failed",
+                final_output_message_id=outbound.id,
+                message_sent=True,
+                warnings_issued=[warning],
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-turn-failure-delivered", turn.id
+                ),
+            )
+            return
         self._record_tool_calls(turn.id, response)
+        processing_continues = _response_has_detached_subagent(response)
         final_message_id = None
         if response.final_text:
-            safe_text = redact_text(response.final_text)
+            safe_text = _localize_user_text(redact_text(response.final_text), hot_context)
             outbound = self.store.create_message(
                 epic_id=active_epic_id,
                 conversation_id=conversation.id,
@@ -290,7 +756,15 @@ class ResidentRuntime:
                     conversation_key=conversation.conversation_key,
                     content=safe_text,
                     idempotency_key=outbound.idempotency_key,
-                    metadata={"conversation_id": conversation.id, "message_id": outbound.id, "turn_id": turn.id},
+                    metadata={
+                        "conversation_id": conversation.id,
+                        "message_id": outbound.id,
+                        "turn_id": turn.id,
+                        "discord_reply_to_message_id": _optional_string(items[-1].event.raw.get("discord_message_id")),
+                        "discord_processing_message_ids": processing_message_ids,
+                        "discord_processing_turn_id": turn.id,
+                        "discord_processing_continues": processing_continues,
+                    },
                 )
             )
             self.store.update_resident_conversation(
@@ -300,6 +774,15 @@ class ResidentRuntime:
                 last_active_at=utc_now(),
                 idempotency_key=deterministic_idempotency_key("resident-conversation-outbound", conversation.id, outbound.id),
             )
+        elif not processing_continues:
+            # No terminal user-visible reply exists, so remove the transient
+            # marker without inventing a completion reaction.
+            await self._invoke_transport_lifecycle(
+                "mark_processing_interrupted",
+                conversation_key=conversation.conversation_key,
+                message_ids=processing_message_ids,
+                turn_id=turn.id,
+            )
         self.store.update_turn(
             turn.id,
             status="completed",
@@ -307,6 +790,65 @@ class ResidentRuntime:
             message_sent=bool(final_message_id),
             idempotency_key=deterministic_idempotency_key("resident-turn-completed", turn.id),
         )
+
+    async def _notify_abandoned_turn(
+        self,
+        turn_id: str,
+        triggered_by_message_ids: Sequence[str],
+    ) -> None:
+        grouped: dict[str, list[str]] = {}
+        for message in self.store.load_messages(triggered_by_message_ids):
+            if not message.conversation_id or not message.discord_message_id:
+                continue
+            conversation = self.store.load_resident_conversation(message.conversation_id)
+            if conversation is None or not conversation.conversation_key.startswith("discord:"):
+                continue
+            grouped.setdefault(conversation.conversation_key, []).append(message.discord_message_id)
+        for conversation_key, message_ids in grouped.items():
+            await self._invoke_transport_lifecycle(
+                "mark_processing_interrupted",
+                conversation_key=conversation_key,
+                message_ids=message_ids,
+                turn_id=turn_id,
+            )
+
+    async def _invoke_transport_lifecycle(
+        self,
+        method_name: str,
+        *,
+        conversation_key: str,
+        message_ids: list[str],
+        turn_id: str,
+    ) -> None:
+        if not message_ids:
+            return
+        callback = getattr(self.outbound, method_name, None)
+        if not callable(callback):
+            return
+        try:
+            await callback(
+                conversation_key=conversation_key,
+                message_ids=message_ids,
+                turn_id=turn_id,
+            )
+        except Exception as exc:
+            # Reaction state is a transport effect, never custody for the turn
+            # itself. Adapter implementations persist their own retry intent.
+            self.emitter.log_system_event(
+                level="warn",
+                category="external_api",
+                event_type="resident_transport_lifecycle_retry_pending",
+                message="Resident transport lifecycle effect could not be applied",
+                details={
+                    "method": method_name,
+                    "turn_id": turn_id,
+                    "error_class": exc.__class__.__name__,
+                },
+                turn_id=turn_id,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-transport-lifecycle-error", method_name, turn_id
+                ),
+            )
 
     def _record_tool_calls(self, turn_id: str, response: AgentResponse) -> None:
         for record in response.tool_calls:
@@ -319,6 +861,69 @@ class ResidentRuntime:
                 duration_ms=record.duration_ms,
                 idempotency_key=deterministic_idempotency_key("resident-tool-call", turn_id, record.id),
             )
+
+    def _message_content_with_discord_reply_context(self, item: PersistedInboundEvent) -> str:
+        if not item.message.discord_message_id:
+            return item.event.content
+        # Render only immutable provenance on the source record.  History is a
+        # separate bounded excerpt and is never an ancestry oracle.
+        persisted = self.store.load_message(item.message.id) or item.message
+        return render_reply_context(persisted)
+
+    def _managed_subagent_launch_origin(
+        self,
+        items: Sequence[PersistedInboundEvent],
+        *,
+        turn_id: str,
+        timezone_name: str,
+    ) -> dict[str, Any]:
+        """Return durable, non-secret Discord provenance for delegated work."""
+
+        discord_items = [
+            item
+            for item in items
+            if _optional_string(item.event.raw.get("discord_message_id"))
+            and item.conversation.conversation_key.startswith("discord:")
+        ]
+        if len(discord_items) > 1:
+            # A burst can contain independent user requests.  The resident may
+            # answer the burst conversationally, but delegated side effects
+            # must not guess which message owns the reply.
+            return {
+                "transport": "discord",
+                "applicability": "ambiguous",
+                "source_kind": "discord_burst",
+                "resident_turn_id": turn_id,
+            }
+        if not discord_items:
+            return {
+                "transport": "non_discord",
+                "applicability": "not_applicable",
+                "source_kind": "scheduler_or_internal_turn",
+            }
+        item = discord_items[0]
+        message_id = _optional_string(item.event.raw.get("discord_message_id"))
+        conversation_key = item.conversation.conversation_key
+        assert message_id is not None
+        return {
+            "transport": "discord",
+            "applicability": "applicable",
+            "conversation_id": item.conversation.id,
+            "resident_conversation_id": item.conversation.id,
+            "resident_turn_id": turn_id,
+            "source_record_id": item.message.id,
+            "reply_target_source_record_id": item.message.id,
+            "conversation_key": conversation_key,
+            "message_id": message_id,
+            "discord_message_id": message_id,
+            "reply_to_message_id": message_id,
+            "guild_id": item.event.subject.guild_id,
+            "channel_id": item.event.subject.channel_id,
+            "thread_id": _optional_string(item.event.raw.get("thread_id")),
+            "dm_user_id": _optional_string(item.event.raw.get("dm_user_id")),
+            "source_kind": "discord_inbound_message",
+            "timezone_name": timezone_name,
+        }
 
     async def _handle_escalation_resolution(
         self,
@@ -356,6 +961,7 @@ class ResidentRuntime:
                             "escalation_id": event.escalation_id,
                             "confirmation_required": True,
                             "request_id": confirmation.request_id,
+                            "discord_reply_to_message_id": _optional_string(event.raw.get("discord_message_id")),
                         },
                     )
                 )
@@ -429,7 +1035,13 @@ class ResidentRuntime:
             release_repair_lock(lock_dir, owner=lock.owner)
         return True
 
-    def _build_history(self, conversation_id: str, *, exclude_ids: Sequence[str]) -> tuple[dict[str, Any], ...]:
+    def _build_history(
+        self,
+        conversation_id: str,
+        *,
+        exclude_ids: Sequence[str],
+        discord_only: bool = False,
+    ) -> tuple[dict[str, Any], ...]:
         """Reconstruct the last N prior messages as user/assistant turns for context.
 
         ``exclude_ids`` drops the current burst, which is already persisted before
@@ -444,12 +1056,32 @@ class ResidentRuntime:
         )
         history: list[dict[str, Any]] = []
         for message in rows:
+            if (
+                discord_only
+                and message.direction == "inbound"
+                and not getattr(message, "discord_message_id", None)
+            ):
+                # Scheduler and maintenance inputs are not Discord-user speech.
+                # Including them in later human turns bloats context and changes
+                # the apparent conversation history.
+                continue
             content = message.content
             if not (content and content.strip()):
                 continue
+            content = content.strip()
+            if len(content) > 4_000:
+                content = content[:3_999] + "…"
             role = "user" if message.direction == "inbound" else "assistant"
             history.append({"role": role, "content": content})
-        return tuple(history)
+        selected: list[dict[str, Any]] = []
+        used = 0
+        for item in reversed(history):
+            size = len(item["content"])
+            if selected and used + size > 16_000:
+                break
+            selected.append(item)
+            used += size
+        return tuple(reversed(selected))
 
     def _model_seam_metadata(
         self,
@@ -503,12 +1135,114 @@ def _dedupe_persisted_events(items: Sequence[PersistedInboundEvent]) -> tuple[Pe
     return tuple(deduped)
 
 
+def _response_has_detached_subagent(response: AgentResponse) -> bool:
+    """Keep working state across the resident's non-terminal launch acknowledgement."""
+
+    return bool(durable_launch_run_ids(response.tool_calls))
+
+
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
 def _optional_dict(value: object) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
+
+
+def _timezone_name_from_hot_context(hot_context: Mapping[str, Any]) -> str:
+    value = hot_context.get("user_timezone")
+    if isinstance(value, Mapping):
+        name = str(value.get("timezone_name") or "").strip()
+        if name:
+            return name
+    return "UTC"
+
+
+def _bounded_failure_warning(exc: Exception) -> str:
+    warning = redact_text(f"{exc.__class__.__name__}: {exc}").strip()
+    return warning if len(warning) <= 1200 else f"{warning[:1199]}…"
+
+
+def _resident_turn_failure_reply(exc: Exception) -> str:
+    detail = str(exc).lower()
+    if "prompt exceeds" in detail or "input_too_large" in detail or "maximum length" in detail:
+        return (
+            "I couldn't process this message because the resident's internal context exceeded "
+            "the model input limit. The failure was recorded and no requested action was taken."
+        )
+    return (
+        "I couldn't complete this resident turn because the model invocation failed. "
+        "The failure was recorded and no requested action was taken."
+    )
+
+
+def _timezone_instruction_from_hot_context(hot_context: Mapping[str, Any]) -> str:
+    from .timezone import ResolvedTimezone
+
+    return timezone_prompt_instruction(
+        ResolvedTimezone(
+            name=_timezone_name_from_hot_context(hot_context),
+            source="hot_context",
+        )
+    )
+
+
+def _localize_user_text(text: str, hot_context: Mapping[str, Any]) -> str:
+    return localize_text_timestamps(
+        text,
+        _timezone_name_from_hot_context(hot_context),
+    )
+
+
+_COMPLETION_VERIFIER_SYSTEM_PROMPT = """
+You are handling a resident-managed delegated-run completion as a fresh normal
+resident turn. Independently verify the original task and the delegated run's
+claims. A terminal manifest, exit code zero, result.md, or delegated final prose
+is evidence to inspect, never proof of completion. Inspect the actual project
+state and run log; run proportionate read-only or test verification when safe.
+Classify truthfully as success, partial, failed, unknown, or blocked. Do not
+repair or continue the delegated task in this turn. Your concise user-facing
+response must begin with exactly `Verification outcome: <classification>.` and
+explain what happened, what is actually complete, concrete verification
+evidence, and remaining caveats/actions. Never expose secrets or internal
+handoff notes.
+""".strip()
+
+
+def _managed_completion_verification_prompt(
+    *,
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    source_message: str,
+) -> str:
+    def resolved_path(field: str, fallback: str) -> str:
+        path = Path(str(manifest.get(field) or fallback))
+        if not path.is_absolute():
+            path = manifest_path.parent / path
+        return str(path.resolve())
+
+    return (
+        "A resident-managed delegated execution has reached a terminal state and now requires "
+        "independent completion verification. Do not accept its final response as proof.\n\n"
+        f"Managed run id: {manifest.get('run_id') or manifest_path.parent.name}\n"
+        f"Claimed terminal status: {manifest.get('status') or 'unknown'}\n"
+        f"Return code: {manifest.get('returncode', 'unknown')}\n"
+        f"Project directory: {manifest.get('project_dir') or 'unknown'}\n"
+        f"Manifest: {manifest_path.resolve()}\n"
+        f"Original delegated prompt: {resolved_path('prompt_path', 'prompt.md')}\n"
+        f"Delegated final claim: {resolved_path('result_path', 'result.md')}\n"
+        f"Full delegated log: {resolved_path('full_log_path', str(manifest.get('log_path') or 'run.log'))}\n\n"
+        "Original user request (context only; preserve its requirements):\n"
+        f"{source_message[:12000]}"
+    )
+
+
+def _verification_outcome(text: str) -> str:
+    prefix = text.lstrip().lower()[:120]
+    for outcome in ("success", "partial", "failed", "unknown", "blocked"):
+        if prefix.startswith(f"verification outcome: {outcome}"):
+            return outcome
+    return "unknown"
 
 
 def _repair_data_dir_from_config(config: ResidentConfig) -> str | None:

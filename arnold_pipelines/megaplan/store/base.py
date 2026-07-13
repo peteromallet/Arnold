@@ -33,6 +33,7 @@ from arnold_pipelines.megaplan.schemas import (
     Plan,
     ProgressEvent,
     ResidentConversation,
+    ResidentUserPreference,
     ScheduledJob,
     SecondOpinion,
     Sprint,
@@ -514,6 +515,7 @@ class Store(Protocol):
         direction: str,
         content: str,
         discord_message_id: str | None = None,
+        discord_reply_provenance: JSONDict | None = None,
         bot_turn_id: str | None = None,
         has_code_attachment: bool = False,
         has_image_attachment: bool = False,
@@ -531,6 +533,14 @@ class Store(Protocol):
         ...
 
     def load_messages(self, message_ids: Sequence[str]) -> list[Message]:
+        ...
+
+    def find_conversation_message_by_discord_id(
+        self,
+        conversation_id: str,
+        discord_message_id: str,
+    ) -> Message | None:
+        """Resolve one exact Discord identity inside one resident conversation."""
         ...
 
     def list_conversation_messages(
@@ -1257,6 +1267,22 @@ class Store(Protocol):
         idempotency_key: str | None = None,
         **changes: Any,
     ) -> ResidentConversation:
+        ...
+
+    def load_resident_user_preference(
+        self, *, transport: str, user_id: str
+    ) -> ResidentUserPreference | None:
+        ...
+
+    def upsert_resident_user_preference(
+        self,
+        *,
+        transport: str,
+        user_id: str,
+        timezone_name: str | None,
+        metadata: JSONDict | None = None,
+        idempotency_key: str | None = None,
+    ) -> ResidentUserPreference:
         ...
 
     def create_scheduled_job(

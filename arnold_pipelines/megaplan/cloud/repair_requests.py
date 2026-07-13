@@ -19,16 +19,27 @@ from arnold_pipelines.megaplan.cloud.repair_lock import (
     acquire_repair_lock,
     inspect_repair_lock,
     release_repair_lock,
+    owner_metadata_path,
 )
 from arnold_pipelines.megaplan.cloud.repair_recurrence import PROBLEM_SIGNATURE_FIELDS
 
 QUEUE_DIR_NAME = "repair-queue"
 REQUESTS_DIR_NAME = "requests"
 DECISIONS_DIR_NAME = "decisions"
+ATTEMPTS_DIR_NAME = "attempts"
 ACTIVE_CLAIMS_DIR_NAME = "active-claims"
 CURRENT_SCHEMA_VERSION = 1
 
-DecisionKind = Literal["accepted", "coalesced", "stale", "superseded", "malformed", "dispatched"]
+DecisionKind = Literal[
+    "accepted",
+    "coalesced",
+    "stale",
+    "superseded",
+    "malformed",
+    "dispatched",
+    "claim_retry",
+    "claim_alert",
+]
 ActiveRepairClaimStatus = Literal["claimed", "already_claimed", "busy", "stale"]
 
 
@@ -86,12 +97,28 @@ def validate_queue_root(queue_root: str | Path) -> Path:
     return root
 
 
+def repair_queue_dir(marker_dir: str | Path) -> Path:
+    """Return the central queue adjacent to the cloud-session marker directory."""
+
+    marker_root = Path(marker_dir).resolve()
+    megaplan_root = (
+        marker_root.parent
+        if marker_root.parent.name == ".megaplan"
+        else marker_root.parent / ".megaplan"
+    )
+    return validate_queue_root(megaplan_root / QUEUE_DIR_NAME)
+
+
 def requests_dir(queue_dir: str | Path) -> Path:
     return validate_queue_root(queue_dir) / REQUESTS_DIR_NAME
 
 
 def decisions_dir(queue_dir: str | Path) -> Path:
     return validate_queue_root(queue_dir) / DECISIONS_DIR_NAME
+
+
+def attempts_dir(queue_dir: str | Path) -> Path:
+    return validate_queue_root(queue_dir) / ATTEMPTS_DIR_NAME
 
 
 def active_claims_dir(queue_dir: str | Path) -> Path:
@@ -348,6 +375,45 @@ def iter_repair_decisions(
     return records
 
 
+def iter_repair_attempts(
+    queue_root: str | Path,
+    *,
+    include_malformed: bool = False,
+) -> list[dict[str, Any]]:
+    """Return immutable managed-dispatch attempts in deterministic order."""
+
+    queue_root = validate_queue_root(queue_root)
+    records: list[dict[str, Any]] = []
+    malformed: list[dict[str, Any]] = []
+    for path in sorted(attempts_dir(queue_root).glob("*.json"), key=lambda item: item.name):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            malformed.append(_malformed_attempt(path, exc))
+            continue
+        if not isinstance(payload, dict):
+            malformed.append(_malformed_attempt(path, ValueError("attempt record is not a JSON object")))
+            continue
+        required = {
+            "schema_version",
+            "kind",
+            "attempt_id",
+            "request_id",
+            "blocker_id",
+            "created_at",
+        }
+        if not required.issubset(payload) or payload.get("kind") != "repair_request_attempt":
+            malformed.append(_malformed_attempt(path, ValueError("attempt record has invalid shape")))
+            continue
+        payload = dict(payload)
+        payload["_path"] = str(path)
+        records.append(payload)
+    records.sort(key=_attempt_sort_key)
+    if include_malformed:
+        records.extend(sorted(malformed, key=lambda item: item["path"]))
+    return records
+
+
 def find_pending_by_signature(
     queue_dir: str | Path,
     problem_signature: Mapping[str, Any],
@@ -395,6 +461,111 @@ def write_decision(
     path = decisions_dir(queue_dir) / f"{when.replace(':', '').replace('-', '')}-{record['decision_id']}.json"
     _write_once_json(path, record)
     return {**record, "_path": str(path)}
+
+
+def write_dispatch_attempt(
+    queue_dir: str | Path,
+    *,
+    request_id: str,
+    blocker_id: str,
+    actor: str,
+    repair_layer: str,
+    command: str,
+    child_pid: int,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Write immutable proof that a claimed request launched a managed child."""
+
+    when = created_at or utc_now()
+    record = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "kind": "repair_request_attempt",
+        "attempt_id": _sha256_json(
+            {
+                "request_id": request_id,
+                "blocker_id": blocker_id,
+                "actor": actor,
+                "repair_layer": repair_layer,
+                "command": command,
+                "child_pid": child_pid,
+                "created_at": when,
+            }
+        ),
+        "request_id": str(request_id or "").strip(),
+        "blocker_id": str(blocker_id or "").strip(),
+        "actor": str(actor or "").strip(),
+        "repair_layer": str(repair_layer or "").strip(),
+        "command": str(command or "").strip(),
+        "child_pid": int(child_pid),
+        "status": "launched",
+        "created_at": when,
+    }
+    for field in ("request_id", "blocker_id", "actor", "repair_layer", "command"):
+        if not record[field]:
+            raise ValueError(f"{field} is required")
+    if record["child_pid"] <= 0:
+        raise ValueError("child_pid must be positive")
+    path = attempts_dir(queue_dir) / f"{when.replace(':', '').replace('-', '')}-{record['attempt_id']}.json"
+    _write_once_json(path, record)
+    return {**record, "_path": str(path)}
+
+
+def record_unclaimed_request_failure(
+    queue_dir: str | Path,
+    *,
+    request_id: str,
+    reason: str,
+    max_retries: int = 3,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Durably bound failed claim handoffs and alert once at exhaustion."""
+
+    if max_retries < 1:
+        raise ValueError("max_retries must be positive")
+    history = [
+        item
+        for item in iter_repair_decisions(queue_dir)
+        if item.get("request_id") == request_id
+    ]
+    existing_alert = next(
+        (item for item in history if item.get("decision") == "claim_alert"),
+        None,
+    )
+    retry_count = sum(item.get("decision") == "claim_retry" for item in history)
+    if existing_alert is not None:
+        return {
+            "status": "alerted",
+            "retry_count": retry_count,
+            "max_retries": max_retries,
+            "alert": existing_alert,
+        }
+
+    attempt_number = retry_count + 1
+    retry = write_decision(
+        queue_dir,
+        request_id=request_id,
+        decision="claim_retry",
+        reason=f"claim handoff {attempt_number}/{max_retries}: {reason}",
+        created_at=created_at,
+    )
+    alert = None
+    if attempt_number >= max_retries:
+        alert = write_decision(
+            queue_dir,
+            request_id=request_id,
+            decision="claim_alert",
+            reason=(
+                f"accepted request remained unclaimed after {max_retries} bounded handoffs: {reason}"
+            ),
+            created_at=created_at,
+        )
+    return {
+        "status": "alerted" if alert is not None else "retryable",
+        "retry_count": attempt_number,
+        "max_retries": max_retries,
+        "retry": retry,
+        "alert": alert,
+    }
 
 
 def claim_active_repair_request(
@@ -484,6 +655,72 @@ def release_active_repair_request_claim(
         owner=owner,
         expected_pid=expected_pid,
     )
+
+
+def bind_managed_run_to_active_claim(
+    queue_dir: str | Path,
+    *,
+    blocker_id: str,
+    request_id: str,
+    managed_run_id: str,
+    managed_manifest_path: str,
+    expected_owner_pid: int | None,
+    new_owner_pid: int,
+) -> bool:
+    """Fence an already-authorized claim to the process that really executes it.
+
+    The watchdog remains the authority that wins the blocker-scoped mkdir
+    claim.  Immediately before the managed supervisor launches the worker, it
+    transfers PID custody and adds the durable run identity.  All identity
+    fields are checked under a claim-local flock, so an observer or duplicate
+    dispatcher cannot attach a different run to the accepted request.
+    """
+
+    normalized_blocker_id = _normalize_claim_identity(blocker_id, "blocker_id")
+    normalized_request_id = _normalize_claim_identity(request_id, "request_id")
+    normalized_run_id = _normalize_claim_identity(managed_run_id, "managed_run_id")
+    lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
+    owner_path = owner_metadata_path(lock_dir)
+    bind_lock = lock_dir.with_name(lock_dir.name + ".managed-run-bind")
+    try:
+        handle = bind_lock.open("a+b")
+    except OSError:
+        return False
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        owner = repair_contract.load_json(owner_path, default={})
+        if not isinstance(owner, dict):
+            return False
+        if str(owner.get("request_id") or "") != normalized_request_id:
+            return False
+        if str(owner.get("blocker_id") or "") != normalized_blocker_id:
+            return False
+        owner_run_id = str(owner.get("managed_agent_run_id") or "")
+        if owner_run_id and owner_run_id != normalized_run_id:
+            return False
+        if expected_owner_pid is not None and owner.get("pid") not in {
+            expected_owner_pid,
+            new_owner_pid,
+        }:
+            return False
+        owner.update(
+            {
+                "pid": int(new_owner_pid),
+                "managed_agent_run_id": normalized_run_id,
+                "managed_manifest_path": str(managed_manifest_path),
+                "managed_agent_bound_at": utc_now(),
+            }
+        )
+        repair_contract.atomic_write_json(
+            owner_path,
+            owner,
+            include_resident_provenance=False,
+        )
+        return True
+    finally:
+        handle.close()
 
 
 def record_malformed_file(queue_dir: str | Path, path: str | Path, reason: str) -> dict[str, Any]:
@@ -671,6 +908,10 @@ def _decision_sort_key(record: Mapping[str, Any]) -> tuple[str, str]:
     return (str(record.get("created_at") or ""), str(record.get("decision_id") or ""))
 
 
+def _attempt_sort_key(record: Mapping[str, Any]) -> tuple[str, str]:
+    return (str(record.get("created_at") or ""), str(record.get("attempt_id") or ""))
+
+
 def _malformed_record(path: Path, exc: Exception) -> dict[str, Any]:
     return {
         "kind": "malformed_repair_request",
@@ -687,8 +928,17 @@ def _malformed_decision(path: Path, exc: Exception) -> dict[str, Any]:
     }
 
 
+def _malformed_attempt(path: Path, exc: Exception) -> dict[str, Any]:
+    return {
+        "kind": "malformed_repair_attempt",
+        "path": str(path),
+        "reason": str(exc),
+    }
+
+
 __all__ = [
     "ACTIVE_CLAIMS_DIR_NAME",
+    "ATTEMPTS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
     "QUEUE_DIR_NAME",
     "ActiveRepairClaimResult",
@@ -696,18 +946,24 @@ __all__ = [
     "DecisionKind",
     "active_claims_dir",
     "active_repair_claim_lock_dir",
+    "attempts_dir",
     "claim_active_repair_request",
+    "bind_managed_run_to_active_claim",
     "enqueue_human_gate_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
     "iter_repair_decisions",
+    "iter_repair_attempts",
     "iter_repair_requests",
     "normalize_problem_signature",
     "problem_signature_key",
     "record_malformed_file",
     "redacted_hint_hash",
+    "repair_queue_dir",
+    "record_unclaimed_request_failure",
     "release_active_repair_request_claim",
     "request_id_for",
     "validate_queue_root",
     "write_decision",
+    "write_dispatch_attempt",
 ]

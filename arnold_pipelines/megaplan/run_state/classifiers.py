@@ -44,6 +44,7 @@ from arnold_pipelines.megaplan.run_state.model import (
     CanonicalState,
     TypedHumanGate,
 )
+from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +84,9 @@ _IMPLEMENTATION_BLOCK_TOKENS = (
     "missing_fallthrough_route",
     "stale_assertion",
     "fixture_refresh",
+    "quality_gate_blocked",
+    "deterministic_quality_blocked",
+    "blocked_recovery_not_resolved",
 )
 
 # Tokens that indicate a retryable *execution* block (transient / budget).
@@ -98,16 +102,6 @@ _RETRYABLE_EXECUTION_TOKENS = (
 # that escalates a run to ``BROKEN_STATE_MACHINE``.
 _BROKEN_REPEAT_THRESHOLD = 3
 
-# Structured needs-human field names that may carry a typed gate category.
-_GATE_CATEGORY_FIELDS = (
-    "gate_type",
-    "human_gate",
-    "gate",
-    "category",
-    "gate_kind",
-    "kind",
-)
-
 # Structured numeric fields that may report repeated blocker attempts.
 _BROKEN_COUNT_FIELDS = (
     "attempt_count",
@@ -117,30 +111,6 @@ _BROKEN_COUNT_FIELDS = (
     "repeat_count",
     "repeated_blocker_count",
 )
-
-# Mapping from canonical gate-category tokens to :class:`TypedHumanGate`.
-_GATE_CATEGORY_MAP = {
-    "explicit_approval": TypedHumanGate.EXPLICIT_APPROVAL,
-    "approval": TypedHumanGate.EXPLICIT_APPROVAL,
-    "approve": TypedHumanGate.EXPLICIT_APPROVAL,
-    "credential": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "credentials": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "credential_account": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "account": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "missing_credential": TypedHumanGate.CREDENTIAL_ACCOUNT,
-    "quota": TypedHumanGate.QUOTA,
-    "rate_limit": TypedHumanGate.QUOTA,
-    "ratelimit": TypedHumanGate.QUOTA,
-    "rate-limit": TypedHumanGate.QUOTA,
-    "verification": TypedHumanGate.VERIFICATION,
-    "verify": TypedHumanGate.VERIFICATION,
-    "review": TypedHumanGate.VERIFICATION,
-    "policy": TypedHumanGate.POLICY,
-    "user_action": TypedHumanGate.USER_ACTION,
-    "user-action": TypedHumanGate.USER_ACTION,
-    "action": TypedHumanGate.USER_ACTION,
-}
-
 
 # ---------------------------------------------------------------------------
 # small helpers
@@ -189,16 +159,7 @@ def _infer_typed_gate(needs_human: Mapping[str, Any]) -> "TypedHumanGate | None"
     ``category`` / ``gate_kind`` / ``kind``) are consulted — never the
     free-text ``summary``, so this is not keyword scanning of prose.
     """
-    for field_name in _GATE_CATEGORY_FIELDS:
-        raw = needs_human.get(field_name)
-        if not isinstance(raw, str):
-            continue
-        token = raw.strip().lower()
-        if not token:
-            continue
-        if token in _GATE_CATEGORY_MAP:
-            return _GATE_CATEGORY_MAP[token]
-    return None
+    return typed_human_gate(needs_human)
 
 
 def _iter_containers(obj: object, _depth: int = 0):
@@ -269,6 +230,7 @@ class ResolverContext:
     # progress signals
     changed_file_count: "int | None"
     has_active_repair: bool
+    is_operator_paused: bool
     # shared projections
     root_cause_fingerprint: str
     base_evidence: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
@@ -284,6 +246,14 @@ class ResolverContext:
 
         chain_last = _safe_lower(chain_state, "last_state")
         plan_current = _safe_lower(plan_state, "current_state")
+        chain_metadata = chain_state.get("metadata")
+        chain_metadata = chain_metadata if isinstance(chain_metadata, Mapping) else {}
+        operator_pause = chain_metadata.get("operator_pause")
+        is_operator_paused = bool(
+            plan_current == "paused"
+            or chain_last == "paused"
+            or (isinstance(operator_pause, Mapping) and operator_pause.get("active") is True)
+        )
         stale_label = next(
             (label for label in (chain_last, plan_current) if label in _STALE_DERIVED_LABELS),
             "",
@@ -346,6 +316,7 @@ class ResolverContext:
             broken_repeat_count=_detect_broken_repeat(evidence),
             changed_file_count=norm.changed_file_count,
             has_active_repair=norm.has_active_repair,
+            is_operator_paused=is_operator_paused,
             root_cause_fingerprint=root_cause_fingerprint,
             base_evidence=base_evidence,
         )
@@ -474,6 +445,26 @@ def classify_completed(ctx: ResolverContext) -> "CanonicalRunState | None":
             _evi("changed_file_count", "", ctx.changed_file_count if ctx.changed_file_count is not None else "unknown"),
             _evi("authority_completion", "", ctx.terminal_state or "real_work_complete"),
         ),
+    )
+
+
+def classify_operator_paused(ctx: ResolverContext) -> "CanonicalRunState | None":
+    """Durable operator intent outranks liveness and all recovery evidence."""
+
+    if not ctx.is_operator_paused:
+        return None
+    return CanonicalRunState(
+        canonical_state=CanonicalState.PAUSED,
+        confidence="high",
+        source_of_truth=("chain_state", "plan_state"),
+        stale_sources=ctx.stale_source_names,
+        human_required=False,
+        human_gate=None,
+        repairable=False,
+        running=False,
+        next_action="explicit_operator_resume",
+        reason="Durable operator pause authority is active; automatic recovery is forbidden.",
+        evidence=ctx.evidence_with_fingerprint(),
     )
 
 
@@ -708,6 +699,7 @@ def classify_unknown(ctx: ResolverContext) -> CanonicalRunState:
 # (classify_unknown is the conservative fallback appended by the resolver.)
 ORDERED_CLASSIFIERS = (
     classify_completed,
+    classify_operator_paused,
     classify_broken_state_machine,
     classify_stale_derived_state,
     classify_running,

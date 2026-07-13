@@ -250,6 +250,62 @@ def test_problem_signature_prefers_phase_result_over_noisy_event_signature(tmp_p
     )
 
 
+def test_problem_signature_ignores_superseded_phase_result_after_recover_blocked(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo-plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "executed",
+                "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+                "meta": {
+                    "overrides": [
+                        {
+                            "action": "recover-blocked",
+                            "to_state": "executed",
+                            "resume_cursor": {
+                                "phase": "review",
+                                "retry_strategy": "manual_review",
+                            },
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            {
+                "phase": "review",
+                "exit_kind": "blocked_by_quality",
+                "blocked_tasks": [],
+                "deviations": [
+                    {
+                        "kind": "quality_gate",
+                        "message": "Resolved import blocker still present in stale phase_result.json.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = _failure_context(
+        phase="review",
+        current_state="executed",
+        gate_recommendation="PROCEED",
+        blocked_task_id="",
+    )
+    ctx["workspace"] = str(tmp_path)
+    ctx["plan_latest_failure"]["state_path"] = str(plan_dir / "state.json")
+
+    signature = repair_recurrence.build_problem_signature(ctx)
+
+    assert signature["event_signature"] == ""
+
+
 def test_problem_signature_event_signature_empty_when_no_events() -> None:
     signature = repair_recurrence.build_problem_signature(_failure_context())
     assert signature["event_signature"] == ""

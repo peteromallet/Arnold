@@ -29,6 +29,7 @@ from .policy import (
     VALID_DEPTH_CHOICES,
     VALID_PHASE_KEYS,
     _canonicalize_tier_models_for_json,
+    _prep_flat_spec_from_profile,
     _premium_cli_route_available,
     _resolve_default_vendor,
     _swap_premium_spec,
@@ -521,7 +522,7 @@ def _built_in_profile_files() -> list[Any]:
         seen.add(resolved)
         try:
             for entry in root.iterdir():
-                if entry.is_file() and entry.name.endswith(".toml"):
+                if entry.is_file() and entry.name.endswith(".toml") and not entry.name.startswith("."):
                     entries.append(entry)
         except (OSError, FileNotFoundError):
             continue
@@ -1086,6 +1087,7 @@ __all__ = [
     "load_profile_sources",
     "load_profiles",
     "profile_to_phase_models",
+    "_prep_flat_spec_from_profile",
     "resolve_prep_models",
     "resolve_profile",
     "resolve_pipeline_profile",

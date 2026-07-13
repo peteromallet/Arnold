@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -632,6 +633,101 @@ def test_drive_internal_error_ignores_warning_only_stderr_when_stdout_has_failur
     assert "M_WARN_ROUTING_DEGRADED" in phase_failure["metadata"]["stderr_raw"]
 
 
+def test_drive_bounds_identical_structural_phase_failures(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "critiqued"}),
+        encoding="utf-8",
+    )
+    detail = (
+        "worker_structural_audit_failed: missing_required at "
+        "/north_star_actions"
+    )
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "critiqued",
+            "next_step": "gate",
+            "valid_next": ["gate"],
+            "progress": {},
+        },
+    )
+
+    def fail_gate(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="gate",
+                invocation_id="test",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return 1, detail, ""
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_gate)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=10, poll_sleep=0)
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 3
+    terminal = failures[-1]
+    assert terminal["kind"] == "deterministic_phase_failure"
+    assert terminal["resume_cursor"]["retry_strategy"] == "repair_phase_contract"
+    assert terminal["metadata"]["count"] == 3
+
+
+def test_drive_phase_failure_preserves_native_exception_forensics(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "prepped"}),
+        encoding="utf-8",
+    )
+    try:
+        raise UnicodeDecodeError("utf-8", b"agent output: \\xa3", 14, 15, "invalid start byte")
+    except UnicodeDecodeError as error:
+        diagnostic = auto._native_exception_diagnostic(error)
+
+    def fake_status(plan: str, **kwargs):
+        return {"state": "prepped", "next_step": "plan", "valid_next": ["plan"], "progress": {}}
+
+    def fake_run_planning_phase(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(phase="plan", invocation_id="test", exit_kind=ExitKind.internal_error.value),
+        )
+        return 1, "", auto._PhaseDiagnosticText("UnicodeDecodeError: invalid start byte", diagnostic)
+
+    captured_failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: captured_failures.append(kwargs))
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    phase_failure = next(item for item in captured_failures if item.get("kind") == "phase_failed")
+    metadata = phase_failure["metadata"]
+    assert metadata["stderr_raw"] == "UnicodeDecodeError: invalid start byte"
+    assert metadata["exception_type"] == "UnicodeDecodeError"
+    assert metadata["exception_traceback"]
+    assert metadata["exception_callsite"]["function"] == "test_drive_phase_failure_preserves_native_exception_forensics"
+    assert base64.b64decode(metadata["diagnostic_bytes_b64"]).decode("utf-8") == metadata["exception_traceback"]
+
+
 def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_blocked_loop(
     monkeypatch,
     tmp_path: Path,
@@ -775,6 +871,64 @@ def test_drive_blocks_when_observed_cursor_disagrees_with_forward_projection(
         "retry_strategy": "repair_workflow_projection",
     }
     assert failure["metadata"]["observed_phase_source"] is None
+
+
+def test_drive_reconciles_completed_execute_before_cursor_projection(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A persisted finalized->executed gap must not become a cursor mismatch.
+
+    This is the real recovery shape: status still projects ``execute`` from
+    ``finalized`` while the last completed execute event projects ``review``.
+    Artifact adoption is deliberately evidence-gated in production; this test
+    isolates the ordering contract and proves that gate runs before cursor
+    comparison can falsely terminal-block the plan.
+    """
+
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "finalized", "history": []}),
+        encoding="utf-8",
+    )
+    reconciliations: list[Path | None] = []
+    failures: list[dict[str, object]] = []
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+            "last_step": {"step": "execute", "result": "success"},
+            "workflow_cursor": {
+                "phase": "execute",
+                "dispatch_phase": "execute",
+                "next_dispatch_phases": ["review"],
+            },
+        }
+
+    def fake_reconcile(candidate: Path | None) -> bool:
+        reconciliations.append(candidate)
+        return True
+
+    def fail_projection(*args, **kwargs):
+        raise AssertionError("cursor projection must run only after reconciliation")
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_recover_completed_execute_artifacts_after_failure", fake_reconcile)
+    monkeypatch.setattr(auto, "_project_auto_dispatch", fail_projection)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(dict(kwargs)))
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    assert reconciliations == [plan_dir]
+    assert outcome.status == "cap"
+    assert all(failure["kind"] != "workflow_cursor_mismatch" for failure in failures)
 
 
 def test_drive_stall_marks_manual_review_origin_auto_stall(

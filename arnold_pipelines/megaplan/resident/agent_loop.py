@@ -18,6 +18,7 @@ from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
 
 from .config import ResidentConfig
+from .provenance import environment_with_provenance
 from .tool_schemas import ToolCallAuditRecord, ToolResult
 from .tool_registry import ToolRegistry
 
@@ -26,6 +27,8 @@ from .tool_registry import ToolRegistry
 class ToolRuntimeContext:
     conversation_id: str
     subject: Any | None = None
+    launch_origin: Mapping[str, Any] | None = None
+    tool_call_id: str | None = None
 
 
 _TOOL_RUNTIME_CONTEXT: contextvars.ContextVar[ToolRuntimeContext | None] = contextvars.ContextVar(
@@ -49,6 +52,7 @@ class AgentRequest:
     escalation_id: str | None = None
     resume_handler: str | None = None
     target_id: str | None = None
+    launch_origin: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,18 @@ class AgentLoopError(RuntimeError):
     """Deterministic resident agent-loop failure."""
 
 
+class AgentPromptTooLargeError(AgentLoopError):
+    """The resident request exceeded its safe budget before model launch."""
+
+
+class ResidentCredentialError(AgentLoopError):
+    """A configured resident API call has no usable credential."""
+
+    def __init__(self, env_name: str) -> None:
+        super().__init__(f"{env_name} is required for live resident API calls")
+        self.env_name = env_name
+
+
 class FakeAgentRunner:
     """Deterministic runner that exercises the resident tool-call loop."""
 
@@ -119,6 +135,7 @@ class FakeAgentRunner:
         runtime_context = ToolRuntimeContext(
             conversation_id=request.conversation_id,
             subject=request.subject,
+            launch_origin=request.launch_origin,
         )
 
         for step_index, step in enumerate(self.steps, start=1):
@@ -134,9 +151,21 @@ class FakeAgentRunner:
             if tool_call_count >= self.max_tool_calls:
                 raise AgentLoopError(f"resident tool-call limit exceeded: {self.max_tool_calls}")
             tool_call_count += 1
-            audit_records.append(
-                await self._execute_tool_call(step.tool_call, tools, tool_call_count, runtime_context)
+            audit = await self._execute_tool_call(
+                step.tool_call,
+                tools,
+                tool_call_count,
+                _context_for_tool_call(runtime_context, f"fake_tool_{tool_call_count:04d}"),
             )
+            audit_records.append(audit)
+            handoff = _durable_launch_handoff_response(
+                request=request,
+                current_tool_calls=(audit,),
+                all_tool_calls=audit_records,
+                steps_executed=step_index,
+            )
+            if handoff is not None:
+                return handoff
 
         raise AgentLoopError("fake agent script ended without final_text")
 
@@ -208,7 +237,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
             raise ValueError("tool_timeout_s must be positive")
 
     async def run(self, request: AgentRequest, tools: ToolRegistry) -> AgentResponse:
-        client = self._client_override or _openai_client(self.config)
+        client = self._client_override or openai_client_from_config(self.config)
         messages = self._messages(request)
         openai_tools = [_openai_tool_schema(tool) for tool in tools.list()]
         audit_records: list[ToolCallAuditRecord] = []
@@ -249,6 +278,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
             if len(audit_records) + len(tool_calls) > self.max_tool_calls:
                 raise AgentLoopError(f"resident tool-call limit exceeded: {self.max_tool_calls}")
             messages.append(_assistant_tool_call_message(message))
+            current_audits: list[ToolCallAuditRecord] = []
             for tool_call in tool_calls:
                 arguments = _tool_call_arguments(tool_call)
                 audit = await _execute_registered_tool(
@@ -260,9 +290,12 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                     runtime_context=ToolRuntimeContext(
                         conversation_id=request.conversation_id,
                         subject=request.subject,
+                        launch_origin=_origin_for_tool_call(request.launch_origin, tool_call.id),
+                        tool_call_id=tool_call.id,
                     ),
                 )
                 audit_records.append(audit)
+                current_audits.append(audit)
                 messages.append(
                     {
                         "role": "tool",
@@ -270,6 +303,15 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                         "content": json.dumps(audit.result, sort_keys=True),
                     }
                 )
+            handoff = _durable_launch_handoff_response(
+                request=request,
+                current_tool_calls=current_audits,
+                all_tool_calls=audit_records,
+                steps_executed=step_index,
+                model=model_name,
+            )
+            if handoff is not None:
+                return handoff
         raise AgentLoopError("resident model loop ended without final_text")
 
     def _messages(self, request: AgentRequest) -> list[dict[str, Any]]:
@@ -331,6 +373,7 @@ class CodexCliAgentRunner(DispatchProtocol):
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    env=environment_with_provenance(request.launch_origin),
                 )
             except FileNotFoundError as exc:
                 raise AgentLoopError("codex CLI is required for resident model_provider=codex") from exc
@@ -367,26 +410,70 @@ class CodexCliAgentRunner(DispatchProtocol):
         payload = {
             "hot_context": request.hot_context,
             "messages": request.messages,
-            "available_resident_tools": tools.as_schema_catalog(),
+            "launch_provenance": request.launch_origin,
+            "available_resident_tools": tools.as_compact_catalog(),
         }
-        return (
+        prompt = (
             f"{request.system_prompt}\n\n"
             "You are running through the Codex CLI resident runner in the project repository. "
             "Use the local filesystem and Megaplan CLI for durable project actions. "
-            "For initiatives, prefer `python -m arnold_pipelines.megaplan initiative ...`; "
+            "For initiatives, prefer `python -P -m arnold_pipelines.megaplan initiative ...`; "
             "initiative creation requires a non-empty description. The resident tool catalog below is "
             "reference material for equivalent CLI capabilities, not a set of callable Codex functions. "
+            "For Discord reply ancestry older than the three ancestors preloaded in the current message, "
+            "use only `python -P -m arnold_pipelines.megaplan resident read-reply-chain --cursor <cursor>`; "
+            "it is store-backed and restricted by the immutable active conversation envelope. "
+            "When native function exposure is absent and delegated work is required, use the supported "
+            "local resident seam before replying: write the complete task to a file, then run "
+            "`python -P -m arnold_pipelines.megaplan.resident.subagent launch --task-file <path> "
+            "--task-kind <kind> --difficulty <D1-D10>`. Do not call a generic subagent launcher in its place. "
+            "The `-P` isolation flag is mandatory: this resident may intentionally run from a pinned "
+            "runtime source while its working directory contains another checkout, and importing from "
+            "that checkout would split launch manifests from status and delivery. "
+            "Immutable delegation provenance is injected into this process. Any resident-managed child "
+            "launch must inherit it; never replace it with a recent conversation cursor, infer it from "
+            "final text, or construct discord_origin manually. A malformed/ambiguous envelope must stop "
+            "the launch. "
             "When cloud status is needed, use the configured cloud YAML from hot context. "
-            "Keep final Discord replies concise.\n\n"
+            "Keep final Discord replies concise. Messages are delivered to the user through Discord, "
+            "so do not reference local filesystem paths or local-file links in user-facing replies; "
+            "describe durable artifacts by run ID or human-readable name instead.\n\n"
             "Resident request JSON:\n"
             + json.dumps(payload, sort_keys=True, default=str)
         )
+        if len(prompt) > self.config.max_prompt_chars:
+            raise AgentPromptTooLargeError(
+                "resident prompt exceeds the safe pre-dispatch budget: "
+                f"{len(prompt)} > {self.config.max_prompt_chars} characters"
+            )
+        return prompt
 
 
 async def _await_maybe(value: Any) -> Any:
     if hasattr(value, "__await__"):
         return await value
     return value
+
+
+def _origin_for_tool_call(
+    origin: Mapping[str, Any] | None,
+    tool_call_id: str,
+) -> Mapping[str, Any] | None:
+    if origin is None:
+        return None
+    return {**dict(origin), "delegation_id": tool_call_id}
+
+
+def _context_for_tool_call(
+    context: ToolRuntimeContext,
+    tool_call_id: str,
+) -> ToolRuntimeContext:
+    return ToolRuntimeContext(
+        conversation_id=context.conversation_id,
+        subject=context.subject,
+        launch_origin=_origin_for_tool_call(context.launch_origin, tool_call_id),
+        tool_call_id=tool_call_id,
+    )
 
 
 async def _run_tool_handler(handler: Any, tool_input: Any, runtime_context: ToolRuntimeContext) -> Any:
@@ -457,24 +544,58 @@ async def _execute_registered_tool(
     )
 
 
-def _openai_client(config: ResidentConfig) -> Any:
+def openai_client_from_config(config: ResidentConfig) -> Any:
+    """Build an API client from the resident's configured endpoint and credentials."""
+
+    return openai_client_for_endpoint(
+        credential_env=api_credential_env(config),
+        base_url=api_base_url(config),
+    )
+
+
+def openai_client_for_endpoint(
+    *,
+    credential_env: str,
+    base_url: str | None = None,
+    timeout_s: float | None = None,
+) -> Any:
+    """Build an OpenAI-compatible client without coupling it to the chat provider."""
+
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:
-        raise AgentLoopError("The openai package is required for live resident model turns") from exc
-    kwargs: dict[str, Any] = {"api_key": _api_key(config)}
-    base_url = _base_url(config)
+        raise AgentLoopError("The openai package is required for resident API calls") from exc
+    api_key = os.getenv(credential_env)
+    if not api_key:
+        raise ResidentCredentialError(credential_env)
+    kwargs: dict[str, Any] = {"api_key": api_key}
     if base_url:
         kwargs["base_url"] = base_url
+    if timeout_s is not None:
+        kwargs["timeout"] = timeout_s
+        # The resident owns the outer timeout and user-facing fallback. Avoid
+        # SDK retries extending a failed voice-note request beyond that bound.
+        kwargs["max_retries"] = 0
     return AsyncOpenAI(**kwargs)
 
 
+# Backward-compatible private alias for internal callers that predate the
+# transcription path.
+_openai_client = openai_client_from_config
+
+
 def _api_key(config: ResidentConfig) -> str:
-    env_name = config.model_api_key_env or _default_api_key_env(config.model_provider)
+    env_name = api_credential_env(config)
     value = os.getenv(env_name)
     if not value:
-        raise AgentLoopError(f"{env_name} is required for live resident model turns")
+        raise ResidentCredentialError(env_name)
     return value
+
+
+def api_credential_env(config: ResidentConfig) -> str:
+    """Return the selected API-key environment variable without reading its value."""
+
+    return config.model_api_key_env or _default_api_key_env(config.model_provider)
 
 
 def _default_api_key_env(provider: str) -> str:
@@ -487,6 +608,12 @@ def _base_url(config: ResidentConfig) -> str | None:
     if config.model_provider == "openrouter":
         return "https://openrouter.ai/api/v1"
     return None
+
+
+def api_base_url(config: ResidentConfig) -> str | None:
+    """Return the selected OpenAI-compatible base URL, if explicitly configured."""
+
+    return _base_url(config)
 
 
 def _client_for_model(model_name: str) -> tuple[Any, str]:
@@ -522,6 +649,84 @@ def _openai_tool_schema(registration: Any) -> dict[str, Any]:
             "parameters": registration.input_model.model_json_schema(),
         },
     }
+
+
+_DURABLE_LAUNCH_STATUSES = frozenset({"launching", "running", "completed"})
+
+
+def _durable_launch_run_id(record: ToolCallAuditRecord) -> str | None:
+    if record.tool_name != "launch_subagent":
+        return None
+    result = record.result if isinstance(record.result, dict) else {}
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    run_id = str(data.get("run_id") or "").strip()
+    status = str(data.get("status") or "").strip()
+    if result.get("ok") is True and run_id and status in _DURABLE_LAUNCH_STATUSES:
+        return run_id
+    return None
+
+
+def durable_launch_run_ids(
+    tool_calls: list[ToolCallAuditRecord] | tuple[ToolCallAuditRecord, ...],
+) -> tuple[str, ...]:
+    """Return successful managed run ids without consulting mutable manifests."""
+
+    run_ids: list[str] = []
+    for record in tool_calls:
+        run_id = _durable_launch_run_id(record)
+        if run_id is not None:
+            run_ids.append(run_id)
+    return tuple(dict.fromkeys(run_ids))
+
+
+def _durable_launch_handoff_response(
+    *,
+    request: AgentRequest,
+    current_tool_calls: list[ToolCallAuditRecord] | tuple[ToolCallAuditRecord, ...],
+    all_tool_calls: list[ToolCallAuditRecord] | tuple[ToolCallAuditRecord, ...],
+    steps_executed: int,
+    model: str | None = None,
+) -> AgentResponse | None:
+    """End a Discord turn once its remaining work has durable agent custody.
+
+    The policy is deliberately based on the registered tool result and the
+    immutable request launch envelope.  It never reads or reconstructs a
+    Discord reply target.  Mixed tool batches, launch failures, and an explicit
+    ``continue_turn`` request retain control for same-turn work.
+    """
+
+    origin = request.launch_origin
+    if not isinstance(origin, Mapping) or origin.get("applicability") != "applicable":
+        return None
+    if not current_tool_calls or any(
+        record.tool_name != "launch_subagent" for record in current_tool_calls
+    ):
+        return None
+    if any(bool(record.arguments.get("continue_turn")) for record in current_tool_calls):
+        return None
+    if any(_durable_launch_run_id(record) is None for record in current_tool_calls):
+        # A failed, synchronous, or malformed launch needs an ordinary resident
+        # follow-up; never hide it behind a success acknowledgement.
+        return None
+    run_ids = durable_launch_run_ids(tuple(all_tool_calls))
+    rendered_ids = ", ".join(f"`{run_id}`" for run_id in run_ids)
+    noun = "run" if len(run_ids) == 1 else "runs"
+    metadata: dict[str, Any] = {
+        "steps_executed": steps_executed,
+        "tool_calls_executed": len(all_tool_calls),
+        "turn_handoff": "durable_subagents",
+        "launched_run_ids": list(run_ids),
+    }
+    if model:
+        metadata["model"] = model
+    return AgentResponse(
+        final_text=(
+            f"Launched resident-managed {noun} {rendered_ids}. "
+            "Terminal results will reply automatically to this message."
+        ),
+        tool_calls=tuple(all_tool_calls),
+        metadata=metadata,
+    )
 
 
 def _message_content_text(content: Any) -> str:

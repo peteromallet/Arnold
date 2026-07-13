@@ -105,6 +105,101 @@ def test_set_profile_preserves_encoded_phase_model_chains(monkeypatch) -> None:
     ]
 
 
+def test_set_profile_clears_stale_vendor_for_non_premium_profile(monkeypatch) -> None:
+    import arnold_pipelines.megaplan.profiles as profiles_module
+
+    monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+    monkeypatch.setattr(
+        profiles_module,
+        "resolve_profile",
+        lambda profile_name, profiles: {
+            "plan": "hermes:deepseek:deepseek-v4-pro",
+            "execute": "hermes:deepseek:deepseek-v4-pro",
+        },
+    )
+
+    state = {
+        "name": "demo",
+        "current_state": "planned",
+        "config": {
+            "profile": "all-claude",
+            "project_dir": str(Path.cwd()),
+            "vendor": "claude",
+        },
+        "meta": {},
+    }
+
+    result = planning_control_binding().apply_transition(
+        planning_run_state_view(state),
+        ControlTransition(op="override", target_id="set-profile", payload={"profile": "demo"}),
+    )
+
+    assert result.accepted is True
+    config_delta = next(delta for delta in result.state_deltas if delta.key == "config")
+    assert config_delta.value["phase_model"] == [
+        "plan=hermes:deepseek:deepseek-v4-pro",
+        "execute=hermes:deepseek:deepseek-v4-pro",
+    ]
+    assert "vendor" not in config_delta.value
+
+
+def test_set_profile_rewrites_stale_prep_metadata_for_non_premium_profile(monkeypatch) -> None:
+    import arnold_pipelines.megaplan.profiles as profiles_module
+
+    monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+    monkeypatch.setattr(profiles_module, "load_profile_metadata", lambda project_dir=None: {"demo": {}})
+    monkeypatch.setattr(
+        profiles_module,
+        "resolve_profile",
+        lambda profile_name, profiles: {
+            "plan": "hermes:deepseek:deepseek-v4-pro",
+            "execute": "hermes:deepseek:deepseek-v4-pro",
+        },
+    )
+    monkeypatch.setattr(
+        profiles_module,
+        "_resolve_prep_models_with_inheritance",
+        lambda *args, **kwargs: {},
+    )
+
+    state = {
+        "name": "demo",
+        "current_state": "planned",
+        "config": {
+            "profile": "all-claude",
+            "project_dir": str(Path.cwd()),
+            "vendor": "claude",
+            "prep_models": {
+                "triage": "claude:claude-sonnet-4-6",
+                "fanout": "claude:claude-sonnet-4-6",
+                "distill": "claude:claude-sonnet-4-6",
+            },
+            "prep_model_resolver_trace": {
+                "flat_prep_input": "claude",
+                "explicit_prep_models": {"triage": "claude:claude-sonnet-4-6"},
+                "resolved_stage_models": {"triage": "claude:claude-sonnet-4-6"},
+                "canonical_fallback_used": {"triage": False},
+            },
+        },
+        "meta": {},
+    }
+
+    result = planning_control_binding().apply_transition(
+        planning_run_state_view(state),
+        ControlTransition(op="override", target_id="set-profile", payload={"profile": "demo"}),
+    )
+
+    assert result.accepted is True
+    config_delta = next(delta for delta in result.state_deltas if delta.key == "config")
+    assert config_delta.value["prep_models"] == {
+        "triage": "hermes:deepseek:deepseek-v4-pro",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "hermes:deepseek:deepseek-v4-pro",
+    }
+    assert config_delta.value["prep_model_resolver_trace"]["flat_prep_input"] is None
+    assert config_delta.value["prep_model_resolver_trace"]["explicit_prep_models"] == {}
+
+
 def test_set_model_replaces_encoded_chain_with_scalar_spec() -> None:
     state = {
         "name": "demo",

@@ -36,7 +36,14 @@ from arnold.control.interface import (
 )
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.profiles import effective_premium_vendor
-from arnold_pipelines.megaplan.profiles.policy import DEFAULT_AGENT_ROUTING, ROBUSTNESS_ACCEPTED, normalize_robustness
+from arnold_pipelines.megaplan.profiles.policy import (
+    DEFAULT_AGENT_ROUTING,
+    ROBUSTNESS_ACCEPTED,
+    _profile_has_premium_slots,
+    _prep_flat_spec_from_profile,
+    normalize_robustness,
+    resolve_prep_models,
+)
 from arnold_pipelines.megaplan.replan_state import (
     REPLAN_STATE_KEYS_TO_CLEAR,
     reset_replan_loop_state,
@@ -1319,14 +1326,45 @@ class PlanningControlBinding:
                     "set-profile cannot be applied to a plan in terminal state "
                     f"'{state['current_state']}'",
                 )
-            from arnold_pipelines.megaplan.profiles import load_profiles, profile_to_phase_models, resolve_profile
+            from arnold_pipelines.megaplan.profiles import (
+                _resolve_prep_models_with_inheritance,
+                load_profile_metadata,
+                load_profiles,
+                profile_to_phase_models,
+                resolve_profile,
+            )
 
             profiles = load_profiles(project_dir=_project_dir(state))
+            metadata = load_profile_metadata(project_dir=_project_dir(state))
             resolved = resolve_profile(new_profile, profiles)
+            try:
+                inherited_prep_models = _resolve_prep_models_with_inheritance(
+                    new_profile,
+                    system_profiles=profiles,
+                    system_metadata=metadata,
+                    pipeline_local_profiles={},
+                    pipeline_local_metadata={},
+                )
+            except CliError:
+                inherited_prep_models = {}
             previous_profile = state["config"].get("profile")
             next_config = dict(state["config"])
             next_config["profile"] = new_profile
             next_config["phase_model"] = profile_to_phase_models(resolved)
+            if _profile_has_premium_slots(resolved):
+                next_config["vendor"] = effective_premium_vendor(config=state.get("config", {}))
+            else:
+                next_config.pop("vendor", None)
+            prep_models, prep_trace = resolve_prep_models(
+                flat_prep_spec=_prep_flat_spec_from_profile(resolved),
+                prep_models=inherited_prep_models,
+            )
+            if prep_models:
+                next_config["prep_models"] = prep_models
+                next_config["prep_model_resolver_trace"] = prep_trace
+            else:
+                next_config.pop("prep_models", None)
+                next_config.pop("prep_model_resolver_trace", None)
             return ControlTransitionResult(
                 accepted=True,
                 mutated=True,

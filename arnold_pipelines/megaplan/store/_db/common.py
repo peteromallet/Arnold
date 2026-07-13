@@ -73,7 +73,7 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
         "active", "discord_attachment_id", "blob_backend", "blob_id",
         "blob_sha256", "blob_size_bytes", "content_type",
     }),
-    "messages": frozenset({"id", "epic_id", "conversation_id", "idempotency_key", "direction", "content", "discord_message_id", "bot_turn_id", "has_code_attachment", "has_image_attachment", "in_burst_with", "was_voice_message", "audio_storage_url", "transcription_metadata", "sent_at"}),
+    "messages": frozenset({"id", "epic_id", "conversation_id", "idempotency_key", "direction", "content", "discord_message_id", "discord_reply_provenance", "bot_turn_id", "has_code_attachment", "has_image_attachment", "in_burst_with", "was_voice_message", "audio_storage_url", "transcription_metadata", "sent_at"}),
     "plan_artifacts": frozenset({
         "plan_id", "name", "kind", "role", "version", "batch", "phase",
         "content_text", "content_bytes", "sha256", "created_at", "updated_at",
@@ -81,6 +81,7 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     "plans": frozenset(_PLAN_COLUMNS),
     "progress_events": frozenset({"id", "epic_id", "plan_id", "sprint_id", "idempotency_key", "kind", "summary", "details", "occurred_at"}),
     "resident_conversations": frozenset({"id", "transport", "conversation_key", "active_epic_id", "guild_id", "channel_id", "thread_id", "dm_user_id", "last_inbound_message_id", "last_outbound_message_id", "delivery_cursor", "metadata", "created_at", "updated_at", "last_active_at"}),
+    "resident_user_preferences": frozenset({"transport", "user_id", "timezone_name", "metadata", "created_at", "updated_at"}),
     "scheduled_jobs": frozenset({"id", "job_type", "status", "conversation_id", "cloud_run_id", "epic_id", "payload", "scheduled_for", "attempt_count", "max_attempts", "claimed_by", "claimed_at", "fired_at", "cancelled_at", "last_error", "created_at", "updated_at"}),
     "second_opinions": frozenset({"id", "epic_id", "requested_at", "requested_by", "focus_areas", "raw_response", "score", "summary", "verdict", "resulting_checklist_item_ids", "model_used"}),
     "sprint_items": frozenset({"id", "sprint_id", "content", "estimated_complexity", "status", "source_section", "position", "created_at"}),
@@ -99,7 +100,7 @@ _COPY_JSONB_COLUMNS = frozenset({
     "plan_versions", "post_state", "pre_state", "prior_state", "prompt_snapshot",
     "provider_response_summary", "request_body", "request_summary", "result",
     "resulting_checklist_item_ids", "sessions", "state_at_turn",
-    "transcription_metadata", "triggered_by_message_ids", "warnings_issued",
+    "discord_reply_provenance", "transcription_metadata", "triggered_by_message_ids", "warnings_issued",
 })
 _SOURCE_REFERENCE_PREFIX = {
     "user_uploaded": "img_user_upload",

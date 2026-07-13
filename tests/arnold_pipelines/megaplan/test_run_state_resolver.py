@@ -50,6 +50,25 @@ def assert_contract_invariants(result: CanonicalRunState) -> None:
     assert "root_cause_fingerprint" in fingerprint_kinds, (
         f"resolver evidence missing root_cause_fingerprint item; kinds={sorted(fingerprint_kinds)}"
     )
+
+
+def test_operator_pause_outranks_live_worker_and_active_repair() -> None:
+    result = resolve_run_state(
+        {
+            "plan_state": {"current_state": "paused", "active_step": {"phase": "execute"}},
+            "chain_state": {
+                "last_state": "paused",
+                "metadata": {"operator_pause": {"active": True}},
+            },
+            "tmux_process": {"alive": True},
+            "repair_progress": {"status": "repairing"},
+        }
+    )
+    assert result.canonical_state is CanonicalState.PAUSED
+    assert result.repairable is False
+    assert result.running is False
+    assert result.next_action == "explicit_operator_resume"
+    assert_contract_invariants(result)
     assert isinstance(result.next_action, str) and result.next_action, (
         f"resolver returned an empty next_action for {result.canonical_state.name}"
     )
@@ -519,8 +538,6 @@ def test_missing_credential_account_gate_resolves_human_action_required() -> Non
         ("approval", TypedHumanGate.EXPLICIT_APPROVAL),
         ("credential", TypedHumanGate.CREDENTIAL_ACCOUNT),
         ("credential_account", TypedHumanGate.CREDENTIAL_ACCOUNT),
-        ("quota", TypedHumanGate.QUOTA),
-        ("rate_limit", TypedHumanGate.QUOTA),
         ("verification", TypedHumanGate.VERIFICATION),
         ("policy", TypedHumanGate.POLICY),
         ("user_action", TypedHumanGate.USER_ACTION),
@@ -622,8 +639,8 @@ def test_resolver_result_serializes_round_trip() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_quota_gate_resolves_human_action_required() -> None:
-    """A quota/rate-limit gate must resolve to HUMAN_ACTION_REQUIRED with QUOTA."""
+def test_quota_gate_is_external_unknown_not_invented_human_decision() -> None:
+    """A quota may clear automatically and is not itself a human decision."""
     evidence = {
         "tmux_process": {"live_status": "stopped"},
         "plan_state": {
@@ -646,11 +663,11 @@ def test_quota_gate_resolves_human_action_required() -> None:
     result = resolve_run_state(evidence)
     assert_contract_invariants(result)
 
-    assert result.canonical_state is CanonicalState.HUMAN_ACTION_REQUIRED
-    assert result.human_required is True
-    assert result.human_gate is TypedHumanGate.QUOTA
-    assert result.next_action == "await_human_action"
-    assert result.confidence == "high"
+    assert result.canonical_state is CanonicalState.UNKNOWN
+    assert result.human_required is False
+    assert result.human_gate is None
+    assert result.next_action == "inspect_evidence"
+    assert result.confidence == "low"
 
 
 def test_verification_gate_resolves_human_action_required() -> None:

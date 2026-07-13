@@ -1,5 +1,8 @@
 # S1: Operational Semantic Health
 
+> Superseded as an executable milestone by C1-C6. Preserved as historical
+> checklist material; see the 2026-07-10 corrective reshape decision.
+
 ## Outcome
 
 Protect current cloud runs from semantic progress failures before the full

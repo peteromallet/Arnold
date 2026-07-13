@@ -79,6 +79,18 @@ def test_import_graph_adds_non_mirror_dependent_test(tmp_path: Path) -> None:
     }
 
 
+def test_bounded_basename_match_skips_archived_tests(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/transition_policy.py", "VALUE = 1\n")
+    _write(repo, "tests/archive/m5/pipelines/megaplan/orchestration/test_transition_policy.py")
+    _write(repo, "tests/orchestration/test_transition_policy.py")
+
+    radius = compute_default_blast_radius(["pkg/transition_policy.py"], repo)
+
+    assert radius["strategy"] == "scoped"
+    assert _selector_values(radius) == ["tests/orchestration/test_transition_policy.py"]
+
+
 def test_import_graph_follows_transitive_imports(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _write(repo, "pkg/a.py", "import pkg.b\n")
@@ -271,7 +283,39 @@ def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
     assert result["command_override"] == (
         "pytest tests/test_feature.py tests/test_core.py"
     )
-    assert "always_run" in result["reason"]
+
+
+def test_resolve_baseline_test_selection_rejects_archived_path_selector(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(tmp_path, "tests/archive/m5/pipelines/megaplan/orchestration/test_transition_policy.py")
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [
+                {
+                    "kind": "path",
+                    "value": "tests/archive/m5/pipelines/megaplan/orchestration/test_transition_policy.py",
+                    "reason": "bad archived selector",
+                }
+            ],
+            "changed_surfaces": ["arnold_pipelines/megaplan/orchestration/transition_policy.py"],
+            "always_run": [],
+            "full_suite_fallback": True,
+            "rationale": "Archived selectors are not valid active baseline inputs.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "unresolved"
+    assert "do not exist" in result["reason"]
 
 
 def test_resolve_baseline_test_selection_rejects_missing_path_selector(

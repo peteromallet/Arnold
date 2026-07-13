@@ -128,17 +128,20 @@ RepairCustodyBucket: TypeAlias = Literal[
     "repairing",
     "repairable_not_repairing",
     "human_required",
+    "paused",
     "broken_superfixer",
 ]
 CUSTODY_BUCKET_REPAIRING: RepairCustodyBucket = "repairing"
 CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING: RepairCustodyBucket = "repairable_not_repairing"
 CUSTODY_BUCKET_HUMAN_REQUIRED: RepairCustodyBucket = "human_required"
+CUSTODY_BUCKET_PAUSED: RepairCustodyBucket = "paused"
 CUSTODY_BUCKET_BROKEN_SUPERFIXER: RepairCustodyBucket = "broken_superfixer"
 REPAIR_CUSTODY_BUCKETS: frozenset[RepairCustodyBucket] = frozenset(
     {
         CUSTODY_BUCKET_REPAIRING,
         CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
         CUSTODY_BUCKET_HUMAN_REQUIRED,
+        CUSTODY_BUCKET_PAUSED,
         CUSTODY_BUCKET_BROKEN_SUPERFIXER,
     }
 )
@@ -413,7 +416,8 @@ def project_repair_custody(
     plan_state: Mapping[str, Any] | None = None,
     current_target: Mapping[str, Any] | None = None,
     canonical_run_state: CanonicalRunState | None = None,
-    queue_root: str | Path | None = None,
+    marker_dir: str | Path | None = None,
+    queue_dir: str | Path | None = None,
     repair_data_dir: str | Path | None = None,
     sidecar_dir: str | Path | None = None,
 ) -> RepairCustodyProjection:
@@ -425,21 +429,17 @@ def project_repair_custody(
 
     plan_payload = _as_mapping(plan_state)
     target_payload = _as_mapping(current_target)
-    validated_queue_root = (
-        repair_requests.validate_queue_root(queue_root)
-        if queue_root is not None
-        else None
-    )
+    queue_root: Path | None = None
+    if queue_dir is not None:
+        queue_root = Path(queue_dir)
+    elif marker_dir is not None:
+        queue_root = repair_requests.repair_queue_dir(marker_dir)
 
     queue_requests = (
-        repair_requests.iter_repair_requests(validated_queue_root)
-        if validated_queue_root is not None
-        else []
+        repair_requests.iter_repair_requests(queue_root, marker_dir=False) if queue_root is not None else []
     )
     queue_decisions = (
-        repair_requests.iter_repair_decisions(validated_queue_root)
-        if validated_queue_root is not None
-        else []
+        repair_requests.iter_repair_decisions(queue_root, marker_dir=False) if queue_root is not None else []
     )
     decision_history = _decision_history_by_request(queue_decisions)
 
@@ -613,6 +613,8 @@ def _custody_bucket_from_canonical_state(
         return CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
     if state is CanonicalState.HUMAN_ACTION_REQUIRED:
         return CUSTODY_BUCKET_HUMAN_REQUIRED
+    if state is CanonicalState.PAUSED:
+        return CUSTODY_BUCKET_PAUSED
     return CUSTODY_BUCKET_BROKEN_SUPERFIXER
 
 
@@ -628,14 +630,8 @@ def classify_repair_dispatch(
     lock_evidence: Any = None,
     process_evidence: Mapping[str, Any] | None = None,
     custody_projection: Mapping[str, Any] | None = None,
-    recovery_view: Mapping[str, Any] | None = None,
 ) -> RepairDispatchDecision:
     """Classify one repair dispatch decision from shared custody evidence.
-
-    When *recovery_view* is provided (as a ``MegaplanRecoveryView`` dict or
-    compatible mapping), its custody-bucket and permitted-action classification
-    is preferred.  Legacy *custody_projection* remains a fallback and drift
-    diagnostics are emitted when the two disagree.
 
     Conservative defaults apply: unknown or ambiguous blocker shapes never
     auto-dispatch. L1 dispatch is reserved for blocked/manual_review states
@@ -646,7 +642,6 @@ def classify_repair_dispatch(
     failure_payload = _as_mapping(latest_failure or plan_payload.get("latest_failure"))
     target_payload = _as_mapping(current_target)
     custody = _as_mapping(custody_projection)
-    recovery = _as_mapping(recovery_view)
 
     normalized_retry_strategy = _first_non_empty(
         _as_text(retry_strategy),
@@ -670,49 +665,6 @@ def classify_repair_dispatch(
     terminal_outcomes = [
         value for value in (_as_list(custody.get("terminal_outcomes")) if custody else []) if _as_text(value)
     ]
-
-    # --- recovery-view preferred path -----------------------------------------
-    if recovery:
-        recovery_decision = _classify_from_recovery_view(
-            recovery=recovery,
-            custody=custody,
-            custody_bucket=custody_bucket,
-            blocker_id=blocker_id,
-            request_id=request_id,
-            current_state=current_state,
-            retry_strategy=normalized_retry_strategy,
-            failure_kind=failure_kind,
-            event_plan_dir=event_plan_dir,
-            target_payload=target_payload,
-            human_blocker_classification=human_blocker_classification,
-            lock_evidence=lock_evidence,
-            process_evidence=process_evidence,
-            terminal_outcomes=terminal_outcomes,
-        )
-        # cross-check: if canonical_run_state is also present and disagrees,
-        # emit a drift diagnostic capturing recovery-vs-canonical divergence.
-        if canonical_run_state is not None and event_plan_dir is not None:
-            canonical_decision = _classify_repair_dispatch_canonical(
-                canonical_run_state=canonical_run_state,
-                blocker_id=blocker_id,
-                request_id=request_id,
-                custody_bucket=custody_bucket,
-                current_state=current_state,
-                retry_strategy=normalized_retry_strategy,
-                failure_kind=failure_kind,
-                lock_evidence=lock_evidence,
-                process_evidence=process_evidence,
-                custody=custody,
-                current_target=target_payload,
-            )
-            _emit_dispatch_drift_detected(
-                event_plan_dir=event_plan_dir,
-                canonical_run_state=canonical_run_state,
-                canonical_decision=canonical_decision,
-                legacy_decision=recovery_decision,
-            )
-        return recovery_decision
-
     if canonical_run_state is not None:
         canonical_decision = _classify_repair_dispatch_canonical(
             canonical_run_state=canonical_run_state,
@@ -819,11 +771,50 @@ def _classify_repair_dispatch_canonical(
     current_target: Mapping[str, Any],
 ) -> RepairDispatchDecision:
     state = canonical_run_state.canonical_state
+    # Derived/canonical completion must never hide current contradictory
+    # ground truth (the exact finalized+active and complete+incomplete cases).
+    if _has_terminality_contradiction(current_target):
+        if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_REPAIRING,
+                dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+                rationale=("terminality contradiction has active repair custody",),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
+        if request_id:
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_L1,
+                dispatch_intent=DISPATCH_INTENT_L1,
+                rationale=("terminality contradiction reopens repair custody",),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
     if state is CanonicalState.COMPLETED:
         return _make_dispatch_decision(
             decision=DISPATCH_DECISION_TERMINAL,
             dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
             rationale=("resolver enforcement: canonical completed state",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if state is CanonicalState.PAUSED:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_NO_ACTION,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("resolver enforcement: durable operator pause forbids recovery",),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -1144,191 +1135,6 @@ def _emit_dispatch_drift_detected(
         return
 
 
-def _classify_from_recovery_view(
-    *,
-    recovery: Mapping[str, Any],
-    custody: Mapping[str, Any],
-    custody_bucket: str,
-    blocker_id: str,
-    request_id: str,
-    current_state: str,
-    retry_strategy: str,
-    failure_kind: str,
-    event_plan_dir: Path | None,
-    target_payload: Mapping[str, Any],
-    human_blocker_classification: Any,
-    lock_evidence: Any,
-    process_evidence: Mapping[str, Any] | None,
-    terminal_outcomes: list[Any],
-) -> RepairDispatchDecision:
-    """Derive dispatch from a recovery-view dict, preferring its custody and
-    permitted actions over raw legacy projection fields.
-
-    Recovery-view custody and permitted-action classification is the preferred
-    input.  Legacy custody is consulted only for drift diagnostics and field
-    fallback when the recovery view omits a value.
-    """
-
-    recovery_custody_bucket = _as_text(recovery.get("custody_bucket")) or custody_bucket
-    recovery_status = _as_text(recovery.get("status")) or "unknown"
-    recovery_needed = bool(recovery.get("recovery_needed", True))
-    permitted_actions_raw = recovery.get("permitted_actions")
-    if not isinstance(permitted_actions_raw, (list, tuple)):
-        permitted_actions_raw = ()
-    permitted_actions: list[dict[str, Any]] = [
-        _as_mapping(item) for item in permitted_actions_raw if isinstance(item, Mapping)
-    ]
-    recovery_diagnostics_raw = recovery.get("diagnostics")
-    if not isinstance(recovery_diagnostics_raw, (list, tuple)):
-        recovery_diagnostics_raw = ()
-
-    # --- drift diagnostic: legacy custody bucket vs recovery-view custody -----
-    if custody and custody_bucket and recovery_custody_bucket != custody_bucket:
-        if event_plan_dir is not None:
-            _emit_recovery_legacy_custody_drift(
-                event_plan_dir=event_plan_dir,
-                legacy_custody_bucket=custody_bucket,
-                recovery_custody_bucket=recovery_custody_bucket,
-                recovery_status=recovery_status,
-            )
-
-    # --- map recovery-view custody to dispatch decision -----------------------
-    rationale: list[str] = []
-    # Prefer recovery-view custody bucket for dispatch derivation.
-    if recovery_custody_bucket == "repairing":
-        decision = DISPATCH_DECISION_REPAIRING
-        dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-        rationale.append("recovery view: repair already in progress")
-    elif recovery_custody_bucket == "repairable" or recovery_custody_bucket == "repairable_not_repairing":
-        # Check active repair using lock/process evidence only (NOT legacy custody,
-        # which may disagree with the recovery view).  The recovery view already
-        # classified this as repairable; do not let a stale legacy custody bucket
-        # override that classification.
-        if lock_evidence is not None or process_evidence is not None:
-            if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody={}):
-                decision = DISPATCH_DECISION_REPAIRING
-                dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-                rationale.append("recovery view: repairable but active repair ownership exists")
-            elif request_id:
-                decision = DISPATCH_DECISION_L1
-                dispatch_intent = DISPATCH_INTENT_L1
-                rationale.append("recovery view: repairable custody with active request")
-            else:
-                decision = DISPATCH_DECISION_NO_ACTION
-                dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-                rationale.append("recovery view: repairable but no active repair request")
-        elif request_id:
-            decision = DISPATCH_DECISION_L1
-            dispatch_intent = DISPATCH_INTENT_L1
-            rationale.append("recovery view: repairable custody with active request")
-        else:
-            decision = DISPATCH_DECISION_NO_ACTION
-            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-            rationale.append("recovery view: repairable but no active repair request")
-    elif recovery_custody_bucket == "human_required":
-        decision = DISPATCH_DECISION_HUMAN_REQUIRED
-        dispatch_intent = DISPATCH_INTENT_HUMAN_REQUIRED
-        rationale.append("recovery view: human intervention required")
-    elif recovery_custody_bucket == "broken_superfixer":
-        decision = DISPATCH_DECISION_BROKEN_SUPERFIXER
-        dispatch_intent = DISPATCH_INTENT_BROKEN_SUPERFIXER
-        rationale.append("recovery view: superfixer is broken")
-    elif recovery_custody_bucket == "healthy":
-        if _is_terminal_dispatch_state(current_state, terminal_outcomes):
-            decision = DISPATCH_DECISION_TERMINAL
-            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-            rationale.append("recovery view: healthy and terminal")
-        else:
-            decision = DISPATCH_DECISION_NO_ACTION
-            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-            rationale.append("recovery view: healthy; no recovery needed")
-    elif recovery_custody_bucket == "blocked":
-        if recovery_needed:
-            # Blocked by runner, publication, or human gate — escalate
-            decision = DISPATCH_DECISION_HUMAN_REQUIRED
-            dispatch_intent = DISPATCH_INTENT_HUMAN_REQUIRED
-            rationale.append("recovery view: blocked by operational gate; human escalation")
-        else:
-            decision = DISPATCH_DECISION_NO_ACTION
-            dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
-            rationale.append("recovery view: blocked but recovery not needed")
-    else:
-        # unknown or unrecognized — fall back conservatively
-        decision = DISPATCH_DECISION_BROKEN_SUPERFIXER
-        dispatch_intent = DISPATCH_INTENT_BROKEN_SUPERFIXER
-        rationale.append(
-            f"recovery view: unrecognized custody bucket {recovery_custody_bucket!r}; "
-            "escalating to superfixer"
-        )
-
-    # --- incorporate permitted-action hints from the recovery view ------------
-    if permitted_actions:
-        action_types = {_as_text(item.get("action_type")) for item in permitted_actions}
-        # If recovery view explicitly permits repair_dispatch, upgrade
-        # queue_only → dispatch_l1 when we have a request_id.
-        if "repair_dispatch" in action_types and decision == DISPATCH_DECISION_NO_ACTION and request_id:
-            decision = DISPATCH_DECISION_L1
-            dispatch_intent = DISPATCH_INTENT_L1
-            rationale.append("recovery view: permitted repair_dispatch overrides no_action")
-        if "human_escalation" in action_types and decision not in {
-            DISPATCH_DECISION_HUMAN_REQUIRED,
-            DISPATCH_DECISION_BROKEN_SUPERFIXER,
-        }:
-            # human_escalation permitted but not yet the decision: keep as
-            # diagnostic but do not downgrade an L1 dispatch.
-            if decision != DISPATCH_DECISION_L1:
-                rationale.append("recovery view: human_escalation also permitted")
-        if "investigate_superfixer" in action_types:
-            if decision not in {
-                DISPATCH_DECISION_BROKEN_SUPERFIXER,
-                DISPATCH_DECISION_HUMAN_REQUIRED,
-            }:
-                rationale.append("recovery view: superfixer investigation recommended")
-
-    # --- append recovery diagnostics to rationale when informative ------------
-    recovery_diag_codes = {
-        _as_text(_as_mapping(item).get("code"))
-        for item in recovery_diagnostics_raw
-        if isinstance(item, Mapping)
-    }
-    if recovery_diag_codes:
-        rationale.append(
-            "recovery view diagnostics: " + ", ".join(sorted(recovery_diag_codes))
-        )
-
-    return _make_dispatch_decision(
-        decision=decision,
-        dispatch_intent=dispatch_intent,
-        rationale=tuple(rationale),
-        blocker_id=blocker_id,
-        request_id=request_id,
-        custody_bucket=recovery_custody_bucket,
-        current_state=current_state,
-        retry_strategy=retry_strategy,
-        failure_kind=failure_kind,
-    )
-
-
-def _emit_recovery_legacy_custody_drift(
-    *,
-    event_plan_dir: Path,
-    legacy_custody_bucket: str,
-    recovery_custody_bucket: str,
-    recovery_status: str,
-) -> None:
-    """Emit a drift event when legacy custody disagrees with recovery view."""
-    payload = {
-        "what": "repair_contract.recovery_vs_legacy_custody_drift",
-        "legacy_custody_bucket": legacy_custody_bucket,
-        "recovery_custody_bucket": recovery_custody_bucket,
-        "recovery_status": recovery_status,
-    }
-    try:
-        emit(EventKind.DRIFT_DETECTED, event_plan_dir, payload=payload)
-    except Exception:
-        return
-
-
 def load_json(path: str | Path, *, default: Any | None = None) -> Any:
     """Load JSON from *path*, returning *default* for missing or invalid files."""
 
@@ -1340,10 +1146,28 @@ def load_json(path: str | Path, *, default: Any | None = None) -> Any:
         return fallback
 
 
-def atomic_write_json(path: str | Path, payload: Mapping[str, Any]) -> None:
-    """Atomically write JSON using the shared fsync/replace runtime primitive."""
+def atomic_write_json(
+    path: str | Path,
+    payload: Mapping[str, Any],
+    *,
+    include_resident_provenance: bool = True,
+) -> None:
+    """Atomically write JSON using the shared fsync/replace runtime primitive.
 
-    _atomic_write_json(Path(path), dict(payload))
+    Resident provenance is additive for durable repair evidence, but callers
+    that persist an identity token (for example a lock owner record) must opt
+    out so the on-disk value remains byte-for-byte equivalent to the identity
+    they later use for guarded release.
+    """
+
+    prepared = dict(payload)
+    if include_resident_provenance:
+        from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+        resident_delegation = safe_provenance_projection()
+        if resident_delegation is not None:
+            prepared.setdefault("resident_delegation", resident_delegation)
+    _atomic_write_json(Path(path), prepared)
 
 
 def read_repair_index(path: str | Path) -> dict[str, Any]:
@@ -1568,13 +1392,20 @@ def _coerce_json_object(
 
 
 def _normalize_repair_index(payload: Mapping[str, Any]) -> dict[str, Any]:
-    extras = sorted(set(payload) - set(_INDEX_TOP_LEVEL_KEYS))
+    allowed_keys = set(_INDEX_TOP_LEVEL_KEYS) | {"resident_delegation"}
+    extras = sorted(set(payload) - allowed_keys)
     if extras:
         raise ValueError(
-            "repair index only supports top-level keys: sessions, incidents"
+            "repair index only supports top-level keys: "
+            "sessions, incidents, resident_delegation"
         )
 
     normalized = {bucket: {} for bucket in _INDEX_TOP_LEVEL_KEYS}
+    resident_delegation = payload.get("resident_delegation")
+    if resident_delegation is not None:
+        if not isinstance(resident_delegation, dict):
+            raise ValueError("repair index field 'resident_delegation' must be an object")
+        normalized["resident_delegation"] = deepcopy(resident_delegation)
     for bucket in _INDEX_TOP_LEVEL_KEYS:
         source = payload.get(bucket, {})
         if not isinstance(source, dict):
@@ -1687,13 +1518,6 @@ REPAIR_EXHAUSTED = "repair_exhausted"
 NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
 ENVIRONMENT_GONE = "environment_gone"  # wiped workspace/spec — ops concern, not repairable
-
-RECOVERY_VERIFIED = "verified_recovered"
-RECOVERY_PROVISIONAL = "provisional"
-RECOVERY_UNKNOWN = "unknown"
-RECOVERY_UNKNOWN_TYPES: frozenset[str] = frozenset(
-    {"missing", "stale", "partial", "contradictory"}
-)
 
 SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {COMPLETE, PROGRESSED, TRUE_HUMAN_BLOCKER}
@@ -1808,151 +1632,11 @@ def classify_verification_outcome(
     return REPAIRING
 
 
-def _verification_timestamp(value: Any) -> datetime | None:
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str) and value.strip():
-        try:
-            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    else:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _blocker_identity(value: Mapping[str, Any] | None) -> str:
-    if not isinstance(value, Mapping):
-        return ""
-    for key in ("blocker_id", "blocker_fingerprint", "fingerprint"):
-        identity = str(value.get(key) or "").strip()
-        if identity:
-            return identity
-    return ""
-
-
-def classify_recovery_verification(
-    *,
-    original_blocker: Mapping[str, Any] | None,
-    observation: Mapping[str, Any] | None,
-    repair_completed_at: datetime | str | None,
-) -> dict[str, Any]:
-    """Classify whether a later observation proves the original blocker cleared.
-
-    Process existence, heartbeat/activity, and subprocess exit are deliberately
-    provisional.  Recovery requires a later, independent, direct observation
-    carrying the same blocker identity.  Invalid evidence fails closed while
-    preserving one of the current-target typed-unknown reasons.
-    """
-
-    def unknown(kind: str, reason: str) -> dict[str, Any]:
-        return {
-            "status": RECOVERY_UNKNOWN,
-            "unknown_type": kind,
-            "recovery_verified": False,
-            "authorizes_verified_recovered": False,
-            "reason": reason,
-        }
-
-    if not isinstance(observation, Mapping) or not observation:
-        return unknown("missing", "independent post-repair observation is absent")
-
-    evidence_state = observation.get("evidence_state")
-    if isinstance(evidence_state, Mapping):
-        unknown_type = str(evidence_state.get("unknown_type") or "").strip().lower()
-        if unknown_type in RECOVERY_UNKNOWN_TYPES:
-            return unknown(unknown_type, f"observation evidence is {unknown_type}")
-
-    if observation.get("contradictory") is True:
-        return unknown("contradictory", "observation contains contradictory evidence")
-
-    provisional_signals = {
-        "pid",
-        "process",
-        "heartbeat",
-        "liveness",
-        "partial_liveness",
-        "subprocess_success",
-    }
-    observation_kind = str(observation.get("kind") or "").strip().lower()
-    has_provisional_signal = observation_kind in provisional_signals or any(
-        observation.get(key) is True
-        for key in (
-            "pid_alive",
-            "process_alive",
-            "heartbeat_active",
-            "is_live",
-            "has_fresh_activity",
-            "subprocess_succeeded",
-        )
-    )
-    if observation.get("returncode") == 0:
-        has_provisional_signal = True
-
-    original_identity = _blocker_identity(original_blocker)
-    observed_identity = _blocker_identity(observation)
-    direct_fields_present = any(
-        key in observation
-        for key in (
-            "blocker_cleared",
-            "directly_observed",
-            "independent",
-            "blocker_id",
-            "blocker_fingerprint",
-            "fingerprint",
-        )
-    )
-    if has_provisional_signal and not direct_fields_present:
-        return {
-            "status": RECOVERY_PROVISIONAL,
-            "unknown_type": "",
-            "recovery_verified": False,
-            "authorizes_verified_recovered": False,
-            "reason": "process, heartbeat, liveness, or subprocess success is provisional only",
-        }
-
-    if not original_identity or not observed_identity:
-        return unknown("partial", "blocker-specific identity is incomplete")
-    if original_identity != observed_identity:
-        return unknown("contradictory", "observation refers to a different blocker")
-    if observation.get("blocker_cleared") is not True:
-        if observation.get("blocker_cleared") is False:
-            return unknown("contradictory", "observation says the original blocker remains")
-        return unknown("partial", "observation does not directly say the blocker cleared")
-    if observation.get("directly_observed") is not True:
-        return unknown("partial", "blocker clearance was not directly observed")
-    if observation.get("independent") is not True:
-        return unknown("partial", "blocker clearance observation is not independent")
-
-    completed_at = _verification_timestamp(repair_completed_at)
-    observed_at = _verification_timestamp(observation.get("observed_at"))
-    if completed_at is None or observed_at is None:
-        return unknown("partial", "verification timestamps are incomplete")
-    if observed_at <= completed_at:
-        return unknown("stale", "verification observation is not later than repair completion")
-
-    return {
-        "status": RECOVERY_VERIFIED,
-        "unknown_type": "",
-        "recovery_verified": True,
-        "authorizes_verified_recovered": True,
-        "reason": "later independent observation directly proves the original blocker cleared",
-        "blocker_identity": original_identity,
-        "repair_completed_at": completed_at.isoformat(),
-        "observed_at": observed_at.isoformat(),
-    }
-
-
 def build_verification_record(
     outcome: str,
     *,
     pre_snapshot: Mapping[str, Any] | None = None,
     post_snapshot: Mapping[str, Any] | None = None,
-    original_blocker: Mapping[str, Any] | None = None,
-    observation: Mapping[str, Any] | None = None,
-    repair_completed_at: datetime | str | None = None,
     delta_summary: str = "",
     recorded_at: datetime | None = None,
 ) -> dict[str, Any]:
@@ -1967,32 +1651,13 @@ def build_verification_record(
     """
     if recorded_at is None:
         recorded_at = datetime.now(timezone.utc)
-    recovery_verification = classify_recovery_verification(
-        original_blocker=original_blocker,
-        observation=observation,
-        repair_completed_at=repair_completed_at,
-    )
     return {
         "outcome": outcome,
         "is_success": is_success_outcome(outcome),
         "is_terminal": is_terminal_outcome(outcome),
-        "recovery_verified": recovery_verification["recovery_verified"],
-        "authorizes_verified_recovered": recovery_verification[
-            "authorizes_verified_recovered"
-        ],
-        "recovery_verification": recovery_verification,
         "recorded_at": recorded_at.isoformat(),
         "pre_snapshot": dict(pre_snapshot) if pre_snapshot is not None else None,
         "post_snapshot": dict(post_snapshot) if post_snapshot is not None else None,
-        "original_blocker": (
-            dict(original_blocker) if original_blocker is not None else None
-        ),
-        "observation": dict(observation) if observation is not None else None,
-        "repair_completed_at": (
-            repair_completed_at.isoformat()
-            if isinstance(repair_completed_at, datetime)
-            else repair_completed_at
-        ),
         "delta_summary": delta_summary,
     }
 
@@ -2476,15 +2141,7 @@ def _event_signature(payload: Mapping[str, Any]) -> tuple[str, str, str]:
     outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
     marker = _repair_attempt_marker(payload)
     if is_success_outcome(outcome):
-        recovery = _payload_recovery_verification(payload)
-        if recovery.get("authorizes_verified_recovered") is True:
-            return ("verified_recovered", outcome, marker)
-        projected_outcome = (
-            RECOVERY_PROVISIONAL
-            if recovery.get("status") == RECOVERY_PROVISIONAL
-            else f"unknown_{recovery.get('unknown_type') or 'missing'}"
-        )
-        return ("repair_attempt", projected_outcome, marker)
+        return ("verified_recovered", outcome, marker)
     if outcome == REPAIRING:
         return ("repair_attempt", "attempted", marker)
     return ("repair_attempt", outcome, marker)
@@ -2551,7 +2208,7 @@ def _emit_incident_bridge_event(
     try:
         from arnold_pipelines.megaplan.cloud.incident_bridge import (
             append_immediate_repair_attempt,
-            append_recovery_observation,
+            append_verified_recovered,
         )
 
         if outcome == REPAIRING:
@@ -2565,12 +2222,9 @@ def _emit_incident_bridge_event(
                 root=root,
             )
         elif is_success_outcome(outcome):
-            append_recovery_observation(
+            append_verified_recovered(
                 incident_id=incident_id,
                 summary=summary,
-                recovery_verification=(
-                    dict(verification) if isinstance(verification, Mapping) else {}
-                ),
                 evidence=evidence,
                 session_id=session_id,
                 root=root,
@@ -2590,22 +2244,6 @@ def _emit_incident_bridge_event(
     except Exception:
         # Bridge event emission is best-effort; never let it fail the save.
         pass
-
-
-def _payload_recovery_verification(payload: Mapping[str, Any]) -> dict[str, Any]:
-    verification = payload.get("verification")
-    if not isinstance(verification, Mapping):
-        verification = {}
-    original_blocker = verification.get("original_blocker")
-    if not isinstance(original_blocker, Mapping):
-        original_blocker = payload.get("original_blocker")
-    observation = verification.get("observation")
-    repair_completed_at = verification.get("repair_completed_at")
-    return classify_recovery_verification(
-        original_blocker=original_blocker if isinstance(original_blocker, Mapping) else None,
-        observation=observation if isinstance(observation, Mapping) else None,
-        repair_completed_at=repair_completed_at,
-    )
 
 
 def _update_session_index_from_repair_data(
@@ -2924,8 +2562,15 @@ def _attempts_from_snapshot(
                 raw=record,
             )
         )
+    managed_attempts = _managed_attempts_from_snapshot(
+        path=path,
+        payload=payload,
+        session=session,
+        blocker_id=blocker_id,
+        fingerprint=fingerprint,
+    )
     if attempts:
-        return attempts
+        return attempts + managed_attempts
     current_attempt_id = _as_scalar_text(payload.get("current_attempt_id"))
     if current_attempt_id:
         snapshot_signature = (
@@ -2961,7 +2606,88 @@ def _attempts_from_snapshot(
                 raw=dict(payload),
             )
         )
-    return attempts
+    return attempts + managed_attempts
+
+
+def _managed_attempts_from_snapshot(
+    *,
+    path: Path,
+    payload: Mapping[str, Any],
+    session: str,
+    blocker_id: str,
+    fingerprint: BlockerFingerprintV1 | None,
+) -> list[RepairCustodyAttemptRecord]:
+    """Project real managed-run evidence without fabricating legacy attempts."""
+
+    from arnold_pipelines.megaplan.managed_agent import is_managed_manifest, observed_status
+
+    projected: list[RepairCustodyAttemptRecord] = []
+    for value in _as_list(payload.get("managed_agent_runs")):
+        reference = _as_mapping(value)
+        run_id = _as_scalar_text(reference.get("run_id"))
+        manifest_text = _as_scalar_text(reference.get("manifest_path"))
+        if not run_id or not manifest_text:
+            continue
+        reference_blocker_id = _as_scalar_text(reference.get("blocker_id"))
+        if blocker_id and reference_blocker_id and reference_blocker_id != blocker_id:
+            continue
+
+        manifest_path = Path(manifest_text)
+        try:
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest_payload = {}
+        manifest = _as_mapping(manifest_payload)
+        if not is_managed_manifest(manifest) or _as_scalar_text(manifest.get("run_id")) != run_id:
+            # A missing or invalid manifest is not execution evidence.  Keep the
+            # compatibility reference in the raw repair snapshot, but do not
+            # turn it into a formal claim or attempt.
+            continue
+
+        links = _as_mapping(manifest.get("links"))
+        manifest_blocker_id = _as_scalar_text(links.get("blocker_id"))
+        if blocker_id and manifest_blocker_id and manifest_blocker_id != blocker_id:
+            continue
+        status, live = observed_status(manifest, manifest_path)
+        if status in {"reserved", "launching"}:
+            state = ATTEMPT_STATE_CLAIMED
+        elif status in {"running", "adopting"}:
+            state = ATTEMPT_STATE_RUNNING
+        elif status == "completed":
+            state = ATTEMPT_STATE_SUCCEEDED
+        elif status in {"cancelled", "superseded"}:
+            state = ATTEMPT_STATE_CANCELLED
+        else:
+            state = ATTEMPT_STATE_FAILED
+        outcome = _as_text(manifest.get("terminal_outcome"))
+        if state in {ATTEMPT_STATE_CLAIMED, ATTEMPT_STATE_RUNNING}:
+            outcome = REPAIRING
+        elif not outcome:
+            outcome = status
+        raw = {
+            "managed_agent_reference": dict(reference),
+            "managed_agent_manifest": dict(manifest),
+            "observed_status": status,
+            "observed_live": live,
+        }
+        projected.append(
+            _build_attempt_record(
+                attempt_id=run_id,
+                session=session,
+                source="managed_agent_execution",
+                path=str(manifest_path),
+                blocker_id=manifest_blocker_id or reference_blocker_id or blocker_id,
+                fingerprint=fingerprint,
+                request_id=_as_scalar_text(links.get("repair_request_id"))
+                or _as_scalar_text(reference.get("repair_request_id")),
+                state=state,
+                outcome=outcome,
+                recorded_at=_as_text(manifest.get("updated_at"))
+                or _as_text(manifest.get("created_at")),
+                raw=raw,
+            )
+        )
+    return projected
 
 
 def _attempts_from_sidecar(
@@ -3191,6 +2917,18 @@ def _is_known_repairable_shape(
     failure_kind: str,
     current_target: Mapping[str, Any],
 ) -> bool:
+    if _has_terminality_contradiction(current_target):
+        return True
+    # The executor detected that the persisted cursor and control projection
+    # disagree.  This is a mechanical state-machine contradiction: it must be
+    # handed to L1 with current-target evidence, never converted into a human
+    # gate or terminal outcome.
+    if (
+        current_state == "blocked"
+        and failure_kind == "workflow_cursor_mismatch"
+        and _has_current_target_evidence(current_target)
+    ):
+        return True
     if current_state == "failed" and retry_strategy == "repair_state" and failure_kind == "no_next_step":
         return _has_current_target_evidence(current_target)
     resume_authority_failure = _as_mapping(current_target.get("resume_authority_failure"))
@@ -3213,6 +2951,28 @@ def _is_known_repairable_shape(
     }:
         return False
     return _has_current_target_evidence(current_target)
+
+
+def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
+    """Return true for states that must reopen custody despite a success label."""
+    target = _as_mapping(current_target)
+    active_step = _as_mapping(target.get("active_step_heartbeat"))
+    if bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")):
+        return _has_current_target_evidence(target)
+    stale_kinds = {
+        _as_text(_as_mapping(item).get("kind"))
+        for item in _as_list(target.get("stale_evidence"))
+        if isinstance(item, Mapping)
+    }
+    if "stale_active_step_dead_pid" in stale_kinds:
+        return _has_current_target_evidence(target)
+    chain = _as_mapping(target.get("chain_state"))
+    try:
+        total = int(chain.get("milestone_total"))
+        completed = int(chain.get("completed_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    return total > 0 and completed < total and _has_current_target_evidence(target)
 
 
 def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
@@ -3247,6 +3007,7 @@ __all__ = [
     "COMPLETE",
     "CUSTODY_BUCKET_BROKEN_SUPERFIXER",
     "CUSTODY_BUCKET_HUMAN_REQUIRED",
+    "CUSTODY_BUCKET_PAUSED",
     "CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING",
     "CUSTODY_BUCKET_REPAIRING",
     "CURRENT_SCHEMA_VERSION",
@@ -3271,10 +3032,6 @@ __all__ = [
     "REPAIR_EXHAUSTED",
     "REPAIR_TIMEOUT",
     "REPAIRING",
-    "RECOVERY_PROVISIONAL",
-    "RECOVERY_UNKNOWN",
-    "RECOVERY_UNKNOWN_TYPES",
-    "RECOVERY_VERIFIED",
     "SUCCESS_OUTCOMES",
     "TRUE_HUMAN_BLOCKER",
     "append_attempt_record",
@@ -3289,7 +3046,6 @@ __all__ = [
     "blocker_id_for_fingerprint",
     "build_verification_record",
     "classify_repair_dispatch",
-    "classify_recovery_verification",
     "classify_verification_outcome",
     "cleanup_repair_data_retention",
     "compute_deadline",

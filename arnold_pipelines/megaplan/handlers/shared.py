@@ -839,17 +839,54 @@ def _normalize_plan_text(plan_text: str) -> str:
     # Fast path: already contains real newlines; leave it alone.
     if "\n" in plan_text:
         return plan_text
-    # If the text contains literal \\n but no real newlines, decode them.
+    # Decode only the JSON escapes that can make a one-line Markdown plan
+    # structurally invalid.  ``unicode_escape`` is deliberately not used here:
+    # it can turn a valid ``\\u00a3`` escape into a lone 0xa3 byte during its
+    # raw-unicode repair round trip, raising UnicodeDecodeError and aborting an
+    # otherwise valid execute phase.
     if "\\n" in plan_text or "\\r" in plan_text:
-        decoded = plan_text.encode("utf-8").decode("unicode_escape")
-        # unicode_escape may turn actual Unicode into latin-1 approximations in
-        # some Python versions; re-encode/decode via raw_unicode_escape to keep
-        # the original code points. Fall back to the decoded string if that fails.
-        try:
-            decoded = decoded.encode("raw_unicode_escape").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            pass
-        decoded = decoded.replace("\r\n", "\n").replace("\r", "\n")
+        decoded_parts: list[str] = []
+        index = 0
+        while index < len(plan_text):
+            char = plan_text[index]
+            if char != "\\" or index + 1 >= len(plan_text):
+                decoded_parts.append(char)
+                index += 1
+                continue
+
+            escape = plan_text[index + 1]
+            if escape == "n":
+                decoded_parts.append("\n")
+                index += 2
+                continue
+            if escape == "r":
+                if index + 3 < len(plan_text) and plan_text[index + 2 : index + 4] == "\\n":
+                    decoded_parts.append("\n")
+                    index += 4
+                else:
+                    decoded_parts.append("\n")
+                    index += 2
+                continue
+            if escape == "u" and index + 5 < len(plan_text):
+                digits = plan_text[index + 2 : index + 6]
+                try:
+                    codepoint = int(digits, 16)
+                except ValueError:
+                    codepoint = -1
+                # Decode valid scalar values, leaving malformed and surrogate
+                # escapes literal rather than constructing invalid text.
+                if codepoint >= 0 and not 0xD800 <= codepoint <= 0xDFFF:
+                    decoded_parts.append(chr(codepoint))
+                    index += 6
+                    continue
+
+            # Do not reinterpret unrelated escapes (for example ``\\t`` or
+            # ``\\\\`` in a code sample).  They are not required to restore
+            # Markdown structure and decoding them changes user content.
+            decoded_parts.append(char)
+            index += 1
+
+        decoded = "".join(decoded_parts)
         if "\n" in decoded:
             return decoded
     return plan_text

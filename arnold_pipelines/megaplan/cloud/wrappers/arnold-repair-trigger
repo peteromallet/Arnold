@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     queue_dir = repair_requests.validate_queue_root(args.queue_root)
     lock_dir = Path(args.lock_dir) if args.lock_dir else queue_dir / "repair-trigger.lock"
     repair_bin = Path(args.repair_bin)
+    meta_repair_bin = Path(args.meta_repair_bin)
     enabled = feature_flags.repair_trigger_enabled()
     authorized = feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1)
 
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
             queue_dir=queue_dir,
             repair_data_dir=Path(args.repair_data_dir) if args.repair_data_dir else None,
             repair_bin=repair_bin,
+            meta_repair_bin=meta_repair_bin,
             enabled=enabled,
             authorized=False,
         )
@@ -130,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             queue_dir=queue_dir,
             repair_data_dir=Path(args.repair_data_dir) if args.repair_data_dir else None,
             repair_bin=repair_bin,
+            meta_repair_bin=meta_repair_bin,
             enabled=enabled,
             authorized=True,
         )
@@ -143,6 +146,7 @@ def _scan_under_lock(
     queue_dir: Path,
     repair_data_dir: Path | None,
     repair_bin: Path,
+    meta_repair_bin: Path,
     enabled: bool,
     authorized: bool,
 ) -> int:
@@ -282,10 +286,21 @@ def _scan_under_lock(
         )
         return 0
 
-    return _dispatch(queue_dir=queue_dir, repair_bin=repair_bin, request=dispatch_candidate)
+    return _dispatch(
+        queue_dir=queue_dir,
+        repair_bin=repair_bin,
+        meta_repair_bin=meta_repair_bin,
+        request=dispatch_candidate,
+    )
 
 
-def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) -> int:
+def _dispatch(
+    *,
+    queue_dir: Path,
+    repair_bin: Path,
+    meta_repair_bin: Path,
+    request: Mapping[str, Any],
+) -> int:
     target = request.get("_resolved_target") if isinstance(request.get("_resolved_target"), Mapping) else {}
     request_id = str(request.get("request_id") or "")
     session = str(target.get("target_session") or request.get("session") or "")
@@ -299,6 +314,10 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
         if isinstance(request.get("blocker_fingerprint"), Mapping)
         else {}
     )
+    dispatch_intent = str(request.get("dispatch_intent") or "")
+    l2_dispatch = dispatch_intent == "broken_superfixer"
+    selected_bin = meta_repair_bin if l2_dispatch else repair_bin
+    mutation_path = feature_flags.MUTATION_PATH_L2 if l2_dispatch else feature_flags.MUTATION_PATH_L1
 
     if not session or not workspace or not remote_spec:
         decision = repair_requests.write_decision(
@@ -309,23 +328,35 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
         )
         _emit({"event": "repair_trigger_decision", "request_id": request_id, "decision": decision})
         return 0
-    if not repair_bin.exists():
+    if not selected_bin.exists():
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason=("meta-repair executable unavailable" if l2_dispatch else "repair executable unavailable"),
+        )
         _emit(
             {
                 "event": "repair_trigger",
                 "status": "repair_unavailable",
                 "request_id": request_id,
-                "repair_bin": str(repair_bin),
+                "repair_bin": str(selected_bin),
+                "custody_retry": retry,
             }
         )
         return 0
     if not blocker_id:
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="canonical blocker_id missing",
+        )
         _emit(
             {
                 "event": "repair_trigger_claim",
                 "status": "missing_blocker_id",
                 "request_id": request_id,
                 "session": session,
+                "custody_retry": retry,
             }
         )
         return 0
@@ -333,32 +364,51 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
     # Defense in depth at the claim/subprocess effect boundary.  Callers may
     # classify and observe freely, but must not create a claim or child process
     # unless the shared master-plus-L1 predicate still authorizes mutation.
-    if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+    if not feature_flags.mutation_authorized(mutation_path):
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason=("L2 mutation authorization changed before claim" if l2_dispatch else "L1 mutation authorization changed before claim"),
+        )
         _emit(
             {
                 "event": "repair_trigger",
                 "status": "blocked",
                 "request_id": request_id,
                 "authorized": False,
-                "reason": "L1 mutation authorization changed before claim",
+                "reason": ("L2 mutation authorization changed before claim" if l2_dispatch else "L1 mutation authorization changed before claim"),
+                "custody_retry": retry,
             }
         )
         return 0
 
+    repair_layer = "l2" if l2_dispatch else "l1"
+    child_command = (
+        f"{selected_bin} {session} l1_custody_failure"
+        if l2_dispatch
+        else f"{selected_bin} {session} {workspace} {remote_spec}"
+    )
     claim = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id=blocker_id,
         request_id=request_id,
-        actor="arnold-repair-trigger",
+        actor="arnold-repair-trigger-l2" if l2_dispatch else "arnold-repair-trigger",
         session=session,
         blocker_fingerprint=blocker_fingerprint,
         pid=os.getpid(),
-        command=f"{repair_bin} {session} {workspace} {remote_spec}",
+        command=child_command,
         cwd=workspace,
         is_pid_live=_pid_is_live,
         extra={"workspace": workspace, "remote_spec": remote_spec},
     )
     if not claim.claimed:
+        retry = None
+        if claim.status == "stale":
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="active claim evidence was stale",
+            )
         _emit(
             {
                 "event": "repair_trigger_claim",
@@ -366,6 +416,7 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
                 "request_id": request_id,
                 "blocker_id": blocker_id,
                 "evidence": claim.evidence or {},
+                "custody_retry": retry,
             }
         )
         return 0
@@ -377,8 +428,13 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
     env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(queue_dir)
     env["ARNOLD_REPAIR_TRIGGER_DISPATCHED"] = "1"
     try:
+        child_argv = (
+            [str(selected_bin), session, "l1_custody_failure"]
+            if l2_dispatch
+            else [str(selected_bin), session, workspace, remote_spec]
+        )
         proc = subprocess.Popen(
-            [str(repair_bin), session, workspace, remote_spec],
+            child_argv,
             cwd=workspace if Path(workspace).exists() else None,
             env=env,
             start_new_session=True,
@@ -392,12 +448,30 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
             owner=claim.owner,
             expected_pid=os.getpid(),
         )
+        repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="repair subprocess launch failed",
+        )
         raise
+    attempt = repair_requests.write_dispatch_attempt(
+        queue_dir,
+        request_id=request_id,
+        blocker_id=blocker_id,
+        actor="arnold-repair-trigger-l2" if l2_dispatch else "arnold-repair-trigger",
+        repair_layer=repair_layer,
+        command=child_command,
+        child_pid=proc.pid,
+    )
     decision = repair_requests.write_decision(
         queue_dir,
         request_id=request_id,
         decision="dispatched",
-        reason="dispatched existing bounded repair loop",
+        reason=(
+            "dispatched existing bounded meta-repair loop"
+            if l2_dispatch
+            else "dispatched existing bounded repair loop"
+        ),
         related_request_id=str(proc.pid),
     )
     _emit(
@@ -409,6 +483,8 @@ def _dispatch(*, queue_dir: Path, repair_bin: Path, request: Mapping[str, Any]) 
             "session": session,
             "workspace": workspace,
             "remote_spec": remote_spec,
+            "repair_layer": repair_layer,
+            "attempt": attempt,
             "decision": decision,
         }
     )
@@ -450,6 +526,26 @@ def _classify_request(
     target_plan = dict(target.get("plan_state") or {}) if isinstance(target.get("plan_state"), Mapping) else {}
     resume_cursor = target_plan.get("resume_cursor") if isinstance(target_plan.get("resume_cursor"), Mapping) else {}
     signature = record.get("problem_signature") if isinstance(record.get("problem_signature"), Mapping) else {}
+    request_target = record.get("target") if isinstance(record.get("target"), Mapping) else {}
+    # ``milestone_or_plan`` is a compatibility field and human-gate requests
+    # historically store the step name there.  Prefer the explicit target plan
+    # identity whenever it is present so a genuine gate is not terminalized as
+    # stale merely because its step name differs from the current plan name.
+    requested_plan_name = str(
+        request_target.get("plan_name") or signature.get("milestone_or_plan") or ""
+    )
+    resolved_plan_name = str(current_refs.get("current_plan_name") or "")
+    if requested_plan_name and resolved_plan_name and requested_plan_name != resolved_plan_name:
+        return {
+            "decision": "stale",
+            "reason": (
+                "repair request target advanced from "
+                f"{requested_plan_name} to {resolved_plan_name}"
+            ),
+            "dispatch_decision": "terminal",
+            "dispatch_intent": "queue_only",
+            "custody_bucket": "",
+        }
     current_plan_name = str(
         current_refs.get("current_plan_name")
         or current_refs.get("marker_plan_name")
@@ -463,7 +559,11 @@ def _classify_request(
     normalized_target = dict(target)
     normalized_target["current_refs"] = current_refs
     normalized_target["plan_state"] = target_plan
-    retry_strategy = str(resume_cursor.get("retry_strategy") or "")
+    retry_strategy = str(
+        resume_cursor.get("retry_strategy")
+        or request_target.get("retry_strategy")
+        or ""
+    )
     if not retry_strategy and str(signature.get("failure_kind") or "") == "blocked_recovery_not_resolved":
         retry_strategy = "manual_review"
     if normalized_target.get("authoritative_source") == "chain_state":
@@ -534,8 +634,20 @@ def _classify_request(
         lock_evidence=lock_evidence,
         custody_projection=projection,
     )
+    deterministic_l3 = (
+        record.get("source") == "six_hour_auditor"
+        and isinstance(request_target.get("deterministic_superfixer_evidence"), Mapping)
+        and request_target["deterministic_superfixer_evidence"].get("actionable") is True
+    )
+    l2_actionable = decision.decision == "broken_superfixer" and deterministic_l3 and bool(
+        projection.get("blocker_id")
+    )
     return {
-        "decision": "actionable" if decision.decision == "dispatch_l1_repair" else "non_actionable",
+        "decision": (
+            "actionable"
+            if decision.decision == "dispatch_l1_repair" or l2_actionable
+            else "non_actionable"
+        ),
         "reason": "; ".join(decision.rationale) or "shared custody classifier did not allow dispatch",
         "dispatch_decision": decision.decision,
         "dispatch_intent": decision.dispatch_intent,
@@ -636,6 +748,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.getenv(
             "ARNOLD_REPAIR_TRIGGER_REPAIR_BIN",
             str(Path(__file__).resolve().with_name("arnold-repair-loop")),
+        ),
+    )
+    parser.add_argument(
+        "--meta-repair-bin",
+        default=os.getenv(
+            "ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN",
+            str(Path(__file__).resolve().with_name("arnold-meta-repair-loop")),
         ),
     )
     parser.add_argument("--lock-dir", default=os.getenv("ARNOLD_REPAIR_TRIGGER_LOCK_DIR", ""))

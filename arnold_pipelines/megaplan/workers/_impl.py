@@ -28,6 +28,8 @@ from arnold_pipelines.megaplan.fallback_chains import (
     configured_fallback_chain_for_phase,
     decode_phase_model_value,
     fallback_observability_fields,
+    is_same_family_operational_classification,
+    provider_family,
 )
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
 from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
@@ -539,6 +541,12 @@ class CodexProgressLiveness:
     """
 
     output_path: Path
+    # Review is read-only and normally short.  Unlike execute, a review must
+    # not let a spinning Codex/node process masquerade as useful work forever:
+    # its JSON trace/rollout/output file are the authoritative evidence that
+    # the model is actually advancing.  Execute keeps CPU sampling because a
+    # legitimate long-running tool can be stdout-silent for minutes.
+    include_cpu_signal: bool = True
 
     session_id: str | None = None
     _stdout_buffer: str = ""
@@ -608,11 +616,13 @@ class CodexProgressLiveness:
         readable = False
         progressing = False
 
-        for current, attr_name in (
+        signals: list[tuple[Any | None, str]] = [
             (_path_progress_signal(self.output_path), "_last_output_signal"),
             (self._sample_rollout_signal(), "_last_rollout_signal"),
-            (self._sample_cpu_signal(), "_last_cpu_signal"),
-        ):
+        ]
+        if self.include_cpu_signal:
+            signals.append((self._sample_cpu_signal(), "_last_cpu_signal"))
+        for current, attr_name in signals:
             signal_readable, signal_progressing = self._observe(current, attr_name)
             readable = readable or signal_readable
             progressing = progressing or signal_progressing
@@ -676,6 +686,9 @@ class WorkerResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    # ``unpriced`` means usage was observed but no canonical model rate exists;
+    # cost_usd remains 0.0 for backward-compatible numeric aggregation.
+    cost_pricing: str | None = None
     # Populated by the Shannon worker so the receipt records the rolled
     # session plan (kind, session_id, voice, pre-turn kinds + pre_sleep_s).
     # ``None`` for non-Shannon workers.
@@ -711,6 +724,7 @@ class WorkerResult:
             prompt_tokens=agent_result.prompt_tokens,
             completion_tokens=agent_result.completion_tokens,
             total_tokens=agent_result.total_tokens,
+            cost_pricing=metadata.get("cost_pricing"),
             shannon_plan=agent_result.shannon_plan,
             rate_limit=rate_limit,
             worker_channel=metadata.get("worker_channel"),
@@ -734,6 +748,7 @@ class WorkerResult:
                 "worker_channel": self.worker_channel,
                 "auth_channel": self.auth_channel,
                 "auth_metadata": self.auth_metadata,
+                "cost_pricing": self.cost_pricing,
                 "configured_specs": list(self.configured_specs),
                 "attempt_index": self.attempt_index,
                 "attempted_specs": list(self.attempted_specs),
@@ -2107,6 +2122,7 @@ def _read_codex_default_model() -> str | None:
 def _codex_step_cost(
     session_id: str | None,
     session_entry: dict[str, Any],
+    requested_model: str | None = None,
 ) -> tuple[float, int, int, str | None, dict[str, Any] | None]:
     """Compute incremental cost (USD) and token deltas for one codex step.
 
@@ -2115,19 +2131,20 @@ def _codex_step_cost(
     stored on ``session_entry`` (mutated in place to record the new totals).
 
     Returns ``(cost_usd, prompt_tokens_delta, completion_tokens_delta,
-    model, current_total_usage)``. Any failure to read the JSONL or compute
-    the delta returns zeros and a ``None`` usage blob — never raises.
+    model, current_total_usage)``. Unknown model rates produce numeric 0.0 for
+    existing aggregation code; the caller records the explicit ``unpriced``
+    status on the worker result. Missing usage never raises.
     """
     from arnold_pipelines.megaplan.pricing.codex import cost_from_codex_usage_dict
 
     if not session_id:
-        return 0.0, 0, 0, None, None
+        return 0.0, 0, 0, requested_model, None
     path = _codex_session_jsonl_path(session_id)
     if path is None:
-        return 0.0, 0, 0, None, None
+        return 0.0, 0, 0, requested_model, None
     current = _read_codex_total_token_usage(path)
     if current is None:
-        return 0.0, 0, 0, None, None
+        return 0.0, 0, 0, requested_model, None
     prev = session_entry.get("last_total_tokens") if isinstance(session_entry, dict) else None
     if not isinstance(prev, dict):
         prev = {}
@@ -2146,8 +2163,9 @@ def _codex_step_cost(
         "output_tokens": _delta("output_tokens"),
         "reasoning_output_tokens": _delta("reasoning_output_tokens"),
     }
-    model = _read_codex_default_model()
-    cost = cost_from_codex_usage_dict(delta_usage, model)
+    model = requested_model or _read_codex_default_model()
+    priced_cost = cost_from_codex_usage_dict(delta_usage, model)
+    cost = priced_cost if priced_cost is not None else 0.0
     prompt_tokens = delta_usage["input_tokens"]  # already includes cached
     completion_tokens = (
         delta_usage["output_tokens"] + delta_usage["reasoning_output_tokens"]
@@ -2161,7 +2179,8 @@ def _emit_codex_execute_llm_start(
     model: str | None,
     prompt: str,
     json_trace: bool,
-) -> None:
+) -> str:
+    call_transaction_id = uuid.uuid4().hex
     try:
         from arnold_pipelines.megaplan.observability.events import EventKind, emit
 
@@ -2180,10 +2199,12 @@ def _emit_codex_execute_llm_start(
                 "prompt_hash": prompt_hash,
                 "streaming": bool(json_trace),
                 "request_id": None,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
         pass
+    return call_transaction_id
 
 
 def _emit_codex_execute_llm_end(
@@ -2193,6 +2214,7 @@ def _emit_codex_execute_llm_end(
     model: str | None,
     tokens_in: int,
     tokens_out: int,
+    call_transaction_id: str | None = None,
 ) -> None:
     try:
         from arnold_pipelines.megaplan.observability.events import EventKind, emit
@@ -2206,6 +2228,7 @@ def _emit_codex_execute_llm_end(
                 "tokens_out": tokens_out,
                 "request_id": request_id,
                 "model": model,
+                "call_transaction_id": call_transaction_id,
             },
         )
     except Exception:
@@ -3005,14 +3028,24 @@ def update_session_state(
 
 
 _VALID_CLAUDE_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
-_VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high")
-_CODEX_EFFORT_ALIASES = {"xhigh": "high", "max": "high"}
+_VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
 
 
 def _normalize_codex_effort(effort: str | None) -> str | None:
+    """Preserve an explicitly requested Codex effort without silent clamping."""
+
+    return effort
+
+
+def _codex_effort_flag(effort: str | None) -> list[str]:
+    """Build the exact Codex CLI effort flag, preserving xhigh/max."""
+
+    effort = _normalize_codex_effort(effort)
     if effort is None:
-        return None
-    return _CODEX_EFFORT_ALIASES.get(effort, effort)
+        return []
+    if effort not in _VALID_CODEX_EFFORTS:
+        raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
+    return ["-c", f"model_reasoning_effort={effort}"]
 
 
 def _codex_model_flag(model: str | None) -> list[str]:
@@ -3235,8 +3268,9 @@ def _run_codex_step_uncapped(
                 "sandbox_mode='read-only'",
             ])
         command.extend(_codex_model_flag(model))
-        if effort is not None:
-            command.extend(["-c", f"model_reasoning_effort={effort}"])
+        command.extend(_codex_effort_flag(effort))
+        if json_trace:
+            command.append("--json")
         if free_text:
             command.append("-")
         else:
@@ -3250,8 +3284,7 @@ def _run_codex_step_uncapped(
         if _trusted_container():
             command.append("--dangerously-bypass-approvals-and-sandbox")
         command.extend(_codex_model_flag(model))
-        if effort is not None:
-            command.extend(["-c", f"model_reasoning_effort={effort}"])
+        command.extend(_codex_effort_flag(effort))
         command.extend(_codex_exec_mode_flags(step))
         # Cap tool-result output per message at 50k chars (defense-in-depth;
         # codex interprets this as tokens — 50k tokens ≈ 200k chars, generous
@@ -3299,8 +3332,7 @@ def _run_codex_step_uncapped(
             str(output_path),
         ])
         command.extend(_codex_model_flag(model))
-        if effort is not None:
-            command.extend(["-c", f"model_reasoning_effort={effort}"])
+        command.extend(_codex_effort_flag(effort))
         if not persistent:
             command.append("--ephemeral")
         command.extend(_codex_exec_mode_flags(step))
@@ -3331,14 +3363,25 @@ def _run_codex_step_uncapped(
             codex_idle_s = float(os.getenv("MEGAPLAN_CODEX_IDLE_TIMEOUT_S", "600"))
         except (TypeError, ValueError):
             codex_idle_s = 600.0
+        execute_call_transaction_id: str | None = None
         if step == "execute":
-            _emit_codex_execute_llm_start(
+            execute_call_transaction_id = _emit_codex_execute_llm_start(
                 plan_dir,
                 model=model,
                 prompt=prompt,
                 json_trace=json_trace,
             )
-        liveness = CodexProgressLiveness(output_path=output_path)
+        # Non-execute phases have no long mutating tool turn to protect.  They
+        # must show a structured Codex event, rollout token, or output artifact
+        # to extend their idle window; a live-but-silent node process is a
+        # transport/CLI wedge, not progress.  Execute deliberately retains
+        # CPU-based liveness because pytest/build subprocesses can be
+        # legitimately quiet for minutes.
+        strict_structured_liveness = step not in _EXECUTE_STEPS
+        liveness = CodexProgressLiveness(
+            output_path=output_path,
+            include_cpu_signal=not strict_structured_liveness,
+        )
         result = run_command(
             command,
             cwd=work_dir,
@@ -3350,7 +3393,13 @@ def _run_codex_step_uncapped(
             pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
             idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
             progress_liveness_factory=liveness.bind_process,
-            progress_liveness_grace_timeout=codex_idle_s if codex_idle_s > 0 else None,
+            # Structured non-execute liveness has no grace: a process that is
+            # merely alive but has no token/event/artifact evidence must
+            # surface as a retryable worker_stall at the configured bounded
+            # idle timeout.
+            progress_liveness_grace_timeout=(
+                0.0 if strict_structured_liveness else (codex_idle_s if codex_idle_s > 0 else None)
+            ),
         )
         if not read_only:
             _verify_engine_after_mutating_worker(step, state, root, execution_env)
@@ -3451,7 +3500,7 @@ def _run_codex_step_uncapped(
                 model=model,
                 read_only=read_only,
             )
-        if error.code == "worker_timeout":
+        if error.code in {"worker_timeout", "worker_stall"}:
             try:
                 capture_outcome = capture_step_output(
                     StepInvocation(
@@ -3513,9 +3562,13 @@ def _run_codex_step_uncapped(
                     exit_code=error.exit_code,
                 ) from error
             raise CliError(
-                "worker_timeout",
+                error.code,
                 (
-                    f"Codex {step} step timed out after {timeout_seconds}s before producing structured output. "
+                    (
+                        f"Codex {step} worker became silent before producing structured output. "
+                        if error.code == "worker_stall"
+                        else f"Codex {step} step timed out after {timeout_seconds}s before producing structured output. "
+                    )
                     + _codex_retry_guidance(step)
                 ),
                 extra=error.extra,
@@ -3743,9 +3796,18 @@ def _run_codex_step_uncapped(
         if isinstance(candidate_entry, dict) and candidate_entry.get("id") == cost_session_id:
             session_entry = candidate_entry
     cost_usd, prompt_tokens, completion_tokens, model_actual, current_totals = _codex_step_cost(
-        cost_session_id, session_entry
+        cost_session_id, session_entry, model
     )
     observed_model = model_actual or model
+    from arnold_pipelines.megaplan.pricing.codex import is_model_priced
+
+    cost_pricing = (
+        "unavailable"
+        if current_totals is None
+        else "priced"
+        if is_model_priced(observed_model)
+        else "unpriced"
+    )
     if step == "execute":
         _emit_codex_execute_llm_end(
             plan_dir,
@@ -3753,8 +3815,9 @@ def _run_codex_step_uncapped(
             model=observed_model,
             tokens_in=prompt_tokens,
             tokens_out=completion_tokens,
+            call_transaction_id=execute_call_transaction_id,
         )
-        if current_totals is not None:
+        if current_totals is not None and cost_pricing == "priced":
             _emit_codex_execute_cost_recorded(
                 plan_dir,
                 request_id=cost_session_id,
@@ -3789,6 +3852,12 @@ def _run_codex_step_uncapped(
             f"{cost_session_id}; step cost will be recorded as $0.00",
             flush=True,
         )
+    elif cost_pricing == "unpriced":
+        print(
+            f"[megaplan] No canonical pricing for Codex model {observed_model!r}; "
+            "step cost is explicitly unpriced (numeric compatibility value $0.00)",
+            flush=True,
+        )
     return WorkerResult(
         payload=payload,
         raw_output=raw,
@@ -3801,6 +3870,7 @@ def _run_codex_step_uncapped(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
+        cost_pricing=cost_pricing,
         worker_channel=_CODEX_WORKER_CHANNEL,
     )
 
@@ -3823,6 +3893,10 @@ def run_codex_step(
     free_text: bool = False,
     repair_attempted: bool = False,
 ) -> WorkerResult:
+    # Non-execute supervision relies on stream-json to observe rollout/token
+    # cadence.  Enforce it here as well as at dispatcher call sites so direct
+    # handler callers cannot silently disable the watchdog's evidence channel.
+    json_trace = json_trace or step not in _EXECUTE_STEPS
     return _run_codex_step_uncapped(
         step,
         state,
@@ -3908,8 +3982,7 @@ def run_codex_prep_step(
             "sandbox_mode='read-only'",
         ])
     command.extend(_codex_model_flag(model))
-    if effort is not None:
-        command.extend(["-c", f"model_reasoning_effort={effort}"])
+    command.extend(_codex_effort_flag(effort))
     command.extend(["--output-schema", str(schema_file), "-"])
 
     result = run_command(
@@ -4287,7 +4360,11 @@ def _codex_to_agent_result(
                 root=root,
                 persistent=(mode == "persistent"),
                 fresh=eff_fresh,
-                json_trace=(step == "execute"),
+                # Every non-execute phase needs stream-json too: it supplies
+                # the token/tool evidence used to distinguish a live phase
+                # from a silent transport wedge.  The final schema payload
+                # still comes from the output file.
+                json_trace=True,
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
@@ -4304,6 +4381,7 @@ def _codex_to_agent_result(
                 or error.code
                 not in {
                     "worker_timeout",
+                    "worker_stall",
                     "connection_error",
                     "codex_pre_first_byte_stall",
                     "worker_error",
@@ -4494,7 +4572,14 @@ def _advance_configured_spec_fallback(
     failure_class: str | None,
     *,
     mode: str,
+    step: str,
+    read_only: bool,
 ) -> tuple[AgentMode, dict[str, Any]] | None:
+    # Never redispatch after a worker may have mutated the checkout. This is
+    # stricter than the provider/model relationship and keeps mid-write
+    # failures fail-closed for both explicit and profile-provided chains.
+    if not read_only or step in _EXECUTE_STEPS:
+        return None
     if failure_class not in _CONFIGURED_SPEC_FALLBACK_CLASSES:
         return None
     configured_specs = tuple(fallback_metadata["configured_specs"])
@@ -4503,6 +4588,10 @@ def _advance_configured_spec_fallback(
     if next_index >= len(configured_specs):
         return None
     next_spec = configured_specs[next_index]
+    current_spec = configured_specs[attempt_index]
+    if provider_family(next_spec) == provider_family(current_spec):
+        if not is_same_family_operational_classification(failure_class):  # type: ignore[arg-type]
+            return None
     next_mode = _agent_mode_from_configured_spec(
         next_spec,
         mode=mode,
@@ -4734,7 +4823,7 @@ def run_step_with_worker(
                                 root=root,
                                 persistent=(mode == "persistent"),
                                 fresh=effective_refreshed,
-                                json_trace=(step == "execute"),
+                                json_trace=True,
                                 prompt_override=prompt_override,
                                 prompt_kwargs=prompt_kwargs,
                                 effort=effort,
@@ -4751,6 +4840,7 @@ def run_step_with_worker(
                                 or error.code
                                 not in {
                                     "worker_timeout",
+                                    "worker_stall",
                                     "connection_error",
                                     "codex_pre_first_byte_stall",
                                     "worker_error",
@@ -4845,6 +4935,8 @@ def run_step_with_worker(
                 fallback_metadata,
                 _configured_spec_worker_failure_class(worker),
                 mode=mode,
+                step=step,
+                read_only=read_only,
             )
             if fallback_attempt is not None:
                 next_mode, fallback_metadata = fallback_attempt
@@ -4893,6 +4985,8 @@ def run_step_with_worker(
                 fallback_metadata,
                 _configured_spec_failure_class(error),
                 mode=mode,
+                step=step,
+                read_only=read_only,
             )
             if fallback_attempt is not None:
                 next_mode, fallback_metadata = fallback_attempt

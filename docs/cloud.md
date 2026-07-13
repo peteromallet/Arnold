@@ -136,8 +136,8 @@ The JSON payload is filtered to the same sessions and includes
 
 | Field | Required | Default | Meaning |
 |---|---|---:|---|
-| `codex.model` | no | `gpt-5.4` | Written into `/root/.codex/config.toml` on boot. |
-| `codex.reasoning` | no | `high` | Reasoning level written into `/root/.codex/config.toml` on boot. |
+| `codex.model` | no | `gpt-5.6-sol` | Written into `/root/.codex/config.toml` on boot. |
+| `codex.reasoning` | no | `medium` | Reasoning level (`minimal` through `max`) written into `/root/.codex/config.toml` on boot. |
 | `megaplan.codex_auth` | no | `chatgpt` | `chatgpt` forces the ChatGPT-subscription OAuth (`preferred_auth_method=chatgpt`; codex uses `chatgpt.com/backend-api/codex` even when `OPENAI_API_KEY` is set) and seeds your local `~/.codex`/`~/.hermes` OAuth onto the volume. `apikey` opts into standard API-key billing. See the "Codex auth" section in the cloud skill. |
 
 > **Codex auth gotcha:** without `codex_auth=chatgpt`, a stray `OPENAI_API_KEY` makes the codex CLI use API-key mode → `api.openai.com` billing → `ERROR: Quota exceeded. Check your plan and billing details.` even with a working ChatGPT subscription.
@@ -257,6 +257,13 @@ The command prints the structured payload on stdout and the same human-readable 
 ### `python -m arnold_pipelines.megaplan cloud status`
 
 Without `--chain`, `cloud status` still runs remote `python -m arnold_pipelines.megaplan status` and prints that JSON payload unchanged.
+
+Status payloads keep the durable lifecycle value in `plan_state` (or the
+legacy-compatible `state`) and expose presentation separately through
+`active_phase`, `execution_state`, and `display_state`. In particular, a live
+execute step is displayed as `executing` while its correct durable
+`plan_state` remains `finalized`. Progress remains a projection: 30% for work
+through finalize plus 70% apportioned by completed finalized-task complexity.
 
 ### `python -m arnold_pipelines.megaplan cloud supervise --chain`
 

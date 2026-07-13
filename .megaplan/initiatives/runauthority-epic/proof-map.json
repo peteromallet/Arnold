@@ -1,0 +1,11 @@
+{
+  "m1-foundation": [
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+  ],
+  "m2-enforcement": [
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+  ],
+  "m3-consumers": [
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+  ]
+}

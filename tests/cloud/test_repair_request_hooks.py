@@ -102,6 +102,53 @@ def _read_decisions(queue_root: Path) -> list[dict]:
 class TestLifecycleFailureEnqueue:
     """Tests for the _enqueue_lifecycle_failure_request hook in auto.py."""
 
+    def test_managed_lifecycle_route_uses_dispatcher_queue_and_chain_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _enqueue_lifecycle_failure_request,
+            _lifecycle_repair_request_route,
+        )
+
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True)
+        queue_root = tmp_path / "managed" / ".megaplan" / "repair-queue"
+        marker_dir = tmp_path / "managed" / ".megaplan" / "cloud-sessions"
+        monkeypatch.setenv("ARNOLD_REPAIR_QUEUE_ROOT", str(queue_root))
+        monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(marker_dir))
+        monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "canonical-chain-session")
+        monkeypatch.setenv("ARNOLD_REPAIR_RUN_KIND", "chain")
+
+        route = _lifecycle_repair_request_route(plan_dir)
+
+        assert route == (
+            queue_root,
+            marker_dir,
+            "canonical-chain-session",
+            "chain",
+        )
+
+        _enqueue_lifecycle_failure_request(
+            plan_dir=plan_dir,
+            queue_root=route[0],
+            marker_dir=route[1],
+            session=route[2],
+            run_kind=route[3],
+            kind="phase_failed",
+            message="review finalization failed",
+            current_state="executed",
+            phase="review",
+            suggested_action="retry review",
+            metadata={"blocked_task_id": "T19"},
+        )
+        request = _read_requests(queue_root)[0]
+        assert request["session"] == "canonical-chain-session"
+        assert request["run_kind"] == "chain"
+        assert request["marker_dir"] == str(marker_dir)
+        assert request["problem_signature"]["failure_kind"] == "phase_failed"
+        assert request["problem_signature"]["blocked_task_id"] == "T19"
+
     def test_lifecycle_marker_content(self, tmp_path: Path) -> None:
         """Enqueued request carries correct source, signature fields, and
         redacted hint hash — no raw failure text stored."""

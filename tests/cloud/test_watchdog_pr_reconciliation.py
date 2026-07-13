@@ -30,6 +30,15 @@ def _run_watchdog_shell(
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
+    for name in (
+        "DISCORD_BOT_TOKEN",
+        "DISCORD_DM_USER_ID",
+        "DISCORD_WEBHOOK_URL",
+        "REPORT_WEBHOOK",
+        "SLACK_WEBHOOK_URL",
+    ):
+        env.pop(name, None)
+    env["DISCORD_DM_BIN"] = "/bin/false"
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
@@ -408,3 +417,46 @@ tmux() { printf 'tmux %s\n' "$*" >> "$CALL_LOG"; return 0; }
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #44 state=open evidence=queue_disabled\t" in report
     assert not list((tmp_path / "repair-queue" / "requests").glob("*.json"))
+
+
+def test_watchdog_pr_reconciliation_preserves_manual_clean_review_gate(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "manual" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text(
+        "merge_policy: auto\n"
+        "review_policy:\n"
+        "  clean_milestone_pr: manual\n"
+        "milestones: []\n",
+        encoding="utf-8",
+    )
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "manual.json"
+    _write_chain_state(
+        chain_path,
+        {"last_state": "awaiting_pr_merge", "pr_number": 45, "pr_state": "open"},
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("reconcile_awaiting_pr_merge"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            (
+                f"reconcile_awaiting_pr_merge demo-session "
+                f"{str(workspace)!r} {str(spec_path)!r}"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("review_policy\t")
+    assert "clean_milestone_pr=manual" in result.stdout
+    assert json.loads(chain_path.read_text(encoding="utf-8"))["pr_state"] == "open"

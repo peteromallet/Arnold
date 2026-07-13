@@ -60,6 +60,416 @@ S6_OVERRIDE_ADOPT_EXECUTION_ROW_ID = "s6.override.adopt_execution.1"
 S6_OVERRIDE_SUSPENSION_ROW_ID = "s6.override.suspension.1"
 S6_OVERRIDE_HUMAN_GATE_ROW_ID = "s6.override.human_gate.1"
 
+# ── Required-field profiles ────────────────────────────────────────────────
+# Each frozenset enumerates the BoundaryContract top-level fields *and*
+# detail keys that must be populated for a contract of that shape.
+# Field names prefixed with ``details.`` refer to keys nested inside the
+# ``details`` mapping.  Profiles are declarative: they do not route or
+# dispatch.
+
+REQUIRED_FIELDS_ARTIFACT_PROMOTION: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "required_artifacts",
+        "expected_state_delta",
+        "phase_result_required",
+        "receipt_required",
+        "details.effect_id",
+        "details.artifact_policy_ref",
+        "details.promotion_kind",
+    }
+)
+
+REQUIRED_FIELDS_LIFECYCLE_TRANSITION: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "phase",
+        "expected_state_delta",
+        "expected_history_entry",
+        "phase_result_required",
+        "receipt_required",
+    }
+)
+
+REQUIRED_FIELDS_REDUCER: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "required_artifacts",
+        "phase_result_required",
+        "receipt_required",
+        "details.reducer_promotion",
+        "details.reducer_ref",
+        "details.fan_in_ref",
+    }
+)
+
+REQUIRED_FIELDS_EXTERNAL_EFFECT: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "required_artifacts",
+        "details.effect_kind",
+        "details.effect_id",
+    }
+)
+
+REQUIRED_FIELDS_EXECUTION_CUSTODY: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "phase",
+        "required_artifacts",
+        "authority_required",
+        "details.custody_scope",
+        "details.fresh_session",
+    }
+)
+
+REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "required_artifacts",
+        "authority_required",
+        "details.approval_scope",
+        "details.suspension_route_id",
+        "details.resume_policy_ref",
+    }
+)
+
+REQUIRED_FIELDS_GRAPH_JOIN_FANOUT: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "details.fan_out_refs",
+        "details.fan_in_ref",
+        "details.join_requirements",
+    }
+)
+
+REQUIRED_FIELDS_EXTERNAL_WITNESS: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "required_artifacts",
+        "details.witness_ref",
+        "details.witness_kind",
+    }
+)
+
+REQUIRED_FIELDS_REVISION_BOUNDARY: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "phase",
+        "required_artifacts",
+        "expected_state_delta",
+        "details.revision_kind",
+        "details.revision_log_ref",
+    }
+)
+
+REQUIRED_FIELDS_VALIDATION_BOUNDARY: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "phase",
+        "required_artifacts",
+        "expected_state_delta",
+        "phase_result_required",
+        "receipt_required",
+        "details.validation_kind",
+    }
+)
+
+REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "required_artifacts",
+        "details.handoff_from",
+        "details.handoff_to",
+        "details.artifact_policy_ref",
+    }
+)
+
+REQUIRED_FIELDS_APPROVAL_BOUNDARY: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "required_artifacts",
+        "authority_required",
+        "details.approval_scope",
+    }
+)
+
+# ── Typed boundary templates ───────────────────────────────────────────────
+# Each template is a canonical BoundaryContract instance that defines the
+# expected shape for a class of boundaries.  Templates are declarative
+# reference instances, not executable route tables or dispatch objects.
+# Downstream code retrieves the template and compares or extends it.
+
+artifact_promotion_template = BoundaryContract(
+    boundary_id="template.artifact_promotion",
+    workflow_id="megaplan-review",
+    row_id="template.artifact_promotion.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={"promotion_stage": "scratch_to_canonical"},
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": "Artifact promotion boundary template: scratch→canonical artifact elevation.",
+        "effect_id": "artifact.promotion",
+        "artifact_policy_ref": "megaplan:artifact-contract",
+        "promotion_kind": "artifact_promotion",
+    },
+)
+
+lifecycle_transition_template = BoundaryContract(
+    boundary_id="template.lifecycle_transition",
+    workflow_id="megaplan-review",
+    row_id="template.lifecycle_transition.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={"current_phase": "<source_phase>"},
+    expected_history_entry="<transition_event>",
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": "Lifecycle transition boundary template: phase→phase durable transition.",
+    },
+)
+
+reducer_template = BoundaryContract(
+    boundary_id="template.reducer",
+    workflow_id="megaplan-review",
+    row_id="template.reducer.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={},
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": "Reducer boundary template: fan-in aggregation into canonical payload.",
+        "reducer_promotion": True,
+        "reducer_ref": "<reducer_ref>",
+        "fan_in_ref": "<fan_in_ref>",
+    },
+)
+
+external_effect_template = BoundaryContract(
+    boundary_id="template.external_effect",
+    workflow_id="megaplan-review",
+    row_id="template.external_effect.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={},
+    phase_result_required=False,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": "External effect boundary template: side-effect emission as declarative contract.",
+        "effect_kind": "external_effect",
+        "effect_id": "<effect_id>",
+    },
+)
+
+execution_custody_template = BoundaryContract(
+    boundary_id="template.execution_custody",
+    workflow_id="megaplan-review",
+    row_id="template.execution_custody.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={},
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": "Execution custody boundary template: custody handoff with fresh session.",
+        "custody_scope": "execute:custody",
+        "fresh_session": True,
+    },
+)
+
+human_approval_waiver_template = BoundaryContract(
+    boundary_id="template.human_approval_waiver",
+    workflow_id="megaplan-review",
+    row_id="template.human_approval_waiver.1",
+    phase=None,
+    required_artifacts=("approval_record.json",),
+    expected_state_delta={},
+    phase_result_required=False,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Human approval/waiver boundary template: deferred human-in-the-loop gate.",
+        "approval_scope": "human:approval",
+        "suspension_route_id": "human:deferred",
+        "resume_policy_ref": "megaplan:suspension",
+    },
+)
+
+graph_join_fanout_template = BoundaryContract(
+    boundary_id="template.graph_join_fanout",
+    workflow_id="megaplan-review",
+    row_id="template.graph_join_fanout.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={},
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=False,
+    details={
+        "description": "Graph join/fan-out boundary template: declared dependency and fan topology.",
+        "fan_out_refs": (),
+        "fan_in_ref": "<fan_in_ref>",
+        "join_requirements": (),
+    },
+)
+
+external_witness_template = BoundaryContract(
+    boundary_id="template.external_witness",
+    workflow_id="megaplan-review",
+    row_id="template.external_witness.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={},
+    phase_result_required=False,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": "External witness boundary template: external attestation evidence.",
+        "witness_ref": "<witness_ref>",
+        "witness_kind": "external_attestation",
+    },
+)
+
+RevisionBoundary = BoundaryContract(
+    boundary_id="template.revision_boundary",
+    workflow_id="megaplan-review",
+    row_id="template.revision_boundary.1",
+    phase=None,
+    required_artifacts=("revised_content.json",),
+    expected_state_delta={"revision_stage": "revised"},
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": "Revision boundary template: rework cycle declarative evidence.",
+        "revision_kind": "revision",
+        "revision_log_ref": "revision_log.md",
+    },
+)
+
+ValidationBoundary = BoundaryContract(
+    boundary_id="template.validation_boundary",
+    workflow_id="megaplan-review",
+    row_id="template.validation_boundary.1",
+    phase=None,
+    required_artifacts=("validation_result.json",),
+    expected_state_delta={"validation_stage": "validated"},
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": "Validation boundary template: validation gate declarative evidence.",
+        "validation_kind": "validation",
+    },
+)
+
+ArtifactHandoffBoundary = BoundaryContract(
+    boundary_id="template.artifact_handoff_boundary",
+    workflow_id="megaplan-review",
+    row_id="template.artifact_handoff_boundary.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={},
+    phase_result_required=False,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": "Artifact handoff boundary template: producer→consumer artifact transfer.",
+        "handoff_from": "<producer_id>",
+        "handoff_to": "<consumer_id>",
+        "artifact_policy_ref": "megaplan:artifact-contract",
+    },
+)
+
+ApprovalBoundary = BoundaryContract(
+    boundary_id="template.approval_boundary",
+    workflow_id="megaplan-review",
+    row_id="template.approval_boundary.1",
+    phase=None,
+    required_artifacts=("approval_record.json",),
+    expected_state_delta={},
+    phase_result_required=False,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Approval boundary template: approval gate with required authority.",
+        "approval_scope": "approval:required",
+    },
+)
+
+# ── Template registry ──────────────────────────────────────────────────────
+
+TYPED_BOUNDARY_TEMPLATES: tuple[BoundaryContract, ...] = (
+    artifact_promotion_template,
+    lifecycle_transition_template,
+    reducer_template,
+    external_effect_template,
+    execution_custody_template,
+    human_approval_waiver_template,
+    graph_join_fanout_template,
+    external_witness_template,
+    RevisionBoundary,
+    ValidationBoundary,
+    ArtifactHandoffBoundary,
+    ApprovalBoundary,
+)
+
+TYPED_BOUNDARY_TEMPLATES_BY_ID: dict[str, BoundaryContract] = {
+    t.boundary_id: t for t in TYPED_BOUNDARY_TEMPLATES
+}
+
+REQUIRED_FIELD_PROFILES: tuple[tuple[str, frozenset[str]], ...] = (
+    ("artifact_promotion", REQUIRED_FIELDS_ARTIFACT_PROMOTION),
+    ("lifecycle_transition", REQUIRED_FIELDS_LIFECYCLE_TRANSITION),
+    ("reducer", REQUIRED_FIELDS_REDUCER),
+    ("external_effect", REQUIRED_FIELDS_EXTERNAL_EFFECT),
+    ("execution_custody", REQUIRED_FIELDS_EXECUTION_CUSTODY),
+    ("human_approval_waiver", REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER),
+    ("graph_join_fanout", REQUIRED_FIELDS_GRAPH_JOIN_FANOUT),
+    ("external_witness", REQUIRED_FIELDS_EXTERNAL_WITNESS),
+    ("revision_boundary", REQUIRED_FIELDS_REVISION_BOUNDARY),
+    ("validation_boundary", REQUIRED_FIELDS_VALIDATION_BOUNDARY),
+    ("artifact_handoff_boundary", REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY),
+    ("approval_boundary", REQUIRED_FIELDS_APPROVAL_BOUNDARY),
+)
+
+REQUIRED_FIELD_PROFILES_BY_KIND: dict[str, frozenset[str]] = {
+    kind: fields for kind, fields in REQUIRED_FIELD_PROFILES
+}
+
 # ── S2 Front-half boundary contracts ───────────────────────────────────────
 
 prep_to_plan = BoundaryContract(
@@ -74,6 +484,37 @@ prep_to_plan = BoundaryContract(
     receipt_required=True,
     authority_required=False,
     details={"description": "Prep → Plan boundary: research and brief complete"},
+)
+
+# ── S1 prep lifecycle rule (profile/template-driven) ─────────────────────
+# This contract expresses the prep rule as a boundary contract instance that
+# explicitly references the lifecycle_transition profile and template so that
+# semantic-health and downstream evaluators can derive expectations from
+# declared metadata rather than hard-coded field values.
+
+prep_lifecycle_rule = BoundaryContract(
+    boundary_id="prep_lifecycle_rule",
+    workflow_id="megaplan-review",
+    row_id=S2_PREP_ROW_ID,
+    phase=BoundaryPhase.PREP,
+    required_artifacts=("research.md", "brief.md"),
+    expected_state_delta={"current_phase": "prep"},
+    expected_history_entry="prep_completed",
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=False,
+    details={
+        "description": (
+            "Prep lifecycle rule: prep→plan transition expressed as a "
+            "profile/template-driven boundary contract instance."
+        ),
+        "profile_kind": "lifecycle_transition",
+        "template_ref": "template.lifecycle_transition",
+        "canonical_outputs": ("research.md", "brief.md"),
+        "state_delta_key": "current_phase",
+        "state_delta_value": "prep",
+        "history_entry": "prep_completed",
+    },
 )
 
 plan_to_critique = BoundaryContract(
@@ -894,13 +1335,215 @@ assert len(BOUNDARY_CONTRACTS_BY_ID) == 35, (
     "(duplicate boundary_id detected)"
 )
 
+# ── Provider lookup helpers ────────────────────────────────────────────────
+# Thin wrappers over the existing registry dicts so callers get consistent
+# optional-lookup semantics without importing internal registry shapes.
+
+
+def get_contract_by_id(contract_id: str) -> BoundaryContract | None:
+    """Look up a :class:`BoundaryContract` by its ``boundary_id``.
+
+    Returns ``None`` when *contract_id* is not a key in
+    :data:`BOUNDARY_CONTRACTS_BY_ID`.  This preserves the existing
+    registry structure while giving callers a named, documented
+    entrance point that does not need to know about the internal dict.
+    """
+    return BOUNDARY_CONTRACTS_BY_ID.get(contract_id)
+
+
+def get_template_by_id(template_id: str) -> BoundaryContract | None:
+    """Look up a typed boundary template by its ``boundary_id``.
+
+    Templates are stored in :data:`TYPED_BOUNDARY_TEMPLATES_BY_ID`
+    and use a ``template.*`` namespace prefix.  Returns ``None``
+    when no match is found.
+    """
+    return TYPED_BOUNDARY_TEMPLATES_BY_ID.get(template_id)
+
+
+def get_profile_by_kind(kind: str) -> frozenset[str] | None:
+    """Look up a required-field profile by its kind label.
+
+    Profiles are stored in :data:`REQUIRED_FIELD_PROFILES_BY_KIND`.
+    Returns ``None`` when *kind* is not a registered profile.
+    """
+    return REQUIRED_FIELD_PROFILES_BY_KIND.get(kind)
+
+
+def list_template_ids() -> tuple[str, ...]:
+    """Return all registered template ``boundary_id`` values."""
+    return tuple(TYPED_BOUNDARY_TEMPLATES_BY_ID.keys())
+
+
+def list_profile_kinds() -> tuple[str, ...]:
+    """Return all registered profile kind labels."""
+    return tuple(REQUIRED_FIELD_PROFILES_BY_KIND.keys())
+
+
+# ── Structural diff helpers ────────────────────────────────────────────────
+
+
+def diff_contracts(
+    a: BoundaryContract,
+    b: BoundaryContract,
+) -> dict[str, object]:
+    """Return a structural diff between two :class:`BoundaryContract` instances.
+
+    The returned dict has these keys:
+
+    * ``matching``: :class:`bool` — ``True`` when the two contracts are
+      structurally identical.
+    * ``field_diffs``: :class:`dict` — maps field name to ``(old_value, new_value)``
+      for every top-level contract field that differs.
+    * ``detail_diffs``: :class:`dict` — maps ``details.<key>`` to
+      ``(old_value, new_value)`` for every nested detail that differs.
+    * ``artifact_diffs``: :class:`dict` — ``{'only_in_a': [...], 'only_in_b': [...]}``
+      when ``required_artifacts`` differ (absent when identical).
+
+    Enum values are converted to their ``.value`` strings for readability.
+    Empty :class:`MappingProxyType` details are compared as ``{}``.
+    """
+    field_diffs: dict[str, tuple[object, object]] = {}
+
+    # ── top-level fields ───────────────────────────────────────────────
+    _comparable = (
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "phase",
+        "expected_state_delta",
+        "expected_history_entry",
+        "phase_result_required",
+        "receipt_required",
+        "authority_required",
+        "contract_version",
+    )
+    for field_name in _comparable:
+        old_val = getattr(a, field_name)
+        new_val = getattr(b, field_name)
+        # Normalize enum → str for comparison and readability
+        if hasattr(old_val, "value"):
+            old_val = old_val.value
+        if hasattr(new_val, "value"):
+            new_val = new_val.value
+        if old_val != new_val:
+            field_diffs[field_name] = (old_val, new_val)
+
+    # ── required_artifacts ─────────────────────────────────────────────
+    artifacts_a = set(a.required_artifacts)
+    artifacts_b = set(b.required_artifacts)
+    artifact_diffs: dict[str, tuple[str, ...]] | None = None
+    if artifacts_a != artifacts_b:
+        artifact_diffs = {
+            "only_in_a": tuple(sorted(artifacts_a - artifacts_b)),
+            "only_in_b": tuple(sorted(artifacts_b - artifacts_a)),
+        }
+
+    # ── details ────────────────────────────────────────────────────────
+    details_a = dict(a.details)
+    details_b = dict(b.details)
+    detail_diffs: dict[str, tuple[object, object]] = {}
+    all_detail_keys = sorted(set(details_a) | set(details_b))
+    for key in all_detail_keys:
+        old_val = details_a.get(key)
+        new_val = details_b.get(key)
+        if old_val != new_val:
+            detail_diffs[f"details.{key}"] = (old_val, new_val)
+
+    matching = not field_diffs and not detail_diffs and artifact_diffs is None
+
+    result: dict[str, object] = {
+        "matching": matching,
+        "field_diffs": field_diffs,
+        "detail_diffs": detail_diffs,
+    }
+    if artifact_diffs is not None:
+        result["artifact_diffs"] = artifact_diffs
+    return result
+
+
+def contract_satisfies_profile(
+    contract: BoundaryContract,
+    profile: frozenset[str],
+) -> tuple[bool, tuple[str, ...]]:
+    """Check whether *contract* satisfies every key in *profile*.
+
+    Returns ``(satisfied, missing_keys)``.  A key is considered missing
+    when:
+
+    * Top-level fields (e.g. ``"boundary_id"``, ``"phase"``): the
+      attribute is ``None``, ``False``, or an empty tuple / mapping.
+    * ``"details.<key>"`` entries: the nested key is absent, ``None``,
+      or an empty string / tuple.
+
+    Non-string scalars (e.g. ``True`` for ``phase_result_required``) are
+    treated as satisfied even though they are not ``str``-typed.
+    """
+    missing: list[str] = []
+    for key in sorted(profile):
+        if key.startswith("details."):
+            detail_key = key[len("details."):]
+            value = contract.details.get(detail_key)
+            if _is_empty_value(value):
+                missing.append(key)
+        else:
+            try:
+                value = getattr(contract, key)
+            except AttributeError:
+                missing.append(key)
+                continue
+            if _is_empty_value(value):
+                missing.append(key)
+    satisfied = len(missing) == 0
+    return satisfied, tuple(missing)
+
+
+def _is_empty_value(value: object) -> bool:
+    """Return ``True`` when *value* is semantically empty."""
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        # Booleans are never "empty" — a required bool is always a value.
+        return False
+    if isinstance(value, str) and not value:
+        return True
+    if isinstance(value, (tuple, list)) and len(value) == 0:  # type: ignore[arg-type]
+        return True
+    if isinstance(value, dict) and len(value) == 0:
+        return True
+    return False
+
+
 __all__ = [
+    "ApprovalBoundary",
+    "ArtifactHandoffBoundary",
     "BOUNDARY_CONTRACTS",
     "BOUNDARY_CONTRACTS_BY_ID",
     "OVERRIDE_AUTHORITY_CONTRACTS",
+    "REQUIRED_FIELD_PROFILES",
+    "REQUIRED_FIELD_PROFILES_BY_KIND",
+    "REQUIRED_FIELDS_APPROVAL_BOUNDARY",
+    "REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY",
+    "REQUIRED_FIELDS_ARTIFACT_PROMOTION",
+    "REQUIRED_FIELDS_EXECUTION_CUSTODY",
+    "REQUIRED_FIELDS_EXTERNAL_EFFECT",
+    "REQUIRED_FIELDS_EXTERNAL_WITNESS",
+    "REQUIRED_FIELDS_GRAPH_JOIN_FANOUT",
+    "REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER",
+    "REQUIRED_FIELDS_LIFECYCLE_TRANSITION",
+    "REQUIRED_FIELDS_REDUCER",
+    "REQUIRED_FIELDS_REVISION_BOUNDARY",
+    "REQUIRED_FIELDS_VALIDATION_BOUNDARY",
+    "RevisionBoundary",
+    "TYPED_BOUNDARY_TEMPLATES",
+    "TYPED_BOUNDARY_TEMPLATES_BY_ID",
+    "ValidationBoundary",
+    "artifact_promotion_template",
     "challenger_to_synthesis",
+    "contract_satisfies_profile",
     "critique_to_gate",
     "decision_to_parent",
+    "diff_contracts",
     "execute_aggregate_promotion",
     "execute_approval",
     "execute_approval_denial",
@@ -909,13 +1552,26 @@ __all__ = [
     "execute_no_review_terminal",
     "execute_partial_failure",
     "execute_resume_anchor",
+    "execution_custody_template",
+    "external_effect_template",
+    "external_witness_template",
     "final_projection",
     "finalize_artifacts",
     "finalize_fallback",
     "gate_to_revise",
+    "get_contract_by_id",
+    "get_profile_by_kind",
+    "get_template_by_id",
+    "graph_join_fanout_template",
+    "human_approval_waiver_template",
+    "lifecycle_transition_template",
+    "list_profile_kinds",
+    "list_template_ids",
     "parent_rejoin_promotion",
     "plan_to_critique",
+    "prep_lifecycle_rule",
     "prep_to_plan",
+    "reducer_template",
     "replan_authority",
     "override_abort_authority",
     "override_adopt_execution_authority",

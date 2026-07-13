@@ -32,6 +32,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
+    is_superseded_recovered_phase_result,
     read_phase_result,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
@@ -41,6 +42,7 @@ from arnold_pipelines.megaplan.workflows.events import (
     workflow_cursor,
 )
 from arnold.runtime.outcome import RunOutcome
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
     if not isinstance(timestamp, str) or not timestamp:
@@ -242,6 +244,7 @@ def _tasks_by_id(finalize_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def _phase_result_recovery_inputs(
     plan_dir: Path,
+    state: dict[str, Any],
 ) -> tuple[tuple[BlockedTask, ...], tuple[Any, ...]]:
     try:
         phase_result = read_phase_result(plan_dir)
@@ -250,6 +253,12 @@ def _phase_result_recovery_inputs(
     if phase_result is None:
         return (), ()
     if phase_result.exit_kind == ExitKind.success.value:
+        return (), ()
+    if is_superseded_recovered_phase_result(
+        phase=phase_result.phase,
+        exit_kind=phase_result.exit_kind,
+        state=state,
+    ):
         return (), ()
     return phase_result.blocked_tasks, phase_result.deviations
 
@@ -386,7 +395,16 @@ def _observed_workflow_phase(
         failure_phase = latest_failure.get("phase")
         if isinstance(failure_phase, str) and failure_phase:
             return failure_phase
-    if isinstance(last_step, dict):
+    # History is only cursor authority when the recorded result actually
+    # completed a workflow transition.  Execute records ``partial`` and
+    # ``blocked`` entries while the state intentionally remains finalized so
+    # the pending batches can run again.  Treating either as a completed
+    # execute event fabricates a review cursor and contradicts that correct
+    # control projection.
+    if (
+        isinstance(last_step, dict)
+        and last_step.get("result") in {"success", "needs_rework", "force_proceeded"}
+    ):
         last_phase = last_step.get("step")
         if isinstance(last_phase, str) and last_phase:
             return last_phase
@@ -435,7 +453,7 @@ def _build_blocker_recovery_context(
             "quality_blockers": [],
             "suggested_commands": [],
         }
-    phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir)
+    phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir, state)
     baseline_deviation_by_task: dict[str, Deviation] = {}
     if phase_blocked_tasks:
         from arnold_pipelines.megaplan.execute.batch import baseline_unavailable_checkpoint_deviations
@@ -944,9 +962,14 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
     anchors = anchor_summary(state, plan_dir)
-    summary = (
-        f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
+    presentation = plan_status_presentation(
+        state.get("current_state"),
+        active_step=active_step,
     )
+    summary = f"Plan '{state['name']}' is currently {presentation['display_state']}"
+    if presentation["display_state"] != state["current_state"]:
+        summary += f" (lifecycle state '{state['current_state']}')"
+    summary += "."
     if is_prose_mode(state):
         summary += f" Mode: {plan_mode}. Output: {plan_output_path}."
     if active_step:
@@ -978,6 +1001,7 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
         "step": "status",
         "plan": state["name"],
         "state": state["current_state"],
+        **presentation,
         "iteration": state["iteration"],
         "summary": summary,
         "next_step": next_steps[0] if next_steps else None,

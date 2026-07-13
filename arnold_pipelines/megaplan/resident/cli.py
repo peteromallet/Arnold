@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,14 @@ from .cloud import CloudCliBackend
 from .config import ResidentConfig
 from .discord import DiscordOutboundSink, ResidentDiscordService, discord_token_from_env
 from .profile import MegaplanResidentProfile
+from .profile import _sanitize_stale_snapshot
+from .provenance import provenance_from_environment
+from .reply_chain import decode_reply_cursor, reply_chain_page
 from .runtime import ResidentRuntime
 from .scheduler import make_store_scheduler
+from .status_tree import DEFAULT_NODE_LIMIT, MAX_NODE_LIMIT, read_cloud_status_node
+from .context_tree import read_context_node, search_context
+from arnold_pipelines.megaplan.cloud import status_snapshot
 
 
 def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
@@ -40,6 +47,44 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     health_parser = sub.add_parser("health", parents=[shared], help="Report resident orchestration health")
     health_parser.add_argument("--limit", type=int, default=10)
 
+    reply_parser = sub.add_parser(
+        "read-reply-chain",
+        parents=[shared],
+        help="Read bounded store-backed Discord reply ancestry for the active conversation",
+    )
+    reply_parser.add_argument(
+        "--source-message-id",
+        help="Resident record id or Discord message id; defaults to the current source message",
+    )
+    reply_parser.add_argument("--cursor", help="Opaque next cursor from the prompt or prior page")
+    reply_parser.add_argument("--limit", type=int, default=5)
+
+    status_tree_parser = sub.add_parser(
+        "status-tree",
+        parents=[shared],
+        help="Read one bounded branch of the canonical cloud status tree",
+    )
+    status_tree_parser.add_argument("--node", default="root", help="Node ID from the root or prior response")
+    status_tree_parser.add_argument("--cursor", type=int, default=0)
+    status_tree_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
+
+    context_parser = sub.add_parser(
+        "context", parents=[shared], help="Read one typed branch of the resident context tree"
+    )
+    context_parser.add_argument("--node", default="root")
+    context_parser.add_argument("--conversation-id")
+    context_parser.add_argument("--cursor", type=int, default=0)
+    context_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
+
+    search_parser = sub.add_parser(
+        "context-search", parents=[shared], help="Search one resident context namespace"
+    )
+    search_parser.add_argument("--scope", required=True)
+    search_parser.add_argument("--query", default="")
+    search_parser.add_argument("--conversation-id")
+    search_parser.add_argument("--cursor", type=int, default=0)
+    search_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
+
 
 def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     config = _resident_config(args)
@@ -50,6 +95,32 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
             return _resident_health(store, config, limit=args.limit)
         if action == "scheduler-once":
             return asyncio.run(_resident_scheduler_once(store, config, worker_id=args.worker_id))
+        if action == "read-reply-chain":
+            return _resident_read_reply_chain(
+                store,
+                source_message_id=args.source_message_id,
+                cursor=args.cursor,
+                limit=args.limit,
+            )
+        if action == "status-tree":
+            return _resident_status_tree(
+                config,
+                node_id=args.node,
+                cursor=args.cursor,
+                limit=args.limit,
+            )
+        if action in {"context", "context-search"}:
+            return _resident_context_tree(
+                store,
+                config,
+                action=action,
+                conversation_id=args.conversation_id,
+                node_id=getattr(args, "node", "root"),
+                scope=getattr(args, "scope", None),
+                query=getattr(args, "query", ""),
+                cursor=args.cursor,
+                limit=args.limit,
+            )
         if action == "discord":
             return _resident_discord(root, store, config, dry_run=args.dry_run)
     finally:
@@ -72,8 +143,11 @@ def _resident_config(args: argparse.Namespace) -> ResidentConfig:
 
 
 def _resident_store(root: Path, args: argparse.Namespace) -> Store:
-    if getattr(args, "store_root", None):
-        return FileStore(Path(args.store_root).expanduser().resolve())
+    store_root = getattr(args, "store_root", None) or os.environ.get(
+        "MEGAPLAN_RESIDENT_STORE_ROOT"
+    )
+    if store_root:
+        return FileStore(Path(store_root).expanduser().resolve())
     config = _resident_config(args)
     if config.is_production:
         return DBStore(actor_id="resident")
@@ -118,6 +192,136 @@ def _resident_health(store: Store, config: ResidentConfig, *, limit: int) -> dic
     }
 
 
+def _resident_read_reply_chain(
+    store: Store,
+    *,
+    source_message_id: str | None,
+    cursor: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    """Constrained CLI twin of the resident read_reply_chain function tool."""
+
+    if limit < 1 or limit > 10:
+        raise CliError("invalid_args", "read-reply-chain --limit must be between 1 and 10")
+    provenance = provenance_from_environment(strict=True)
+    if not provenance or provenance.get("applicability") != "applicable":
+        raise CliError(
+            "authorization_denied",
+            "read-reply-chain requires one immutable Discord resident source envelope",
+        )
+    conversation_id = str(provenance.get("resident_conversation_id") or "").strip()
+    if not conversation_id:
+        raise CliError("authorization_denied", "resident conversation provenance is unavailable")
+
+    cursor_source = None
+    offset = 0
+    if cursor:
+        try:
+            cursor_source, offset = decode_reply_cursor(cursor)
+        except ValueError as exc:
+            raise CliError("invalid_cursor", str(exc)) from exc
+    requested = (source_message_id or "").strip() or cursor_source
+    if not requested:
+        requested = str(
+            provenance.get("source_record_id") or provenance.get("discord_message_id") or ""
+        ).strip()
+    if not requested:
+        raise CliError("invalid_args", "reply-chain source message is unavailable")
+
+    message = store.load_message(requested)
+    if message is not None and message.conversation_id != conversation_id:
+        raise CliError(
+            "authorization_denied", "reply-chain source is outside the active conversation"
+        )
+    if message is None:
+        message = store.find_conversation_message_by_discord_id(conversation_id, requested)
+    if message is None:
+        raise CliError("not_found", "reply-chain source was not found in the active conversation")
+    if cursor_source is not None and cursor_source != message.id:
+        raise CliError("invalid_cursor", "cursor does not belong to the requested source message")
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "read-reply-chain",
+        **reply_chain_page(message, offset=offset, limit=limit),
+    }
+
+
+def _resident_status_tree(
+    config: ResidentConfig,
+    *,
+    node_id: str,
+    cursor: int,
+    limit: int,
+) -> dict[str, Any]:
+    if cursor < 0:
+        raise CliError("invalid_args", "status-tree --cursor must be non-negative")
+    if limit < 1 or limit > MAX_NODE_LIMIT:
+        raise CliError(
+            "invalid_args", f"status-tree --limit must be between 1 and {MAX_NODE_LIMIT}"
+        )
+    snapshot, degraded_reason = status_snapshot.load_cloud_status_snapshot(
+        config.status_snapshot_path,
+        max_age_s=2 * 60 * 60,
+    )
+    if snapshot is None:
+        raise CliError(
+            "status_unavailable",
+            degraded_reason or "canonical cloud status snapshot is unavailable",
+        )
+    if degraded_reason:
+        snapshot = _sanitize_stale_snapshot(snapshot, degraded_reason)
+    result = read_cloud_status_node(snapshot, node_id=node_id, cursor=cursor, limit=limit)
+    if not result.get("success"):
+        raise CliError("status_node_not_found", str(result.get("error") or "node read failed"))
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "status-tree",
+        "degraded_reason": degraded_reason,
+        "node": result["node"],
+    }
+
+
+def _resident_context_tree(
+    store: Store,
+    config: ResidentConfig,
+    *,
+    action: str,
+    conversation_id: str | None,
+    node_id: str,
+    scope: str | None,
+    query: str,
+    cursor: int,
+    limit: int,
+) -> dict[str, Any]:
+    if cursor < 0 or limit < 1 or limit > MAX_NODE_LIMIT:
+        raise CliError("invalid_args", f"cursor must be non-negative and limit 1..{MAX_NODE_LIMIT}")
+    resolved_conversation = conversation_id
+    if not resolved_conversation:
+        provenance = provenance_from_environment(strict=False)
+        if provenance:
+            resolved_conversation = str(provenance.get("resident_conversation_id") or "") or None
+    resolved_conversation = resolved_conversation or "cli-context"
+    profile = MegaplanResidentProfile(store=store, config=config)
+    asyncio.run(profile.load_hot_context(resolved_conversation))
+    sources = profile._context_source_cache[resolved_conversation]
+    result = (
+        read_context_node(sources, node_id=node_id, cursor=cursor, limit=limit)
+        if action == "context"
+        else search_context(
+            sources,
+            scope=str(scope or ""),
+            query=query,
+            cursor=cursor,
+            limit=limit,
+        )
+    )
+    if not result.get("success"):
+        raise CliError("context_node_error", str(result.get("error") or "context read failed"))
+    return {"success": True, "step": "resident", "action": action, "node": result["node"]}
+
+
 async def _resident_scheduler_once(store: Store, config: ResidentConfig, *, worker_id: str) -> dict[str, Any]:
     worker = make_store_scheduler(
         store=store,
@@ -151,7 +355,16 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
     if token is None:
         raise CliError("missing_discord_token", f"{config.discord_bot_token_env} is required")
     authorizer = ResidentAuthorizer(config)
-    outbound = DiscordOutboundSink()
+    # Dev/test residents may handle interactive test traffic, but durable
+    # operational outboxes belong exclusively to the production bot boundary.
+    outbound = DiscordOutboundSink(
+        delivery_environment=config.mode,
+        bot_role=config.discord_bot_role,
+        reaction_effect_root=(
+            Path(getattr(store, "root", None) or root / ".megaplan/resident")
+            / "discord_reaction_effects"
+        ),
+    )
     confirmation_manager = StoreBackedConfirmationManager(config, store)
     runtime = ResidentRuntime(
         config=config,

@@ -1,5 +1,9 @@
 # M7: Phase Coverage And Reducer Boundaries
 
+> Superseded as an executable milestone by C1-C6. A "documented exemption" here
+> may only be a time-bounded C1-C5 migration exception; C6 permits none for a
+> declared supported producer.
+
 ## Outcome
 
 Boundary contracts and semantic-health checks cover core Megaplan phases and
@@ -49,7 +53,8 @@ OUT:
 
 ## Done Criteria
 
-1. Every covered phase has a contract or documented exemption.
+1. Every covered phase has a contract; temporary migration exceptions identify
+   an owner and removal milestone and cannot survive final acceptance.
 2. Semantic-health tests cover at least one broken contract per phase family.
 3. Reducer tests cover child output without reducer promotion and reducer
    promotion without required child evidence.
@@ -62,4 +67,3 @@ OUT:
 - BoundaryTurn reducer code
 - semantic-health evaluator
 - existing phase and reducer tests
-

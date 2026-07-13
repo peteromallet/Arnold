@@ -9,6 +9,9 @@ from typing import Any
 
 from arnold_pipelines.megaplan.types import PlanState
 from arnold_pipelines.megaplan._core import is_prose_mode
+from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    has_durable_terminal_task_evidence,
+)
 from arnold_pipelines.megaplan._core.io import list_batch_artifacts, read_json
 from arnold_pipelines.megaplan.execute.quality import unchanged_baseline_uncommitted_paths
 from arnold_pipelines.megaplan.loop.git import _collect_git_status_paths_with_nested_repos, _normalize_repo_path
@@ -132,7 +135,7 @@ def apply_authoritative_execute_overrides(
             if isinstance(task_id, str) and task_id.strip():
                 explicit_task_ids.add(task_id.strip())
                 task = tasks_by_id.get(task_id.strip())
-                if task is not None:
+                if task is not None and not has_durable_terminal_task_evidence(task):
                     task.update(item)
                     task.setdefault("id", task_id.strip())
         for item in payload.get("sense_check_acknowledgments", []):
@@ -435,7 +438,7 @@ def _validate_execution_evidence_code(
         merged = dict(task)
         if isinstance(task_id, str):
             authoritative = authoritative_overrides.get(task_id)
-            if isinstance(authoritative, dict):
+            if isinstance(authoritative, dict) and not has_durable_terminal_task_evidence(task):
                 merged.update(authoritative)
                 merged.setdefault("id", task_id)
                 merged.setdefault("task_id", task_id)

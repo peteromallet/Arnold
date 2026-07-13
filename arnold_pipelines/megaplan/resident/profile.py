@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Literal, Mapping
+import threading
+import time
+from typing import Any, Literal, Mapping, Sequence
 from urllib.parse import urlparse
 
 from pydantic import Field
 
+from agentbox.redaction import redact_text
+from agentbox.reset_notifications import list_reset_notifications
+from agentbox.services import DISCORD_RESIDENT_RESTART_COMMAND
 from arnold_pipelines.megaplan.control import ControlTargetResolver
 from arnold_pipelines.megaplan.editorial import body as editorial_body
 from arnold_pipelines.megaplan.editorial import checklist as editorial_checklist
@@ -29,6 +35,7 @@ from arnold_pipelines.megaplan.store import (
 )
 from arnold_pipelines.megaplan.store.export import collect_epic_export, write_epic_export_tar
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
 from arnold_pipelines.megaplan.cloud import status_snapshot
 from arnold_pipelines.megaplan.layout import (
     ALLOWED_INITIATIVE_SUBDIRS,
@@ -45,6 +52,7 @@ from arnold_pipelines.megaplan.layout import (
 )
 
 from .auth import ActionKind, AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
+from .agent_loop import current_tool_runtime_context
 from .cloud import (
     CloudCliBackend,
     CloudOperation,
@@ -57,13 +65,47 @@ from .cloud import (
 from .config import ResidentConfig
 from .tool_registry import ToolRegistration, ToolRegistry
 from .tool_schemas import ToolInput, ToolResult
+from .timezone import TimezoneService, add_localized_timestamp_fields
 from . import vp_todo
-from .subagent import launch_subagent_task
+from .subagent import (
+    DELEGATED_TASK_KINDS,
+    MANAGED_RUN_SCHEMA,
+    DelegatedTaskKind,
+    launch_subagent_task,
+    list_managed_resident_agents,
+)
+from .provenance import normalize_delegation_provenance
+from .reply_chain import (
+    REPLY_TOOL_MAX_PAGE,
+    decode_reply_cursor,
+    reply_chain_page,
+)
+from .status_tree import (
+    DEFAULT_NODE_LIMIT,
+    MAX_NODE_LIMIT,
+    compact_cloud_status_snapshot,
+    read_cloud_status_node,
+)
+from .context_tree import (
+    POLICY_PACKS,
+    build_context_root,
+    classify_intent_packs,
+    read_context_node,
+    search_context,
+)
 
-MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v1"
+MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v6"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
 # of staleness before treating broad status as degraded.
 _SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
+_HOT_CONTEXT_CLOUD_TIMEOUT_S = 2.0
+_SNAPSHOT_BACKGROUND_REFRESH_MIN_INTERVAL_S = 60.0
+_VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT = 3
+_VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS = 240
+_VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS = 160
+_INITIATIVE_HOT_CONTEXT_LIMIT = 5
+_RESIDENT_AGENT_RUNNING_LIMIT = 12
+_RESIDENT_AGENT_RECENT_LIMIT = 3
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
 
 
@@ -92,6 +134,251 @@ def _sanitize_stale_snapshot(snapshot: Mapping[str, Any], reason: str) -> dict[s
         "stale_banner": banner,
         "stale_reason": reason,
     }
+
+
+def _conversation_history_context(
+    store: Store,
+    *,
+    conversation_id: str,
+) -> dict[str, Any]:
+    """Describe the durable, complete user-visible history without loading it all."""
+
+    backend = type(store).__name__
+    location: dict[str, Any] = {
+        "backend": backend,
+        "description": "the Store instance backing this resident runtime",
+    }
+
+    root = getattr(store, "root", None)
+    if root is not None:
+        store_root = Path(root).expanduser().resolve()
+        location.update(
+            {
+                "store_root": str(store_root),
+                "conversation_record": str(
+                    store_root / "resident_conversations" / f"{conversation_id}.json"
+                ),
+                "message_collection": str(store_root / "messages"),
+                "message_selector": {"conversation_id": conversation_id},
+            }
+        )
+
+    return {
+        "authority": (
+            "All resident-persisted inbound and outbound user-visible messages for this "
+            "conversation. The conversation record is metadata/cursors; the complete transcript "
+            "is the matching records in the message collection, ordered by sent_at."
+        ),
+        "conversation_id": conversation_id,
+        "location": location,
+        "ordering_field": "sent_at",
+        "discord_provenance_fields": ["discord_message_id", "bot_turn_id"],
+        "search": {
+            "tool": "search_messages",
+            "arguments": {
+                "conversation_id": conversation_id,
+                "query": "<target words or empty string>",
+                "limit": 50,
+            },
+            "note": (
+                "Always pass this conversation_id. Results are bounded, so use targeted repeated "
+                "queries for a complete audit."
+            ),
+        },
+        "hot_context_caveat": (
+            "recent_messages and the model history window are bounded excerpts, not the full history"
+        ),
+        "discord_caveat": (
+            "This is the authoritative resident transcript, not a scrape of Discord's rendered UI; "
+            "reactions, later edits, deletions, embeds, and other unstored UI state may be absent."
+        ),
+    }
+
+
+def _bounded_redacted_text(value: object, *, limit: int) -> str:
+    """Return a compact display value without carrying credentials into hot context."""
+    text = redact_text(str(value).strip())
+    return text if len(text) <= limit else f"{text[: limit - 1]}…"
+
+
+def _vp_todo_hot_context(path: Path) -> dict[str, Any]:
+    """Build the deliberately small VP special-request to-do context projection.
+
+    The file's model records only ``pending``/terminal status and an optional
+    natural-language ``when`` condition. It cannot truthfully say whether a
+    conditional item is due, so this projection uses pending terminology only.
+    """
+    pending = vp_todo.pending_items(path)
+    preview = [
+        {
+            "id": item["id"],
+            "task": _bounded_redacted_text(
+                item["task"], limit=_VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS
+            ),
+            "status": item["status"],
+            "when": (
+                _bounded_redacted_text(
+                    item["when"], limit=_VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS
+                )
+                if item["when"]
+                else None
+            ),
+        }
+        for item in pending[:_VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT]
+    ]
+    return {
+        "schema_version": "vp-special-requests-todo-hot-context-v1",
+        "pending_count": len(pending),
+        "pending_preview": preview,
+        "preview_limit": _VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT,
+        "preview_omitted_count": max(0, len(pending) - len(preview)),
+        "pending_semantics": (
+            "This count and preview include items whose status is pending. An item with a "
+            "non-empty when condition remains pending until its condition is verified; it is "
+            "not thereby known to be due."
+        ),
+        "full_list_retrieval": {
+            "tool": "read_todo_list",
+            "arguments": {},
+            "instruction": (
+                "Call read_todo_list with no arguments to retrieve the full VP special-requests "
+                "to-do list, including pending items beyond this preview and retained failed items."
+            ),
+        },
+    }
+
+
+def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep lifecycle orientation in hot context without embedding manifests."""
+
+    def compact(row: Mapping[str, Any]) -> dict[str, Any]:
+        delivery = row.get("completion_delivery")
+        return {
+            key: row.get(key)
+            for key in (
+                "run_id",
+                "run_kind",
+                "status",
+                "live",
+                "pid",
+                "backend",
+                "model",
+                "task_kind",
+                "difficulty",
+                "task_excerpt",
+                "created_at",
+                "started_at",
+                "finished_at",
+                "terminal_outcome",
+                "parent_run_id",
+            )
+            if row.get(key) is not None
+        } | {
+            "completion_delivery": {
+                key: delivery.get(key)
+                for key in ("status", "attempt_count", "delivered_at", "last_error_category")
+                if delivery.get(key) is not None
+            }
+            if isinstance(delivery, Mapping)
+            else None
+        }
+
+    running = [
+        compact(row)
+        for row in list(value.get("running") or [])[:_RESIDENT_AGENT_RUNNING_LIMIT]
+        if isinstance(row, Mapping)
+    ]
+    recent = [
+        compact(row)
+        for row in list(value.get("recent") or [])[:_RESIDENT_AGENT_RECENT_LIMIT]
+        if isinstance(row, Mapping)
+    ]
+    return {
+        "schema_version": value.get("schema_version"),
+        "scope": value.get("scope"),
+        "running_count": value.get("running_count", len(running)),
+        "running": running,
+        "running_omitted_count": max(0, int(value.get("running_count") or 0) - len(running)),
+        "recent_count": value.get("recent_count", len(recent)),
+        "recent": recent,
+        "recent_preview_limit": _RESIDENT_AGENT_RECENT_LIMIT,
+        "delivery_status_counts": value.get("delivery_status_counts", {}),
+        "terminal_delivery_status_counts": value.get("terminal_delivery_status_counts", {}),
+        "delivery_attention_count": value.get("delivery_attention_count", 0),
+    }
+
+
+def _compact_activity_summary(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep active/attention status; finished history is a three-row preview."""
+
+    result = {
+        key: value.get(key)
+        for key in ("schema_version", "generated_at", "degraded", "degraded_reason", "summary")
+        if key in value
+    }
+    for key in ("active_working", "active_blocked", "attention", "paused"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            result[key] = rows[:8]
+    completed = value.get("recently_completed")
+    if isinstance(completed, list):
+        result["recently_completed"] = completed[:3]
+        result["recently_completed_omitted_count"] = max(0, len(completed) - 3)
+    return result
+
+
+def _compact_restart_lifecycle(value: object) -> dict[str, Any]:
+    """Summarize durable reset receipts without embedding their full payloads."""
+
+    if isinstance(value, Mapping):
+        raw_rows = value.get("records")
+        rows = list(raw_rows) if isinstance(raw_rows, list) else []
+        record_count = int(value.get("count") or len(rows))
+    else:
+        rows = list(value) if isinstance(value, list) else []
+        record_count = len(rows)
+    compact: list[dict[str, Any]] = []
+    for row in rows[:2]:
+        if not isinstance(row, Mapping):
+            continue
+        restart = row.get("restart") if isinstance(row.get("restart"), Mapping) else {}
+        delivery = row.get("delivery") if isinstance(row.get("delivery"), Mapping) else {}
+        initiator = row.get("initiator") if isinstance(row.get("initiator"), Mapping) else {}
+        compact.append({
+            "reset_id": row.get("notification_id"),
+            "restart_status": restart.get("status"),
+            "delivery_status": delivery.get("status"),
+            "requested_at": restart.get("requested_at"),
+            "completed_at": restart.get("completed_at"),
+            "delivered_at": delivery.get("delivered_at"),
+            "source_record_id": initiator.get("source_record_id"),
+        })
+    return {
+        "record_count": record_count,
+        "latest": compact,
+        "detail_route": "runtime/restart",
+    }
+
+
+def _status_hot_orientation(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Legacy status key becomes a directory entry; detail lives at context node status."""
+
+    if value is None:
+        return None
+    orientation = {
+        key: value.get(key)
+        for key in (
+            "schema_version", "generated_at", "source", "watchdog_generated_at", "degraded",
+            "stale_banner", "stale_reason", "summary", "session_count", "completed_session_count",
+        )
+        if value.get(key) is not None
+    } | {
+        "detail_node": "status",
+        "instruction": "Use context_root attention first, then read_context_node('status/...').",
+    }
+    if value.get("stale_banner"):
+        orientation["sessions"] = []
+    return orientation
 
 
 class ActorToolInput(ToolInput):
@@ -251,6 +538,14 @@ class SearchMessagesInput(ActorToolInput):
     limit: int = Field(default=10, gt=0, le=50)
 
 
+class ReadReplyChainInput(ToolInput):
+    """Read a bounded page of exact Discord reply ancestry."""
+
+    source_message_id: str | None = None
+    cursor: str | None = None
+    limit: int = Field(default=5, gt=0, le=REPLY_TOOL_MAX_PAGE)
+
+
 class SearchEpicsInput(ActorToolInput):
     query: str = ""
     state: str | None = None
@@ -395,6 +690,27 @@ class ReadTodoListInput(ToolInput):
     """Read the VP special-requests to-do list (no arguments)."""
 
 
+class ReadCloudStatusNodeInput(ToolInput):
+    node_id: str = "root"
+    cursor: int = Field(default=0, ge=0)
+    limit: int = Field(default=DEFAULT_NODE_LIMIT, ge=1, le=MAX_NODE_LIMIT)
+
+
+class ReadContextNodeInput(ToolInput):
+    node_id: str = "root"
+    cursor: int = Field(default=0, ge=0)
+    limit: int = Field(default=DEFAULT_NODE_LIMIT, ge=1, le=MAX_NODE_LIMIT)
+
+
+class SearchContextInput(ToolInput):
+    scope: Literal[
+        "status", "agents", "conversation", "initiatives", "todos", "capabilities", "policies"
+    ]
+    query: str = ""
+    cursor: int = Field(default=0, ge=0)
+    limit: int = Field(default=DEFAULT_NODE_LIMIT, ge=1, le=MAX_NODE_LIMIT)
+
+
 class CompleteTodoItemInput(ToolInput):
     id: str
     result: str = ""
@@ -410,10 +726,67 @@ class AddTodoItemInput(ToolInput):
     when: str = ""
 
 
+class GetTimezonePreferenceInput(ToolInput):
+    """Read the current Discord user's canonical timezone preference."""
+
+
+class SetTimezonePreferenceInput(ToolInput):
+    timezone_name: str
+
+
 class LaunchSubagentInput(ToolInput):
     task: str
+    task_kind: DelegatedTaskKind = "routine"
+    difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     project_dir: str | None = None
+    backend: str = "codex"
+    background: bool = True
+    model: str | None = None
+    reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    request_id: str | None = None
+    retry_of_run_id: str | None = None
+    continue_turn: bool = Field(
+        default=False,
+        description=(
+            "Keep the resident model turn open after a successful durable launch. Use only when "
+            "another launch or explicit same-turn work, human input, launch-error handling, or "
+            "concrete result combination/transformation is still required."
+        ),
+    )
+
+
+def _resident_core_prompt() -> str:
+    """Small permanent contract; task-specific detail is loaded as policy packs."""
+
+    return (
+        "You are the resident Megaplan operator. Be evidence-led, concise, and honest about "
+        "unknowns. Use constrained resident/CLI operations for durable actions and never claim an "
+        "action, launch, delivery, or restart without returned durable evidence. Ask for human input "
+        "only when a real approval gate or material ambiguity blocks safe work.\n"
+        f"Planning assets follow {LAYOUT_POLICY_VERSION} under .megaplan/initiatives/<slug>/; search "
+        "initiatives by rough slug/title/description first and reuse matches before creating one. Never put planning docs directly under "
+        ".megaplan/briefs. Never create planning docs directly under .megaplan/briefs.\n"
+        "Hot context is a bounded orientation root, not the database. Follow context_root.routes and "
+        "use read_context_node/search_context (or the listed python -P CLI twins) for only the branch "
+        "needed. Never load a complete cloud-status JSON. conversation_history and model history are "
+        "bounded excerpts; search the authoritative current conversation before historical claims.\n"
+        "Default to `launch_subagent` for any user-requested execution work; make that tool call before replying "
+        "so the launch is durable. Never invent a run ID. Do not babysit normal delegated work or Megaplan/cloud "
+        "chains; durable agents, runners, watchdogs, and bounded repair own continuation. Babysitting should be exceptionally rare.\n"
+        "The vp_special_requests_todos preview contains pending, not necessarily due, items; call "
+        "`read_todo_list` with no arguments for the full retained list.\n"
+        "Absolute user-visible times use hot-context user_timezone; stored control-plane timestamps stay "
+        "UTC. Reply ancestry is only the exact preloaded ancestry or bounded read_reply_chain output.\n"
+        "For broad status, use context_root.attention and the status node, cite generated_at, and preserve "
+        "canonical progress/display fields. Use `progress.display_state` as its canonical status label, "
+        "falling back to `progress.plan_state` only when `display_state` is absent; show an active execute step as `executing`. "
+        "If stale_banner exists, emit it verbatim first and do not quote "
+        "withheld frozen numbers.\n"
+        "For a Discord restart, use only the canonical command in hot context; never use pkill, killall, "
+        "cgroup-wide stops, or tmux cleanup; state that the current turn can be interrupted while durable "
+        "agents and chains are preserved."
+    )
 
 
 @dataclass
@@ -428,6 +801,13 @@ class MegaplanResidentProfile:
     actor_id: str = "resident-bot"
     tool_registry: ToolRegistry = field(default_factory=ToolRegistry)
     _registered_default_tools: bool = False
+    _snapshot_refresh_thread: threading.Thread | None = field(
+        default=None, init=False, repr=False
+    )
+    _snapshot_refresh_started_at: float = field(default=0.0, init=False, repr=False)
+    _context_source_cache: dict[str, dict[str, Any]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.confirmation_manager is None:
@@ -441,6 +821,10 @@ class MegaplanResidentProfile:
             self._registered_default_tools = True
 
     def system_prompt(self) -> str:
+        return _resident_core_prompt()
+
+        # Historical monolith retained unreachable for one migration cycle; it
+        # is no longer sent to the model and can be removed after rollout.
         return (
             "You are the resident Megaplan operator. Shape epics through Megaplan "
             "editorial tools, report cloud status through constrained cloud tools, "
@@ -459,10 +843,59 @@ class MegaplanResidentProfile:
             "When the user asks you to queue a recurring task or special request, add it with "
             "`add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use "
             "`read_todo_list` to show what's queued. In conversation you add and read items — a "
-            "scheduled sweep picks up pending items and executes them with `launch_subagent`."
+            "scheduled sweep picks up pending items and executes them with the resident-owned "
+            "`launch_subagent` managed Codex lifecycle. Hot context's `vp_special_requests_todos` "
+            "is only a bounded pending-item orientation summary: a pending item with a `when` "
+            "condition is not known to be due until you verify that condition. Use its stable item "
+            "IDs when referring to previewed work, and call `read_todo_list` with no arguments "
+            "whenever you need the full list (including retained failed items). For normal "
+            "delegated work, keep its defaults (`backend=codex`, `background=true`) and report "
+            "the returned durable paths. "
+            "Always classify delegated work with `task_kind` and D1-D10 `difficulty`. Use Luna/low "
+            "only for bounded lookup, extraction, or mechanical D1-D3 work; routine coding, "
+            "debugging, and research default to Terra/medium; ambiguous, cross-cutting, high-risk, "
+            "or D7-D10 work uses Sol/high. Do not request xhigh/max by default. "
+            "For launches caused by an inbound Discord message, the managed manifest retains only "
+            "non-secret reply provenance and the terminal sweep automatically replies to that exact "
+            "message with the subagent's concise final summary. Delivery state and evidence are visible "
+            "in `resident_agents`; surface retry, failed, or unknown delivery states honestly. "
+            "Default to `launch_subagent` for any user-requested execution work, and make that "
+            "tool call before replying so the work is durably started rather than merely acknowledged. "
+            "A successful durable launch hands off the rest of the turn by default: the runtime sends "
+            "only a concise acknowledgement naming every launched run ID and stating that terminal "
+            "results will reply automatically, then ends the resident turn without another model step. "
+            "Never claim the delegated work is complete in that acknowledgement. Set `continue_turn=true` "
+            "only when another launch or explicit same-turn follow-up is still required, required human "
+            "input must be requested, a launch failed, or there is a concrete need to combine or transform "
+            "results in this turn. For sequential multiple launches, set it on each launch except the last; "
+            "parallel final launches may all leave it false. "
+            "Do not babysit normal delegated work or Megaplan/cloud chains. Durable agents, chain "
+            "runners, watchdogs, and bounded automatic repair own continued progress by default. "
+            "Babysitting should be exceptionally rare: use it only when the user explicitly requests "
+            "recurring hands-on monitoring and the ordinary durable lifecycle is demonstrably "
+            "insufficient; never infer it from requests such as 'push it forward', 'keep it moving', "
+            "or 'finish the work'. Prefer a one-time durable operator launch or repair action instead. "
+            "Only defer the launch when required human input, an approval gate, or material ambiguity "
+            "makes execution unsafe or impossible; in that case, ask for the blocking input explicitly."
+            " Hot context's `user_timezone` is the presentation authority for this turn. Render absolute "
+            "user-visible times in that IANA timezone, prefer deterministic `*_local` fields, keep all "
+            "stored/control-plane timestamps in UTC, and do not convert relative durations. The current "
+            "Discord user can inspect or update the durable preference with `get_timezone_preference` "
+            "and `set_timezone_preference`."
+            " For conversation-history questions, use `conversation_history` in hot context as the "
+            "authority map. `recent_messages` and the model history window are bounded excerpts, not the "
+            "full history; search the authoritative resident message store with `search_messages` and the "
+            "current conversation id before concluding that a prior thread or delivery is absent."
+            " Every Discord user message explicitly preloads up to three exact reply ancestors from "
+            "immutable resident-store provenance. The current message is excluded from that ancestry, "
+            "and ancestors are ordered nearest parent first. Never infer reply relationships from "
+            "`recent_messages` or other nearby excerpts. When the prompt says older ancestors remain, "
+            "call `read_reply_chain` with the supplied cursor to page through older store-backed ancestry; "
+            "the tool is bounded, cycle-safe, and restricted to this DM/channel/thread conversation."
             " For broad status questions ('how's it going?', 'what is active?', 'is it cooking?', "
-            "'why did it not reply?'), answer from `cloud_status_snapshot` / `plan_activity_summary` "
-            "in hot context FIRST. That snapshot is the canonical shared-runner view produced by the "
+            "'why did it not reply?'), answer from the compact `cloud_status_snapshot` / "
+            "`plan_activity_summary` in hot context FIRST. This is a bounded root projection of the "
+            "canonical shared-runner snapshot produced by the "
             "watchdog; cite its generated_at timestamp. If `cloud_status_snapshot.stale_banner` is "
             "present, you MUST emit that banner VERBATIM as your first line and you MUST NOT quote "
             "any percent, sprint, summary, or progress number from that snapshot — those have been "
@@ -474,9 +907,13 @@ class MegaplanResidentProfile:
             "epic's overall percent — e.g. 'Epic X: <progress.percent>% (A/B sprints done), currently "
             "on <current_plan>'. `progress.percent` already folds the in-flight plan's stage fraction "
             "in, so it advances as the current plan progresses rather than freezing between milestones. "
-            "When `progress.plan_percent` is present, also append the in-flight plan's stage estimate, "
-            "e.g. '...; in-flight <plan_percent>% (<plan_state>)'; if `plan_state` is present without "
-            "a `plan_percent` (e.g. 'blocked'), show that state instead. When `epic_delta_1h` / "
+            "When `progress.plan_percent` is present, also append the in-flight plan's stage estimate. "
+            "Use `progress.display_state` as its canonical status label when available, falling back "
+            "to `progress.plan_state` only when `display_state` is absent — e.g. '...; in-flight "
+            "<plan_percent>% (<display_state>)'. This preserves paused, blocked, failed, completed, "
+            "and idle-finalized truth while showing an active execute step as `executing`. If the "
+            "chosen status label is present without a `plan_percent` (e.g. 'blocked'), show that state "
+            "instead. When `epic_delta_1h` / "
             "`epic_delta_5h` are present, append the recent rate — e.g. '(+<d1>% in the past hour, "
             "+<d5>% in the past 5h)' — and omit any window whose delta is null (the epic is younger "
             "than that window). When `progress.stage_changes_1h` is a non-empty list, add one line of "
@@ -484,16 +921,69 @@ class MegaplanResidentProfile:
             "in the past hour)'; omit it when the list is empty (no ladder progress in the window). "
             "When `epic_started_at` / `plan_started_at` are present, add 'epic "
             "started <relative time>, plan started <relative time>'. Use the pre-calculated fields as "
-            "given; do not recompute them or invent other sub-plan percentages — `plan_percent` is a "
-            "coarse completed-stages/total-stages estimate, so present it as approximate. "
+            "given; do not recompute them or invent other sub-plan percentages — `plan_percent` "
+            "reserves 30% for pre-execute stages and weights execute progress by the finalized "
+            "task inventory's authoritative complexity scores. "
             "Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
-            "without labeling it degraded. Targeted per-plan questions may still use the cloud tools."
+            "without labeling it degraded. For deeper status questions, navigate only the relevant "
+            "child node with `read_cloud_status_node`. In the Codex CLI runner, use "
+            "`python -P -m arnold_pipelines.megaplan resident status-tree --node '<node_id>'`; "
+            "never load the complete cloud-status JSON into the prompt. Targeted per-plan questions "
+            "may still use the constrained cloud tools. "
+            "For a Discord resident restart, use only the canonical command in hot context under "
+            "`resident_runtime.restart`; never use pkill, killall, a cgroup-wide stop, or tmux cleanup. "
+            "The command must fail closed unless the installed unit proves its main-process-only "
+            "stop boundary. Be explicit that the current Discord turn can be interrupted even though "
+            "durable resident agents and Megaplan/cloud chains are preserved."
         )
 
+    def system_prompt_for(self, request_text: str | None) -> str:
+        packs = classify_intent_packs(request_text)
+        rendered = "\n".join(f"[{name}] {POLICY_PACKS[name]}" for name in packs)
+        return f"{_resident_core_prompt()}\nSelected policy packs:\n{rendered}"
+
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
-        local_epic_chain_state = self._load_local_epic_chain_state_context()
-        live_cloud_chain = await self._load_live_cloud_chain_context()
-        cloud_status_snapshot, snapshot_degraded = self._load_cloud_status_snapshot()
+        async def bounded_live_cloud() -> dict[str, Any] | None:
+            try:
+                return await asyncio.wait_for(
+                    self._load_live_cloud_chain_context(),
+                    timeout=_HOT_CONTEXT_CLOUD_TIMEOUT_S,
+                )
+            except TimeoutError:
+                return {
+                    "available": False,
+                    "cloud_yaml": str(self.config.cloud_yaml_path),
+                    "error": "cloud status lookup exceeded the hot-context timeout",
+                    "degraded": True,
+                }
+
+        (
+            local_epic_chain_state,
+            initiative_index,
+            resident_agents,
+            todo_context,
+            restart_lifecycle,
+            snapshot_result,
+            live_cloud_chain,
+        ) = await asyncio.gather(
+            asyncio.to_thread(self._load_local_epic_chain_state_context),
+            asyncio.to_thread(
+                initiative_compact_index, Path.cwd(), limit=_INITIATIVE_HOT_CONTEXT_LIMIT
+            ),
+            asyncio.to_thread(list_managed_resident_agents, project_root=Path.cwd()),
+            asyncio.to_thread(_vp_todo_hot_context, self._todo_path()),
+            asyncio.to_thread(list_reset_notifications, limit=5),
+            asyncio.to_thread(self._load_cloud_status_snapshot),
+            bounded_live_cloud(),
+        )
+        full_cloud_status_snapshot, snapshot_degraded = snapshot_result
+        self._schedule_cloud_status_snapshot_refresh()
+        cloud_status_tree_root = compact_cloud_status_snapshot(full_cloud_status_snapshot)
+        cloud_status_snapshot = _status_hot_orientation(cloud_status_tree_root)
+        activity_summary = _compact_activity_summary(
+            status_snapshot.plan_activity_summary(full_cloud_status_snapshot)
+        )
+        compact_agents = _compact_resident_agents(resident_agents)
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
@@ -503,7 +993,7 @@ class MegaplanResidentProfile:
                 "allowed_doc_kinds": sorted(ALLOWED_INITIATIVE_SUBDIRS),
                 "legacy_briefs_root": ".megaplan/briefs",
             },
-            "initiative_index": initiative_compact_index(Path.cwd(), limit=40),
+            "initiative_index": initiative_index,
             "resident_runtime": {
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
@@ -520,24 +1010,150 @@ class MegaplanResidentProfile:
                 "trusted_container": status_snapshot.is_trusted_container(),
                 "has_local_markers": status_snapshot.has_local_markers(),
                 "status_snapshot_path": str(self.config.status_snapshot_path),
+                "restart": {
+                    "canonical_command": DISCORD_RESIDENT_RESTART_COMMAND,
+                    "procedure": (
+                        "Run the canonical AgentBox command. On a host it reads the installed "
+                        "systemd unit's effective stop policy and refuses the restart unless "
+                        "KillMode is exactly `process` with no ExecStop or ExecStopPost hooks. "
+                        "Inside the resident container where systemctl is unavailable, it instead "
+                        "verifies and respawns only the dedicated Discord resident tmux pane."
+                    ),
+                    "stop_scope": "Discord resident process/pane only",
+                    "safety_guarantees": [
+                        "resident-managed detached subagents are not signaled",
+                        "tmux-backed Megaplan and cloud chains are not stopped or cleaned up",
+                        "the command fails closed if the installed unit or tmux pane is stale or unsafe",
+                    ],
+                    "operational_caveat": (
+                        "The in-flight Discord resident turn is interrupted. On a systemd host, "
+                        "installing or refreshing the unit remains an explicit operator action."
+                    ),
+                    "forbidden_shortcuts": [
+                        "pkill/killall",
+                        "systemctl kill --kill-whom=all",
+                        "tmux kill-server or session cleanup",
+                    ],
+                    "lifecycle": _compact_restart_lifecycle(restart_lifecycle),
+                },
+                "subagent_launch": {
+                    "standard": MANAGED_RUN_SCHEMA,
+                    "codex_sandbox": "danger-full-access",
+                    "stdin": "sealed",
+                    "lifecycle": "detached with durable manifest, log, and result",
+                    "completion_delivery": (
+                        "terminal Discord-origin launches reply to the original inbound message; "
+                        "manifest status is idempotent and retry-aware"
+                    ),
+                    "run_root": ".megaplan/plans/resident-subagents",
+                    "resident_tool": "launch_subagent",
+                    "codex_usage": {
+                        "backend": "codex",
+                        "background": True,
+                        "default_task_kind": "routine",
+                        "default_difficulty": 4,
+                        "default_model": "gpt-5.6-terra",
+                        "default_reasoning_effort": "medium",
+                        "task_kinds": list(DELEGATED_TASK_KINDS),
+                        "routing": {
+                            "bounded_mechanical_d1_d3": "gpt-5.6-luna:low",
+                            "routine": "gpt-5.6-terra:medium",
+                            "ambiguous_high_risk_or_d7_d10": "gpt-5.6-sol:high",
+                        },
+                    },
+                },
             },
             "configured_cloud_yaml": str(self.config.cloud_yaml_path),
+            "cloud_launch_guidance": {
+                "canonical_command": (
+                    "python -m arnold_pipelines.megaplan cloud chain "
+                    ".megaplan/initiatives/<initiative>/chain.yaml "
+                    "--cloud-yaml .megaplan/initiatives/<initiative>/cloud.yaml --fresh"
+                ),
+                "on_box_command": (
+                    "python -m arnold_pipelines.megaplan cloud chain "
+                    ".megaplan/initiatives/<initiative>/chain.yaml "
+                    "--cloud-yaml .megaplan/initiatives/<initiative>/cloud.yaml --fresh --on-box"
+                ),
+                "transport_choice": (
+                    "When the resident is already inside the target agentbox/container, use --on-box. "
+                    "It performs the normal cloud canonicalization, workspace/session setup, tmux launch, "
+                    "watchdog marker registration, and launch verification without SSH. Use the default "
+                    "SSH transport only from an external control machine."
+                ),
+                "requirements": (
+                    "Use an initiative-specific cloud.yaml with provider ssh, mode chain, and unique "
+                    "repo.workspace and chain_session. Launch the canonical initiative chain.yaml; "
+                    "do not start an unregistered local chain when cloud execution was requested."
+                ),
+            },
             # Canonical broad-status snapshot — the first source for "how's it
             # going?" / "what is active?" questions. Produced by the watchdog
             # from local observation only; never requires SSH from the resident.
             "cloud_status_snapshot": cloud_status_snapshot,
-            "plan_activity_summary": status_snapshot.plan_activity_summary(cloud_status_snapshot),
+            "plan_activity_summary": activity_summary,
             "cloud_status_degraded": snapshot_degraded,
             "epic_chain_visibility": _summarize_epic_chain_visibility(local_epic_chain_state, live_cloud_chain),
-            # Supplemental detail only; NOT the canonical shared-runner view.
-            "local_epic_chain_state": local_epic_chain_state,
+            # The broad snapshot root is sufficient when fresh. Keep the much
+            # larger local scan only as an explicitly degraded fallback.
+            "local_epic_chain_state": (
+                local_epic_chain_state
+                if full_cloud_status_snapshot is None or snapshot_degraded
+                else {"available_as_degraded_fallback": True, "embedded": False}
+            ),
             "live_cloud_chain": live_cloud_chain,
+            "resident_agents": compact_agents,
+            "vp_special_requests_todos": todo_context,
         }
+        base["context_root"] = build_context_root(
+            status=cloud_status_tree_root,
+            agents=compact_agents,
+            initiatives=initiative_index,
+            todos=todo_context,
+            runtime={
+                "model_provider": self.config.model_provider,
+                "model": self.config.model_name,
+                "trusted_container": status_snapshot.is_trusted_container(),
+                "restart_node": "runtime/restart",
+            },
+            conversation={"conversation_id": conversation_id},
+        )
+
+        def cache_sources(messages: Sequence[Any] = ()) -> None:
+            self._context_source_cache[conversation_id] = {
+                "root": base["context_root"],
+                "status_snapshot": full_cloud_status_snapshot,
+                "agents": resident_agents,
+                "initiatives": initiative_index,
+                "todos": [vp_todo.public_item(item) for item in vp_todo.load_items(self._todo_path())],
+                "runtime": {
+                    "model_provider": self.config.model_provider,
+                    "model": self.config.model_name,
+                    "trusted_container": status_snapshot.is_trusted_container(),
+                    "restart": {
+                        "canonical_command": DISCORD_RESIDENT_RESTART_COMMAND,
+                        "lifecycle": restart_lifecycle,
+                    },
+                },
+                "messages": [
+                    item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+                    for item in messages
+                ],
+                "capabilities": self.tool_registry.as_compact_catalog(),
+            }
+            while len(self._context_source_cache) > 32:
+                self._context_source_cache.pop(next(iter(self._context_source_cache)))
         if self.store is None:
-            return base
+            cache_sources()
+            resolved = TimezoneService(self.store, self.config).resolve(user_id=None)
+            base["user_timezone"] = resolved.hot_context()
+            return add_localized_timestamp_fields(base, resolved.name)
         conversation = self.store.load_resident_conversation(conversation_id)
         if conversation is None:
-            return base
+            cache_sources()
+            resolved = TimezoneService(self.store, self.config).resolve(user_id=None)
+            base["user_timezone"] = resolved.hot_context()
+            return add_localized_timestamp_fields(base, resolved.name)
         active_epic_id = conversation.active_epic_id
         active_initiative_slug = slugify_initiative(active_epic_id) if active_epic_id else None
         context = self.store.load_hot_context(active_epic_id) if active_epic_id else None
@@ -551,6 +1167,10 @@ class MegaplanResidentProfile:
         base.update(
             {
                 "conversation": conversation.model_dump(mode="json"),
+                "conversation_history": _conversation_history_context(
+                    self.store,
+                    conversation_id=conversation.id,
+                ),
                 "active_epic": context.epic.model_dump(mode="json") if context and context.epic else None,
                 "active_initiative": (
                     initiative_metadata(Path.cwd(), active_initiative_slug)
@@ -568,7 +1188,21 @@ class MegaplanResidentProfile:
                 "pending_cloud_checks": [row.model_dump(mode="json") for row in pending_checks],
             }
         )
-        return base
+        subject_user_id = str(
+            conversation.metadata.get("last_subject_user_id")
+            or conversation.dm_user_id
+            or ""
+        ) or None
+        resolved = TimezoneService(self.store, self.config).resolve(
+            user_id=subject_user_id,
+            conversation=conversation,
+            guild_id=conversation.guild_id,
+        )
+        base["user_timezone"] = resolved.hot_context()
+        cache_sources(
+            self.store.list_conversation_messages(conversation.id, limit=200)
+        )
+        return add_localized_timestamp_fields(base, resolved.name)
 
     def _load_local_epic_chain_state_context(self) -> dict[str, Any]:
         roots: list[Path] = [Path.cwd()]
@@ -635,36 +1269,11 @@ class MegaplanResidentProfile:
         degraded, not canonical). Never raises — a missing/unreadable snapshot
         is the degraded-mode signal, not an error.
 
-        Inside the trusted container the snapshot is built fresh from local
-        observation on every call, so hot context always reflects the current
-        running/stuck/done set (the on-disk file the watchdog writes hourly can
-        lag a newly-started session by up to a tick). Elsewhere the on-disk file
-        is read with a freshness window.
+        This read path never rebuilds projections.  The watchdog-owned file is
+        preferred and any refresh is scheduled in a daemon thread after the
+        request has its bounded fallback.  Expensive marker/repair projection
+        work therefore never runs on the Discord event-loop thread.
         """
-        # P0: build fresh whenever the canonical marker dir is present — the real
-        # "I'm on the box" signal — NOT gated on MEGAPLAN_TRUSTED_CONTAINER. A
-        # resident that lost the env var on a manual restart still serves live
-        # per-turn data instead of a stale cache. The env var now only gates the
-        # best-effort shared-file write (so an arbitrary on-box process doesn't
-        # clobber the watchdog's cache).
-        if status_snapshot.has_local_markers():
-            try:
-                snapshot = status_snapshot.build_cloud_status_snapshot()
-            except Exception as exc:  # pragma: no cover - defensive guard
-                return None, f"snapshot build failed: {exc.__class__.__name__}: {exc}"
-            if status_snapshot.is_trusted_container():
-                # Best-effort refresh of the shared on-disk file so CLI/laptop
-                # and later reads see the current view too. The watchdog still
-                # owns the hourly cadence; this just keeps the file fresh between
-                # sweeps while the resident is active. A write failure never
-                # degrades the answer.
-                try:
-                    status_snapshot.write_cloud_status_snapshot(
-                        snapshot, path=self.config.status_snapshot_path
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    pass
-            return snapshot, None
         path = self.config.status_snapshot_path
         try:
             snapshot, degraded_reason = status_snapshot.load_cloud_status_snapshot(
@@ -682,6 +1291,35 @@ class MegaplanResidentProfile:
             return _sanitize_stale_snapshot(snapshot, degraded_reason), degraded_reason
         return snapshot, None
 
+    def _schedule_cloud_status_snapshot_refresh(self) -> None:
+        if not status_snapshot.has_local_markers():
+            return
+        thread = self._snapshot_refresh_thread
+        now = time.monotonic()
+        if thread is not None and thread.is_alive():
+            return
+        if now - self._snapshot_refresh_started_at < _SNAPSHOT_BACKGROUND_REFRESH_MIN_INTERVAL_S:
+            return
+        self._snapshot_refresh_started_at = now
+
+        def refresh() -> None:
+            try:
+                snapshot = status_snapshot.build_cloud_status_snapshot()
+                status_snapshot.write_cloud_status_snapshot(
+                    snapshot, path=self.config.status_snapshot_path
+                )
+            except Exception:
+                # Hot context already carries the degraded cached fallback.  The
+                # watchdog remains the canonical periodic refresh owner.
+                return
+
+        self._snapshot_refresh_thread = threading.Thread(
+            target=refresh,
+            name="resident-cloud-status-refresh",
+            daemon=True,
+        )
+        self._snapshot_refresh_thread.start()
+
     def tools(self) -> ToolRegistry:
         return self.tool_registry
 
@@ -692,6 +1330,7 @@ class MegaplanResidentProfile:
             ToolRegistration("select_epic", "Select the active epic for a resident conversation.", "write", SelectEpicInput, ToolResult, self._select_epic),
             ToolRegistration("read_epic", "Read an epic body, checklist, and sprints.", "read", EpicInput, ToolResult, self._read_epic),
             ToolRegistration("search_messages", "Search resident messages using the Megaplan store.", "read", SearchMessagesInput, ToolResult, self._search_messages),
+            ToolRegistration("read_reply_chain", "Read a bounded page of immutable Discord reply ancestry for the current or another message in this conversation. Use the prompt-provided cursor for ancestors older than the three preloaded ones.", "read", ReadReplyChainInput, ToolResult, self._read_reply_chain),
             ToolRegistration("search_epics", "Search Megaplan epics using the Megaplan store.", "read", SearchEpicsInput, ToolResult, self._search_epics),
             ToolRegistration("search_plans", "Search Megaplan plans using the Megaplan store.", "read", SearchPlansInput, ToolResult, self._search_plans),
             ToolRegistration("search_code_artifacts", "Search stored code artifacts with bounded redacted results.", "read", SearchCodeArtifactsInput, ToolResult, self._search_code_artifacts),
@@ -730,14 +1369,129 @@ class MegaplanResidentProfile:
             ToolRegistration("schedule_cloud_check", "Schedule a durable cloud status check.", "control", ScheduleCloudCheckInput, ToolResult, self._schedule_cloud_check),
             ToolRegistration("cancel_cloud_check", "Cancel a durable cloud status check.", "control", CancelCloudCheckInput, ToolResult, self._cancel_cloud_check),
             ToolRegistration("list_cloud_checks", "List durable cloud status checks.", "cloud_read", ListCloudChecksInput, ToolResult, self._list_cloud_checks),
-            ToolRegistration("read_todo_list", "Read the VP special-requests to-do list (pending + retained items).", "read", ReadTodoListInput, ToolResult, self._read_todo_list),
+            ToolRegistration("read_cloud_status_node", "Read one bounded branch of the canonical cloud status tree. Start from node IDs in hot context and paginate event branches; raw snapshots are never returned.", "cloud_read", ReadCloudStatusNodeInput, ToolResult, self._read_cloud_status_node),
+            ToolRegistration("read_context_node", "Read one typed, bounded branch from the resident context tree.", "read", ReadContextNodeInput, ToolResult, self._read_context_node),
+            ToolRegistration("search_context", "Search one allow-listed resident context namespace without loading unrelated state.", "read", SearchContextInput, ToolResult, self._search_context),
+            ToolRegistration("read_todo_list", "Read the full VP special-requests to-do list, including pending, conditional, and retained failed items.", "read", ReadTodoListInput, ToolResult, self._read_todo_list),
+            ToolRegistration("get_timezone_preference", "Read the current Discord user's durable IANA timezone preference and effective presentation timezone.", "read", GetTimezonePreferenceInput, ToolResult, self._get_timezone_preference),
+            ToolRegistration("set_timezone_preference", "Set the current Discord user's durable IANA timezone preference. The update applies on the next message.", "write", SetTimezonePreferenceInput, ToolResult, self._set_timezone_preference),
             ToolRegistration("complete_todo_item", "Mark a to-do item done and clear it from the list; pass a short result summary.", "write", CompleteTodoItemInput, ToolResult, self._complete_todo_item),
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
-            ToolRegistration("launch_subagent", "Launch a sub-agent to execute an arbitrary task with file/web/terminal tools and return its final response.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, full log, and result path. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
+
+    def _read_cloud_status_node(self, payload: ReadCloudStatusNodeInput) -> ToolResult:
+        snapshot, degraded_reason = self._load_cloud_status_snapshot()
+        result = read_cloud_status_node(
+            snapshot,
+            node_id=payload.node_id,
+            cursor=payload.cursor,
+            limit=payload.limit,
+        )
+        if not result.get("success"):
+            return _fail(str(result.get("error") or "status-tree node read failed"))
+        return _ok(
+            "cloud status node read",
+            node=result["node"],
+            degraded_reason=degraded_reason,
+        )
+
+    def _active_context_sources(self) -> dict[str, Any] | None:
+        runtime_context = current_tool_runtime_context()
+        conversation_id = runtime_context.conversation_id if runtime_context is not None else None
+        if conversation_id and conversation_id in self._context_source_cache:
+            return self._context_source_cache[conversation_id]
+        if len(self._context_source_cache) == 1:
+            return next(iter(self._context_source_cache.values()))
+        return None
+
+    def _read_context_node(self, payload: ReadContextNodeInput) -> ToolResult:
+        sources = self._active_context_sources()
+        if sources is None:
+            return _fail("context root is unavailable for the active conversation")
+        result = read_context_node(
+            sources, node_id=payload.node_id, cursor=payload.cursor, limit=payload.limit
+        )
+        if not result.get("success"):
+            return _fail(str(result.get("error") or "context node read failed"))
+        return _ok("context node read", node=result["node"])
+
+    def _search_context(self, payload: SearchContextInput) -> ToolResult:
+        sources = self._active_context_sources()
+        if sources is None:
+            return _fail("context root is unavailable for the active conversation")
+        result = search_context(
+            sources,
+            scope=payload.scope,
+            query=payload.query,
+            cursor=payload.cursor,
+            limit=payload.limit,
+        )
+        if not result.get("success"):
+            return _fail(str(result.get("error") or "context search failed"))
+        return _ok("context searched", node=result["node"])
+
+    def _timezone_tool_subject(self) -> AuthorizationSubject | None:
+        context = current_tool_runtime_context()
+        subject = context.subject if context is not None else None
+        return subject if isinstance(subject, AuthorizationSubject) else None
+
+    def _get_timezone_preference(self, payload: GetTimezonePreferenceInput) -> ToolResult:
+        subject = self._timezone_tool_subject()
+        if subject is None:
+            return _fail("timezone preference requires an authenticated Discord user")
+        if self.authorizer is not None:
+            decision = self.authorizer.authorize_action(subject, "read")
+            if not decision.allowed:
+                return _fail("authorization denied", reason=decision.reason)
+        context = current_tool_runtime_context()
+        conversation = (
+            self._store().load_resident_conversation(context.conversation_id)
+            if context is not None
+            else None
+        )
+        service = TimezoneService(self._store(), self.config)
+        preference = service.get_user_preference(subject.user_id)
+        resolved = service.resolve(
+            user_id=subject.user_id,
+            conversation=conversation,
+            guild_id=subject.guild_id,
+        )
+        return _ok(
+            "timezone preference read",
+            configured_timezone=(preference.timezone_name if preference is not None else None),
+            effective_timezone=resolved.hot_context(),
+        )
+
+    def _set_timezone_preference(self, payload: SetTimezonePreferenceInput) -> ToolResult:
+        subject = self._timezone_tool_subject()
+        if subject is None:
+            return _fail("timezone preference requires an authenticated Discord user")
+        if self.authorizer is not None:
+            decision = self.authorizer.authorize_action(subject, "write")
+            if not decision.allowed:
+                return _fail("authorization denied", reason=decision.reason)
+        try:
+            preference = TimezoneService(self._store(), self.config).set_user_timezone(
+                subject.user_id,
+                payload.timezone_name,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-user-timezone-tool",
+                    subject.user_id,
+                    (current_tool_runtime_context().tool_call_id if current_tool_runtime_context() else "direct"),
+                ),
+            )
+        except ValueError as exc:
+            return _fail(str(exc), timezone_name=payload.timezone_name)
+        return _ok(
+            "timezone preference updated; it applies to the next message",
+            timezone_name=preference.timezone_name,
+            transport=preference.transport,
+            user_id=preference.user_id,
+        )
 
     def _search_messages(self, payload: SearchMessagesInput) -> ToolResult:
         if denied := self._denied(payload, "read"):
@@ -746,6 +1500,82 @@ class MegaplanResidentProfile:
         if payload.conversation_id is not None:
             rows = [row for row in rows if row.conversation_id == payload.conversation_id][: payload.limit]
         return _ok("messages searched", messages=[_message_result(row) for row in rows], count=len(rows), limit=payload.limit)
+
+    def _read_reply_chain(self, payload: ReadReplyChainInput) -> ToolResult:
+        context = current_tool_runtime_context()
+        if context is None or not context.conversation_id:
+            return _fail(
+                "reply-chain reads require an active resident conversation",
+                error="conversation_context_required",
+            )
+        if self.authorizer is not None:
+            origin_authorized = (
+                isinstance(context.launch_origin, Mapping)
+                and context.launch_origin.get("applicability") == "applicable"
+                and context.launch_origin.get("resident_conversation_id")
+                == context.conversation_id
+            )
+            if not isinstance(context.subject, AuthorizationSubject) and not origin_authorized:
+                return _fail(
+                    "reply-chain read lacks an authorized subject or immutable source envelope",
+                    error="authorization_context_required",
+                )
+            decision = (
+                self.authorizer.authorize_action(context.subject, "read")
+                if isinstance(context.subject, AuthorizationSubject)
+                else None
+            )
+            if decision is not None and not decision.allowed:
+                return _fail(
+                    f"authorization denied: {decision.reason}",
+                    authorization_denied=True,
+                    reason=decision.reason,
+                    audit=decision.audit,
+                )
+
+        cursor_source: str | None = None
+        offset = 0
+        if payload.cursor:
+            try:
+                cursor_source, offset = decode_reply_cursor(payload.cursor)
+            except ValueError as exc:
+                return _fail(str(exc), error="invalid_cursor")
+
+        requested = (payload.source_message_id or "").strip() or cursor_source
+        if requested is None and isinstance(context.launch_origin, Mapping):
+            requested = str(
+                context.launch_origin.get("source_record_id")
+                or context.launch_origin.get("discord_message_id")
+                or ""
+            ).strip() or None
+        if requested is None:
+            return _fail(
+                "source_message_id is required when the current source is ambiguous",
+                error="source_message_required",
+            )
+
+        message = self._store().load_message(requested)
+        if message is not None and message.conversation_id != context.conversation_id:
+            return _fail(
+                "reply-chain source is outside the active conversation",
+                error="cross_conversation_rejected",
+            )
+        if message is None:
+            message = self._store().find_conversation_message_by_discord_id(
+                context.conversation_id, requested
+            )
+        if message is None:
+            return _fail(
+                "reply-chain source was not found in the active conversation",
+                error="source_not_found",
+            )
+        if cursor_source is not None and cursor_source != message.id:
+            return _fail(
+                "cursor does not belong to the requested source message",
+                error="cursor_source_mismatch",
+            )
+        page = reply_chain_page(message, offset=offset, limit=payload.limit)
+        return _ok("reply ancestry read", **page)
 
     def _search_epics(self, payload: SearchEpicsInput) -> ToolResult:
         if denied := self._denied(payload, "read"):
@@ -1694,7 +2524,10 @@ class MegaplanResidentProfile:
                 payload.interval_seconds,
             ),
         )
-        return _ok("cloud check scheduled", scheduled_job=job.model_dump(mode="json"))
+        return _ok(
+            "cloud check scheduled",
+            scheduled_job=self._localized_tool_data(job.model_dump(mode="json")),
+        )
 
     def _cancel_cloud_check(self, payload: CancelCloudCheckInput) -> ToolResult:
         if denied := self._denied(payload, "admin"):
@@ -1711,7 +2544,10 @@ class MegaplanResidentProfile:
             cancelled_at=datetime.now(UTC),
             idempotency_key=deterministic_idempotency_key("resident-tool-cancel-cloud-check", job.id),
         )
-        return _ok("cloud check cancelled", scheduled_job=updated.model_dump(mode="json"))
+        return _ok(
+            "cloud check cancelled",
+            scheduled_job=self._localized_tool_data(updated.model_dump(mode="json")),
+        )
 
     def _list_cloud_checks(self, payload: ListCloudChecksInput) -> ToolResult:
         if denied := self._denied(payload, "cloud_read"):
@@ -1725,7 +2561,12 @@ class MegaplanResidentProfile:
         )
         if payload.epic_id is not None:
             rows = [row for row in rows if row.epic_id == payload.epic_id]
-        return _ok("cloud checks listed", scheduled_jobs=[row.model_dump(mode="json") for row in rows])
+        return _ok(
+            "cloud checks listed",
+            scheduled_jobs=self._localized_tool_data(
+                [row.model_dump(mode="json") for row in rows]
+            ),
+        )
 
     def _todo_path(self) -> Path:
         return Path(self.config.special_requests_todo_path)
@@ -1754,18 +2595,51 @@ class MegaplanResidentProfile:
         task = payload.task.strip()
         if not task:
             return _fail("task is required")
-        item = vp_todo.add_item(self._todo_path(), task, when=payload.when)
+        runtime_context = current_tool_runtime_context()
+        item = vp_todo.add_item(
+            self._todo_path(),
+            task,
+            when=payload.when,
+            launch_provenance=(
+                runtime_context.launch_origin if runtime_context is not None else None
+            ),
+        )
         return _ok("todo item added", item=vp_todo.public_item(item))
 
     async def _launch_subagent(self, payload: LaunchSubagentInput) -> ToolResult:
         task = payload.task.strip()
         if not task:
             return _fail("task is required")
+        runtime_context = current_tool_runtime_context()
+        launch_origin = runtime_context.launch_origin if runtime_context is not None else None
+        if (
+            (not isinstance(launch_origin, Mapping) or launch_origin.get("applicability") == "not_applicable")
+            and payload.request_id
+        ):
+            todo_item = next(
+                (
+                    item
+                    for item in vp_todo.load_items(self._todo_path())
+                    if item["id"] == payload.request_id
+                ),
+                None,
+            )
+            if todo_item is not None and isinstance(todo_item.get("launch_provenance"), dict):
+                launch_origin = todo_item["launch_provenance"]
         result = await launch_subagent_task(
             self.config,
             task=task,
             toolsets=payload.toolsets,
             project_dir=payload.project_dir,
+            backend=payload.backend,
+            background=payload.background,
+            model=payload.model,
+            reasoning_effort=payload.reasoning_effort,
+            task_kind=payload.task_kind,
+            difficulty=payload.difficulty,
+            request_id=payload.request_id,
+            launch_origin=launch_origin,
+            retry_of_run_id=payload.retry_of_run_id,
         )
         if not result.ok:
             return ToolResult(
@@ -1775,8 +2649,17 @@ class MegaplanResidentProfile:
             )
         return ToolResult(
             ok=True,
-            message="subagent completed",
-            data={"final_text": result.final_text, "returncode": result.returncode},
+            message=("subagent launched" if result.status == "running" else "subagent completed"),
+            data={
+                "final_text": result.final_text,
+                "returncode": result.returncode,
+                "run_id": result.run_id,
+                "status": result.status,
+                "manifest_path": result.manifest_path,
+                "log_path": result.log_path,
+                "result_path": result.result_path,
+                "pid": result.pid,
+            },
         )
 
     async def _run_cloud_tool(
@@ -1793,6 +2676,16 @@ class MegaplanResidentProfile:
         action = "cloud_read" if operation in {"cloud_status", "cloud_status_chain", "cloud_logs"} else "admin"
         if denied := self._denied(payload, action):
             return denied
+        runtime_context = current_tool_runtime_context()
+        launch_provenance = normalize_delegation_provenance(
+            runtime_context.launch_origin
+            if runtime_context is not None and runtime_context.launch_origin is not None
+            else {
+                "transport": "non_discord",
+                "applicability": "not_applicable",
+                "source_kind": "resident_internal_cloud_call",
+            }
+        )
         try:
             repo_args = resolved_repo_args if resolved_repo_args is not None else self._repo_arguments_for_payload(payload)
             run = self._load_or_create_cloud_run(
@@ -1819,6 +2712,7 @@ class MegaplanResidentProfile:
                     target_id=target_id,
                     arguments={key: str(value) for key, value in request_args.items() if value is not None},
                     confirmed=operation in {"cloud_start_chain", "cloud_bootstrap"},
+                    launch_provenance=launch_provenance,
                 )
             )
         except Exception as exc:
@@ -1831,9 +2725,26 @@ class MegaplanResidentProfile:
         return _ok(
             result.summary,
             classification=result.classification,
-            cloud_run=updated.model_dump(mode="json"),
-            cloud_result={"summary": result.summary, "details": result.details},
+            cloud_run=self._localized_tool_data(updated.model_dump(mode="json")),
+            cloud_result=self._localized_tool_data(
+                {"summary": result.summary, "details": result.details}
+            ),
         )
+
+    def _localized_tool_data(self, value: Any) -> Any:
+        context = current_tool_runtime_context()
+        conversation = (
+            self._store().load_resident_conversation(context.conversation_id)
+            if context is not None
+            else None
+        )
+        subject = context.subject if context is not None else None
+        resolved = TimezoneService(self._store(), self.config).resolve(
+            user_id=(str(subject.user_id) if isinstance(subject, AuthorizationSubject) else None),
+            conversation=conversation,
+            guild_id=(subject.guild_id if isinstance(subject, AuthorizationSubject) else None),
+        )
+        return add_localized_timestamp_fields(value, resolved.name)
 
     def _repo_arguments_for_payload(self, payload: CloudToolInput) -> dict[str, str]:
         repo_url = payload.repo_url
@@ -1896,6 +2807,17 @@ class MegaplanResidentProfile:
         status: str,
         metadata: dict[str, Any],
     ) -> Any:
+        runtime_context = current_tool_runtime_context()
+        launch_provenance = normalize_delegation_provenance(
+            runtime_context.launch_origin
+            if runtime_context is not None and runtime_context.launch_origin is not None
+            else {
+                "transport": "non_discord",
+                "applicability": "not_applicable",
+                "source_kind": "resident_internal_cloud_call",
+            }
+        )
+        metadata = {**metadata, "resident_delegation": launch_provenance}
         idempotency_key = deterministic_idempotency_key(
             "resident-cloud-run",
             operation,
@@ -1906,6 +2828,8 @@ class MegaplanResidentProfile:
             target_id,
             command_summary,
             payload.actor_user_id or self.actor_id,
+            launch_provenance.get("correlation_id"),
+            launch_provenance.get("delegation_id"),
         )
         run = self._store().create_cloud_run(
             CloudRunInput(
@@ -2334,12 +3258,18 @@ def _summarize_plan_state(work_dir: Path, plan_name: str) -> dict[str, Any] | No
         if not path.exists():
             continue
         data = _read_json_object(path)
+        active_step = _summarize_active_step(data.get("active_step"))
+        presentation = plan_status_presentation(
+            data.get("current_state") or data.get("state"),
+            active_step=active_step,
+        )
         return {
             "path": str(path),
             "mtime": _path_mtime(path),
             "current_state": data.get("current_state") or data.get("state"),
             "iteration": data.get("iteration"),
-            "active_step": _summarize_active_step(data.get("active_step")),
+            "active_step": active_step,
+            **presentation,
             "last_gate": _summarize_last_gate(data.get("last_gate")),
             "read_error": data.get("_read_error"),
         }
@@ -2394,6 +3324,9 @@ def _plan_activity_item(row: dict[str, Any]) -> dict[str, Any]:
         "last_state": row.get("last_state"),
         "plan_current_state": plan_state.get("current_state") if isinstance(plan_state, dict) else None,
         "active_step": active_step,
+        "active_phase": plan_state.get("active_phase") if isinstance(plan_state, dict) else None,
+        "execution_state": plan_state.get("execution_state") if isinstance(plan_state, dict) else None,
+        "display_state": plan_state.get("display_state") if isinstance(plan_state, dict) else None,
         "chain_spec_path": row.get("chain_spec_path"),
         "work_dir": row.get("work_dir"),
         "mtime": row.get("mtime"),

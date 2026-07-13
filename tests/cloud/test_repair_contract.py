@@ -100,8 +100,13 @@ def test_repair_contract_round_trips_legacy_payload_without_shape_changes(tmp_pa
 
     repair_contract.save_repair_data(path, payload)
 
-    assert json.loads(path.read_text(encoding="utf-8")) == payload
-    assert repair_contract.load_json(path) == payload
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    persisted.pop("resident_delegation", None)
+    loaded = repair_contract.load_json(path)
+    loaded.pop("resident_delegation", None)
+
+    assert persisted == payload
+    assert loaded == payload
 
 
 def test_repair_contract_additive_fields_are_explicit_and_redaction_is_recursive() -> None:
@@ -560,6 +565,33 @@ def test_repair_index_load_missing_returns_default_shape(tmp_path: Path) -> None
     assert loaded == {"sessions": {}, "incidents": {}}
 
 
+def test_repair_index_preserves_resident_delegation_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "index.json"
+    path.write_text(
+        json.dumps(
+            {
+                "sessions": {},
+                "incidents": {},
+                "resident_delegation": {
+                    "schema_version": "arnold-resident-delegation-provenance-v1",
+                    "custody_id": "custody-1",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    repair_contract.update_session_index(
+        path,
+        "wbc",
+        {"status": "repairing"},
+    )
+
+    loaded = repair_contract.read_repair_index(path)
+    assert loaded["resident_delegation"]["custody_id"] == "custody-1"
+    assert loaded["sessions"]["wbc"]["status"] == "repairing"
+
+
 def test_repair_index_updates_create_and_merge_nested_refs_idempotently(tmp_path: Path) -> None:
     path = tmp_path / "repair-data" / "index.json"
 
@@ -612,6 +644,7 @@ def test_repair_index_updates_create_and_merge_nested_refs_idempotently(tmp_path
     }
 
     loaded = repair_contract.read_repair_index(path)
+    resident_delegation = loaded.pop("resident_delegation", None)
     assert loaded == {
         "sessions": {
             "session-1": {
@@ -633,6 +666,37 @@ def test_repair_index_updates_create_and_merge_nested_refs_idempotently(tmp_path
                 },
             }
         },
+    }
+    if resident_delegation is not None:
+        assert resident_delegation["schema_version"] == (
+            "arnold-resident-delegation-provenance-v1"
+        )
+
+
+def test_repair_index_allows_resident_delegation_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "repair-data" / "index.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "sessions": {},
+                "incidents": {},
+                "resident_delegation": {
+                    "schema_version": "arnold-resident-delegation-provenance-v1",
+                    "transport": "discord",
+                    "conversation_key": "discord:dm:123",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = repair_contract.read_repair_index(path)
+
+    assert loaded["resident_delegation"] == {
+        "schema_version": "arnold-resident-delegation-provenance-v1",
+        "transport": "discord",
+        "conversation_key": "discord:dm:123",
     }
 
 
@@ -1097,6 +1161,11 @@ def test_retention_cleanup_preserves_protected_artifacts_and_records_cleanup_eve
     assert "stale-session" not in summary["index_snapshots"]["after"]["sessions"]
     assert summary["index_snapshots"]["after"]["sessions"]["active-session"]["latest_meta_repair_id"] == ""
     persisted_index = repair_contract.read_repair_index(repair_dir / "index.json")
+    resident_delegation = persisted_index.pop("resident_delegation", None)
+    if resident_delegation is not None:
+        assert resident_delegation["schema_version"] == (
+            "arnold-resident-delegation-provenance-v1"
+        )
     assert persisted_index == summary["index_snapshots"]["after"]
 
     cleanup_records = repair_contract.read_jsonl_records(
@@ -1576,6 +1645,37 @@ def test_recovery_view_dispatches_repairable_with_request() -> None:
     assert any("recovery view" in r for r in decision.rationale)
 
 
+def test_recovery_view_refuses_l1_when_legacy_request_has_no_blocker_identity() -> None:
+    recovery = _make_recovery_view_dict(
+        custody_bucket="repairable",
+        permitted_actions=[
+            {"action_type": "repair_dispatch", "rationale": "ready", "source": "test"}
+        ],
+    )
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["7473fa42"],
+            "blocker_id": "",
+            "current_state": "blocked",
+            "failure_kind": "",
+            "terminal_outcomes": ["repair_exhausted"],
+        },
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+        },
+        current_target={"current_refs": {"current_plan_name": "c1-contract-reality"}},
+    )
+
+    assert decision.decision == repair_contract.DISPATCH_DECISION_BROKEN_SUPERFIXER
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_BROKEN_SUPERFIXER
+    assert decision.request_id == "7473fa42"
+    assert decision.blocker_id == ""
+    assert any("request/blocker identity" in item for item in decision.rationale)
+
+
 def test_recovery_view_dispatches_repairing_custody() -> None:
     """When recovery_view custody is repairing, dispatch REPAIRING."""
     recovery = _make_recovery_view_dict(
@@ -1666,8 +1766,8 @@ def test_recovery_view_dispatches_healthy_as_no_action() -> None:
     assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_QUEUE_ONLY
 
 
-def test_recovery_view_blocked_escalates_to_human() -> None:
-    """When recovery_view is blocked and recovery_needed, escalate to human."""
+def test_recovery_view_untyped_blocked_is_broken_superfixer() -> None:
+    """A generic blocked view cannot invent a human decision."""
     recovery = _make_recovery_view_dict(
         custody_bucket="blocked",
         status="blocked",
@@ -1687,8 +1787,8 @@ def test_recovery_view_blocked_escalates_to_human() -> None:
         plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
         current_target={"current_refs": {"current_plan_name": "test-plan"}},
     )
-    assert decision.decision == repair_contract.DISPATCH_DECISION_HUMAN_REQUIRED
-    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_HUMAN_REQUIRED
+    assert decision.decision == repair_contract.DISPATCH_DECISION_BROKEN_SUPERFIXER
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_BROKEN_SUPERFIXER
     assert any("blocked" in r.lower() for r in decision.rationale)
 
 

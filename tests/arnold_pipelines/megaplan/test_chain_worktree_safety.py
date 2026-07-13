@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -533,6 +534,66 @@ def test_checkout_existing_milestone_reconciles_with_refreshed_base(
     local_branch = _git(runner, "rev-parse", "HEAD").stdout.strip()
     assert remote_branch == local_branch
     assert any("git rebase origin/native-python-working-tree -> rc=0" in m for m in messages)
+
+
+def test_checkout_existing_milestone_skips_rebase_when_remote_base_rewrites_away_expected_base(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    runner = tmp_path / "runner"
+    messages: list[str] = []
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "chain.yaml").write_text("profile: partnered-5\n", encoding="utf-8")
+    _git(source, "add", "chain.yaml")
+    _git(source, "commit", "-m", "base")
+    _git(source, "branch", "-M", "main")
+    _git(source, "push", "-u", "origin", "main")
+    expected_base = _git(source, "rev-parse", "HEAD").stdout.strip()
+
+    _git(source, "checkout", "-b", "cloud/m1")
+    (source / "milestone.txt").write_text("m1\n", encoding="utf-8")
+    _git(source, "add", "milestone.txt")
+    _git(source, "commit", "-m", "milestone")
+    milestone_sha = _git(source, "rev-parse", "HEAD").stdout.strip()
+    _git(source, "push", "-u", "origin", "cloud/m1")
+
+    _git(source, "checkout", "--orphan", "rewrite-main")
+    for path in source.iterdir():
+        if path.name == ".git":
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    (source / "README.md").write_text("rewritten main\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "rewrite main unrelated")
+    _git(source, "branch", "-M", "rewrite-main", "main")
+    _git(source, "push", "--force", "origin", "main")
+
+    _git(tmp_path, "clone", "--branch", "main", str(origin), str(runner))
+    _git(runner, "config", "user.email", "test@example.com")
+    _git(runner, "config", "user.name", "Test User")
+
+    _checkout_milestone_branch(
+        runner,
+        "cloud/m1",
+        base_branch="main",
+        writer=messages.append,
+        from_origin=True,
+        expected_base_ref=expected_base,
+    )
+
+    assert _git(runner, "branch", "--show-current").stdout.strip() == "cloud/m1"
+    assert _git(runner, "rev-parse", "HEAD").stdout.strip() == milestone_sha
+    assert (runner / "milestone.txt").read_text(encoding="utf-8") == "m1\n"
+    assert any("skipping automatic rebase for existing milestone branch cloud/m1" in m for m in messages)
+    assert not any("git rebase origin/main" in m for m in messages)
 
 
 def test_run_chain_repushes_deleted_remote_base_branch_from_local_ref(
@@ -1400,9 +1461,30 @@ def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monke
     assert Path.cwd() == root
 
 
-def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
+@pytest.mark.parametrize(
+    ("pr_states", "guard_results", "expected_status"),
+    [
+        (
+            ["open", "open"],
+            [(False, "no typed no-op completion waiver found")],
+            "stopped",
+        ),
+        (
+            ["open", "merged"],
+            [
+                (False, "open PR evidence is stale"),
+                (True, "merged publication evidence is authoritative"),
+            ],
+            "done",
+        ),
+    ],
+)
+def test_run_chain_rechecks_pr_state_when_premerge_completion_guard_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pr_states: list[str],
+    guard_results: list[tuple[bool, str]],
+    expected_status: str,
 ) -> None:
     root = tmp_path / "repo"
     _init_repo(root)
@@ -1482,13 +1564,15 @@ def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
         "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
         lambda *args, **kwargs: (True, "authoritative"),
     )
+    guard_iter = iter(guard_results)
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._chain_completion_guard",
-        lambda *args, **kwargs: (False, "no typed no-op completion waiver found"),
+        lambda *args, **kwargs: next(guard_iter),
     )
+    pr_state_iter = iter(pr_states)
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._pr_state",
-        lambda *args, **kwargs: "open",
+        lambda *args, **kwargs: next(pr_state_iter),
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._mark_pr_ready",
@@ -1499,14 +1583,24 @@ def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
         lambda *args, **kwargs: merge_calls.append(1) or "merged",
     )
 
-    result = run_chain(spec_path, root, writer=lambda _message: None)
+    messages: list[str] = []
+    result = run_chain(spec_path, root, writer=messages.append)
 
-    assert result["status"] == "stopped"
-    assert "completion guard blocked before PR merge" in result["reason"]
+    assert result["status"] == expected_status
     assert ready_calls == []
     assert merge_calls == []
 
     saved = load_chain_state(spec_path)
-    assert saved.last_state == "blocked"
-    assert saved.pr_number == 80
-    assert saved.pr_state == "open"
+    if expected_status == "stopped":
+        assert "completion guard blocked before PR merge" in result["reason"]
+        assert saved.last_state == "blocked"
+        assert saved.pr_number == 80
+        assert saved.pr_state == "open"
+        assert saved.completed == []
+    else:
+        assert saved.last_state == "done"
+        assert saved.current_milestone_index == 1
+        assert saved.current_plan_name is None
+        assert saved.completed[0]["label"] == "m1"
+        assert saved.completed[0]["pr_state"] == "merged"
+        assert any("merged while completion guard was evaluating" in msg for msg in messages)

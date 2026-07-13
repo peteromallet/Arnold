@@ -37,6 +37,56 @@ def _stable_unique_strings(values: list[str]) -> list[str]:
     return ordered
 
 
+def phase_quality_deviations_for_current_attempt(
+    batch_payloads: list[dict[str, Any]],
+    *,
+    blocking_reasons: list[str],
+) -> tuple[list[str], list[str]]:
+    """Separate current quality blockers from deferred execution evidence.
+
+    ``execution_batch_*.json`` is a durable, cross-attempt audit trail.  It is
+    intentionally cumulative in ``execution.json``.  It must *not*, however,
+    be replayed as the quality-gate input for a later retry: an earlier
+    contract failure may have been fixed by a subsequent batch, and an
+    explicitly unavailable external prerequisite is evidence rather than a
+    code-quality failure.
+
+    Callers pass only payloads produced by the invocation currently being
+    reduced.  The returned first list is safe to publish as PhaseResult
+    ``deviations``; the second remains durable diagnostic evidence.
+    """
+    current: list[str] = []
+    for payload in batch_payloads:
+        current.extend(
+            issue
+            for issue in payload.get("deviations", [])
+            if isinstance(issue, str) and issue.strip()
+        )
+
+    deferred_markers = (
+        "advisory",
+        "expected environment limitation",
+        "accepted environment blocker",
+        "environment-dependent",
+        "environment gap",
+        "prerequisite error",
+        "prerequisites are missing",
+        "comfyui server",
+        "could not find comfyui",
+        "err_connection_refused",
+        "recorded as command evidence only",
+    )
+    blockers = list(blocking_reasons)
+    deferred: list[str] = []
+    for issue in current:
+        normalized = issue.casefold()
+        if any(marker in normalized for marker in deferred_markers):
+            deferred.append(issue)
+        else:
+            blockers.append(issue)
+    return _stable_unique_strings(blockers), _stable_unique_strings(deferred)
+
+
 def _build_aggregate_execution_payload(
     batch_payloads: list[dict[str, Any]],
     *,
@@ -184,6 +234,36 @@ def _collect_per_batch_claimed_paths(
     return claimed
 
 
+def _collect_finalized_task_claimed_paths(
+    plan_dir: Path | None,
+    project_dir: Path,
+) -> set[str]:
+    """Return terminal finalized task file claims as durable scope evidence."""
+    if plan_dir is None:
+        return set()
+    try:
+        finalize_data = read_json(plan_dir / "finalize.json")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return set()
+    if not isinstance(finalize_data, dict):
+        return set()
+
+    claimed: set[str] = set()
+    terminal_statuses = {"done", "skipped", "waived", "not_applicable"}
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict) or task.get("status") not in terminal_statuses:
+            continue
+        raw_files = task.get("files_changed", [])
+        if isinstance(raw_files, dict):
+            raw_files = expand_projected_path_list(raw_files, plan_dir=plan_dir)
+        claimed |= {
+            _normalize_execute_claimed_path(path, project_dir)
+            for path in raw_files
+            if isinstance(path, str) and path.strip()
+        }
+    return claimed
+
+
 def _expand_untracked_directory_entries(
     project_dir: Path,
     observed_snapshot: dict[str, str],
@@ -220,6 +300,70 @@ def _capture_execute_scope_snapshot(
     if recursive_error is None:
         return recursive_snapshot, None
     return _expand_untracked_directory_entries(project_dir, observed_snapshot), None
+
+
+
+def reconcile_finalized_review_scope_claims(
+    finalize_data: dict[str, Any],
+    *,
+    plan_dir: Path | None,
+    project_dir: Path,
+    state: PlanState | None,
+) -> dict[str, list[str]]:
+    """Persist review-linked ownership for files in the declared milestone diff.
+
+    Review task verdicts are structured, task-linked repository evidence.  On a
+    retry, use that evidence only for terminal task records and only when the
+    path is actually in the declared committed milestone range.  This is a
+    narrow reconciliation, not a heuristic attribution of arbitrary changed
+    files.
+    """
+    if plan_dir is None or not isinstance(state, dict):
+        return {}
+    policy = (state.get("meta") or {}).get("chain_policy")
+    base_ref = policy.get("milestone_base_sha") if isinstance(policy, dict) else None
+    if not isinstance(base_ref, str) or not base_ref.strip():
+        return {}
+    try:
+        from arnold_pipelines.megaplan.loop.git import _collect_committed_range_paths
+        changed = _collect_committed_range_paths(project_dir, base_ref=base_ref)
+        review = read_json(plan_dir / "review.json")
+    except Exception:
+        return {}
+    if not isinstance(review, dict):
+        return {}
+    tasks_by_id = {
+        task.get("id"): task for task in finalize_data.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+        and task.get("status") in {"done", "skipped"}
+    }
+    reconciled: dict[str, list[str]] = {}
+    for verdict in review.get("task_verdicts", []):
+        if not isinstance(verdict, dict):
+            continue
+        task = tasks_by_id.get(verdict.get("task_id"))
+        paths = verdict.get("evidence_files")
+        if task is None or not isinstance(paths, list):
+            continue
+        additions = sorted({
+            _normalize_execute_claimed_path(path, project_dir)
+            for path in paths
+            if isinstance(path, str)
+            and _normalize_execute_claimed_path(path, project_dir) in changed
+        })
+        if not additions:
+            continue
+        existing = [
+            path for path in task.get("files_changed", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        merged = list(dict.fromkeys([*existing, *additions]))
+        if merged == existing:
+            continue
+        task["files_changed"] = merged
+        task["scope_reconciled_files"] = additions
+        reconciled[str(task["id"])] = additions
+    return reconciled
 
 
 def _compute_execute_scope_drift(
@@ -270,6 +414,9 @@ def _compute_execute_scope_drift(
     # Union per-batch claims from disk so per-batch execute mode compares the
     # working-tree diff against every batch's claims, not just this call's.
     files_claimed |= _collect_per_batch_claimed_paths(plan_dir, project_dir)
+    # Retain claims reconciled by earlier batches when a retry only has a
+    # partial/reconstructed current payload.
+    files_claimed |= _collect_finalized_task_claimed_paths(plan_dir, project_dir)
     if state is not None:
         config = state.get("config") or {}
         if config.get("mode") == "doc":

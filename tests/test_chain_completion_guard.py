@@ -1154,6 +1154,91 @@ def test_run_chain_clears_stale_closed_pr_state_on_restart(tmp_path: Path) -> No
     assert saved.last_state == "done"
 
 
+def test_run_chain_clears_missing_pr_context_while_resuming_blocked_plan(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan(
+        tmp_path,
+        current_state="finalized",
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="blocked",
+            pr_number=99,
+            pr_state="open",
+        ),
+    )
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._capture_sync_state",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._pr_state",
+            return_value="closed",
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+            return_value=123,
+        ) as ensure_pr,
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=chain_module.DriverOutcome(
+                status="done",
+                plan="plan-m1",
+                final_state="done",
+                iterations=1,
+                reason="ok",
+            ),
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._handle_outcome",
+            return_value="skip",
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._append_completed_with_guard",
+            return_value=(True, ""),
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+        )
+
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "done"
+    assert ensure_pr.call_count == 1
+    assert saved.current_milestone_index == 1
+    assert saved.pr_number is None
+    assert saved.pr_state is None
+    assert saved.last_state == "done"
+
+
 def test_latest_execution_batch_all_tasks_done_accepts_execution_window_authority(
     tmp_path: Path,
 ) -> None:
@@ -2259,6 +2344,38 @@ def test_merged_pr_completion_prefers_gh_merge_commit_over_stale_chain_pr_head(
     assert stale_pr_head[:12] not in reason
 
 
+def test_completion_guard_allows_published_pr_target_descending_from_chain_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    base = _init_repo(tmp_path)
+    local_branch = _git(tmp_path, "branch", "--show-current")
+    published_sha = _commit_published_semantic_change(
+        tmp_path,
+        base,
+        branch="published-not-landed",
+        return_to=local_branch,
+    )
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    def fake_published_target_from_gh(_root: Path, pr_number: int) -> tuple[str, str]:
+        assert pr_number == 95
+        return published_sha, "gh.pr#95.mergeCommit"
+
+    monkeypatch.setattr(
+        chain_module,
+        "_published_pr_target_from_gh",
+        fake_published_target_from_gh,
+    )
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        {**_record(), "pr_number": 95, "pr_state": "merged"},
+        implementation_milestone=True,
+        chain_state=ChainState(target_base_ref=local_branch),
+    )
+
+    assert ok is True
+    assert "published PR target" in reason
 def test_missing_milestone_base_sha_blocks_without_waiver(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _commit_semantic_change(tmp_path)

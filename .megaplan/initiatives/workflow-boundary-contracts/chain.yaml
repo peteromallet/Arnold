@@ -1,27 +1,123 @@
 base_branch: main
-merge_policy: manual
+merge_policy: auto
 anchors:
   north_star: NORTHSTAR.md
+launch_preconditions:
+- name: Run Authority is fully landed with content-addressed proof
+  kind: chain_completed
+  chain: .megaplan/initiatives/runauthority-epic/chain.yaml
+  require_manifest: true
 milestones:
-  - label: s1-operational-semantic-health
-    idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s1-operational-semantic-health.md
-    profile: partnered-5
-    robustness: full
-  - label: s2-contract-foundation-and-authority
-    idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s2-contract-foundation-and-authority.md
-    profile: partnered-5
-    robustness: full
-    depends_on:
-      - s1-operational-semantic-health
-  - label: s3-megaplan-boundary-coverage-and-cloud-custody
-    idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s3-megaplan-boundary-coverage-and-cloud-custody.md
-    profile: partnered-5
-    robustness: full
-    depends_on:
-      - s2-contract-foundation-and-authority
-  - label: s4-consumption-and-general-conformance
-    idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s4-consumption-and-general-conformance.md
-    profile: partnered-5
-    robustness: full
-    depends_on:
-      - s3-megaplan-boundary-coverage-and-cloud-custody
+- label: c1-contract-reality-reconciliation
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/c1-contract-reality-reconciliation.md
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  with_prep: true
+  prep_clarify: false
+  prep_direction: Start from the combined prerequisite completion manifests and current
+    main. Inventory every supported runtime producer/consumer and actual artifacts,
+    authority records, observations, ledger/effect records, JSON schemas, retention/security
+    policies, and failure semantics before changing any runtime writer. Freeze the
+    execution-attempt ledger schema and migration matrix. This milestone is observe-only
+    outside boundary-local contracts and fixtures.
+  notes: 'Difficulty 5/5. This is the mutation gate: C2 cannot begin until ownership,
+    supported-surface coverage, payload/reference policy, atomicity/failure semantics,
+    compatibility fixtures, and zero-final-exemption criteria pass.'
+- label: c2-durable-findings-and-immediate-repair
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/c2-durable-findings-and-immediate-repair.md
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  with_prep: true
+  prep_clarify: false
+  prep_direction: Consume C1's pinned schema and matrices. Implement the kernel execution-attempt
+    ledger and durable payload/reference store contract, then map findings through
+    prerequisite-owned observation, repair-request, mutation-gate, and verification
+    contracts. Do not introduce parallel authority, lifecycle, queue, or runtime schemas.
+  notes: Difficulty 5/5. First shared-surface mutation. Start must be durable before
+    dispatch; terminal persistence failures must block success and remain visible.
+    Prove crash/fault and mutation-disabled negative controls.
+  depends_on:
+  - c1-contract-reality-reconciliation
+- label: c3-cloud-execution-custody-and-consumers
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/c3-cloud-execution-custody-and-consumers.md
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  with_prep: true
+  prep_clarify: false
+  prep_direction: Migrate every supported Megaplan phase, reducer, suspension/resume/cancellation,
+    and cloud execution seam to the C2 ledger. Map custody findings onto Run Authority
+    RunnerView/MegaplanRecoveryView and Maintenance attempt-verification custody;
+    reuse canonical status and auditor facts.
+  notes: Difficulty 5/5. Global producers and consumers can affect every active session;
+    rollout begins shadow-only but cannot leave shadow bypasses on supported Megaplan
+    surfaces at milestone acceptance.
+  depends_on:
+  - c2-durable-findings-and-immediate-repair
+- label: c4-chain-pr-and-repair-boundaries
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/c4-chain-pr-and-repair-boundaries.md
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  depth: high
+  with_prep: true
+  prep_clarify: false
+  prep_direction: Ledger chain, PR/publication, repair, independent verification,
+    and auditor workflow attempts plus external-effect intents/outcomes. Build evidence
+    from accepted Run Authority decisions and coherent Maintenance observations while
+    preserving existing ownership.
+  notes: Difficulty 5/5. Pinned identity, effect fencing, durable result references,
+    and failure-visible persistence are mandatory at every authority-increasing boundary.
+  depends_on:
+  - c3-cloud-execution-custody-and-consumers
+- label: c5-generic-profiles-templates-and-authority
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/c5-generic-profiles-templates-and-authority.md
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  with_prep: true
+  prep_clarify: false
+  prep_direction: Complete versioned payload/reference, retention/redaction/security,
+    query/replay, profile, and template behavior in the existing vocabulary. Authority
+    profiles adapt prerequisite-owned decisions and TransitionWriter evidence; they
+    never become a second route engine or mutator.
+  notes: Difficulty 5/5. Schema, storage, access, retention, and compatibility choices
+    become a public durable-data surface.
+  depends_on:
+  - c4-chain-pr-and-repair-boundaries
+- label: c6-non-megaplan-conformance
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/c6-non-megaplan-conformance.md
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  depth: high
+  with_prep: true
+  prep_clarify: false
+  prep_direction: Make the pinned arnold.pipeline.native runtime adapter through NativePersistenceBackend
+    a required ledger adopter, using the native-only evidence_pack API 1.0 workflow
+    for conformance. Run the full legacy/current, fault-injection, query/replay/audit,
+    and shared-consumer matrix and remove compatibility bypasses for every declared
+    supported producer.
+  notes: Difficulty 5/5. Final acceptance requires a machine-readable support manifest,
+    zero undeclared or supported-surface exemptions, and reproducible evidence that
+    every supported step/attempt is ledgered.
+  depends_on:
+  - c5-generic-profiles-templates-and-authority
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+driver:
+  robustness: thorough
+  vendor: codex
+  auto_approve: true
+  require_clean_base: true
+  max_iterations: 60
+  poll_sleep: 8.0
+  prep_clarify: false

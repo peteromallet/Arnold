@@ -179,7 +179,13 @@ def acquire_repair_lock(
         return inspect_repair_lock(lock_path, now=now, is_pid_live=is_pid_live)
 
     try:
-        atomic_write_json(owner_metadata_path(lock_path), owner)
+        # Owner equality is the release fence.  Additive provenance belongs on
+        # the surrounding repair record, not inside this identity token.
+        atomic_write_json(
+            owner_metadata_path(lock_path),
+            owner,
+            include_resident_provenance=False,
+        )
     except Exception:
         try:
             lock_path.rmdir()

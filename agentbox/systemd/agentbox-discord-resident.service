@@ -7,9 +7,15 @@ Type=simple
 WorkingDirectory={{WORKING_DIRECTORY}}
 Environment=AGENTBOX_CONFIG={{WORKSPACE_ROOT}}/agentbox.yaml
 Environment=PYTHONPATH={{WORKING_DIRECTORY}}
+Environment=MEGAPLAN_RESIDENT_MODE=production
+Environment=MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=production
 Environment=MEGAPLAN_RESIDENT_MODEL_PROVIDER=codex
-Environment=MEGAPLAN_RESIDENT_MODEL=gpt-5.5
-Environment=MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT=medium
+Environment=MEGAPLAN_RESIDENT_MODEL=gpt-5.6-sol
+Environment=MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT=low
+Environment=MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_PROVIDER=groq
+Environment=MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_MODEL=whisper-large-v3-turbo
+Environment=MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_API_KEY_ENV=GROQ_API_KEY
+Environment=MEGAPLAN_RESIDENT_VOICE_TRANSCRIPTION_BASE_URL=https://api.groq.com/openai/v1
 # Set the real token with a drop-in, e.g.
 #   sudo systemctl edit agentbox-discord-resident
 # and add:
@@ -17,6 +23,11 @@ Environment=MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT=medium
 #   Environment=DISCORD_BOT_TOKEN=<token>
 Environment=DISCORD_BOT_TOKEN=
 ExecStart={{PYTHON}} -m arnold_pipelines.megaplan resident discord
+# The resident is only the Discord control process. Durable delegated agents
+# and tmux-backed Megaplan/cloud chains must outlive a resident relaunch even
+# when they inherited this unit's cgroup. The AgentBox restart command verifies
+# this installed property and refuses to restart if it has drifted.
+KillMode=process
 Restart=on-failure
 RestartSec=10
 

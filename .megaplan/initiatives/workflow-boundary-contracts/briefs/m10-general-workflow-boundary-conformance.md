@@ -1,5 +1,9 @@
 # M10: General Workflow Boundary Conformance
 
+> Superseded as an executable milestone by C1-C6. Its opt-in adoption language
+> does not apply to the runtimes declared supported by the corrective chain;
+> C6 requires their universal ledger/conformance adoption.
+
 ## Outcome
 
 New Arnold workflows can define boundaries using the same contract vocabulary and
@@ -51,10 +55,10 @@ OUT:
 - Domain-specific concepts belong in adapters that map onto generic primitives;
   the core should not grow `clinical_safety`, `public_deliberation`,
   `DAW_null_test`, or similar profession-specific families.
-- Reusable templates are opt-in profiles over the core contract model. A
-  workflow may define a custom template, but once it opts into boundary
-  conformance the template must declare required fields, extension policy, and
-  compatibility semantics.
+- Reusable templates remain selectable profiles over the core contract model.
+  A workflow may define a custom template, but every boundary on a declared
+  supported runtime must use the shared attempt ledger and declare required
+  fields, extension policy, and compatibility semantics.
 
 ## Done Criteria
 

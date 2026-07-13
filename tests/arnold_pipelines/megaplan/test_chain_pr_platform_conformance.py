@@ -189,3 +189,36 @@ def test_chain_pr_handoff_sync_and_restart_state_use_faked_boundaries(
     loaded = load_chain_state(spec_path)
     assert loaded.metadata["platform_conformance"] == product_routing_markers
     assert not any("megaplan route" in " ".join(command).lower() for command in commands)
+
+
+def test_compatibility_pr_actor_preserves_manual_review_policy(tmp_path: Path) -> None:
+    node = RunNode(node_id="node-1", spec_ref="m6")
+    resolution = maybe_resolve_pr_merge_wait(
+        root=tmp_path,
+        state_id="supervisor-run",
+        state=SupervisorState(
+            variant=SupervisorVariantKind.CHAIN,
+            run_nodes=[node],
+        ),
+        node=node,
+        run_state=RunStateView(
+            run_id="run-001",
+            outcome=RunOutcome.AWAITING_HUMAN,
+            cursor="awaiting_pr_merge",
+            raw_state={
+                "current_state": "awaiting_pr_merge",
+                "resume_cursor": {"kind": "pr_merge", "pr_number": 77},
+            },
+            metadata={"pr_number": 77},
+        ),
+        plan_dir=tmp_path / ".megaplan" / "plans" / "plan-m6",
+        binding="megaplan",
+        policy=SupervisorLadderPolicy(),
+        writer=lambda _message: None,
+        automatic_pr_progression=False,
+    )
+
+    assert resolution.handled is False
+    assert resolution.advanced is False
+    assert resolution.pr_number == 77
+    assert "human PR review" in (resolution.reason or "")

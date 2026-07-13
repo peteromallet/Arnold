@@ -63,6 +63,18 @@ def _ordered_sessions(snapshot: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return sorted(sessions, key=rank)
 
 
+def _in_flight_progress_text(progress: Any) -> str:
+    """Render progress with the canonical derived label when it is available."""
+    if not isinstance(progress, Mapping):
+        return ""
+    label = progress.get("display_state") or progress.get("plan_state")
+    plan_percent = progress.get("plan_percent")
+    if plan_percent is not None:
+        text = f"in-flight {plan_percent}%"
+        return f"{text} ({label})" if label else text
+    return f"in-flight {label}" if label else ""
+
+
 def format_cloud_status_short(
     snapshot: Mapping[str, Any] | None,
     *,
@@ -95,8 +107,14 @@ def format_cloud_status_short(
         emoji = _STATUS_EMOJI.get(status, "❓")
         plan = entry.get("current_plan") or entry.get("session", "?")
         line = f"{emoji} `{entry.get('session', '?')}` — {status}: {plan}"
+        in_flight = _in_flight_progress_text(entry.get("progress"))
+        if in_flight:
+            line += f"; {in_flight}"
         if entry.get("operator_next") and status in {"repairing", "blocked", "attention"}:
             line += f" ({entry['operator_next']})"
+        repair_summary = _repair_dispatch_summary(entry)
+        if repair_summary:
+            line += f" [{repair_summary}]"
         lines.append(line)
 
     return _chunk_lines(lines, max_chars=max_chars)
@@ -120,14 +138,9 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
             progress_str = f"  progress={progress.get('percent')}%"
             # In-flight plan stage estimate (completed lifecycle stages / total),
             # or the raw plan state when it is not percentage-able (e.g. blocked).
-            plan_percent = progress.get("plan_percent")
-            plan_state = progress.get("plan_state")
-            if plan_percent is not None:
-                progress_str += f"  plan={plan_percent}%"
-                if plan_state:
-                    progress_str += f" ({plan_state})"
-            elif plan_state:
-                progress_str += f"  plan={plan_state}"
+            in_flight = _in_flight_progress_text(progress)
+            if in_flight:
+                progress_str += "  plan=" + in_flight.removeprefix("in-flight ")
             # Epic % gained over the last 1h / 5h, from sweep history.
             delta_parts = []
             for window, key in (("1h", "epic_delta_1h"), ("5h", "epic_delta_5h")):
@@ -150,6 +163,9 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
             out.append(f"      latest_activity: {entry['latest_activity']}")
         if entry.get("operator_next"):
             out.append(f"      operator_next: {entry['operator_next']}")
+        repair_summary = _repair_dispatch_summary(entry)
+        if repair_summary:
+            out.append(f"      repair_dispatch: {repair_summary}")
         evidence = entry.get("evidence") or {}
         if isinstance(evidence, Mapping) and evidence.get("marker"):
             out.append(f"      evidence: {evidence['marker']}")
@@ -290,6 +306,24 @@ def _sorted_mapping_items(value: Any, field: str) -> list[Mapping[str, Any]]:
 
     items = [item for item in (value or ()) if isinstance(item, Mapping)]
     return sorted(items, key=lambda item: (str(item.get(field) or ""), str(item.get("source") or "")))
+
+
+def _repair_dispatch_summary(entry: Mapping[str, Any]) -> str:
+    dispatch = entry.get("repair_dispatch")
+    if not isinstance(dispatch, Mapping):
+        return ""
+    budget = dispatch.get("retry_budget")
+    budget = budget if isinstance(budget, Mapping) else {}
+    cursor = dispatch.get("evidence_cursor")
+    cursor = cursor if isinstance(cursor, Mapping) else {}
+    cursor_value = cursor.get("history_index") or cursor.get("event_seq") or "?"
+    return (
+        f"decision={dispatch.get('decision') or 'unknown'} "
+        f"request/claim/attempt={dispatch.get('request_count', 0)}/"
+        f"{dispatch.get('claim_count', 0)}/{dispatch.get('attempt_count', 0)} "
+        f"budget={budget.get('remaining_attempts', '?')}/{budget.get('max_attempts', '?')} "
+        f"cursor={cursor_value}"
+    )
 
 
 def format_attention_only(snapshot: Mapping[str, Any] | None) -> str:
