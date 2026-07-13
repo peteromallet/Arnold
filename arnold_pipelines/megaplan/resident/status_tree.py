@@ -31,6 +31,8 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
         for item in _as_sequence(snapshot.get("sessions"))
         if isinstance(item, Mapping)
     ]
+    active = [item for item in sessions if _root_session_needs_detail(item)]
+    completed = [item for item in sessions if not _root_session_needs_detail(item)]
     return {
         "schema_version": STATUS_TREE_SCHEMA,
         "node_id": "root",
@@ -42,7 +44,18 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
         "stale_reason": snapshot.get("stale_reason"),
         "summary": _safe_value(snapshot.get("summary"), depth=1),
         "session_count": len(sessions),
-        "sessions": sessions,
+        # Active/blocked/repairing work belongs in the always-on root.  Finished
+        # sessions are represented by a tiny preview and remain navigable.
+        "sessions": active,
+        "completed_session_count": len(completed),
+        "completed_sessions_preview": [
+            {
+                key: item.get(key)
+                for key in ("node_id", "session", "display_name", "status", "latest_activity")
+                if item.get(key) is not None
+            }
+            for item in completed[:3]
+        ],
         "navigation": {
             "cli": (
                 "python -P -m arnold_pipelines.megaplan resident status-tree "
@@ -55,6 +68,16 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
             ),
         },
     }
+
+
+def _root_session_needs_detail(session: Mapping[str, Any]) -> bool:
+    status = str(session.get("status") or session.get("display_state") or "").casefold()
+    return bool(
+        session.get("repairing")
+        or session.get("should_run")
+        or session.get("process")
+        or status not in {"complete", "completed", "finished", "success", "succeeded"}
+    )
 
 
 def read_cloud_status_node(
@@ -129,8 +152,31 @@ def read_cloud_status_node(
 
 def _compact_session(session: Mapping[str, Any]) -> dict[str, Any]:
     session_name = str(session.get("session") or session.get("display_name") or "unknown")
-    progress = _safe_value(session.get("progress"), depth=2)
-    repair = _repair_summary(session)
+    raw_progress = _as_mapping(session.get("progress"))
+    progress = {
+        key: _safe_value(raw_progress.get(key), depth=2)
+        for key in (
+            "percent", "plan_percent", "display_state", "plan_state", "current_plan",
+            "completed_count", "milestone_count", "completed_sprints", "total_sprints",
+            "epic_delta_1h", "epic_delta_5h", "stage_changes_1h", "epic_started_at",
+            "plan_started_at",
+        )
+        if raw_progress.get(key) is not None
+    } or None
+    full_repair = _repair_summary(session)
+    repair = (
+        {
+            key: full_repair.get(key)
+            for key in (
+                "canonical_state", "current_state", "custody_bucket", "failure_kind",
+                "retry_strategy", "canonical_reason", "request_count", "claim_count",
+                "attempt_count", "active_request_ids",
+            )
+            if full_repair.get(key) is not None
+        }
+        if full_repair
+        else None
+    )
     return {
         "node_id": f"session/{quote(session_name, safe='')}",
         "session": session_name,
