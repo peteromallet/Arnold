@@ -24,6 +24,8 @@ from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_DANGEROUS_CATEGORIES,
     NORTH_STAR_ACTION_TYPES,
 )
+from arnold_pipelines.megaplan.schema_projection import schema_template_payload
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import FlagRegistry, PlanState
 
 def _iteration_pressure_block(state: PlanState, plan_dir: Path) -> str:
@@ -266,23 +268,10 @@ def _write_gate_template(
     """Write the gate output template file and return its path."""
     import json
 
-    template: dict[str, object] = {
-        "recommendation": "",
-        "rationale": "",
-        "signals_assessment": "",
-        "warnings": [],
-        "flag_resolutions": [],
-        "accepted_tradeoffs": [
-            {
-                "flag_id": "",
-                "concern": "",
-                "subsystem": "",
-                "rationale": "",
-            }
-        ],
-        "settled_decisions": [],
-        "north_star_actions": [],
-    }
+    template = schema_template_payload(
+        SCHEMAS["gate.json"],
+        contract="gate scratch template",
+    )
 
     output_path = plan_dir / "gate_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")

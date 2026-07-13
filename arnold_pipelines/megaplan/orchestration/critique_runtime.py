@@ -961,6 +961,8 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "settled_decisions": [],
                 "passed": False,
                 "flag_resolutions": [],
+                "accepted_tradeoffs": [],
+                "north_star_actions": [],
                 "unresolved_flags": [],
                 "preflight_results": {},
                 "orchestrator_guidance": "Light robustness routes critique to one revision pass.",
@@ -1171,29 +1173,11 @@ def _carried_north_star_actions(plan_dir: Path) -> list[dict[str, Any]]:
     :func:`is_blocking_category`. Missing/malformed payloads yield an empty
     list; the guard is the single fail-closed authority.
     """
-    carry_path = plan_dir / "gate_carry.json"
-    if carry_path.exists():
-        try:
-            carry = read_json(carry_path)
-        except Exception:
-            carry = None
-        if isinstance(carry, dict):
-            raw = carry.get("north_star_actions")
-            if isinstance(raw, list):
-                actions = [a for a in raw if isinstance(a, dict)]
-                if actions:
-                    return actions
-    gate_path = plan_dir / "gate.json"
-    if gate_path.exists():
-        try:
-            gate = read_json(gate_path)
-        except Exception:
-            gate = None
-        if isinstance(gate, dict):
-            raw = gate.get("north_star_actions")
-            if isinstance(raw, list):
-                return [a for a in raw if isinstance(a, dict)]
-    return []
+    from arnold_pipelines.megaplan.north_star_actions import (
+        read_carried_north_star_actions,
+    )
+
+    return read_carried_north_star_actions(plan_dir)
 
 
 def _revise_north_star_halt_actions(

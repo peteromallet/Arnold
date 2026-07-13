@@ -53,6 +53,11 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
     resolve_baseline_test_selection,
 )
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
+from arnold_pipelines.megaplan.schema_projection import (
+    project_schema_owned_fields,
+    require_schema_fields,
+)
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan._core.topology import STAGE_TO_STATE
 from arnold_pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot_recursive,
@@ -1567,7 +1572,21 @@ def _route_finalize_baseline_selection_failure_to_revise(
 ) -> StepResponse:
     projection = _finalize_revise_fallback_projection()
     message = _finalize_baseline_contract_message(error.test_selection)
+    prior_gate_contract: dict[str, Any] = {}
+    for prior_name in ("gate_carry.json", "gate.json"):
+        prior_path = plan_dir / prior_name
+        if not prior_path.exists():
+            continue
+        prior = read_json(prior_path)
+        if isinstance(prior, Mapping):
+            prior_gate_contract = project_schema_owned_fields(
+                prior,
+                SCHEMAS["gate.json"],
+                contract="finalize revise gate preservation",
+            )
+            break
     gate_feedback = {
+        **prior_gate_contract,
         "recommendation": "ITERATE",
         "passed": False,
         "rationale": message,
@@ -1604,6 +1623,9 @@ def _route_finalize_baseline_selection_failure_to_revise(
         ],
         "addressed_flags": [],
         "flag_resolutions": [],
+        "accepted_tradeoffs": prior_gate_contract.get("accepted_tradeoffs", []),
+        "settled_decisions": prior_gate_contract.get("settled_decisions", []),
+        "north_star_actions": prior_gate_contract.get("north_star_actions", []),
         "orchestrator_guidance": (
             "Run revise. The revised plan must add structured `test_blast_radius` "
             "metadata with scoped path selectors, or explicitly opt into "
@@ -1615,8 +1637,18 @@ def _route_finalize_baseline_selection_failure_to_revise(
             "test_selection": error.test_selection,
         },
     }
+    require_schema_fields(
+        gate_feedback,
+        SCHEMAS["gate.json"],
+        contract="finalize revise gate persistence",
+    )
     state["current_state"] = projection["state"]
-    state["last_gate"] = gate_feedback
+    from arnold_pipelines.megaplan.handlers.gate import (
+        _build_gate_carry,
+        _sync_legacy_last_gate_for_workflow,
+    )
+
+    _sync_legacy_last_gate_for_workflow(state, gate_feedback)
     meta = state.setdefault("meta", {})
     if isinstance(meta, dict):
         meta.setdefault("finalize_revise_feedback", []).append(
@@ -1630,13 +1662,10 @@ def _route_finalize_baseline_selection_failure_to_revise(
     atomic_write_json(
         plan_dir / "gate_carry.json",
         {
-            "version": 1,
-            "recommendation": "ITERATE",
-            "passed": False,
-            "rationale_brief": message,
-            "warnings": gate_feedback["warnings"],
-            "orchestrator_guidance": gate_feedback["orchestrator_guidance"],
-            "iteration": state["iteration"],
+            **_build_gate_carry(
+                gate_feedback,
+                iteration=state["iteration"],
+            ),
             "source": "finalize_baseline_selection",
         },
     )

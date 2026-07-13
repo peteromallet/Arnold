@@ -61,6 +61,8 @@ def _minimal_gate_payload(**overrides: Any) -> dict[str, Any]:
         "warnings": [],
         "settled_decisions": [],
         "flag_resolutions": [],
+        "accepted_tradeoffs": [],
+        "north_star_actions": [],
         "resolved_flag_ids": [],
         "resolution_summary": "",
     }
@@ -102,13 +104,13 @@ def _blocking_ns_action(**overrides: Any) -> dict[str, Any]:
 class TestGateArtifactNormalizedActions:
     """Build the gate artifact and inspect its ``north_star_actions`` field."""
 
-    def test_no_north_star_actions_produces_empty_list(self) -> None:
-        """Gate artifact with no north_star_actions in payload yields []."""
+    def test_missing_north_star_actions_fails_closed(self) -> None:
+        """Persistence cannot turn an absent required action list into []."""
         signals = _minimal_signals()
         payload = _minimal_gate_payload()
-        # No north_star_actions key at all.
-        artifact = build_gate_artifact(signals, payload, override_forced=False)
-        assert artifact["north_star_actions"] == []
+        payload.pop("north_star_actions")
+        with pytest.raises(RuntimeError, match="north_star_actions"):
+            build_gate_artifact(signals, payload, override_forced=False)
 
     def test_payload_north_star_actions_are_normalized(self) -> None:
         """When the payload carries raw actions, they are normalized in the artifact."""
@@ -156,12 +158,12 @@ class TestGateArtifactNormalizedActions:
         assert dangerous["severity"] == SEVERITY_BLOCKING
         assert dangerous["severity_source"] == SEVERITY_SOURCE_SCHEMA
 
-    def test_empty_payload_still_produces_normalized_empty_list(self) -> None:
-        """An explicitly None payload for north_star_actions normalizes to []."""
+    def test_null_north_star_actions_fails_closed(self) -> None:
+        """An invalid null required field cannot become an empty list."""
         signals = _minimal_signals()
         payload = _minimal_gate_payload(north_star_actions=None)
-        artifact = build_gate_artifact(signals, payload, override_forced=False)
-        assert artifact["north_star_actions"] == []
+        with pytest.raises(RuntimeError, match="north_star_actions must be a list"):
+            build_gate_artifact(signals, payload, override_forced=False)
 
     def test_normalized_actions_include_all_required_fields(self) -> None:
         """Normalized actions carry id, concern, category, action_type, severity,
@@ -210,8 +212,10 @@ class TestGateCarryPreservesNormalizedActions:
             "recommendation": "ITERATE",
             "passed": False,
             "rationale": "Needs work.",
+            "signals_assessment": "Needs work.",
             "settled_decisions": [],
             "warnings": [],
+            "accepted_tradeoffs": [],
             "orchestrator_guidance": "Revise the plan.",
             "unresolved_flags": [],
             "flag_resolutions": [],
@@ -221,20 +225,22 @@ class TestGateCarryPreservesNormalizedActions:
         assert "north_star_actions" in carry
         assert carry["north_star_actions"] == normalized_actions
 
-    def test_carry_empty_north_star_actions_when_missing(self) -> None:
-        """When gate_summary has no north_star_actions key, carry gets empty list."""
+    def test_carry_missing_north_star_actions_fails_closed(self) -> None:
+        """Carry persistence cannot hide an absent required action list."""
         gate_summary: dict[str, Any] = {
             "recommendation": "PROCEED",
             "passed": True,
             "rationale": "Good.",
+            "signals_assessment": "Good.",
             "settled_decisions": [],
             "warnings": [],
+            "accepted_tradeoffs": [],
             "orchestrator_guidance": "Proceed to finalize.",
             "unresolved_flags": [],
             "flag_resolutions": [],
         }
-        carry = _build_gate_carry(gate_summary, iteration=1)
-        assert carry["north_star_actions"] == []
+        with pytest.raises(RuntimeError, match="north_star_actions"):
+            _build_gate_carry(gate_summary, iteration=1)
 
     def test_carry_preserves_severity_source(self) -> None:
         """Blocking actions with schema-sourced severity survive carry."""
@@ -251,8 +257,10 @@ class TestGateCarryPreservesNormalizedActions:
             "recommendation": "ITERATE",
             "passed": False,
             "rationale": "",
+            "signals_assessment": "",
             "settled_decisions": [],
             "warnings": [],
+            "accepted_tradeoffs": [],
             "orchestrator_guidance": "",
             "unresolved_flags": [],
             "flag_resolutions": [],
@@ -270,11 +278,14 @@ class TestGateCarryPreservesNormalizedActions:
             "recommendation": "ITERATE",
             "passed": False,
             "rationale": "",
+            "signals_assessment": "",
             "settled_decisions": [],
             "warnings": [],
+            "accepted_tradeoffs": [],
             "orchestrator_guidance": "",
             "unresolved_flags": [],
             "flag_resolutions": [],
+            "north_star_actions": [],
         }
         carry = _build_gate_carry(gate_summary, iteration=3)
         assert carry["iteration"] == 3
@@ -290,8 +301,10 @@ class TestGateCarryPreservesNormalizedActions:
             "recommendation": "ITERATE",
             "passed": False,
             "rationale": "",
+            "signals_assessment": "",
             "settled_decisions": [],
             "warnings": [],
+            "accepted_tradeoffs": [],
             "orchestrator_guidance": "",
             "unresolved_flags": [],
             "flag_resolutions": [],
@@ -359,8 +372,8 @@ class TestCarriedNorthStarActionsReader:
             assert len(result) == 1
             assert result[0]["id"] == "ns-from-gate-only"
 
-    def test_falls_back_to_gate_json_when_carry_has_no_actions(self) -> None:
-        """When gate_carry has an empty north_star_actions list, fall back to gate."""
+    def test_explicit_empty_carry_is_authoritative(self) -> None:
+        """An explicit empty carry must not revive stale gate actions."""
         with tempfile.TemporaryDirectory() as tmpdir:
             plan_dir = Path(tmpdir)
             carry_path = plan_dir / "gate_carry.json"
@@ -376,8 +389,7 @@ class TestCarriedNorthStarActionsReader:
             gate_path.write_text(json.dumps(gate_data), encoding="utf-8")
 
             result = _carried_north_star_actions(plan_dir)
-            assert len(result) == 1
-            assert result[0]["id"] == "ns-from-gate-fallback"
+            assert result == []
 
     def test_returns_empty_list_when_both_files_missing(self) -> None:
         """When neither gate_carry.json nor gate.json exist, returns []."""
@@ -386,8 +398,7 @@ class TestCarriedNorthStarActionsReader:
             result = _carried_north_star_actions(plan_dir)
             assert result == []
 
-    def test_returns_empty_list_when_neither_has_actions(self) -> None:
-        """When both files exist but have no north_star_actions, returns []."""
+    def test_missing_required_actions_in_carry_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             plan_dir = Path(tmpdir)
             (plan_dir / "gate_carry.json").write_text(
@@ -396,11 +407,10 @@ class TestCarriedNorthStarActionsReader:
             (plan_dir / "gate.json").write_text(
                 json.dumps({"recommendation": "ITERATE"}), encoding="utf-8"
             )
-            result = _carried_north_star_actions(plan_dir)
-            assert result == []
+            with pytest.raises(NorthStarActionValidationError, match="missing required"):
+                _carried_north_star_actions(plan_dir)
 
-    def test_carry_with_null_actions_falls_back_to_gate(self) -> None:
-        """When carry has north_star_actions set to null, fall back to gate."""
+    def test_carry_with_null_actions_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             plan_dir = Path(tmpdir)
             carry_path = plan_dir / "gate_carry.json"
@@ -415,9 +425,8 @@ class TestCarriedNorthStarActionsReader:
             }
             gate_path.write_text(json.dumps(gate_data), encoding="utf-8")
 
-            result = _carried_north_star_actions(plan_dir)
-            assert len(result) == 1
-            assert result[0]["id"] == "ns-gate-from-null-carry"
+            with pytest.raises(NorthStarActionValidationError, match="must be a list"):
+                _carried_north_star_actions(plan_dir)
 
 
 # --------------------------------------------------------------------------- #
