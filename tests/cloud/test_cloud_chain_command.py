@@ -40,6 +40,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _run_bootstrap_wrapper,
     _status_should_use_chain,
     _tmux_chain_launch_command,
+    _tmux_chain_stop_for_fresh_command,
     _validate_chain_spec_location,
     build_cloud_parser,
     cloud_chain_status_payload,
@@ -66,6 +67,20 @@ def test_on_box_chain_uses_direct_agentbox_transport() -> None:
     )
 
     assert isinstance(provider, OnBoxProvider)
+
+
+def test_fresh_chain_stop_is_identity_guarded_before_reset() -> None:
+    command = _tmux_chain_stop_for_fresh_command(
+        session_name="demo-chain",
+        marker_path="/workspace/.megaplan/cloud-sessions/demo-chain.json",
+        identity_digest="digest-123",
+    )
+
+    assert "tmux has-session -t demo-chain" in command
+    assert "grep -F digest-123" in command
+    assert "tmux kill-session -t demo-chain" in command
+    assert "refusing fresh reset" in command
+    assert "exit 17" in command
 from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 from arnold_pipelines.megaplan.types import CliError
 

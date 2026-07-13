@@ -2837,6 +2837,32 @@ def _tmux_epic_chain_launch_command(
     )
 
 
+def _tmux_chain_stop_for_fresh_command(
+    *,
+    session_name: str,
+    marker_path: str,
+    identity_digest: str,
+) -> str:
+    """Stop only the runner owned by the chain that is about to be reset.
+
+    A fresh launch must never erase durable chain state underneath a live
+    driver.  The marker identity check also prevents ``--fresh`` from killing
+    an unrelated session that happens to share a tmux name.
+    """
+    return (
+        f"if tmux has-session -t {shlex.quote(session_name)} 2>/dev/null; then "
+        f"if [ -f {shlex.quote(marker_path)} ] && "
+        f"grep -F {shlex.quote(identity_digest)} {shlex.quote(marker_path)} >/dev/null 2>&1; then "
+        f"tmux kill-session -t {shlex.quote(session_name)} 2>/dev/null; "
+        f"echo {shlex.quote(f'stopped {session_name} session for fresh launch')}; "
+        "else "
+        f"echo {shlex.quote(f'ERROR: {session_name} session marker does not match requested chain; refusing fresh reset')}; "
+        "exit 17; "
+        "fi; "
+        "fi"
+    )
+
+
 def _tmux_chain_restart_command(
     workspace: str,
     remote_spec_path: str,
@@ -3691,6 +3717,21 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
+    if bool(getattr(args, "fresh", False)):
+        stop_result = provider.ssh_exec(
+            _tmux_chain_stop_for_fresh_command(
+                session_name=launch_ctx.session_name,
+                marker_path=launch_ctx.marker_path,
+                identity_digest=launch_ctx.digest,
+            )
+        )
+        if stop_result.returncode != 0:
+            _relay_output(stop_result, secret_names=spec.secrets, env=os.environ)
+            raise CliError(
+                "chain_session_collision" if stop_result.returncode == 17 else "provider_failed",
+                (stop_result.stderr or stop_result.stdout or "remote fresh-session stop failed").strip(),
+            )
+
     reset_result = provider.ssh_exec(
         _chain_state_reset_command(
             workspace=launch_ctx.workspace,
