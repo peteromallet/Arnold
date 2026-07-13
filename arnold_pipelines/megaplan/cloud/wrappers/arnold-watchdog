@@ -2294,7 +2294,7 @@ verify_relaunch_health() {
 
 repair_trigger_scan() {
   local trigger_bin="${REPAIR_TRIGGER_BIN:-}"
-  local output rc
+  local output rc attempt
   if [[ -z "$trigger_bin" ]]; then
     return 0
   fi
@@ -2302,13 +2302,19 @@ repair_trigger_scan() {
     log "repair-trigger unavailable path=$trigger_bin"
     return 0
   fi
-  output="$(
-    PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
-      "$trigger_bin" \
-      --marker-dir "$MARKER_DIR" \
-      --repair-data-dir "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" 2>&1
-  )"
-  rc=$?
+  rc=1
+  for attempt in 1 2 3; do
+    output="$(
+      PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+        "$trigger_bin" \
+        --marker-dir "$MARKER_DIR" \
+        --repair-data-dir "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" 2>&1
+    )"
+    rc=$?
+    [[ $rc -eq 0 ]] && break
+    log "repair-trigger bootstrap attempt=$attempt rc=$rc; retrying before watchdog interval sleep"
+    [[ $attempt -lt 3 ]] && sleep 1
+  done
   if [[ -n "$output" ]]; then
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
@@ -2316,7 +2322,7 @@ repair_trigger_scan() {
     done <<< "$output"
   fi
   if [[ $rc -ne 0 ]]; then
-    log "repair-trigger exited rc=$rc; continuing watchdog scan"
+    log "repair-trigger exited rc=$rc after bounded bootstrap retries; continuing watchdog scan"
   fi
   return 0
 }
@@ -4275,6 +4281,7 @@ dispatch_kimi_repair() {
   local workspace="$2"
   local remote_spec="$3"
   local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
+  local run_id_path managed_run_id managed_manifest child_pid confirm_attempt
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
   request_id=""
@@ -4320,6 +4327,8 @@ dispatch_kimi_repair() {
       ;;
   esac
   pgid_path="$(kimi_pgid_path "$session")"
+  run_id_path="${pgid_path}.managed-run-id"
+  rm -f "$run_id_path"
   kimi_dispatch_marker_set "$session"
   managed_identity="${request_id:-watchdog-${session}-$(date +%s%N)}"
   incident_id="$(json_field "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json" incident_id 2>/dev/null || true)"
@@ -4336,6 +4345,7 @@ dispatch_kimi_repair() {
     --route-class watchdog_authorized_l1
     --backend repair-loop
     --command-display "arnold-repair-loop $session"
+    --run-id-file "$run_id_path"
     --lineage-key "repair-request:${request_id:-$session}"
     --link "repair_request_id=$request_id"
     --link "blocker_id=$blocker_id"
@@ -4363,11 +4373,53 @@ dispatch_kimi_repair() {
     "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
-  printf '%s\n' "$!" > "$pgid_path"
-  log "repair loop background-dispatched session=$session pid=$!"
-  REPAIR_DISPATCH_RESULT="dispatched"
-  emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop background-dispatched" "dispatched" "immediate_repair"
-  return 0
+  child_pid="$!"
+  printf '%s\n' "$child_pid" > "$pgid_path"
+  managed_run_id=""
+  managed_manifest=""
+  for confirm_attempt in 1 2 3 4 5; do
+    managed_run_id="$(cat "$run_id_path" 2>/dev/null || true)"
+    if [[ -n "$managed_run_id" ]]; then
+      managed_manifest="$workspace/.megaplan/plans/resident-subagents/$managed_run_id/manifest.json"
+      if PYTHONSAFEPATH=1 python3 -P - "$managed_manifest" "$managed_run_id" "$session" "$request_id" "$blocker_id" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path, run_id, session, request_id, blocker_id = sys.argv[1:]
+try:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    raise SystemExit(1)
+links = payload.get("links") if isinstance(payload.get("links"), dict) else {}
+history = payload.get("status_history") if isinstance(payload.get("status_history"), list) else []
+running_seen = any(isinstance(item, dict) and item.get("status") == "running" for item in history)
+valid = (
+    payload.get("run_id") == run_id
+    and payload.get("run_kind") == "automatic_repair"
+    and payload.get("status") == "running"
+    and running_seen
+    and links.get("cloud_session") == session
+    and (not request_id or links.get("repair_request_id") == request_id)
+    and (not blocker_id or links.get("blocker_id") == blocker_id)
+)
+raise SystemExit(0 if valid else 1)
+PY
+      then
+        log "repair loop managed launch confirmed session=$session run_id=$managed_run_id manifest=$managed_manifest"
+        REPAIR_DISPATCH_RESULT="dispatched"
+        emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop managed launch confirmed run_id=$managed_run_id" "dispatched" "immediate_repair"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  kimi_dispatch_marker_clear "$session"
+  rm -f "$pgid_path"
+  log "repair loop launch failed confirmation session=$session pid=$child_pid run_id=${managed_run_id:-missing} manifest=${managed_manifest:-missing}"
+  REPAIR_DISPATCH_RESULT="launch_failed"
+  emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop managed launch confirmation failed" "unavailable" "immediate_repair"
+  return 1
 }
 
 claim_active_repair_launch() {
