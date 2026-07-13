@@ -24,6 +24,7 @@ from typing import Any
 from uuid import uuid4
 
 RESET_NOTIFICATION_SCHEMA = "agentbox-resident-reset-notification-v1"
+RESET_NOTIFICATION_CONTRACT = "single-terminal-v2"
 RESET_NOTIFICATION_ENV = "AGENTBOX_RESET_NOTIFICATION_ROOT"
 RESET_FALLBACK_CONVERSATION_ENV = "AGENTBOX_DISCORD_RESET_FALLBACK_CONVERSATION"
 DEFAULT_NOTIFICATION_ROOT = Path("/workspace/.megaplan/resident/reset_notifications")
@@ -108,6 +109,7 @@ def prepare_reset_notification(
     initiator = _initiator_projection(provenance)
     record: dict[str, Any] = {
         "schema_version": RESET_NOTIFICATION_SCHEMA,
+        "notification_contract": RESET_NOTIFICATION_CONTRACT,
         "notification_id": notification_id,
         "created_at": _timestamp(now),
         "updated_at": _timestamp(now),
@@ -687,17 +689,24 @@ def _claim_delivery(
                 ):
                     return None
             status = str(delivery.get("status") or "prepared")
-            if status == "restart_failed":
-                # v1 records used this as a non-deliverable terminal marker.
-                # The single-notification contract reports that failure instead.
-                status = "pending"
-                delivery["status"] = status
+            if (
+                phase == "delivery"
+                and record.get("notification_contract") != RESET_NOTIFICATION_CONTRACT
+                and status not in _TERMINAL_DELIVERY_STATES
+            ):
+                # Historical records predate the single-terminal contract.  They
+                # must never become a newly deliverable backlog during an upgrade.
+                delivery["status"] = "suppressed"
                 _append_state(
                     delivery,
-                    status=status,
+                    status="suppressed",
                     now=now,
-                    evidence="legacy_terminal_failure_made_deliverable",
+                    evidence="legacy_backlog_suppressed_on_single_terminal_upgrade",
                 )
+                record[phase] = delivery
+                record["updated_at"] = _timestamp(now)
+                _atomic_json(path, record)
+                return None
             if status in _TERMINAL_DELIVERY_STATES:
                 return None
             due_at = _parse_timestamp(delivery.get("next_attempt_at"))
@@ -1224,12 +1233,20 @@ def _set_reconciled_failure(
     now: datetime,
 ) -> None:
     delivery = dict(record.get("delivery") or {})
-    delivery["status"] = "pending"
+    is_current_contract = (
+        record.get("notification_contract") == RESET_NOTIFICATION_CONTRACT
+    )
+    delivery_status = "pending" if is_current_contract else "suppressed"
+    delivery["status"] = delivery_status
     _append_state(
         delivery,
-        status="pending",
+        status=delivery_status,
         now=now,
-        evidence="startup_found_no_supervisor_and_unchanged_identity_failure_deliverable",
+        evidence=(
+            "startup_found_no_supervisor_and_unchanged_identity_failure_deliverable"
+            if is_current_contract
+            else "legacy_backlog_suppressed_on_single_terminal_upgrade"
+        ),
     )
     _append_restart_state(
         restart,

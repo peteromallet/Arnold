@@ -288,7 +288,7 @@ def test_failed_restart_delivers_exactly_one_truthful_terminal_outcome(
     )
 
 
-def test_legacy_non_deliverable_failure_is_migrated_to_terminal_delivery(
+def test_legacy_non_deliverable_failure_is_suppressed_without_delivery(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
@@ -300,6 +300,7 @@ def test_legacy_non_deliverable_failure_is_migrated_to_terminal_delivery(
         now=now,
     )
     legacy = json.loads(reservation.path.read_text())
+    legacy.pop("notification_contract")
     legacy["delivery"]["status"] = "restart_failed"
     reservation.path.write_text(json.dumps(legacy))
     outbound = _Outbound()
@@ -308,13 +309,12 @@ def test_legacy_non_deliverable_failure_is_migrated_to_terminal_delivery(
         sweep_reset_notifications(outbound=outbound, notification_root=tmp_path, now=now)
     )
 
-    assert result.delivered == 1
-    assert len(outbound.sent) == 1
-    assert outbound.sent[0].metadata["resident_reset_notification_outcome"] == "failed"
+    assert result.delivered == 0
+    assert len(outbound.sent) == 0
     state = list_reset_notifications(notification_root=tmp_path)["records"][0]
-    assert state["delivery"]["status"] == "delivered"
+    assert state["delivery"]["status"] == "suppressed"
     assert any(
-        item["evidence"] == "legacy_terminal_failure_made_deliverable"
+        item["evidence"] == "legacy_backlog_suppressed_on_single_terminal_upgrade"
         for item in state["delivery"]["state_history"]
     )
 
@@ -414,6 +414,38 @@ def test_prepared_record_with_unchanged_identity_fails_safe_and_releases_fence(
     failed = next(row for row in records if row["notification_id"] != replacement.notification_id)
     assert failed["restart"]["status"] == "failed"
     assert failed["delivery"]["status"] == "pending"
+
+
+def test_legacy_prepared_record_reconciles_failure_without_arming_backlog(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    reservation = prepare_reset_notification(
+        notification_root=tmp_path,
+        restart_request={
+            "backend": "systemd",
+            "old_identity": {"backend": "systemd", "main_pid": 303},
+        },
+    )
+    legacy = json.loads(reservation.path.read_text())
+    legacy.pop("notification_contract")
+    reservation.path.write_text(json.dumps(legacy))
+
+    result = reconcile_prepared_reset_notifications(
+        notification_root=tmp_path,
+        current_identity={"backend": "systemd", "main_pid": 303},
+    )
+    outbound = _Outbound()
+    sweep = asyncio.run(
+        sweep_reset_notifications(outbound=outbound, notification_root=tmp_path)
+    )
+
+    assert result == {"scanned": 1, "succeeded": 0, "failed": 1, "in_progress": 0}
+    assert sweep.delivered == 0
+    assert outbound.sent == []
+    record = list_reset_notifications(notification_root=tmp_path)["records"][0]
+    assert record["restart"]["status"] == "failed"
+    assert record["delivery"]["status"] == "suppressed"
 
 
 def test_duplicate_restart_from_same_discord_source_reuses_durable_receipt(
