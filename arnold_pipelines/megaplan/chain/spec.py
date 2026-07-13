@@ -1172,6 +1172,14 @@ def save_chain_state(spec_path: Path, state: ChainState) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     spec_identity = _storage_identity_for_chain_spec(spec_path)
     metadata = dict(state.metadata)
+    # A chain launched beneath a Discord-resident delegation retains the same
+    # routing-only correlation/custody projection.  Internal workers and repair
+    # dispatchers can then be audited without copying user content or secrets.
+    from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        metadata.setdefault("resident_delegation", resident_delegation)
     metadata["chain_spec_path"] = str(spec_identity)
     if spec_identity.exists():
         metadata["chain_spec_sha256"] = hashlib.sha256(spec_identity.read_bytes()).hexdigest()

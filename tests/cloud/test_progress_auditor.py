@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,23 @@ def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
 
 
+def test_installed_auditor_trampoline_honors_deployed_source_root() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    hot_env_at = text.index(". /workspace/.cloud-hot-env")
+    source_root_at = text.index('AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-')
+    reexec_at = text.index('exec "$SOURCE_AUDITOR" "$@"')
+    assert hot_env_at < source_root_at < reexec_at
+    assert 'CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold' in text
+
+
+def test_auditor_gather_prefers_deployed_source_over_caller_cwd() -> None:
+    program = _extract_gather_program()
+    cwd_at = program.index("sys.path.insert(0, str(pathlib.Path.cwd()))")
+    deployed_source_at = program.index("sys.path.insert(0, arnold_src)")
+
+    assert cwd_at < deployed_source_at
+
+
 def _systemd_file(name: str) -> str:
     return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
@@ -42,7 +60,8 @@ def _extract_report_assembler() -> str:
     marker = (
         'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" '
         '"$REPORT_LOG" "$TS" "$AUDIT_MUTATION_AUTHORIZED_FLAG" '
-        '"$AUDIT_LAUNCH_ATTEMPTED" <<\'PY\''
+        '"$AUDIT_LAUNCH_ATTEMPTED" "$RECOVERY_EVIDENCE" '
+        '"$AUDIT_CODEX_MODEL" <<\'PY\''
     )
     py_start = text.index(marker)
     py_start = text.index("\n", py_start) + 1
@@ -62,6 +81,99 @@ def _extract_gather_program() -> str:
     return text[py_start:py_end]
 
 
+def _load_superfixer_cycle_functions() -> dict[str, object]:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _superfixer_cycle_evidence(ev):")
+    end = text.index("\ndef _meta_repair_gap_is_primary", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+    }
+    exec(text[start:end], namespace)
+    return namespace
+
+
+def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
+    return {
+        "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},
+        "repair_custody_summary": {
+            "accepted_unclaimed_request_ids": ["7473fa42"],
+            "request_status_counts": {"accepted": 1},
+            "claim_count": 0,
+            "attempt_count": 0,
+            "claim_retry_counts": {"7473fa42": 2},
+            "claim_alert_request_ids": [],
+            "retry_budget": {"claim_retries_remaining": 1},
+        },
+        "repair_data_summary": {
+            "exists": True,
+            "outcome": "repair_exhausted",
+            "mtime_age_min": 180,
+        },
+        "meta_repair_summary": {
+            "meta_record_count": 0,
+            "meta_run_log_count": 0,
+            "failed_meta_run_count": 0,
+            "failed_meta_record_count": 0,
+        },
+        "current_target": {"tmux_process": {"live_status": "stopped"}},
+        "active_step_liveness": {
+            "present": True,
+            "worker_pid_alive": False,
+        },
+        "chain_state_summary": {
+            "current": {
+                "last_state": "blocked",
+                "completed_count": 0,
+                "total_milestones": 4,
+            }
+        },
+        "meta_repair_refs": [],
+        "prior_watchdog_report_refs": [],
+    }
+
+
+def test_superfixer_cycle_detects_wbc_accepted_unclaimed_exhaustion() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is True
+    assert projected["accepted_unclaimed_count"] == 1
+    assert projected["claim_count"] == 0
+    assert projected["attempt_count"] == 0
+    assert projected["runner_dead"] is True
+    assert projected["absent_or_stale_l2"] is True
+
+
+def test_superfixer_cycle_excludes_typed_human_gate() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["resolver_state"] = {"canonical_state": "HUMAN_ACTION_REQUIRED"}
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason == ""
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is False
+    assert projected["excluded_typed_human_gate"] is True
+
+
+def test_superfixer_cycle_fails_closed_on_unknown_custody_evidence() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["repair_custody_summary"]["projection_error"] = "runtime skew"
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("broken_superfixer_unknown_evidence:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is False
+    assert projected["unknown_evidence"] is True
+
+
 def _extract_gather_function(name: str, next_name: str) -> str:
     text = _extract_gather_program()
     start = text.index(f"def {name}(")
@@ -69,11 +181,127 @@ def _extract_gather_function(name: str, next_name: str) -> str:
     return text[start:end]
 
 
+def test_deterministic_phase_history_surfaces_structural_retry_loop() -> None:
+    program = _extract_gather_program()
+    start = program.index("def _deterministic_phase_history_evidence(")
+    end = program.index("\ndef _event_seq(", start)
+    namespace = {
+        "re": __import__("re"),
+        "cutoff": datetime(2026, 7, 13, 16, 0, tzinfo=timezone.utc),
+        "_parse_iso": lambda value: datetime.fromisoformat(value.replace("Z", "+00:00")),
+    }
+    exec(program[start:end], namespace)
+    history = [
+        {
+            "step": "gate",
+            "result": "error",
+            "message": "missing_required at /north_star_actions",
+            "timestamp": f"2026-07-13T16:0{index}:00Z",
+        }
+        for index in range(3)
+    ]
+
+    evidence = namespace["_deterministic_phase_history_evidence"](history)
+
+    assert evidence["count"] == 3
+    assert evidence["phase"] == "gate"
+    assert evidence["source"] == "state.history"
+
+
 def _extract_auditor_function(name: str) -> str:
     text = _wrapper("arnold-progress-auditor")
     start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + 3
     return text[start:end]
+
+
+def _extract_recovery_assembler() -> str:
+    text = _wrapper("arnold-progress-auditor")
+    marker = '"$watchdog_rc" "$enabled" "$AUDIT_CODEX_MODEL" <<\'PY\''
+    start = text.index(marker)
+    start = text.index("\n", start) + 1
+    end = text.index("\nPY\n", start)
+    return text[start:end]
+
+
+def test_scheduled_recovery_uses_shared_advancement_policy(tmp_path: Path) -> None:
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+    report = tmp_path / "watchdog.json"
+    output = tmp_path / "recovery.json"
+    before.write_text(json.dumps({"generated_at": "before"}), encoding="utf-8")
+    after.write_text(
+        json.dumps(
+            {
+                "generated_at": "after",
+                "sessions": [
+                    {
+                        "session": "manual",
+                        "status": "attention",
+                        "should_run": True,
+                        "workspace": str(tmp_path / "manual"),
+                        "advancement": {
+                            "action": "await_human",
+                            "automatic": False,
+                            "gate": "security_approval",
+                        },
+                    },
+                    {
+                        "session": "terminal",
+                        "status": "attention",
+                        "should_run": True,
+                        "workspace": str(tmp_path / "terminal"),
+                        "advancement": {
+                            "action": "reconcile_terminal",
+                            "automatic": True,
+                            "gate": None,
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report.write_text(
+        json.dumps(
+            {
+                "timestamp_utc": "now",
+                "items": [
+                    {"session": "manual", "status": "needs_human"},
+                    {"session": "terminal", "status": "needs_human"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _extract_recovery_assembler(),
+            str(before),
+            str(after),
+            str(report),
+            str(output),
+            "0",
+            "1",
+            "gpt-5.6-sol",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    decisions = {
+        item["session"]: item
+        for item in json.loads(output.read_text(encoding="utf-8"))["decisions"]
+    }
+    assert decisions["manual"]["disposition"] == "human_gated"
+    assert decisions["manual"]["decision"] == "await_human"
+    assert decisions["terminal"]["decision"] == "reconcile_terminal"
+    assert decisions["terminal"]["disposition"] == "eligible_missing_runner"
 
 
 def _run_gather_program(
@@ -101,6 +329,11 @@ def _run_gather_program(
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(tmp_path / ".megaplan" / "repair-queue")
+    # Synthetic sessions may intentionally reuse a production incident name;
+    # never let live marker or meta-run evidence alter the deterministic fixture.
+    env["MEGAPLAN_AUDIT_MARKER_DIR"] = str(tmp_path / ".megaplan" / "cloud-sessions")
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / ".megaplan" / "meta-runs")
     if extra_env:
         env.update(extra_env)
 
@@ -124,6 +357,71 @@ def _run_gather_program(
     return json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))
 
 
+def test_gather_detects_deterministic_llm_retry_when_latest_failure_is_empty(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "gate-loop"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "gate-loop",
+                "current_state": "critiqued",
+                "iteration": 1,
+                "latest_failure": None,
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    timestamp = datetime.now(timezone.utc).isoformat()
+    message = (
+        "worker_structural_audit_failed: model output structural audit failed: "
+        "missing_required at /north_star_actions"
+    )
+    events = [
+        {
+            "kind": "llm_call_error",
+            "phase": "gate",
+            "payload": {"message": message},
+            "ts_utc": timestamp,
+            "seq": seq,
+        }
+        for seq in range(1, 5)
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": "gate-loop",
+                "session": "gate-loop-session",
+                "kind": "plan",
+                "sources": ["fixture"],
+            }
+        ],
+        tmp_path,
+    )
+
+    assert len(payload["findings"]) == 1
+    finding = payload["findings"][0]
+    assert finding["latest_failure_kind"] is None
+    assert finding["deterministic_retry_evidence"]["count"] == 4
+    assert finding["deterministic_retry_evidence"]["phase"] == "gate"
+    assert any(
+        reason.startswith("deterministic_retry_exhaustion:")
+        for reason in finding["reasons"]
+    )
+    patterns = payload["root_cause_patterns"]["repeated_failure_signatures"]
+    assert patterns[0]["total_occurrences"] == 4
+    assert patterns[0]["affected_plans"] == ["gate-loop"]
+
+
 def _run_report_assembler(
     findings_data: dict,
     tmp_path: Path,
@@ -141,8 +439,21 @@ def _run_report_assembler(
     json_out = tmp_path / "audit.json"
     md_out = tmp_path / "audit.md"
     log_path = tmp_path / "audit-report.log"
+    recovery_path = tmp_path / "recovery.json"
 
     findings_path.write_text(json.dumps(findings_data), encoding="utf-8")
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "watchdog_exit_code": 0,
+                "sessions_discovered": 0,
+                "should_run_count": 0,
+                "decisions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     result = subprocess.run(
         [
@@ -155,6 +466,8 @@ def _run_report_assembler(
             ts,
             "1" if autofix_authorized else "0",
             "1" if launch_attempted else "0",
+            str(recovery_path),
+            "gpt-5.6-sol",
         ],
         capture_output=True,
         text=True,
@@ -259,6 +572,7 @@ def _run_record_incident_audits(tmp_path: Path, findings_data: dict) -> list[dic
             "AUDIT_GITHUB_REPO=''",
             "AUDIT_GITHUB_REPO_PATH=''",
             "AUDIT_GITHUB_LABELS='incident-control-plane,persistent-problem'",
+            f"REPAIR_QUEUE_ROOT={shlex.quote(str(tmp_path / '.megaplan' / 'repair-queue'))}",
             "record_incident_audits " + shlex.quote(str(findings_path)),
         ]
     )
@@ -732,8 +1046,21 @@ class TestGreenChecksNoFindings:
             json_out = fresh / "audit.json"
             md_out = fresh / "audit.md"
             fresh_log = fresh / "audit-report.log"
+            recovery_path = fresh / "recovery.json"
 
             findings_path.write_text(json.dumps(findings_data), encoding="utf-8")
+            recovery_path.write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "watchdog_exit_code": 0,
+                        "sessions_discovered": 0,
+                        "should_run_count": 0,
+                        "decisions": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             result = subprocess.run(
                 [
@@ -744,6 +1071,10 @@ class TestGreenChecksNoFindings:
                     str(md_out),
                     str(fresh_log),
                     "20260702T220000Z",
+                    "0",
+                    "0",
+                    str(recovery_path),
+                    "gpt-5.6-sol",
                 ],
                 capture_output=True,
                 text=True,
@@ -1397,6 +1728,15 @@ class TestAuditorWrapperBoundary:
         capture = json.loads(audit_capture.read_text(encoding="utf-8"))
         projection_input = capture["audit_input"]["projection_input"]
 
+        current_target_call = next(
+            call for call in calls if call["fn"] == "resolve_current_target"
+        )
+        assert current_target_call["kwargs"] == {
+            "marker_dir": str(tmp_path / ".megaplan" / "cloud-sessions"),
+            "repair_data_dir": str(repair_root),
+            "workspace_hint": str(workspace),
+        }
+
         assert {call["fn"] for call in calls} >= {
             "resolve_current_target",
             "resolve_run_state",
@@ -1938,13 +2278,14 @@ class TestAuditorWrapperBoundary:
         assert events[1]["payload"]["next_expected_event"] is None
         assert events[1]["payload"]["decision"]["reconciler_next_expected_event"] == "auditor_escalate_to_human"
         assert all(event["payload"].get("next_expected_event") != "meta_repair.repair_attempt" for event in events)
-        queue_root = workspace / ".megaplan" / "repair-queue"
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
         requests = [json.loads(path.read_text(encoding="utf-8")) for path in (queue_root / "requests").glob("*.json")]
         assert len(requests) == 1
         assert requests[0]["source"] == "six_hour_auditor"
         assert requests[0]["session"] == "demo-session"
         assert requests[0]["target"]["incident_id"] == "inc-124"
-        assert not (tmp_path / ".megaplan" / "cloud-sessions" / "repair-data").exists()
+        repair_data_dir = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data"
+        assert not (repair_data_dir / "demo-session.needs-human.json").exists()
 
 
 class TestLiveSignalFiltering:
@@ -2387,6 +2728,84 @@ class TestLiveSignalFiltering:
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
 
+    def test_meta_repair_summary_reconciles_partial_liveness_with_new_chain_target(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "old-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "old-plan", "current_state": "done", "latest_failure": None}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "new-plan",
+                    "last_state": "finalized",
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        sidecar_events = tmp_path / "repair-data.d" / "events"
+        repair_root.mkdir(parents=True)
+        sidecar_events.mkdir(parents=True)
+        (repair_root / "old-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "old-session",
+                    "outcome": "partial_liveness",
+                    "current_attempt_id": 1,
+                    "current_advancement_snapshot": {
+                        "milestone_or_plan": "superseded-plan",
+                        "current_state": "authority_divergence",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sidecar_events / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "session": "old-session",
+                        "run_kind": "chain",
+                        "plan_name": "superseded-plan",
+                        "health": "alive",
+                        "outcome": "partial_liveness",
+                        "recorded_at": f"2026-07-03T22:0{idx}:00+00:00",
+                    }
+                )
+                + "\n"
+                for idx in range(2)
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "old-plan",
+                    "session": "old-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert findings["findings"] == []
+        assert len(findings["green_checks"]) == 1
+
     def test_gather_flags_watchdog_complete_chain_health_disagreement(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
@@ -2554,6 +2973,195 @@ class TestLiveSignalFiltering:
         assert len(findings["findings"]) == 1
         assert any("repair_data_ghost_running" in reason for reason in findings["findings"][0]["reasons"])
         assert findings["findings"][0]["repair_data_summary"]["current_attempt_id"] == ""
+
+    def test_gather_flags_complete_repair_with_incomplete_chain(self, tmp_path: Path) -> None:
+        """The exact false-success artifact must be visible to the L3 prompt."""
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "demo-plan", "current_state": "finalized", "active_step": {"phase": "execute", "worker_pid": 999999}}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "finalized",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}, {"label": "m2"}],
+                    "completed": [{"label": "m1", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps({"session": "demo-session", "outcome": "complete"}), encoding="utf-8"
+        )
+
+        findings = _run_gather_program(
+            [{"workspace": str(workspace), "plan": "demo-plan", "session": "demo-session", "kind": "chain", "sources": ["marker"]}],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert len(findings["findings"]) == 1
+        reasons = findings["findings"][0]["reasons"]
+        assert any("repair_complete_incomplete_chain" in reason for reason in reasons)
+        assert any("plan_active_step_ghost_worker" in reason for reason in reasons)
+
+    def test_gather_flags_wbc_accepted_unclaimed_exhausted_cycle_for_l3(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        session = "workflow-boundary-contracts-corrective-20260710"
+        plan = "c1-contract-reality-20260711-1433"
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / plan
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True)
+        chain_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": plan,
+                    "current_state": "executed",
+                    "iteration": 9,
+                    "active_step": {"phase": "execute", "worker_pid": 99999999},
+                    "latest_failure": {
+                        "kind": "blocked_recovery_not_resolved",
+                        "message": "machine repair exhausted without advancement",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-wbc.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": plan,
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "c1"}, {"label": "c2"}],
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / f"{session}.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": session,
+                    "workspace": str(workspace),
+                    "outcome": "repair_exhausted",
+                    "attempt_ids": [],
+                    "iterations": [{"iteration": value} for value in range(1, 10)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        queued = repair_requests.enqueue_repair_request(
+            queue_root=queue_root,
+            session=session,
+            workspace=workspace,
+            source="legacy_watchdog",
+            problem_signature={},
+            target={"plan_name": plan},
+        )
+        assert queued["status"] == "queued"
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": plan,
+                    "session": session,
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        assert any("stale_l1_l2_cycle" in reason for reason in finding["reasons"])
+        evidence = finding["deterministic_superfixer_evidence"]
+        assert evidence["actionable"] is True
+        assert evidence["accepted_unclaimed_count"] == 1
+        assert evidence["claim_count"] == 0
+        assert evidence["attempt_count"] == 0
+        assert evidence["repair_outcome"] == "repair_exhausted"
+        assert evidence["runner_dead"] is True
+        assert evidence["chain_incomplete"] is True
+        assert evidence["absent_or_stale_l2"] is True
+        assert evidence["retry_budget"]["remaining_attempts"] == 3
+
+    def test_superfixer_cycle_excludes_typed_human_gate_and_fails_closed_on_malformed_evidence(
+        self,
+    ) -> None:
+        namespace: dict[str, object] = {}
+        source = "\n\n".join(
+            [
+                _extract_gather_function(
+                    "_chain_state_looks_terminal", "_chain_state_looks_nonterminal"
+                ),
+                _extract_gather_function(
+                    "_chain_state_looks_nonterminal",
+                    "_watchdog_chain_health_disagreement_reason",
+                ),
+                _extract_gather_function(
+                    "_superfixer_cycle_evidence", "_stale_l1_l2_cycle_reason"
+                ),
+            ]
+        )
+        exec(source, namespace)
+        classify = namespace["_superfixer_cycle_evidence"]
+
+        human = classify({"resolver_state": {"canonical_state": "HUMAN_ACTION_REQUIRED"}})
+        assert human == {
+            "actionable": False,
+            "excluded_typed_human_gate": True,
+            "canonical_state": "HUMAN_ACTION_REQUIRED",
+        }
+
+        malformed = classify(
+            {
+                "resolver_state": {"canonical_state": "UNKNOWN"},
+                "repair_custody_summary": {"malformed_request_count": 1},
+                "repair_data_summary": {},
+                "active_step_liveness": {
+                    "present": True,
+                    "worker_pid_alive": False,
+                },
+                "current_target": {"tmux_process": {"live_status": "dead"}},
+                "chain_state_summary": {
+                    "current": {
+                        "last_state": "blocked",
+                        "chain_complete": False,
+                        "total_milestones": 2,
+                        "completed_count": 0,
+                    }
+                },
+            }
+        )
+        assert malformed["actionable"] is False
+        assert malformed["unknown_evidence"] is True
+        assert malformed["canonical_state"] == "UNKNOWN"
+        assert malformed["malformed_request_count"] == 1
+        assert malformed["excluded_typed_human_gate"] is False
 
     def test_meta_repair_summary_ignores_stale_recurring_retry_after_complete_chain(
         self, tmp_path: Path

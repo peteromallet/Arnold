@@ -199,10 +199,25 @@ def classify_chain_status(
         "sync_state": sync.get("sync_state"),
     }
 
+    if chain_state is not None:
+        from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+
+        if is_paused(chain_state):
+            return _classification(
+                OperationState.SUSPENDED,
+                "paused",
+                "operator_pause",
+                base_metadata,
+            )
+
     if spec is not None and chain_state is not None:
         current_index = chain_state.current_milestone_index
         milestone_count = len(spec.milestones)
-        if milestone_count > 0 and current_index >= milestone_count:
+        if (
+            milestone_count > 0
+            and current_index >= milestone_count
+            and _chain_has_full_completed_set(spec, chain_state)
+        ):
             return _classification(
                 OperationState.SUCCEEDED,
                 "complete",
@@ -486,6 +501,15 @@ def _project_root_from_resources(resources: tuple[TypedResource, ...]) -> Path |
 def _read_json_object(path: Path) -> dict[str, Any]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     return raw if isinstance(raw, dict) else {}
+
+
+def _chain_has_full_completed_set(spec: ChainSpec, chain_state: ChainState) -> bool:
+    completed_labels = {
+        str(entry.get("label"))
+        for entry in chain_state.completed
+        if isinstance(entry, Mapping) and isinstance(entry.get("label"), str)
+    }
+    return all(milestone.label in completed_labels for milestone in spec.milestones)
 
 
 def _format_chain_status(spec: ChainSpec, chain_state: ChainState) -> dict[str, Any]:

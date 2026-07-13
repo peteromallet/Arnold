@@ -122,6 +122,33 @@ def _route_signal_for_override_action(action: str) -> str | None:
     return ROUTE_SIGNAL_BY_ACTION.get(action)
 
 
+def _archive_stale_phase_result_for_resume(plan_dir: Path) -> str | None:
+    """Move the terminal phase_result aside before resuming a blocked plan.
+
+    ``recover-blocked`` changes ``state.current_state`` back to the predecessor
+    phase. Keeping the old terminal ``phase_result.json`` in place makes status
+    and blocker-recovery read contradictory evidence from the superseded blocked
+    phase.
+    """
+
+    phase_result_path = plan_dir / "phase_result.json"
+    if not phase_result_path.exists():
+        return None
+    stamp = (
+        now_utc()
+        .replace("-", "")
+        .replace(":", "")
+        .replace(".", "")
+    )
+    backup_path = plan_dir / f"phase_result.recovered-{stamp}.json"
+    suffix = 1
+    while backup_path.exists():
+        backup_path = plan_dir / f"phase_result.recovered-{stamp}-{suffix}.json"
+        suffix += 1
+    phase_result_path.replace(backup_path)
+    return backup_path.name
+
+
 def _override_response_owns_next_step(action: str) -> bool:
     try:
         return _override_action_entry(action).family != "terminal_route"
@@ -1344,6 +1371,7 @@ def _override_recover_blocked(
     state["current_state"] = recovered_state
     state.pop("latest_failure", None)
     state.pop("active_step", None)
+    archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
     _append_to_meta(
         state,
         "overrides",
@@ -1355,6 +1383,7 @@ def _override_recover_blocked(
             "to_state": recovered_state,
             "resume_cursor": dict(resume_cursor),
             "blocker_ids": [blocker.blocker_id for blocker in evaluation.blockers],
+            "archived_phase_result": archived_phase_result,
         },
     )
     save_state_merge_meta(plan_dir, state)
@@ -1372,6 +1401,8 @@ def _override_recover_blocked(
         "resume_cursor": resume_cursor,
         "blockers": blocker_details,
     }
+    if archived_phase_result is not None:
+        response["archived_phase_result"] = archived_phase_result
     return response
 
 
@@ -1441,14 +1472,18 @@ def _override_set_profile(
 ) -> StepResponse:
     from arnold_pipelines.megaplan.profiles import (
         _canonicalize_tier_models_for_json,
+        _resolve_prep_models_with_inheritance,
         _resolve_tier_models_with_inheritance,
+        _prep_flat_spec_from_profile,
         apply_depth_rewrite,
         apply_vendor_rewrite,
         load_profile_metadata,
         load_profiles,
+        resolve_prep_models,
         resolve_profile,
         profile_to_phase_models,
     )
+    from arnold_pipelines.megaplan.profiles.policy import _profile_has_premium_slots
 
     new_profile = getattr(args, "profile", None)
     if not new_profile:
@@ -1472,21 +1507,49 @@ def _override_set_profile(
         )
     except CliError:
         tier_models = {}
+    try:
+        inherited_prep_models = _resolve_prep_models_with_inheritance(
+            new_profile,
+            system_profiles=profiles,
+            system_metadata=metadata,
+            pipeline_local_profiles={},
+            pipeline_local_metadata={},
+        )
+    except CliError:
+        inherited_prep_models = {}
     vendor = effective_premium_vendor(config=state.get("config", {}))
-    resolved = apply_vendor_rewrite(resolved, vendor)
+    if _profile_has_premium_slots(resolved) or inherited_prep_models:
+        resolved = apply_vendor_rewrite(
+            resolved,
+            vendor,
+            prep_models=inherited_prep_models,
+        )
     depth = state["config"].get("depth")
     if depth is not None:
         resolved = apply_depth_rewrite(resolved, depth)
     phase_models = profile_to_phase_models(resolved)
+    prep_models, prep_trace = resolve_prep_models(
+        flat_prep_spec=_prep_flat_spec_from_profile(resolved),
+        prep_models=inherited_prep_models,
+    )
 
     previous_profile = state["config"].get("profile")
     state["config"]["profile"] = new_profile
     state["config"]["phase_model"] = phase_models
-    state["config"]["vendor"] = vendor
+    if _profile_has_premium_slots(resolved):
+        state["config"]["vendor"] = vendor
+    else:
+        state["config"].pop("vendor", None)
     if tier_models:
         state["config"]["tier_models"] = _canonicalize_tier_models_for_json(tier_models)
     else:
         state["config"].pop("tier_models", None)
+    if prep_models:
+        state["config"]["prep_models"] = prep_models
+        state["config"]["prep_model_resolver_trace"] = prep_trace
+    else:
+        state["config"].pop("prep_models", None)
+        state["config"].pop("prep_model_resolver_trace", None)
     exec_spec = next(
         (phase_model.split("=", 1)[1] for phase_model in phase_models if phase_model.startswith("execute=")),
         "",

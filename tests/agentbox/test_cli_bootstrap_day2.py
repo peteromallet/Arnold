@@ -51,6 +51,27 @@ def test_cli_services_list_returns_expected_names(tmp_path, monkeypatch, capsys)
     assert "agentbox-discord-resident" in captured.out
 
 
+def test_cli_services_restart_returns_failure_when_safety_gate_refuses(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
+    (tmp_path / "agentbox.yaml").write_text(
+        f"workspace_root: {workspace}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "agentbox.cli.restart_service",
+        lambda service, **kwargs: {"ok": False, "error": "unsafe unit"},
+    )
+
+    result = main(
+        ["services", "restart", "agentbox-discord-resident", "--json"]
+    )
+
+    assert result == 1
+    assert "unsafe unit" in capsys.readouterr().out
+
+
 def test_cli_version_outputs_version(tmp_path, monkeypatch, capsys) -> None:
     workspace = tmp_path / "workspace"
     monkeypatch.setenv("AGENTBOX_CONFIG", str(tmp_path / "agentbox.yaml"))
@@ -106,6 +127,10 @@ def test_cli_parser_has_new_commands() -> None:
     args = parser.parse_args(["services", "restart", "arnold-guardian"])
     assert args.services_command == "restart"
     assert args.service == "arnold-guardian"
+
+    args = parser.parse_args(["services", "reset-notifications", "--limit", "3"])
+    assert args.services_command == "reset-notifications"
+    assert args.limit == 3
 
     args = parser.parse_args(["notify", "test", "--dm-user-id", "123"])
     assert args.command == "notify"

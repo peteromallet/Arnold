@@ -1,5 +1,8 @@
 # S2: Contract Foundation And Authority
 
+> Superseded as an executable milestone by C1-C6. Preserved as historical
+> checklist material; see the 2026-07-10 corrective reshape decision.
+
 ## Outcome
 
 Build the shared boundary vocabulary and apply it to the first producer and

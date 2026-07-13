@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -8,8 +9,11 @@ from pydantic import ValidationError
 
 from arnold_pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
-from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
-from arnold_pipelines.megaplan.store import FileStore
+from arnold_pipelines.megaplan.resident.profile import (
+    MegaplanResidentProfile,
+    _compact_restart_lifecycle,
+)
+from arnold_pipelines.megaplan.store import FileStore, ResidentConversationInput
 
 
 class FakeCloudBackend:
@@ -23,6 +27,42 @@ class FakeCloudBackend:
             summary="cloud_status_chain: active chain running",
             details={"payload": {"active_cloud_chains": 1}},
         )
+
+
+def test_restart_lifecycle_compacts_real_listing_shape() -> None:
+    compact = _compact_restart_lifecycle(
+        {
+            "count": 17,
+            "records": [
+                {
+                    "notification_id": "reset-one",
+                    "initiator": {"source_record_id": "msg-source"},
+                    "restart": {
+                        "status": "succeeded",
+                        "requested_at": "2026-07-13T19:07:55Z",
+                        "completed_at": "2026-07-13T19:08:00Z",
+                    },
+                    "delivery": {
+                        "status": "delivered",
+                        "delivered_at": "2026-07-13T19:08:01Z",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert compact["record_count"] == 17
+    assert compact["latest"] == [
+        {
+            "reset_id": "reset-one",
+            "restart_status": "succeeded",
+            "delivery_status": "delivered",
+            "requested_at": "2026-07-13T19:07:55Z",
+            "completed_at": "2026-07-13T19:08:00Z",
+            "delivered_at": "2026-07-13T19:08:01Z",
+            "source_record_id": "msg-source",
+        }
+    ]
 
 
 def test_megaplan_resident_tool_catalog_exposes_initiatives_policy(tmp_path: Path) -> None:
@@ -43,6 +83,13 @@ def test_megaplan_resident_tool_catalog_exposes_initiatives_policy(tmp_path: Pat
     assert ".megaplan/initiatives/<slug>/" in prompt
     assert "Never create planning docs directly under .megaplan/briefs" in prompt
     assert "search initiatives by rough slug/title/description first" in prompt
+    assert "Default to `launch_subagent` for any user-requested execution work" in prompt
+    assert "make that tool call before replying" in prompt
+    assert "Do not babysit normal delegated work or Megaplan/cloud chains" in prompt
+    assert "Babysitting should be exceptionally rare" in prompt
+    assert "Use `progress.display_state` as its canonical status label" in prompt
+    assert "falling back to `progress.plan_state` only when `display_state` is absent" in prompt
+    assert "active execute step as `executing`" in prompt
 
 
 def test_megaplan_resident_write_initiative_doc_creates_canonical_folder(tmp_path: Path) -> None:
@@ -171,6 +218,86 @@ def test_megaplan_resident_hot_context_includes_compact_initiative_index(
     assert {"README.md", "chain.yaml"}.issubset(set(row["recent_docs"]))
 
 
+def test_megaplan_resident_hot_context_identifies_complete_conversation_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store_root = tmp_path / "resident-store"
+    store = FileStore(store_root)
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            transport="discord",
+            conversation_key="discord:dm:42",
+            channel_id="1001",
+            dm_user_id="42",
+        )
+    )
+    store.create_message(
+        epic_id=None,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="older durable message outside a bounded prompt window",
+        discord_message_id="123456789012345678",
+    )
+    profile = MegaplanResidentProfile(store=store)
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context(conversation.id))
+
+    history = context["conversation_history"]
+    assert history["conversation_id"] == conversation.id
+    assert history["location"]["backend"] == "FileStore"
+    assert history["location"]["store_root"] == str(store_root.resolve())
+    assert history["location"]["conversation_record"] == str(
+        store_root.resolve()
+        / "resident_conversations"
+        / f"{conversation.id}.json"
+    )
+    assert history["location"]["message_collection"] == str(
+        store_root.resolve() / "messages"
+    )
+    assert history["location"]["message_selector"] == {
+        "conversation_id": conversation.id
+    }
+    assert history["search"]["tool"] == "search_messages"
+    assert history["search"]["arguments"]["conversation_id"] == conversation.id
+    assert history["ordering_field"] == "sent_at"
+    assert "not the full history" in history["hot_context_caveat"]
+    assert "conversation_history" in profile.system_prompt()
+
+
+def test_megaplan_resident_hot_context_surfaces_safe_restart_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    profile = MegaplanResidentProfile(store=FileStore(tmp_path / "store"))
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+
+    restart = context["resident_runtime"]["restart"]
+    assert restart["canonical_command"] == (
+        "agentbox services restart agentbox-discord-resident"
+    )
+    assert "KillMode" in restart["procedure"]
+    assert "ExecStopPost" in restart["procedure"]
+    assert "tmux pane" in restart["procedure"]
+    assert "refuses" in restart["procedure"]
+    assert "resident process/pane only" in restart["stop_scope"]
+    assert any("subagents are not signaled" in item for item in restart["safety_guarantees"])
+    assert any("Megaplan and cloud chains" in item for item in restart["safety_guarantees"])
+    assert "in-flight Discord resident turn" in restart["operational_caveat"]
+    assert "pkill/killall" in restart["forbidden_shortcuts"]
+
+    prompt = profile.system_prompt()
+    assert "use only the canonical command in hot context" in prompt
+    assert "never use pkill, killall" in prompt
+
+
 def test_megaplan_resident_hot_context_includes_live_cloud_chain(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -189,6 +316,10 @@ def test_megaplan_resident_hot_context_includes_live_cloud_chain(
     context = asyncio.run(profile.load_hot_context("missing-conversation"))
 
     assert context["configured_cloud_yaml"] == "cloud.active.yaml"
+    assert "cloud chain" in context["cloud_launch_guidance"]["canonical_command"]
+    assert "unique" in context["cloud_launch_guidance"]["requirements"]
+    assert "--on-box" in context["cloud_launch_guidance"]["on_box_command"]
+    assert "without SSH" in context["cloud_launch_guidance"]["transport_choice"]
     assert context["resident_runtime"]["codex_sandbox"] == "workspace-write"
     assert context["live_cloud_chain"]["available"] is True
     assert context["live_cloud_chain"]["classification"] == "running"
@@ -240,6 +371,48 @@ def test_megaplan_resident_hot_context_includes_local_epic_chain_state(
     assert local_state["active_chains"][0]["plan_state"]["current_state"] == "initialized"
 
 
+def test_resident_hot_context_projects_live_execute_over_finalized_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    chain_state_dir = project / ".megaplan" / "plans" / ".chains"
+    plan_dir = project / ".megaplan" / "plans" / "m1-live"
+    chain_state_dir.mkdir(parents=True)
+    plan_dir.mkdir(parents=True)
+    (chain_state_dir / "chain-live.json").write_text(
+        (
+            '{"current_plan_name":"m1-live","current_milestone_index":0,'
+            '"last_state":"running","completed":[],"metadata":{'
+            '"chain_spec_path":"chain.yaml","execution_environment":{"work_dir":"%s"}}}'
+        )
+        % str(project),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(
+        '{"current_state":"finalized","iteration":0,"active_step":{"phase":"execute"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(project)
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(cloud_yaml_path=Path("missing-cloud.yaml")),
+    )
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+    chain = next(
+        row
+        for row in context["local_epic_chain_state"]["active_chains"]
+        if row["current_plan_name"] == "m1-live"
+    )
+    state = chain["plan_state"]
+
+    assert state["current_state"] == "finalized"
+    assert state["active_phase"] == "execute"
+    assert state["execution_state"] == "executing"
+    assert state["display_state"] == "executing"
+
+
 def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -289,6 +462,54 @@ def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(
     assert [e["session"] for e in summary["active_working"]] == ["demo"]
 
 
+def test_hot_context_cannot_embed_oversized_cloud_repair_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    project = tmp_path / "project"
+    project.mkdir()
+    snapshot_path = tmp_path / "cloud-status.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "source": "cloud-local-observer",
+                "summary": {"running": 1},
+                "sessions": [
+                    {
+                        "session": "oversized-repair",
+                        "status": "running",
+                        "repair_custody": {"raw_history": "x" * 1_100_000},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", tmp_path / "no-markers")
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=snapshot_path),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+    serialized = json.dumps(context)
+
+    assert len(serialized) < 100_000
+    assert "raw_history" not in serialized
+    assert context["cloud_status_snapshot"]["detail_node"] == "status"
+    assert any(
+        route.get("node_id") == "status"
+        for route in context["context_root"]["routes"]
+    )
+
+
 def test_megaplan_resident_hot_context_labels_missing_snapshot_degraded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -314,13 +535,11 @@ def test_megaplan_resident_hot_context_labels_missing_snapshot_degraded(
     assert context["plan_activity_summary"]["degraded"] is True
 
 
-def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_container(
+def test_megaplan_resident_hot_context_uses_fallback_then_refreshes_in_background(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """In-container, the resident builds a fresh local snapshot each turn instead
-    of reading the (stale, hourly) on-disk file, so newly-started sessions appear
-    immediately and the on-disk file is refreshed."""
+    """Projection rebuilding never blocks the inbound Discord turn."""
     import json
     from arnold_pipelines.megaplan.cloud import status_snapshot
 
@@ -343,11 +562,21 @@ def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_containe
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
     monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
     monkeypatch.setattr(status_snapshot, "DEFAULT_WATCHDOG_REPORT", tmp_path / "absent-report.json")
+    monkeypatch.setattr(
+        status_snapshot,
+        "build_cloud_status_snapshot",
+        lambda: {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "source": "test-background-refresh",
+            "summary": {"running": 1},
+            "sessions": [{"session": "live", "status": "running"}],
+        },
+    )
     on_disk = tmp_path / "cloud-status.json"
 
     profile = MegaplanResidentProfile(
         store=FileStore(tmp_path / "store"),
-        # Points at a nonexistent file; in-container it must be ignored in favor of a fresh build.
+        # The first turn gets a bounded missing-snapshot fallback while refresh runs.
         config=ResidentConfig(status_snapshot_path=on_disk),
         cloud_backend=FakeCloudBackend(),
     )
@@ -355,24 +584,23 @@ def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_containe
 
     context = asyncio.run(profile.load_hot_context("c"))
 
-    snap = context["cloud_status_snapshot"]
-    assert snap is not None
-    assert context["cloud_status_degraded"] is None
-    assert any(s["session"] == "live" for s in snap["sessions"])
-    # The fresh build also refreshed the on-disk file for CLI/laptop consumers.
+    assert context["cloud_status_snapshot"] is None
+    assert context["cloud_status_degraded"] is not None
+    assert profile._snapshot_refresh_thread is not None
+    profile._snapshot_refresh_thread.join(timeout=5)
     assert on_disk.exists()
     written = json.loads(on_disk.read_text(encoding="utf-8"))
     assert any(s["session"] == "live" for s in written["sessions"])
+    refreshed = asyncio.run(profile.load_hot_context("c"))
+    assert refreshed["cloud_status_snapshot"] is not None
+    assert refreshed["cloud_status_degraded"] is None
 
 
-def test_megaplan_resident_hot_context_builds_fresh_with_markers_without_env(
+def test_megaplan_resident_background_refresh_uses_markers_without_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """P0: marker-dir presence (not the trust env var) triggers a fresh build, so
-    a resident that lost MEGAPLAN_TRUSTED_CONTAINER on a manual restart still
-    serves live per-turn data. Without the env var it must NOT clobber the shared
-    cache."""
+    """Marker presence schedules refresh even when the trust env was lost."""
     import json
     from arnold_pipelines.megaplan.cloud import status_snapshot
 
@@ -395,6 +623,16 @@ def test_megaplan_resident_hot_context_builds_fresh_with_markers_without_env(
     monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
     monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
     monkeypatch.setattr(status_snapshot, "DEFAULT_WATCHDOG_REPORT", tmp_path / "absent-report.json")
+    monkeypatch.setattr(
+        status_snapshot,
+        "build_cloud_status_snapshot",
+        lambda: {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "source": "test-background-refresh",
+            "summary": {"running": 1},
+            "sessions": [{"session": "live", "status": "running"}],
+        },
+    )
     on_disk = tmp_path / "cloud-status.json"
 
     profile = MegaplanResidentProfile(
@@ -406,16 +644,63 @@ def test_megaplan_resident_hot_context_builds_fresh_with_markers_without_env(
 
     context = asyncio.run(profile.load_hot_context("c"))
 
-    snap = context["cloud_status_snapshot"]
-    assert snap is not None
-    assert context["cloud_status_degraded"] is None
-    # Fresh build reflects the live marker even without the trust env var...
-    assert any(s["session"] == "live" for s in snap["sessions"])
-    # ...visibility reports the actual trust/marker state.
+    assert context["cloud_status_snapshot"] is None
+    assert context["cloud_status_degraded"] is not None
     assert context["resident_runtime"]["has_local_markers"] is True
     assert context["resident_runtime"]["trusted_container"] is False
-    # Without the trust env var, the shared cache must NOT be written.
-    assert not on_disk.exists()
+    assert profile._snapshot_refresh_thread is not None
+    profile._snapshot_refresh_thread.join(timeout=5)
+    assert on_disk.exists()
+
+
+def test_megaplan_resident_hot_context_never_waits_for_projection_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    import time
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    marker_dir = tmp_path / "cloud-sessions"
+    marker_dir.mkdir()
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_build():
+        started.set()
+        release.wait(timeout=5)
+        return {
+            "generated_at": "2026-07-13T00:00:00Z",
+            "source": "test",
+            "summary": {},
+            "sessions": [],
+        }
+
+    monkeypatch.setattr(status_snapshot, "build_cloud_status_snapshot", slow_build)
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=tmp_path / "snapshot.json"),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    async def run_with_heartbeat():
+        before = time.monotonic()
+        task = asyncio.create_task(profile.load_hot_context("c"))
+        await asyncio.sleep(0.05)
+        heartbeat_elapsed = time.monotonic() - before
+        return await task, heartbeat_elapsed
+
+    context, heartbeat_elapsed = asyncio.run(run_with_heartbeat())
+
+    assert started.wait(timeout=1)
+    assert heartbeat_elapsed < 0.5
+    assert context["cloud_status_snapshot"] is None
+    assert context["cloud_status_degraded"] is not None
+    release.set()
+    assert profile._snapshot_refresh_thread is not None
+    profile._snapshot_refresh_thread.join(timeout=5)
 
 
 def test_megaplan_resident_hot_context_sanitizes_stale_snapshot(

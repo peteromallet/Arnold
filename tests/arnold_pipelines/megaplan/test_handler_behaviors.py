@@ -28,7 +28,89 @@ from arnold_pipelines.megaplan.handlers.structured_output import (
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 
+def test_evaluator_promotion_does_not_erase_nonempty_worker_verdict() -> None:
+    from arnold_pipelines.megaplan.orchestration.critique_runtime import (
+        _prefer_nonempty_evaluator_payload,
+    )
+
+    worker = {"selections": [{"check_id": "correctness"}], "skipped": []}
+    promoted_empty = {"selections": [], "skipped": [{"check_id": "correctness"}]}
+
+    assert _prefer_nonempty_evaluator_payload(worker, promoted_empty) == worker
+
+
 class TestAdaptiveCritiqueRouting:
+    def test_complexity_seven_routes_when_the_profile_declares_tier_seven(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.execute import batch
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+
+        def fake_resolve_tier_spec(args: argparse.Namespace, spec: str, *, phase: str = "execute"):
+            assert phase == "critique"
+            agent, model = spec.split(":", 1)
+            return agent, "fresh", model
+
+        monkeypatch.setattr(batch, "_resolve_tier_spec", fake_resolve_tier_spec)
+        checks = [{"id": "correctness", "question": "Correct?", "complexity": 7}]
+
+        assert _apply_adaptive_critique_routing(
+            {"config": {}},
+            argparse.Namespace(tier_models={"critique": {7: "codex:gpt-5.5"}}),
+            checks,
+        ) is None
+
+        assert checks[0]["_routing_tier"] == 7
+        assert checks[0]["_routing_selected_spec"] == "codex:gpt-5.5"
+
+    def test_high_complexity_uses_highest_configured_legacy_critique_tier(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.execute import batch
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+
+        def fake_resolve_tier_spec(args: argparse.Namespace, spec: str, *, phase: str = "execute"):
+            assert phase == "critique"
+            agent, model = spec.split(":", 1)
+            return agent, "fresh", model
+
+        monkeypatch.setattr(batch, "_resolve_tier_spec", fake_resolve_tier_spec)
+        checks = [{"id": "correctness", "question": "Correct?", "complexity": 7}]
+
+        assert _apply_adaptive_critique_routing(
+            {"config": {}},
+            argparse.Namespace(
+                tier_models={
+                    "critique": {
+                        1: "hermes:deepseek:deepseek-v4-flash",
+                        2: "hermes:deepseek:deepseek-v4-flash",
+                        3: "hermes:deepseek:deepseek-v4-flash",
+                        4: "codex:gpt-5.4",
+                        5: "codex:gpt-5.5",
+                    }
+                }
+            ),
+            checks,
+        ) is None
+
+        assert checks[0]["_routing_tier"] == 7
+        assert checks[0]["_routing_selected_spec"] == "codex:gpt-5.5"
+
+    @pytest.mark.parametrize("complexity", [0, 11, True, "7"])
+    def test_malformed_or_out_of_range_complexity_remains_an_invariant_error(
+        self, complexity: object
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+        from arnold_pipelines.megaplan.types import CliError
+
+        with pytest.raises(CliError) as exc_info:
+            _apply_adaptive_critique_routing(
+                {"config": {}},
+                argparse.Namespace(tier_models={"critique": {7: "codex:gpt-5.5"}}),
+                [{"id": "correctness", "question": "Correct?", "complexity": complexity}],
+            )
+        assert exc_info.value.code == "critique_complexity_invariant"
+
     def test_tier_chain_selects_first_spec_for_routing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1134,6 +1216,112 @@ class TestOverrideFallbackChains:
         assert "tier_models" in state["config"]
         assert state["config"]["tier_models"]["execute"]["4"]
         assert state["config"]["tier_models"]["critique"]["4"]
+
+    def test_set_profile_clears_stale_vendor_for_non_premium_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.profiles as profiles_module
+
+        monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(profiles_module, "load_profile_metadata", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(
+            profiles_module,
+            "resolve_profile",
+            lambda profile_name, profiles: {
+                "plan": "hermes:deepseek:deepseek-v4-pro",
+                "execute": "hermes:deepseek:deepseek-v4-pro",
+            },
+        )
+        monkeypatch.setattr(
+            profiles_module,
+            "_resolve_tier_models_with_inheritance",
+            lambda *args, **kwargs: {},
+        )
+
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {"project_dir": str(tmp_path), "profile": "old", "vendor": "claude"},
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+        }
+        args = argparse.Namespace(profile="demo", reason="switch")
+
+        response = _override_set_profile(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        assert state["config"]["phase_model"] == [
+            "plan=hermes:deepseek:deepseek-v4-pro",
+            "execute=hermes:deepseek:deepseek-v4-pro",
+        ]
+        assert "vendor" not in state["config"]
+
+    def test_set_profile_rewrites_stale_prep_metadata_for_non_premium_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.profiles as profiles_module
+
+        monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(profiles_module, "load_profile_metadata", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(
+            profiles_module,
+            "resolve_profile",
+            lambda profile_name, profiles: {
+                "plan": "hermes:deepseek:deepseek-v4-pro",
+                "execute": "hermes:deepseek:deepseek-v4-pro",
+            },
+        )
+        monkeypatch.setattr(
+            profiles_module,
+            "_resolve_tier_models_with_inheritance",
+            lambda *args, **kwargs: {},
+        )
+        monkeypatch.setattr(
+            profiles_module,
+            "_resolve_prep_models_with_inheritance",
+            lambda *args, **kwargs: {},
+        )
+
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {
+                "project_dir": str(tmp_path),
+                "profile": "old",
+                "vendor": "claude",
+                "prep_models": {
+                    "triage": "claude:claude-sonnet-4-6",
+                    "fanout": "claude:claude-sonnet-4-6",
+                    "distill": "claude:claude-sonnet-4-6",
+                },
+                "prep_model_resolver_trace": {
+                    "flat_prep_input": "claude",
+                    "explicit_prep_models": {
+                        "triage": "claude:claude-sonnet-4-6",
+                    },
+                    "resolved_stage_models": {
+                        "triage": "claude:claude-sonnet-4-6",
+                    },
+                    "canonical_fallback_used": {"triage": False},
+                },
+            },
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+        }
+        args = argparse.Namespace(profile="demo", reason="switch")
+
+        response = _override_set_profile(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        assert state["config"]["prep_models"] == {
+            "triage": "hermes:deepseek:deepseek-v4-pro",
+            "fanout": "hermes:deepseek:deepseek-v4-pro",
+            "distill": "hermes:deepseek:deepseek-v4-pro",
+        }
+        assert state["config"]["prep_model_resolver_trace"]["flat_prep_input"] is None
+        assert state["config"]["prep_model_resolver_trace"]["explicit_prep_models"] == {}
 
     def test_set_model_replaces_encoded_chain_with_scalar_spec(self, tmp_path: Path) -> None:
         state = {

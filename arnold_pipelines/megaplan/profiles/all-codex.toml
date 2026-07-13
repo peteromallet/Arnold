@@ -1,59 +1,63 @@
-# `all-codex` — single-vendor Codex (GPT-5.5) end to end, for users who have
+# `all-codex` — single-vendor Codex (GPT-5.6) end to end, for users who have
 # ONLY OpenAI/Codex credentials. The Codex counterpart to `all-claude`:
-# every reasoning phase runs on the flagship model; vendor_locked so --vendor
-# / --critic are silently ignored.
+# every reasoning phase stays in the Codex/OpenAI family; vendor_locked so
+# --vendor / --critic are silently ignored.
 #
-# Execute is complexity-routed WITHIN Codex (see tier_models.execute), but the
-# lever is **reasoning effort**, not a cheaper model — Codex has no
-# Haiku-class budget model to drop to, so cheap tasks run the same model at
-# `minimal`/`low` effort (fewer reasoning tokens = cheaper) and the hardest
-# tasks run at `high`. The flat `execute = "codex"` entry (default effort) is
-# the fallback when tier routing is disabled (e.g. --phase-model execute=…).
+# Author/review phases use Sol as the flagship reasoning model. Prep and
+# execute/critique route within the GPT-5.6 Codex model family: Luna for cheap
+# structured work, Terra for high-volume medium work, and Sol for hard or
+# judgment-heavy work. The flat `execute = "codex:gpt-5.6-sol:high"` entry is the
+# fallback when tier routing is disabled (e.g. --phase-model execute=…).
 #
 # Note: `feedback` is Codex too. It only runs under --with-feedback, but a
 # Codex-only profile must remain Codex-only when the optional slot is enabled.
 [profiles.all-codex]
 vendor_locked = true
-plan = "codex"
-prep = "codex"
-critique = "codex"
-critique_evaluator = "codex"
-revise = "codex"
-gate = "codex"
-finalize = "codex"
-execute = "codex"
-feedback              = "codex:low"
-loop_plan = "codex"
-loop_execute = "codex"
-review = "codex"
-tiebreaker_researcher = "codex"
-tiebreaker_challenger = "codex"
+plan = "codex:gpt-5.6-sol:medium"
+prep = ["codex:gpt-5.6-sol:medium", "codex:gpt-5.6-terra:medium"]
+critique = ["codex:gpt-5.6-sol:high", "codex:gpt-5.6-terra:high"]
+critique_evaluator = ["codex:gpt-5.6-sol:high", "codex:gpt-5.6-terra:high"]
+revise = "codex:gpt-5.6-sol:medium"
+gate = ["codex:gpt-5.6-terra:low", "codex:gpt-5.6-luna:low"]
+finalize = "codex:gpt-5.6-terra:low"
+execute = "codex:gpt-5.6-sol:high"
+feedback = "codex:gpt-5.6-terra:low"
+loop_plan = "codex:gpt-5.6-sol:medium"
+loop_execute = "codex:gpt-5.6-sol:high"
+review = ["codex:gpt-5.6-sol:high", "codex:gpt-5.6-terra:high"]
+tiebreaker_researcher = "codex:gpt-5.6-sol:high"
+tiebreaker_challenger = "codex:gpt-5.6-sol:high"
 
-# Prep models: keep research evidence-gathering inside Codex (read-only).
+# Prep models: keep research evidence-gathering inside Codex (read-only), but
+# use cheaper 5.6 variants where maximum Sol depth is not needed.
 [profiles.all-codex.prep_models]
-triage = "codex:gpt-5.4"
-fanout = "codex:gpt-5.4"
-distill = "codex:gpt-5.4"
+triage = ["codex:gpt-5.6-luna:low", "codex:gpt-5.6-terra:low"]
+fanout = ["codex:gpt-5.6-terra:medium", "codex:gpt-5.6-luna:low"]
+distill = ["codex:gpt-5.6-sol:medium", "codex:gpt-5.6-terra:medium"]
 
-# Within-Codex execute routing by adjudicated task complexity (1–5). Effort
-# suffixes, not model pins — Codex's cost lever is reasoning depth. --depth
+# Within-Codex execute routing by adjudicated task complexity (1-10). --depth
 # does not rewrite these (execute is not an author phase), so the ladder is
 # stable.
 [profiles.all-codex.tier_models.execute]
-1 = "codex:minimal"
-2 = "codex:low"
-3 = "codex:low"
-4 = "codex:medium"
-5 = "codex:high"
-6 = "codex:high"
-7 = "codex:high"
-8 = "codex:high"
-9 = "codex:high"
-10 = "codex:high"
+1 = "codex:gpt-5.6-luna:low"
+2 = "codex:gpt-5.6-terra:low"
+3 = "codex:gpt-5.6-terra:low"
+4 = "codex:gpt-5.6-terra:medium"
+5 = "codex:gpt-5.6-sol:high"
+6 = "codex:gpt-5.6-sol:high"
+7 = "codex:gpt-5.6-sol:high"
+8 = "codex:gpt-5.6-sol:high"
+9 = "codex:gpt-5.6-sol:xhigh"
+10 = "codex:gpt-5.6-sol:xhigh"
 
 [profiles.all-codex.tier_models.critique]
-1 = "codex:minimal"
-2 = "codex:low"
-3 = "codex:low"
-4 = "codex:medium"
-5 = "codex:high"
+1 = ["codex:gpt-5.6-luna:low", "codex:gpt-5.6-terra:low"]
+2 = ["codex:gpt-5.6-terra:low", "codex:gpt-5.6-luna:low"]
+3 = ["codex:gpt-5.6-terra:low", "codex:gpt-5.6-luna:low"]
+4 = ["codex:gpt-5.6-terra:medium", "codex:gpt-5.6-luna:low"]
+5 = ["codex:gpt-5.6-sol:high", "codex:gpt-5.6-terra:high"]
+6 = ["codex:gpt-5.6-sol:high", "codex:gpt-5.6-terra:high"]
+7 = ["codex:gpt-5.6-sol:high", "codex:gpt-5.6-terra:high"]
+8 = ["codex:gpt-5.6-sol:high", "codex:gpt-5.6-terra:high"]
+9 = ["codex:gpt-5.6-sol:xhigh", "codex:gpt-5.6-terra:high"]
+10 = ["codex:gpt-5.6-sol:xhigh", "codex:gpt-5.6-terra:high"]

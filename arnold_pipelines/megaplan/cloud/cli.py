@@ -150,6 +150,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     )
     chain_parser.add_argument("spec", help="Local chain spec path")
     chain_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Launch from inside the agentbox without SSH, preserving cloud tmux/marker/watchdog setup",
+    )
+    chain_parser.add_argument(
         "--idea-dir",
         default=None,
         help="Directory containing local idea files referenced by the chain spec",
@@ -247,6 +252,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Validate, canonicalize, upload, launch, and watchdog-verify a cloud epic",
     )
     launch_epic_parser.add_argument("spec_or_dir", help="Local chain.yaml or epic brief directory")
+    launch_epic_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Launch from inside the agentbox without SSH, preserving cloud tmux/marker/watchdog setup",
+    )
     launch_epic_parser.add_argument(
         "--slug",
         default=None,
@@ -423,6 +433,17 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     )
     resume_parser.add_argument("--plan", help="Optional plan name to resume")
 
+    pause_chain_parser = cloud_sub.add_parser(
+        "pause-chain", parents=[shared], help="Durably pause one chain and stop only its runner"
+    )
+    pause_chain_parser.add_argument("--reason", required=True)
+    pause_chain_parser.add_argument("--actor", default="operator")
+
+    resume_chain_parser = cloud_sub.add_parser(
+        "resume-chain", parents=[shared], help="Explicitly resume a durably paused chain"
+    )
+    resume_chain_parser.add_argument("--actor", default="operator")
+
     cloud_sub.add_parser("down", parents=[shared], help="Pause the deployment without deleting volume")
 
     supervise_parser = cloud_sub.add_parser(
@@ -574,6 +595,31 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
             return 0
 
+        if action in {"pause-chain", "resume-chain"}:
+            marker = _load_marker(root, args)
+            if not isinstance(marker, dict):
+                raise CliError("missing_marker", "No canonical last-chain marker is available")
+            workspace = str(marker.get("workspace") or "").strip()
+            remote_spec = str(marker.get("remote_spec") or "").strip()
+            session = str(marker.get("chain_session") or marker.get("session") or "").strip()
+            marker_path = str(marker.get("marker_path") or "").strip()
+            if not marker_path and session:
+                marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session}.json")
+            if not all((workspace, remote_spec, session, marker_path)):
+                raise CliError("invalid_marker", "Chain marker lacks workspace/spec/session custody")
+            argv = [
+                "python3", "-P", "-m", "arnold_pipelines.megaplan.cloud.operator_control",
+                "pause" if action == "pause-chain" else "resume",
+                "--spec", remote_spec, "--workspace", workspace,
+                "--session", session, "--marker", marker_path,
+                "--actor", str(getattr(args, "actor", None) or "operator"),
+            ]
+            if action == "pause-chain":
+                argv.extend(["--reason", str(args.reason)])
+            result = provider.ssh_exec(shlex.join(argv))
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            return result.returncode
+
         if action == "down":
             return provider.down()
 
@@ -629,6 +675,13 @@ def _status_should_use_chain(root: Path, args: argparse.Namespace, spec: CloudSp
 
 
 def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
+    if bool(getattr(args, "on_box", False)):
+        action = getattr(args, "cloud_action", None)
+        if action not in {"chain", "launch-epic"}:
+            raise CliError("invalid_args", "--on-box is supported only for cloud chain and launch-epic")
+        from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+        return OnBoxProvider(spec)
     # Gate session overrides on provider capability, not on a provider-name special case.
     base_provider = get_provider(spec.provider, spec)
     session_name = getattr(args, "session", None)
@@ -911,7 +964,7 @@ def _run_quickstart(root: Path, args: argparse.Namespace) -> int:
         "provider": "ssh",
         "repo": {"url": repo_url, "branch": base_branch, "workspace": workspace},
         "agents": {"default": args.vendor},
-        "codex": {"model": "gpt-5.4", "reasoning": args.depth},
+        "codex": {"model": "gpt-5.6-sol", "reasoning": args.depth},
         "chain_session": slug,
         "mode": "idle",
         "chain": {"spec": f"{workspace}/.megaplan/initiatives/{slug}/chain.yaml"},
@@ -1771,7 +1824,7 @@ def _cloud_chain_launch_provenance(
     verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current_milestone = chain_spec.milestones[0].label if chain_spec.milestones else None
-    return {
+    payload = {
         "success": True,
         "event": "cloud_chain_launched",
         "remote_spec": ctx.remote_spec_path,
@@ -1812,6 +1865,12 @@ def _cloud_chain_launch_provenance(
         },
         "verification": verification or {},
     }
+    from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        payload["resident_delegation"] = resident_delegation
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -2496,6 +2555,8 @@ def _megaplan_refresh_command(
         "    exit 20",
         "  fi",
         '  pip install -e "$MEGAPLAN_RUNTIME_SRC"',
+        '  RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
+        '  PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
         "fi",
@@ -2575,6 +2636,28 @@ def _tmux_chain_launch_command(
         "identity_digest": digest,
         "run_kind": "chain",
     }
+    from arnold_pipelines.megaplan.notification_safety import (
+        notification_context_for_current_execution,
+    )
+
+    notification_context = notification_context_for_current_execution()
+    if notification_context is not None:
+        marker_payload = dict(marker_payload)
+        marker_payload.setdefault("notification_context", notification_context)
+    from arnold_pipelines.megaplan.resident.provenance import (
+        DELEGATION_CONTEXT_ENV,
+        encoded_provenance,
+        safe_provenance_projection,
+    )
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        marker_payload = dict(marker_payload)
+        marker_payload.setdefault("resident_delegation", resident_delegation)
+        chain_cmd = (
+            f"export {DELEGATION_CONTEXT_ENV}="
+            f"{shlex.quote(encoded_provenance(resident_delegation))}; {chain_cmd}"
+        )
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
         f"{shlex.quote(str(PurePosixPath(marker).parent))}"
@@ -2718,6 +2801,20 @@ def _tmux_epic_chain_launch_command(
         one_shot=one_shot,
         log_relative=log_relative,
     )
+    from arnold_pipelines.megaplan.resident.provenance import (
+        DELEGATION_CONTEXT_ENV,
+        encoded_provenance,
+        safe_provenance_projection,
+    )
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        marker_payload = dict(marker_payload)
+        marker_payload.setdefault("resident_delegation", resident_delegation)
+        epic_chain_cmd = (
+            f"export {DELEGATION_CONTEXT_ENV}="
+            f"{shlex.quote(encoded_provenance(resident_delegation))}; {epic_chain_cmd}"
+        )
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
         f"{shlex.quote(str(PurePosixPath(marker_path).parent))}"
@@ -4029,6 +4126,11 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         "verification": {**verification, "watchdog_tracking": tracking},
         "editable_install_sync": editable_install_sync,
     }
+    from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+    resident_delegation = safe_provenance_projection()
+    if resident_delegation is not None:
+        payload["resident_delegation"] = resident_delegation
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
 
     marker_path = _marker_dir(_cloud_yaml_path(root, args)) / "last_chain.json"

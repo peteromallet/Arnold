@@ -80,6 +80,42 @@ def test_source_initiative_repair_overlays_canonical_completion_artifacts(tmp_pa
     ]
 
 
+def test_source_initiative_repair_never_overwrites_existing_active_spec(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "arnold-src"
+    _write_source_initiative(source_root)
+    workspace = tmp_path / "workspace"
+    remote_spec = workspace / ".megaplan" / "initiatives" / "demo.chain" / "chain.yaml"
+    remote_spec.parent.mkdir(parents=True)
+    existing = (
+        "milestones:\n"
+        "  - label: already-running-m1\n"
+        "    idea: .megaplan/initiatives/demo.chain/briefs/local.md\n"
+    )
+    remote_spec.write_text(existing, encoding="utf-8")
+    local_brief = remote_spec.parent / "briefs" / "local.md"
+    local_brief.parent.mkdir()
+    local_brief.write_text("# Preserve active work\n", encoding="utf-8")
+
+    assert not source_initiative_restore_available(
+        workspace=workspace,
+        remote_spec=remote_spec,
+        arnold_src=source_root,
+    )
+    result = repair_source_initiative(
+        workspace=workspace,
+        remote_spec=remote_spec,
+        arnold_src=source_root,
+    )
+
+    assert result.repaired is False
+    assert result.reason == "source_initiative_already_present"
+    assert remote_spec.read_text(encoding="utf-8") == existing
+    assert local_brief.read_text(encoding="utf-8") == "# Preserve active work\n"
+    assert not (remote_spec.parent / "completion-manifest.json").exists()
+
+
 def test_repair_loop_restores_missing_workspace_and_exits_complete(tmp_path: Path) -> None:
     source_root = tmp_path / "arnold-src"
     _write_source_initiative(source_root)

@@ -31,9 +31,9 @@ FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-pro
 ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
+HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
-AUTOMATIC_REPAIR_MODEL="gpt-5.6-sol"
 DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
 DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-3600}"
 KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"
@@ -59,6 +59,77 @@ PROGRESS_FILE="$MARKER_DIR/${SAFE_SESSION}.repair-progress.json"
 NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
 REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"
 REPAIR_LOCK_DIR="${CLOUD_WATCHDOG_REPAIR_LOCK_DIR:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.lock}"
+
+load_resident_delegation_context() {
+  local encoded rc
+  encoded="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_PATH" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.resident.provenance import (
+    DELEGATION_CONTEXT_ENV,
+    encoded_provenance,
+    normalize_delegation_provenance,
+)
+
+raw = os.environ.get(DELEGATION_CONTEXT_ENV)
+if raw:
+    try:
+        payload = json.loads(raw)
+        print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+    except Exception as exc:
+        print(f"invalid inherited resident delegation provenance: {exc}", file=sys.stderr)
+        raise SystemExit(65)
+    raise SystemExit(0)
+
+path = Path(sys.argv[1])
+try:
+    marker = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    raise SystemExit(3)
+payload = marker.get("resident_delegation") if isinstance(marker, dict) else None
+if payload is None:
+    raise SystemExit(3)
+try:
+    print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+except Exception as exc:
+    print(f"invalid marker resident delegation provenance: {exc}", file=sys.stderr)
+    raise SystemExit(65)
+PY
+)"
+  rc=$?
+  if [[ "$rc" == "3" ]]; then
+    return 0
+  fi
+  if [[ "$rc" != "0" ]]; then
+    echo "repair launch refused: resident delegation provenance validation failed" >&2
+    return "$rc"
+  fi
+  if [[ -n "$encoded" ]]; then
+    export ARNOLD_RESIDENT_DELEGATION_CONTEXT="$encoded"
+  fi
+}
+
+load_resident_delegation_context || exit $?
+
+if PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REMOTE_SPEC" <<'PY'
+import sys
+from pathlib import Path
+from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+from arnold_pipelines.megaplan.chain.spec import load_chain_state
+
+try:
+    paused = is_paused(load_chain_state(Path(sys.argv[1])))
+except Exception:
+    paused = False
+raise SystemExit(0 if paused else 1)
+PY
+then
+  echo "[repair-loop] durable operator pause active; automatic repair skipped session=$SESSION" >&2
+  exit 0
+fi
 
 if ! [[ "$REPAIR_BUDGET_SECS" =~ ^[0-9]+$ ]] || (( REPAIR_BUDGET_SECS <= 0 )); then
   REPAIR_BUDGET_SECS=7200
@@ -106,36 +177,6 @@ log() {
   local message
   message="$(redact_inline_text "$*")"
   echo "[repair-loop $(date -Iseconds)] $message" | tee -a "$LOG"
-}
-
-l1_mutation_authorized() {
-  if [[ "${CURRENT_TARGET_MUTATION_ELIGIBLE:-1}" != "1" ]]; then
-    return 1
-  fi
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -c \
-    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
-}
-
-resolve_current_target_evidence() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$MARKER_DIR" "$DATA_DIR" "${WORKSPACE:-}" <<'PY'
-import json
-import sys
-
-from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
-
-session, marker_dir, repair_data_dir, workspace = sys.argv[1:]
-record = resolve_current_target(
-    session,
-    marker_dir=marker_dir,
-    repair_data_dir=repair_data_dir,
-    workspace_hint=workspace,
-)
-print(json.dumps(record, sort_keys=True, separators=(",", ":")))
-PY
-}
-
-current_target_mutation_eligible() {
-  python3 -c 'import json, sys; state=json.load(sys.stdin).get("evidence_state", {}); raise SystemExit(0 if state.get("status") == "resolved" and state.get("mutation_eligible") is True else 1)'
 }
 
 redact_inline_text() {
@@ -425,19 +466,19 @@ release_active_repair_claim() {
   if [[ -z "$blocker_id" || ! "$owner_pid" =~ ^[0-9]+$ ]]; then
     return
   fi
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}" "$blocker_id" "$owner_pid" "$request_id" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_DIR" "$blocker_id" "$owner_pid" "$request_id" <<'PY'
 import sys
 
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_lock import inspect_repair_lock
 
-queue_root, blocker_id, owner_pid_text, request_id = sys.argv[1:]
+marker_dir, blocker_id, owner_pid_text, request_id = sys.argv[1:]
 try:
     owner_pid = int(owner_pid_text)
 except ValueError:
     raise SystemExit(0)
 
-queue_dir = repair_requests.validate_queue_root(queue_root)
+queue_dir = repair_requests.repair_queue_dir(marker_dir)
 lock_dir = repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
 owner = inspect_repair_lock(lock_dir).owner
 if request_id and isinstance(owner, dict):
@@ -846,17 +887,6 @@ active_step = record.get("active_step_heartbeat")
 if isinstance(active_step, dict) and active_step.get("active"):
     raise SystemExit(0)
 if isinstance(active_step, dict):
-    # The resolver's explicit liveness verdict is authoritative.  In
-    # particular, stale phase/timestamp fields must not turn a dead worker
-    # (active=False / pid_live=False) back into an apparently live run.  Keep
-    # the legacy timestamp fallback only for records that predate those
-    # boolean verdicts and therefore have genuinely unknown liveness.
-    active = active_step.get("active")
-    pid_live = active_step.get("pid_live")
-    if isinstance(active, bool):
-        raise SystemExit(0 if active else 1)
-    if isinstance(pid_live, bool):
-        raise SystemExit(0 if pid_live else 1)
     phase = str(active_step.get("phase") or "").strip().lower()
     started_at = str(active_step.get("started_at") or "").strip()
     last_activity_at = str(active_step.get("last_activity_at") or "").strip()
@@ -1180,6 +1210,89 @@ PY
     "$workspace" "$workspace" "$plan_name" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
 }
 
+resume_plan_relaunch_command() {
+  local plan_name="$1"
+  local workspace="$2"
+  local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan resume --plan %q --project-dir %q >> %q 2>&1' \
+    "$workspace" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
+}
+
+chain_resume_plan_relaunch_command_if_needed() {
+  local workspace="$1"
+  local plan_name="$2"
+  local remote_spec="${3:-}"
+  if [[ -z "$plan_name" && -n "$remote_spec" ]]; then
+    plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || true
+import hashlib
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+spec_path = pathlib.Path(sys.argv[2])
+if not spec_path.is_absolute():
+    spec_path = workspace / spec_path
+try:
+    spec_path = spec_path.resolve()
+except OSError:
+    pass
+digest = hashlib.sha1(str(spec_path).encode("utf-8")).hexdigest()[:12]
+state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+try:
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+plan_name = payload.get("current_plan_name") if isinstance(payload, dict) else ""
+if isinstance(plan_name, str) and plan_name and "/" not in plan_name:
+    print(plan_name)
+PY
+)"
+  fi
+  [[ -n "$plan_name" ]] || return 1
+  local plan_state_file="$workspace/.megaplan/plans/$plan_name/state.json"
+  [[ -f "$plan_state_file" ]] || return 1
+  if ! python3 - "$plan_state_file" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+if str(payload.get("current_state") or "").strip() != "blocked":
+    raise SystemExit(1)
+resume_cursor = payload.get("resume_cursor")
+if not isinstance(resume_cursor, dict):
+    raise SystemExit(1)
+phase = str(resume_cursor.get("phase") or "").strip()
+retry_strategy = str(resume_cursor.get("retry_strategy") or "").strip()
+latest_failure = payload.get("latest_failure")
+if not isinstance(latest_failure, dict):
+    raise SystemExit(1)
+failure_kind = str(latest_failure.get("kind") or "").strip()
+failure_phase = str(latest_failure.get("phase") or "").strip()
+
+raise SystemExit(
+    0
+    if (
+        phase
+        and phase != "recover-blocked"
+        and retry_strategy in {"check_provider_and_retry", "wait_and_retry"}
+        and failure_kind == "external_error_resume_required"
+        and failure_phase == "recover-blocked"
+    )
+    else 1
+)
+PY
+  then
+    return 1
+  fi
+  resume_plan_relaunch_command "$plan_name" "$workspace"
+}
+
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
   [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
@@ -1258,6 +1371,12 @@ resolve_relaunch_command() {
   local run_kind="${4:-chain}"
   local plan_name="${5:-}"
   local relaunch_command="${6:-}"
+  # A chain marker commonly preserves its original `chain start` command and
+  # omits plan_name. Once the active plan records explicit resume authority,
+  # that current state must outrank the stale launch-time marker command.
+  if [[ "$run_kind" != "plan" ]] && chain_resume_plan_relaunch_command_if_needed "$workspace" "$plan_name" "$remote_spec"; then
+    return 0
+  fi
   if [[ -n "$relaunch_command" ]] && ! stale_marker_relaunch_command "$relaunch_command"; then
     printf '%s' "$relaunch_command"
     return 0
@@ -1390,6 +1509,23 @@ def is_terminal_plan(plan_state: dict[str, object]) -> tuple[bool, str]:
         return True, f"plan_state={current_state}"
     return False, current_state
 
+def plan_has_active_or_orphaned_worker(plan_state: dict[str, object]) -> bool:
+    """Treat any recorded active step as non-terminal until it is reconciled.
+
+    A dead PID is not evidence of completion: it is the incident shape the
+    repair loop exists to recover.  The state writer must clear active_step
+    before this checker can close custody.
+    """
+    active_step = plan_state.get("active_step")
+    if not isinstance(active_step, dict):
+        return False
+    return bool(
+        active_step.get("active")
+        or active_step.get("phase")
+        or active_step.get("step")
+        or active_step.get("worker_pid") not in (None, "")
+    )
+
 def chain_completion_reason(chain_state: dict[str, object]) -> str:
     last_state = str(chain_state.get("last_state") or "").strip().lower()
     milestones = chain_state.get("milestones")
@@ -1403,8 +1539,14 @@ def chain_completion_reason(chain_state: dict[str, object]) -> str:
         current_idx_int = int(current_idx)
     except (TypeError, ValueError):
         current_idx_int = None
-    if milestone_count and current_idx_int is not None and current_idx_int >= milestone_count:
-        return f"current_milestone_index={current_idx_int} past_last_milestone={milestone_count - 1}"
+    # Completion is a custody contract, not an index heuristic.  In
+    # particular a stale/recovered state can carry an index past the end while
+    # completed[] is empty.  Require a known total, every milestone recorded,
+    # and a terminal chain state.
+    if milestone_count <= 0:
+        return ""
+    if last_state not in {"done", "complete", "completed"}:
+        return ""
     milestone_labels = [
         str(item.get("label") or item.get("id") or "").strip()
         for item in milestones
@@ -1416,12 +1558,10 @@ def chain_completion_reason(chain_state: dict[str, object]) -> str:
         if isinstance(item, dict)
     }
     milestone_labels = [label for label in milestone_labels if label]
-    if milestone_labels and all(label in completed_labels for label in milestone_labels):
+    if milestone_labels and len(milestone_labels) == milestone_count and all(label in completed_labels for label in milestone_labels):
         return f"all_milestones_completed={len(milestone_labels)}/{milestone_count}"
     if milestone_count and completed_count >= milestone_count:
         return f"completed_entries={completed_count}/{milestone_count}"
-    if last_state in {"done", "complete"}:
-        return ""
     return ""
 
 def manifest_completion_reason(root: pathlib.Path, spec_path: pathlib.Path | None) -> tuple[str, pathlib.Path | None]:
@@ -1471,6 +1611,17 @@ def chain_health_blocks_terminal_shortcut() -> bool:
     if pr_state and pr_state not in {"merged", "closed"}:
         return True
     return True
+
+def chain_state_blocks_terminal_shortcut() -> bool:
+    """Do not let plan terminality erase an incomplete chain cursor.
+
+    The chain-health sidecar is only a projection and may be absent on the
+    first repair attempt.  When the authoritative chain state exists, require
+    its full completion contract before declaring the repair target complete.
+    """
+    if run_kind != "chain" or not chain_state:
+        return False
+    return not bool(chain_completion_reason(chain_state))
 
 def stale_marker_completion_reason() -> str:
     try:
@@ -1545,10 +1696,18 @@ preferred_plan_name = plan_name or str(chain_state.get("current_plan_name") or "
 plan_path = resolve_plan_state(workspace, preferred_plan_name)
 plan_state = load_json(plan_path)
 plan_complete, plan_reason = is_terminal_plan(plan_state)
+plan_has_active_step = plan_has_active_or_orphaned_worker(plan_state)
 chain_reason = chain_completion_reason(chain_state) if run_kind == "chain" else ""
 manifest_reason, manifest_path = manifest_completion_reason(workspace, remote_spec) if run_kind == "chain" else ("", None)
 chain_last_state = str(chain_state.get("last_state") or "").strip().lower()
 stale_marker_reason = stale_marker_completion_reason()
+
+# A chain can close on its own state when it is fully completed, even if the
+# current plan still carries a stale failure marker.  An active/dead worker
+# record is still a retryable contradiction and must prevent the shortcut.
+if run_kind == "chain" and chain_reason and plan_has_active_step:
+    chain_reason = ""
+    manifest_reason = ""
 
 if run_kind == "chain" and chain_reason:
     print(
@@ -1576,46 +1735,63 @@ elif run_kind == "chain" and manifest_reason:
             ]
         )
     )
-elif (
-    run_kind == "chain"
-    and plan_complete
-    and chain_path is not None
-    and chain_path.exists()
-    and chain_last_state in {"done", "complete"}
-    and not chain_health_blocks_terminal_shortcut()
-):
-    print(
-        "\t".join(
-            [
-                "1",
-                "chain",
-                f"terminal plan+chain state={chain_last_state}",
-                str(chain_path or ""),
-                str(plan_path or ""),
-                str(plan_state.get("current_state") or plan_state.get("state") or ""),
-            ]
+elif run_kind == "chain" and plan_complete and not plan_has_active_step:
+    if (
+        not chain_health_blocks_terminal_shortcut()
+        and not chain_state_blocks_terminal_shortcut()
+    ):
+        if chain_path and chain_last_state not in {"done", "complete", "completed"}:
+            print(
+                "\t".join(
+                    [
+                        "1",
+                        "chain",
+                        "terminal plan state supersedes stale chain state",
+                        str(chain_path or ""),
+                        str(plan_path or ""),
+                        str(plan_state.get("current_state") or plan_state.get("state") or ""),
+                    ]
+                )
+            )
+        elif chain_path and chain_last_state in {"done", "complete", "completed"}:
+            print(
+                "\t".join(
+                    [
+                        "1",
+                        "chain",
+                        "terminal plan state supersedes stale chain state",
+                        str(chain_path or ""),
+                        str(plan_path or ""),
+                        str(plan_state.get("current_state") or plan_state.get("state") or ""),
+                    ]
+                )
+            )
+        else:
+            print(
+                "\t".join(
+                    [
+                        "0",
+                        "",
+                        "",
+                        str(chain_path or ""),
+                        str(plan_path or ""),
+                        str(plan_state.get("current_state") or plan_state.get("state") or ""),
+                    ]
+                )
+            )
+    else:
+        print(
+            "\t".join(
+                [
+                    "0",
+                    "",
+                    "",
+                    str(chain_path or ""),
+                    str(plan_path or ""),
+                    str(plan_state.get("current_state") or plan_state.get("state") or ""),
+                ]
+            )
         )
-    )
-elif (
-    run_kind == "chain"
-    and plan_complete
-    and chain_path is not None
-    and chain_path.exists()
-    and chain_last_state not in {"done", "complete"}
-    and not chain_health_blocks_terminal_shortcut()
-):
-    print(
-        "\t".join(
-            [
-                "1",
-                "chain",
-                "terminal plan state supersedes stale chain state",
-                str(chain_path or ""),
-                str(plan_path or ""),
-                str(plan_state.get("current_state") or plan_state.get("state") or ""),
-            ]
-        )
-    )
 elif stale_marker_reason:
     print(
         "\t".join(
@@ -1629,7 +1805,7 @@ elif stale_marker_reason:
             ]
         )
     )
-elif run_kind == "plan" and plan_complete:
+elif run_kind == "plan" and plan_complete and not plan_has_active_step:
     print(
         "\t".join(
             [
@@ -2469,10 +2645,11 @@ def _state_mismatch_analysis(
         or str(plan_latest_failure.get("message") or "").strip()
         or str(plan_latest_failure.get("state") or "").strip()
     )
+    ready_plan_states = {"planned", "finalized", "executed"}
     detected = (
         bool(plan_state_path)
         and bool(chain_state_path)
-        and plan_state == "finalized"
+        and plan_state in ready_plan_states
         and chain_last_state in {"awaiting_human", "blocked"}
         and not has_latest_failure
         and (not chain_plan or not plan_name or chain_plan == plan_name)
@@ -2489,11 +2666,161 @@ def _state_mismatch_analysis(
         "chain_state_path": chain_state_path,
         "classification": "PLAN_CHAIN_STATE_MISMATCH",
         "summary": (
-            f"state mismatch detected: plan={plan_state} is ready to execute, "
-            f"but chain last_state={chain_last_state} is stale"
+            f"state mismatch detected: plan current_state={plan_state} is ahead of "
+            f"stale chain last_state={chain_last_state}"
         ),
         "recommended_action": (
             "sync chain last_state from plan current_state and mechanically re-drive"
+        ),
+    }
+
+
+def _provider_profile_viability(
+    plan_state: dict[str, object],
+) -> dict[str, object]:
+    config = plan_state.get("config") if isinstance(plan_state.get("config"), dict) else {}
+    if not isinstance(config, dict) or not config:
+        return {}
+
+    profile_name = str(config.get("profile") or "").strip()
+    vendor = str(config.get("vendor") or "").strip()
+    history = plan_state.get("history") if isinstance(plan_state.get("history"), list) else []
+    phase_models = [
+        item for item in (config.get("phase_model") or [])
+        if isinstance(item, str) and "=" in item
+    ]
+    if not profile_name and not phase_models:
+        return {}
+
+    try:
+        from arnold_pipelines.megaplan.profiles import (
+            apply_available_model_floor,
+            effective_premium_vendor,
+            load_profiles,
+            profile_to_phase_models,
+            resolve_profile,
+        )
+        from arnold_pipelines.megaplan.profiles.policy import (
+            _deepseek_credential_configured,
+            _premium_credential_configured,
+        )
+    except Exception:
+        return {}
+
+    codex_available = bool(_premium_credential_configured("codex"))
+    claude_available = bool(_premium_credential_configured("claude"))
+    deepseek_available = bool(_deepseek_credential_configured())
+
+    quota_in_history = False
+    for item in history[-8:]:
+        if not isinstance(item, dict):
+            continue
+        text = "\n".join(
+            str(item.get(key) or "")
+            for key in ("message", "error", "details", "stderr", "stdout")
+        ).lower()
+        if "usage limit" in text or "quota" in text:
+            quota_in_history = True
+            break
+
+    selected_specs: dict[str, str] = {}
+    for entry in phase_models:
+        try:
+            phase, chain = decode_phase_model_value(entry)
+        except Exception:
+            continue
+        selected_specs.setdefault(phase, chain.selected())
+
+    resolved_specs: dict[str, str] = {}
+    floored_specs: dict[str, str] = {}
+    floor_changed = False
+    if profile_name:
+        try:
+            profiles = load_profiles(project_dir=Path(config.get("project_dir") or "."))
+            resolved = resolve_profile(profile_name, profiles)
+            resolved = apply_available_model_floor(dict(resolved))
+            floored_phase_models = profile_to_phase_models(resolved)
+            for entry in floored_phase_models:
+                phase, chain = decode_phase_model_value(entry)
+                floored_specs.setdefault(phase, chain.selected())
+        except Exception:
+            floored_specs = {}
+
+    for phase in ("plan", "execute", "critique"):
+        selected = selected_specs.get(phase)
+        floored = floored_specs.get(phase)
+        if selected:
+            resolved_specs[phase] = selected
+        if floored:
+            floor_changed = floor_changed or bool(selected and selected != floored)
+
+    selected_agents = {
+        parse_agent_spec(spec).agent
+        for spec in selected_specs.values()
+        if isinstance(spec, str) and spec
+    }
+    selected_requires_claude = (
+        "claude" in selected_agents
+        or vendor == "claude"
+        or profile_name in {"all-claude", "variable-claude"}
+    )
+    selected_requires_codex = (
+        "codex" in selected_agents
+        or vendor == "codex"
+        or profile_name in {"all-codex", "variable-codex"}
+    )
+    selected_requires_unavailable_vendor = (
+        (selected_requires_claude and not claude_available)
+        or (selected_requires_codex and not codex_available)
+    )
+
+    diagnosis_parts: list[str] = []
+    if selected_requires_claude and not claude_available:
+        diagnosis_parts.append("current profile/phase_model targets Claude, but Claude/Shannon is unavailable on this worker")
+    if selected_requires_codex and not codex_available:
+        diagnosis_parts.append("current profile/phase_model targets Codex, but Codex is unavailable on this worker")
+    if quota_in_history and codex_available:
+        diagnosis_parts.append("recent plan history shows a Codex quota failure")
+    if floor_changed:
+        diagnosis_parts.append("available-model floor would rewrite at least one selected premium phase")
+
+    recommended_action = ""
+    if quota_in_history and not claude_available and deepseek_available:
+        recommended_action = (
+            "If escaping a Codex quota failure, do not switch to all-claude on this worker. "
+            "Prefer a DeepSeek-capable profile such as all-deepseek-pro-direct or partnered-5."
+        )
+    elif selected_requires_claude and not claude_available:
+        recommended_action = (
+            "Do not pick a Claude-only recovery until Claude/Shannon is actually available "
+            "on the worker; choose an available vendor/profile instead."
+        )
+    elif selected_requires_codex and not codex_available and deepseek_available:
+        recommended_action = (
+            "Codex is unavailable here; prefer a DeepSeek-capable profile rather than "
+            "repeating a Codex-only recovery."
+        )
+
+    return {
+        "detected": bool(diagnosis_parts),
+        "current_profile": profile_name,
+        "current_vendor": vendor or effective_premium_vendor(config=config),
+        "codex_available": codex_available,
+        "claude_available": claude_available,
+        "deepseek_available": deepseek_available,
+        "quota_in_history": quota_in_history,
+        "selected_specs": resolved_specs,
+        "floored_specs": {
+            phase: spec
+            for phase, spec in floored_specs.items()
+            if phase in {"plan", "execute", "critique"}
+        },
+        "diagnosis": "; ".join(diagnosis_parts),
+        "recommended_action": recommended_action,
+        "vendor_switch_note": (
+            "`override set-profile` preserves the current premium vendor when it rewrites "
+            "named profiles. If you are changing vendor families, pair it with "
+            "`override set-vendor` / `set-model` or pick a profile whose selected routes are viable."
         ),
     }
 
@@ -2679,6 +3006,7 @@ plan_latest_failure = {}
 stale_state = {"classification": "NO LATEST FAILURE", "summary": "no latest_failure is set"}
 user_action_context = {}
 plan_runtime_state = {}
+provider_profile_viability = {}
 preferred_plan_name = marker_plan_name if run_kind == "plan" else str(chain_state_summary.get("current_plan_name") or "")
 plan_state_path = _resolve_plan_state(workspace, preferred_plan_name)
 plan_events_path = None
@@ -2693,6 +3021,7 @@ if plan_state_path is not None:
         plan_events_tail = _events_tail(plan_events_path, limit=12)
         last_gate = _latest_gate_event(plan_events_path)
     stale_state = _stale_state_analysis(plan_state, plan_events_path, latest_failure)
+    provider_profile_viability = _provider_profile_viability(plan_state)
     plan_latest_failure = {
         "plan_name": plan_state.get("name") or plan_state_path.parent.name,
         "state_path": str(plan_state_path),
@@ -2945,6 +3274,16 @@ if (
 ):
     failure_classification = "stale_state"
 elif (
+    stale_state.get("classification") == "NO LATEST FAILURE"
+    and "stale_active_step_dead_pid" in stale_kinds
+    and authoritative_plan_state in {"finalized", "executed"}
+    and not (
+        isinstance(resolver_output.get("active_step_heartbeat"), dict)
+        and bool(resolver_output.get("active_step_heartbeat", {}).get("active"))
+    )
+):
+    failure_classification = "stale_state"
+elif (
     failure_classification == "unknown_failure_mode"
     and run_kind == "chain"
     and stale_state.get("classification") == "NO LATEST FAILURE"
@@ -2985,6 +3324,7 @@ payload = {
     "user_action_context": user_action_context,
     "execute_attempt_context": execute_attempt_context,
     "resume_authority_failure": resume_authority_failure,
+    "provider_profile_viability": provider_profile_viability,
 }
 payload["resolver_output"] = resolver_output
 print(json.dumps(payload, sort_keys=True))
@@ -3025,6 +3365,15 @@ plan_failure = latest_context.get("plan_latest_failure") or {}
 failure_context = latest_context.get("failure_context") if isinstance(latest_context.get("failure_context"), dict) else {}
 execute_attempt_context = latest_context.get("execute_attempt_context") or failure_context.get("execute_attempt_context") or {}
 chain_state = latest_context.get("chain_state_summary") or {}
+provider_profile_viability = (
+    latest_context.get("provider_profile_viability")
+    if isinstance(latest_context.get("provider_profile_viability"), dict)
+    else failure_context.get("provider_profile_viability")
+    if isinstance(failure_context.get("provider_profile_viability"), dict)
+    else initial.get("provider_profile_viability")
+    if isinstance(initial.get("provider_profile_viability"), dict)
+    else {}
+)
 run_kind = (payload.get("run_kind") or latest_context.get("run_kind") or "chain").strip().lower()
 metadata = plan_failure.get("metadata") or {}
 classification = latest_context.get("failure_classification") or "unknown_failure_mode"
@@ -3185,6 +3534,20 @@ if (
     and "stale_chain_state_after_terminal_plan" in stale_kinds
     and authoritative_plan_state in terminal_plan_states
 ):
+    classification = "stale_state"
+elif (
+    state_classification == "NO LATEST FAILURE"
+    and "stale_active_step_dead_pid" in stale_kinds
+    and authoritative_plan_state in {"finalized", "executed"}
+    and not (
+        isinstance(resolver_output.get("active_step_heartbeat"), dict)
+        and bool(resolver_output.get("active_step_heartbeat", {}).get("active"))
+    )
+):
+    # A finalized/executed plan with no live worker and no latest_failure is a
+    # stale mechanical-custody gap, not a live target-code blocker. Route it
+    # through stale-state recovery so the wrapper clears the orphaned execute
+    # custody and mechanically re-drives the plan.
     classification = "stale_state"
 
 signal_text = "\n\n".join(str(item).strip() for item in signals[:4] if str(item).strip()) or "(none captured)"
@@ -3605,6 +3968,50 @@ for item in iterations:
 if not history_lines:
     history_lines.append("- none yet")
 
+provider_lines = []
+if provider_profile_viability:
+    provider_lines = [
+        "",
+        "## Provider/Profile Viability",
+        (
+            f"- current profile={provider_profile_viability.get('current_profile') or '(none)'} "
+            f"vendor={provider_profile_viability.get('current_vendor') or '(unknown)'}"
+        ),
+        (
+            "- available routes: "
+            f"codex={'yes' if provider_profile_viability.get('codex_available') else 'no'}, "
+            f"claude={'yes' if provider_profile_viability.get('claude_available') else 'no'}, "
+            f"deepseek={'yes' if provider_profile_viability.get('deepseek_available') else 'no'}"
+        ),
+    ]
+    selected_specs = provider_profile_viability.get("selected_specs")
+    if isinstance(selected_specs, dict) and selected_specs:
+        selected_bits = [
+            f"{phase}={spec}"
+            for phase, spec in selected_specs.items()
+            if phase in {"plan", "execute", "critique"} and spec
+        ]
+        if selected_bits:
+            provider_lines.append("- selected specs: " + ", ".join(selected_bits))
+    floored_specs = provider_profile_viability.get("floored_specs")
+    if isinstance(floored_specs, dict) and floored_specs:
+        floored_bits = [
+            f"{phase}={spec}"
+            for phase, spec in floored_specs.items()
+            if phase in {"plan", "execute", "critique"} and spec
+        ]
+        if floored_bits:
+            provider_lines.append("- available-model floor: " + ", ".join(floored_bits))
+    diagnosis = str(provider_profile_viability.get("diagnosis") or "").strip()
+    if diagnosis:
+        provider_lines.append(f"- diagnosis: {diagnosis}")
+    recommended = str(provider_profile_viability.get("recommended_action") or "").strip()
+    if recommended:
+        provider_lines.append(f"- recommended action: {recommended}")
+    note = str(provider_profile_viability.get("vendor_switch_note") or "").strip()
+    if note:
+        provider_lines.append(f"- note: {note}")
+
 detail_paths = [f"- repair data: {path}"]
 for label, value in (
     ("plan state", plan_failure.get("state_path")),
@@ -3662,6 +4069,7 @@ summary = "\n".join(
         user_actions_md,
         "```",
         *mismatch_lines,
+        *provider_lines,
         "",
         "## Prior repair attempts",
         *history_lines,
@@ -3700,6 +4108,7 @@ repair_data_init() {
   printf '%s' "$failure_context" > "$payload_dir/failure_context"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$payload_dir" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
@@ -3811,6 +4220,25 @@ payload = {
     "request_id": dispatch_request_id,
     "blocker_id": dispatch_blocker_id,
 }
+managed_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip()
+managed_manifest = str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or "").strip()
+if managed_run_id:
+    payload["managed_agent_run_id"] = managed_run_id
+    payload["managed_agent_manifest_path"] = managed_manifest
+    managed_runs = [
+        item for item in existing.get("managed_agent_runs", []) if isinstance(item, dict)
+    ]
+    if not any(item.get("run_id") == managed_run_id for item in managed_runs):
+        managed_runs.append(
+            {
+                "run_id": managed_run_id,
+                "run_kind": "automatic_repair",
+                "manifest_path": managed_manifest,
+                "repair_request_id": dispatch_request_id,
+                "blocker_id": dispatch_blocker_id,
+            }
+        )
+    payload["managed_agent_runs"] = managed_runs
 resolver_output = failure_context_payload.get("resolver_output")
 payload["initial_facts"]["resolver_output"] = resolver_output or {}
 payload = merge_additive_fields(payload, target=resolver_output or {}, incident_id=incident_id)
@@ -3834,6 +4262,7 @@ repair_data_record_dev() {
   local after_sha="$9"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
@@ -3892,6 +4321,11 @@ entry["dev_summary"] = (
 )
 entry["dev_validation"] = report.get("validation") or []
 entry["dev_report"] = report
+managed_agent_run_id = str(
+    os.environ.get("CURRENT_MANAGED_REPAIR_WORKER_RUN_ID") or ""
+)
+if managed_agent_run_id:
+    entry["managed_agent_run_id"] = managed_agent_run_id
 entry["structural_pattern"] = report.get("structural_pattern") or ""
 entry["other_instantiations"] = report.get("other_instantiations") or []
 entry["human_review_recommendation"] = report.get("human_review_recommendation") or ""
@@ -3949,6 +4383,8 @@ attempt["dev_hypothesis"] = entry["dev_hypothesis"]
 attempt["dev_summary"] = entry["dev_summary"]
 attempt["dev_validation"] = entry["dev_validation"]
 attempt["dev_report"] = report
+if managed_agent_run_id:
+    attempt["managed_agent_run_id"] = managed_agent_run_id
 attempt["structural_pattern"] = entry["structural_pattern"]
 attempt["other_instantiations"] = entry["other_instantiations"]
 attempt["human_review_recommendation"] = entry["human_review_recommendation"]
@@ -4136,6 +4572,7 @@ repair_data_record_kimi() {
   printf '%s' "$failure_context" > "$failure_context_file"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context_file" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
@@ -4194,6 +4631,11 @@ entry["user_action_context"] = failure_context_payload.get("user_action_context"
 entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", entry.get("execute_attempt_context", {}))
 entry["resolver_output"] = failure_context_payload.get("resolver_output", entry.get("resolver_output", {}))
 entry["kimi_report"] = report
+managed_agent_run_id = str(
+    os.environ.get("CURRENT_MANAGED_REPAIR_WORKER_RUN_ID") or ""
+)
+if managed_agent_run_id:
+    entry["managed_agent_run_id"] = managed_agent_run_id
 attempts = payload.setdefault("attempts", [])
 for item in attempts:
     if not isinstance(item, dict) or int(item.get("attempt_id") or 0) != attempt_id:
@@ -4206,6 +4648,8 @@ for item in attempts:
     item["post_kimi_failure_context"] = failure_context_payload
     item["resolver_output"] = failure_context_payload.get("resolver_output", {})
     item["kimi_report"] = report
+    if managed_agent_run_id:
+        item["kimi_managed_agent_run_id"] = managed_agent_run_id
     break
 
 save_repair_data(pathlib.Path(path), payload)
@@ -4270,7 +4714,19 @@ if not isinstance(stale_state, dict):
 state_mismatch = failure_context.get("state_mismatch") if isinstance(failure_context, dict) else {}
 if not isinstance(state_mismatch, dict):
     state_mismatch = {}
-has_stale_state = stale_state.get("classification") == "STALE STATE"
+resolver_output = failure_context.get("resolver_output") if isinstance(failure_context, dict) else {}
+if not isinstance(resolver_output, dict):
+    resolver_output = {}
+stale_kinds = {
+    str(item.get("kind") or "").strip()
+    for item in resolver_output.get("stale_evidence", [])
+    if isinstance(item, dict)
+}
+has_dead_active_step = (
+    stale_state.get("classification") == "NO LATEST FAILURE"
+    and "stale_active_step_dead_pid" in stale_kinds
+)
+has_stale_state = stale_state.get("classification") == "STALE STATE" or has_dead_active_step
 has_state_mismatch = bool(state_mismatch.get("detected"))
 if not has_stale_state and not has_state_mismatch:
     print("none")
@@ -4295,6 +4751,14 @@ if not isinstance(state, dict):
 
 actions: list[str] = []
 stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+if has_dead_active_step:
+    active_step = state.get("active_step")
+    if isinstance(active_step, dict) and any(
+        active_step.get(key) not in (None, "")
+        for key in ("phase", "step", "worker_pid", "pid", "session_id")
+    ):
+        state.pop("active_step", None)
+        actions.append("cleared orphaned active_step for dead worker PID")
 if has_stale_state and stale_state.get("latest_failure_stale") and state.get("latest_failure") is not None:
     state["latest_failure"] = None
     success = stale_state.get("latest_success_after_failure")
@@ -4508,6 +4972,11 @@ def write_json(path: Path, payload: dict[str, object]) -> None:
 
 try:
     from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+    from arnold_pipelines.megaplan.chain.advancement import (
+        AdvancementPolicy,
+        assess_advancement,
+        policy_for_spec_path,
+    )
 except Exception:
     print("")
     raise SystemExit(0)
@@ -4579,6 +5048,43 @@ if (resume_phase and resume_phase != "execute") or (failure_phase and failure_ph
     print("")
     raise SystemExit(0)
 
+needs_human = target.get("needs_human") if isinstance(target.get("needs_human"), dict) else {}
+stale_kinds = {
+    str(item.get("kind") or "")
+    for item in (target.get("stale_evidence") or [])
+    if isinstance(item, dict)
+}
+explicit_gate = None
+if needs_human.get("present") and "stale_needs_human_plan_ref" not in stale_kinds:
+    explicit_gate = str(needs_human.get("summary") or "needs_human")
+try:
+    policy = policy_for_spec_path(remote_spec) if remote_spec else AdvancementPolicy(
+        merge_policy="auto",
+        clean_milestone_pr="auto",
+        auto_approve=True,
+        source="repair_default",
+    )
+except Exception:
+    policy = AdvancementPolicy(
+        merge_policy="unknown",
+        clean_milestone_pr="unknown",
+        auto_approve=False,
+        source="unreadable_spec",
+    )
+advancement = assess_advancement(
+    policy,
+    current_state="blocked",
+    chain_last_state="blocked",
+    explicit_human_gate=explicit_gate,
+    failure_kind=failure_kind,
+)
+if advancement.action == "await_human":
+    print(f"human gate preserved; blocked recovery not rewritten: {advancement.reason}")
+    raise SystemExit(0)
+if advancement.action != "repair":
+    print("")
+    raise SystemExit(0)
+
 plan_name = str(plan_state.get("name") or plan_path.parent.name or plan_name_hint).strip()
 meta = plan_state.get("meta")
 meta = meta if isinstance(meta, dict) else {}
@@ -4593,6 +5099,7 @@ recoveries.append(
         "previous_state": current_state,
         "previous_retry_strategy": retry_strategy,
         "previous_failure_kind": failure_kind,
+        "advancement_policy": advancement.to_dict(),
     }
 )
 meta["watchdog_dev_fix_recoveries"] = recoveries
@@ -4698,6 +5205,10 @@ mechanical_launch_step() {
   cat > "$launch_script" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+# Unlink only after this child has opened the script.  Removing it in the
+# parent immediately after tmux new-session -d races tmux startup and can
+# turn a valid canonical relaunch into a false failed:stopped result.
+rm -f -- "\${BASH_SOURCE[0]}"
 cd $(printf '%q' "$workspace")
 exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
 EOF
@@ -4707,7 +5218,6 @@ EOF
     echo "failed:tmux_launch_failed"
     return 1
   fi
-  rm -f "$launch_script"
   health="$(verify_started_and_holding "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MECHANICAL_VERIFY_INITIAL_SECS" "$MECHANICAL_VERIFY_HOLD_SECS")" || {
     detail="$health"
     kill_tmux_session_if_present "$session"
@@ -5109,11 +5619,11 @@ write_dev_prompt() {
   canonical_block="$(render_canonical_block)"
   if [[ "$recurrence_mode" == "1" ]]; then
     mode_tasks="$(cat <<EOF
-9. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
-10. Trace the actual mechanism end-to-end: inspect the real stderr/exit code, the actual SHAs, prompt contents, chain/plan state, and any worker inputs the run received versus what it should have received.
-11. Do not stop at a status label. Name the precise mechanism that recreates the symptom before you propose a fix.
-12. Use the extra time in this root-cause attempt; depth matters more than turn-shortness here.
-13. Write a concise JSON report to $report_path with keys:
+10. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
+11. Trace the actual mechanism end-to-end: inspect the real stderr/exit code, the actual SHAs, prompt contents, chain/plan state, and any worker inputs the run received versus what it should have received.
+12. Do not stop at a status label. Name the precise mechanism that recreates the symptom before you propose a fix.
+13. Use the extra time in this root-cause attempt; depth matters more than turn-shortness here.
+14. Write a concise JSON report to $report_path with keys:
     classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
     structural_pattern, other_instantiations, human_review_recommendation,
     findings_doc_path, findings_doc_appended.
@@ -5121,9 +5631,9 @@ EOF
 )"
   else
     mode_tasks="$(cat <<EOF
-9. Use the raw failure signal, run narrative, and prior-attempt history to avoid repeating failed ideas.
-10. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
-11. Write a concise JSON report to $report_path with keys:
+10. Use the raw failure signal, run narrative, and prior-attempt history to avoid repeating failed ideas.
+11. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
+12. Write a concise JSON report to $report_path with keys:
     classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
     structural_pattern, other_instantiations, human_review_recommendation,
     findings_doc_path, findings_doc_appended.
@@ -5173,12 +5683,13 @@ Task:
    - User Action Gate: ATTEMPT to resolve those user actions before treating this as a human stop. Read user_actions.md plus user_action_resolutions.json, inspect the referenced evidence/artifacts/code, make the best defensible judgment call, and record each decision with the CLI instead of hand-writing JSON. Use:
    cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan user-action resolve --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}" --action-id <ACTION_ID> --resolution <satisfied|accepted_blocked|waived|manual_required|rejected> --reason "..." --instructions "..." --tasks "<TASK_ID,...>"
    Prefer satisfied when the evidence clearly answers the action. Use accepted_blocked or waived only when the action itself permits a fallback. Leave unresolved or mark manual_required only when the decision is genuinely ambiguous, unusually difficult, or requires human-only judgment.
-3. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
-4. Apply the narrowest safe root-cause fix at the correct ownership boundary: use $ARNOLD_SRC on branch $SYNC_BRANCH for Arnold engine/superfixer bugs, and use $WORKSPACE for target application code when the blocker is a task implementation failure in that repo. Prefer a general engine fix over a workflow-specific patch only when the evidence points to Arnold itself.
-5. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
-6. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
-7. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
-8. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
+3. When provider/profile settings are implicated, read the Provider/Profile Viability block carefully. Do not switch to a vendor whose route is unavailable on this worker. Remember that override set-profile preserves the current premium vendor when rewriting a named profile; if you actually need to change vendor families, pair it with override set-vendor / set-model or pick a viable non-premium/DeepSeek profile.
+4. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
+5. Apply the narrowest safe root-cause fix at the correct ownership boundary: use $ARNOLD_SRC on branch $SYNC_BRANCH for Arnold engine/superfixer bugs, and use $WORKSPACE for target application code when the blocker is a task implementation failure in that repo. Prefer a general engine fix over a workflow-specific patch only when the evidence points to Arnold itself.
+6. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
+7. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
+8. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
+9. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
 $mode_tasks
 
 Constraints:
@@ -5247,107 +5758,8 @@ repair_agent_workdir() {
   fi
 }
 
-reject_conflicting_automatic_repair_model_pins() {
-  local name value
-  for name in CODEX_MODEL CLOUD_WATCHDOG_CODEX_MODEL CLOUD_WATCHDOG_DEV_FIX_MODEL; do
-    value="${!name:-}"
-    if [[ -n "$value" && "$value" != "$AUTOMATIC_REPAIR_MODEL" ]]; then
-      log "automatic repair model pin conflict: $name=$value required=$AUTOMATIC_REPAIR_MODEL"
-      return 1
-    fi
-  done
-  if [[ "${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0}" != "0" ]]; then
-    log "automatic repair model pin conflict: CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM=${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM} required=0 model=$AUTOMATIC_REPAIR_MODEL"
-    return 1
-  fi
-}
-
-automatic_repair_receipt_root() {
-  if [[ -n "${CLOUD_WATCHDOG_DISPATCH_RECEIPT_ROOT:-}" ]]; then
-    printf '%s\n' "$CLOUD_WATCHDOG_DISPATCH_RECEIPT_ROOT"
-  elif [[ -n "${PLAN_NAME:-}" && -d "$WORKSPACE/.megaplan/plans/$PLAN_NAME" ]]; then
-    printf '%s\n' "$WORKSPACE/.megaplan/plans/$PLAN_NAME"
-  else
-    printf '%s\n' "$DATA_DIR/dispatch-plans/$SAFE_SESSION"
-  fi
-}
-
-initialize_automatic_repair_receipt() {
-  local iteration="$1"
-  local receipt_root
-  receipt_root="$(automatic_repair_receipt_root)"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$AUTOMATIC_REPAIR_MODEL" <<'PY'
-import pathlib
-import sys
-
-from arnold_pipelines.megaplan.receipts.writer import (
-    initialize_dispatch_receipt,
-    prepare_dispatch_receipt,
-)
-
-root, model = sys.argv[1:]
-receipt = prepare_dispatch_receipt(
-    action="automatic_repair",
-    configured_model=model,
-)
-initialized = initialize_dispatch_receipt(pathlib.Path(root), receipt)
-print(initialized["dispatch_id"])
-PY
-}
-
-record_automatic_repair_started() {
-  local dispatch_id="$1"
-  local receipt_root
-  receipt_root="$(automatic_repair_receipt_root)"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$dispatch_id" "$AUTOMATIC_REPAIR_MODEL" <<'PY'
-import json
-import pathlib
-import sys
-
-from arnold_pipelines.megaplan.receipts.writer import dispatch_receipt_path, record_dispatch_started
-
-root, dispatch_id, model = sys.argv[1:]
-root_path = pathlib.Path(root)
-receipt = json.loads(dispatch_receipt_path(root_path, dispatch_id).read_text(encoding="utf-8"))
-record_dispatch_started(root_path, receipt, resolved_runtime_model=model)
-PY
-}
-
-finalize_automatic_repair_receipt() {
-  local dispatch_id="$1"
-  local turn_rc="$2"
-  local before_sha="$3"
-  local after_sha="$4"
-  local receipt_root
-  receipt_root="$(automatic_repair_receipt_root)"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$receipt_root" "$dispatch_id" "$AUTOMATIC_REPAIR_MODEL" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
-import json
-import pathlib
-import sys
-
-from arnold_pipelines.megaplan.receipts.writer import dispatch_receipt_path, finalize_dispatch_receipt
-
-root, dispatch_id, model, turn_rc, before_sha, after_sha = sys.argv[1:]
-root_path = pathlib.Path(root)
-receipt = json.loads(dispatch_receipt_path(root_path, dispatch_id).read_text(encoding="utf-8"))
-committed = bool(before_sha and after_sha and before_sha != after_sha)
-finalize_dispatch_receipt(
-    root_path,
-    receipt,
-    outcome="succeeded" if int(turn_rc) == 0 else "failed",
-    resolved_runtime_model=model,
-    mutation_facts={"state": None, "source": None, "commit": committed, "push": None},
-    detail=f"automatic repair subprocess exited {turn_rc}",
-)
-PY
-}
-
 run_dev_fix_turn() {
   require_repair_lock_held
-  if ! l1_mutation_authorized; then
-    log "observed: dev-fix launch blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
-    return 1
-  fi
   local iteration="$1"
   local attempt_id="$2"
   local recurring="$3"
@@ -5355,11 +5767,8 @@ run_dev_fix_turn() {
   local dispatch_model="$5"
   local dispatch_kind="$6"
   local fallback_reason="$7"
-  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort repair_workdir dispatch_id child_pid
-  if [[ "$requested_model" != "$AUTOMATIC_REPAIR_MODEL" || "$dispatch_model" != "$AUTOMATIC_REPAIR_MODEL" || "$dispatch_kind" != "codex" || -n "$fallback_reason" ]]; then
-    log "automatic repair model selection rejected: requested=$requested_model dispatch=$dispatch_model kind=$dispatch_kind fallback=${fallback_reason:-none} required=$AUTOMATIC_REPAIR_MODEL"
-    return 78
-  fi
+  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort repair_workdir run_id_file managed_run_id
+  local -a managed_cmd worker_cmd
   prompt_path="$RUN_DIR/iter${iteration}-dev-fix-prompt.md"
   report_path="$RUN_DIR/iter${iteration}-dev-fix-report.json"
   write_dev_prompt "$prompt_path" "$requested_model" "$dispatch_model" "$report_path" "$recurring"
@@ -5374,70 +5783,42 @@ run_dev_fix_turn() {
   dev_timeout="$(cap_timeout_to_repair_budget "$dev_timeout" "dev-dispatch-$iteration")"
   log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort workdir=$repair_workdir"
   prepare_repair_agent_exec_env
-  dispatch_id="$(initialize_automatic_repair_receipt "$iteration")" || {
-    log "automatic repair dispatch blocked: durable receipt initialization failed iteration=$iteration"
-    return 78
-  }
-  (
-    cd "$repair_workdir" &&
-    timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec \
-      --sandbox danger-full-access \
-      -c model="$AUTOMATIC_REPAIR_MODEL" \
-      -c model_reasoning_effort="$reasoning_effort" \
-      - < "$prompt_path"
-  ) >> "$LOG" 2>&1 &
-  child_pid=$!
-  CHILD_PIDS+=("$child_pid")
-  if ! record_automatic_repair_started "$dispatch_id"; then
-    log "automatic repair dispatch indeterminate: subprocess started but receipt transition failed iteration=$iteration pid=$child_pid"
-    kill "$child_pid" 2>/dev/null || true
-    wait "$child_pid" 2>/dev/null || true
-    return 78
-  fi
-  if wait "$child_pid"; then
-    rc=0
+  run_id_file="$RUN_DIR/iter${iteration}-dev-fix-managed-run-id"
+  if [[ "$dispatch_kind" == "hermes" ]]; then
+    worker_cmd=(timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file="$prompt_path" --project_dir="$repair_workdir")
   else
-    rc=$?
+    worker_cmd=(timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec --sandbox danger-full-access -c model="$dispatch_model" -c model_reasoning_effort="$reasoning_effort" -)
   fi
-  after_sha="$(cd "$repair_workdir" && git rev-parse HEAD 2>/dev/null || true)"
-  if ! finalize_automatic_repair_receipt "$dispatch_id" "$rc" "$before_sha" "$after_sha"; then
-    log "automatic repair dispatch indeterminate: receipt finalization failed iteration=$iteration"
-    return 78
+  managed_cmd=(
+    python3 -m arnold_pipelines.megaplan.managed_agent run
+    --run-kind automatic_repair_retry
+    --identity-key "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:dev:$attempt_id:$iteration:$dispatch_model"
+    --project-dir "$repair_workdir"
+    --task-kind root_cause
+    --difficulty "$([[ "$recurring" == "1" ]] && printf 9 || printf 7)"
+    --model "$dispatch_model"
+    --reasoning-effort "$reasoning_effort"
+    --route-class "repair_${dispatch_kind}${fallback_reason:+_fallback}"
+    --backend "$dispatch_kind"
+    --command-display "automatic repair dev-fix iteration $iteration"
+    --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:dev"
+    --run-id-file "$run_id_file"
+    --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+    --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+    --link "cloud_session=$SESSION"
+    --link "chain=$REMOTE_SPEC"
+    --link "plan=$PLAN_NAME"
+    --link "phase=dev_fix"
+    --link "attempt=$attempt_id"
+  )
+  if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
+    managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
   fi
-  repair_data_record_dev "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
-  append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"
-}
-
-run_kimi_launch_turn() {
-  require_repair_lock_held
-  ensure_repair_budget_available "kimi-launch-$1"
-  if ! l1_mutation_authorized; then
-    log "observed: kimi launch blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
-    return 1
+  if [[ "$dispatch_kind" != "hermes" ]]; then
+    managed_cmd+=(--stdin-file "$prompt_path")
   fi
-  local iteration="$1"
-  local run_kind="$2"
-  local plan_name="$3"
-  local relaunch_command="$4"
-  local prompt_path report_path rc health
-  prompt_path="$RUN_DIR/iter${iteration}-kimi-prompt.md"
-  report_path="$RUN_DIR/iter${iteration}-kimi-report.json"
-  write_kimi_prompt "$prompt_path" "$relaunch_command" "$report_path"
-  KIMI_TIMEOUT="$(cap_timeout_to_repair_budget "$KIMI_TIMEOUT" "kimi-dispatch-$iteration")"
-  log "iteration=$iteration kimi-launch model=$KIMI_MODEL timeout=$KIMI_TIMEOUT"
-  prepare_repair_agent_exec_env
-  (
-    cd "$ARNOLD_SRC" &&
-    PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
-    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \
-      --query_file="$prompt_path" \
-      --model="$KIMI_MODEL" \
-      --api_key="${KIMI_API_KEY:-}" \
-      --base_url="$KIMI_BASE_URL" \
-      --max_turns="$KIMI_MAX_TURNS" \
-      --enabled_toolsets='"terminal,file,code_execution,todo"' \
-      --save_sample=True
-  ) >> "$LOG" 2>&1 &
+  managed_cmd+=(-- "${worker_cmd[@]}")
+  (cd "$repair_workdir" && "${managed_cmd[@]}") >> "$LOG" 2>&1 &
   local child_pid=$!
   CHILD_PIDS+=("$child_pid")
   if wait "$child_pid"; then
@@ -5445,6 +5826,76 @@ run_kimi_launch_turn() {
   else
     rc=$?
   fi
+  managed_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
+  export CURRENT_MANAGED_REPAIR_WORKER_RUN_ID="$managed_run_id"
+  after_sha="$(cd "$repair_workdir" && git rev-parse HEAD 2>/dev/null || true)"
+  repair_data_record_dev "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
+  append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"
+}
+
+run_kimi_launch_turn() {
+  require_repair_lock_held
+  ensure_repair_budget_available "kimi-launch-$1"
+  local iteration="$1"
+  local run_kind="$2"
+  local plan_name="$3"
+  local relaunch_command="$4"
+  local prompt_path report_path rc health run_id_file managed_run_id
+  local -a managed_cmd worker_cmd
+  prompt_path="$RUN_DIR/iter${iteration}-kimi-prompt.md"
+  report_path="$RUN_DIR/iter${iteration}-kimi-report.json"
+  write_kimi_prompt "$prompt_path" "$relaunch_command" "$report_path"
+  KIMI_TIMEOUT="$(cap_timeout_to_repair_budget "$KIMI_TIMEOUT" "kimi-dispatch-$iteration")"
+  log "iteration=$iteration kimi-launch model=$KIMI_MODEL timeout=$KIMI_TIMEOUT"
+  prepare_repair_agent_exec_env
+  run_id_file="$RUN_DIR/iter${iteration}-kimi-managed-run-id"
+  worker_cmd=(
+    env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"
+    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent
+    --query_file="$prompt_path"
+    --model="$KIMI_MODEL"
+    --api_key="${KIMI_API_KEY:-}"
+    --base_url="$KIMI_BASE_URL"
+    --max_turns="$KIMI_MAX_TURNS"
+    --enabled_toolsets='"terminal,file,code_execution,todo"'
+    --save_sample=True
+  )
+  managed_cmd=(
+    python3 -m arnold_pipelines.megaplan.managed_agent run
+    --run-kind automatic_repair_retry
+    --identity-key "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:kimi:$CURRENT_ATTEMPT_ID:$iteration:$KIMI_MODEL"
+    --project-dir "$ARNOLD_SRC"
+    --task-kind debugging
+    --difficulty 6
+    --model "$KIMI_MODEL"
+    --reasoning-effort bounded
+    --route-class repair_kimi_recovery
+    --backend kimi
+    --command-display "automatic repair Kimi recovery iteration $iteration"
+    --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:kimi"
+    --run-id-file "$run_id_file"
+    --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+    --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+    --link "cloud_session=$SESSION"
+    --link "chain=$REMOTE_SPEC"
+    --link "plan=$plan_name"
+    --link "phase=kimi_recovery"
+    --link "attempt=$CURRENT_ATTEMPT_ID"
+  )
+  if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
+    managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
+  fi
+  managed_cmd+=(-- "${worker_cmd[@]}")
+  (cd "$ARNOLD_SRC" && "${managed_cmd[@]}") >> "$LOG" 2>&1 &
+  local child_pid=$!
+  CHILD_PIDS+=("$child_pid")
+  if wait "$child_pid"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  managed_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
+  export CURRENT_MANAGED_REPAIR_WORKER_RUN_ID="$managed_run_id"
   health="$(verify_started_and_holding "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$KIMI_VERIFY_INITIAL_SECS" "$KIMI_VERIFY_HOLD_SECS")" || {
     repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "failed:$health" "$report_path" "$rc"
     kill_tmux_session_if_present "$SESSION"
@@ -5452,6 +5903,17 @@ run_kimi_launch_turn() {
   }
   repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running" "$report_path" "$rc"
   return 0
+}
+
+glm_dispatch_model() {
+  python3 - <<'PY'
+from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
+try:
+    resolve_model("zhipu:glm-5.2")
+except Exception:
+    raise SystemExit(1)
+print("zhipu:glm-5.2")
+PY
 }
 
 write_needs_human_marker() {
@@ -5484,10 +5946,38 @@ PY
 send_discord_escalation() {
   require_repair_lock_held
   ensure_repair_budget_available "discord-escalation"
-  local result_path context_path result_status
+  local result_path context_path result_status suppression_reason
   result_path="$RUN_DIR/discord-result.json"
   context_path="$RUN_DIR/discord-escalation-context.json"
   result_status="helper_unavailable"
+  suppression_reason="$(PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$WORKSPACE" "$SESSION" "$MARKER_PATH" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.notification_safety import classify_user_notification
+
+data_path, workspace, session, marker_path = sys.argv[1:]
+try:
+    payload = json.loads(pathlib.Path(data_path).read_text(encoding="utf-8"))
+except Exception:
+    payload = {"session": session, "workspace": workspace}
+try:
+    marker = json.loads(pathlib.Path(marker_path).read_text(encoding="utf-8"))
+except Exception:
+    marker = None
+if isinstance(payload, dict) and isinstance(marker, dict):
+    payload["session_marker"] = marker
+decision = classify_user_notification(payload=payload, workspace=workspace)
+if not decision.allowed:
+    print(decision.reason)
+PY
+)"
+  if [[ -n "$suppression_reason" ]]; then
+    log "repair Discord escalation suppressed session=$SESSION reason=$suppression_reason"
+    printf '%s' "test_execution_suppressed"
+    return 0
+  fi
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$MARKER_DIR" "$DATA_DIR" "$NEEDS_HUMAN_FILE" "$context_path" "${DISCORD_DM_USER_ID:-}" <<'PY'
 import json
 import pathlib
@@ -5701,17 +6191,6 @@ if [[ -z "$RUN_KIND" ]]; then
   fi
 fi
 
-# Resolve through the production adapter once at entry and retain its typed
-# evidence state across the Python/shell boundary. Unknown evidence remains
-# observable, but cannot make a later repair-agent mutation predicate pass.
-CURRENT_TARGET_RECORD="$(resolve_current_target_evidence 2>>"$LOG" || true)"
-CURRENT_TARGET_MUTATION_ELIGIBLE=0
-if [[ -n "$CURRENT_TARGET_RECORD" ]] && printf '%s' "$CURRENT_TARGET_RECORD" | current_target_mutation_eligible; then
-  CURRENT_TARGET_MUTATION_ELIGIBLE=1
-fi
-export CURRENT_TARGET_RECORD CURRENT_TARGET_MUTATION_ELIGIBLE
-log "current-target evidence session=$SESSION record=${CURRENT_TARGET_RECORD:-{\"evidence_state\":{\"status\":\"unknown\",\"unknown_type\":\"missing\"}}}"
-
 # Environment-gone backstop: if the workspace dir is gone the repair loop has
 # nothing to repair (it is a code-fixer, not a provisioner — it cannot recreate
 # a wiped workspace). Persist an environment_gone outcome for audit and exit 0
@@ -5862,7 +6341,7 @@ PY
 repair_source_workspace_if_possible() {
   require_repair_lock_held
   ensure_repair_budget_available "source-workspace-repair"
-  local result_path="" tmp_root="" tmp_clone="" status=1 entry base source_origin="" workspace_origin=""
+  local result_path="" tmp_root="" tmp_clone="" status=1 entry base source_origin="" workspace_origin="" expected_origin=""
   result_path="$RUN_DIR/source-workspace-repair.json"
   if [[ ! -d "$ARNOLD_SRC/.git" ]]; then
     printf '%s\n' '{"repaired": false, "reason": "source_git_missing", "details": {}}' >"$result_path"
@@ -5870,24 +6349,99 @@ repair_source_workspace_if_possible() {
     return 1
   fi
   source_origin="$(git -C "$ARNOLD_SRC" remote get-url origin 2>/dev/null || true)"
-  if [[ -d "$WORKSPACE/.git" ]] || git -C "$WORKSPACE" rev-parse --show-toplevel >/dev/null 2>&1; then
-    workspace_origin="$(git -C "$WORKSPACE" remote get-url origin 2>/dev/null || true)"
-    if [[ -n "$source_origin" && "$workspace_origin" != "$source_origin" ]]; then
-      git -C "$WORKSPACE" remote set-url origin "$source_origin" >>"$LOG" 2>&1
-      python3 - "$result_path" "$WORKSPACE" "$source_origin" <<'PY'
+  # The repair engine's checkout is not the target project.  A workspace can
+  # be reconstructed from it only when the session marker explicitly proves
+  # that both remotes identify the same repository.  In particular, never
+  # turn a VibeComfy target into the Arnold engine repo.
+  expected_origin="$(python3 - "$MARKER_PATH" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    marker = {}
+
+candidates = [
+    marker.get("repo_url"), marker.get("repository_url"), marker.get("git_url"),
+    marker.get("origin"), marker.get("repo"),
+]
+cloud = marker.get("cloud")
+if isinstance(cloud, dict):
+    candidates.extend([cloud.get("repo_url"), cloud.get("repository_url")])
+command = str(marker.get("relaunch_command") or "")
+match = re.search(r"(?:^|\s)(?:REPO|REPO_URL)=['\"]?([^'\"\s]+)", command)
+if match:
+    candidates.append(match.group(1))
+for candidate in candidates:
+    value = str(candidate or "").strip()
+    if value:
+        print(value)
+        break
+PY
+)"
+  if [[ -z "$expected_origin" ]]; then
+    printf '%s\n' '{"repaired": false, "reason": "target_repo_identity_missing", "details": {}}' >"$result_path"
+    log "source workspace repair refused: marker has no target repo identity result=$result_path"
+    return 1
+  fi
+  if ! python3 - "$source_origin" "$expected_origin" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+def identity(value):
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("git@") and ":" in value and "://" not in value:
+        value = value[4:].replace(":", "/", 1)
+    elif "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        value = f"{host}{parsed.path.rstrip('/')}"
+    else:
+        value = value.removeprefix("https://").removeprefix("http://")
+    return value.lower().removesuffix(".git")
+
+raise SystemExit(0 if identity(sys.argv[1]) and identity(sys.argv[1]) == identity(sys.argv[2]) else 1)
+PY
+  then
+    python3 - "$result_path" "$source_origin" "$expected_origin" <<'PY'
 import json
 import pathlib
 import sys
+from urllib.parse import urlsplit
 
-result_path, workspace, source_origin = sys.argv[1:]
-pathlib.Path(result_path).write_text(
+path, source_origin, expected_origin = sys.argv[1:]
+
+def identity(value):
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("git@") and ":" in value and "://" not in value:
+        value = value[4:].replace(":", "/", 1)
+    elif "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        value = f"{host}{parsed.path.rstrip('/')}"
+    else:
+        value = value.removeprefix("https://").removeprefix("http://")
+    return value.lower().removesuffix(".git")
+
+pathlib.Path(path).write_text(
     json.dumps(
         {
-            "repaired": True,
-            "reason": "source_workspace_remote_repaired",
+            "repaired": False,
+            "reason": "source_repo_identity_mismatch",
             "details": {
-                "workspace": workspace,
-                "origin": source_origin,
+                "source_origin": identity(source_origin),
+                "expected_origin": identity(expected_origin),
             },
         },
         indent=2,
@@ -5896,8 +6450,77 @@ pathlib.Path(result_path).write_text(
     encoding="utf-8",
 )
 PY
-      log "source workspace repair succeeded result=$result_path"
-      return 0
+    log "source workspace repair refused: engine repo differs from target repo result=$result_path"
+    return 1
+  fi
+  if [[ -d "$WORKSPACE/.git" ]] || git -C "$WORKSPACE" rev-parse --show-toplevel >/dev/null 2>&1; then
+    workspace_origin="$(git -C "$WORKSPACE" remote get-url origin 2>/dev/null || true)"
+    if ! python3 - "$workspace_origin" "$expected_origin" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+def identity(value):
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("git@") and ":" in value and "://" not in value:
+        value = value[4:].replace(":", "/", 1)
+    elif "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        value = f"{host}{parsed.path.rstrip('/')}"
+    else:
+        value = value.removeprefix("https://").removeprefix("http://")
+    return value.lower().removesuffix(".git")
+
+raise SystemExit(0 if identity(sys.argv[1]) and identity(sys.argv[1]) == identity(sys.argv[2]) else 1)
+PY
+    then
+      python3 - "$result_path" "$WORKSPACE" "$workspace_origin" "$expected_origin" <<'PY'
+import json
+import pathlib
+import sys
+from urllib.parse import urlsplit
+
+result_path, workspace, workspace_origin, expected_origin = sys.argv[1:]
+
+def identity(value):
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("git@") and ":" in value and "://" not in value:
+        value = value[4:].replace(":", "/", 1)
+    elif "://" in value:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        value = f"{host}{parsed.path.rstrip('/')}"
+    else:
+        value = value.removeprefix("https://").removeprefix("http://")
+    return value.lower().removesuffix(".git")
+
+pathlib.Path(result_path).write_text(
+    json.dumps(
+        {
+            "repaired": False,
+            "reason": "workspace_repo_identity_mismatch",
+            "details": {
+                "workspace": workspace,
+                "workspace_origin": identity(workspace_origin),
+                "expected_origin": identity(expected_origin),
+            },
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+      log "source workspace repair refused: workspace repo differs from marker target result=$result_path"
+      return 1
     fi
     printf '%s\n' '{"repaired": false, "reason": "workspace_git_present", "details": {}}' >"$result_path"
     log "source workspace repair not applicable status=2 result=$result_path"
@@ -6021,9 +6644,17 @@ if [[ "${mechanical_status:-}" == "running" ]]; then
   exit 0
 fi
 
-if ! reject_conflicting_automatic_repair_model_pins; then
-  repair_data_set_outcome "repair_exhausted"
-  exit 78
+GLM_MODEL=""
+GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"
+if [[ "${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0}" == "1" ]]; then
+  if GLM_MODEL="$(glm_dispatch_model 2>/dev/null)"; then
+    GLM_FALLBACK=""
+  else
+    GLM_MODEL="gpt-5.4"
+    GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
+  fi
+else
+  GLM_MODEL="gpt-5.4"
 fi
 
 for iteration in 1 2 3; do
@@ -6034,9 +6665,26 @@ for iteration in 1 2 3; do
   exit_if_repair_target_complete "iteration-$iteration-start"
   exit_if_repair_target_recovered "iteration-$iteration-start"
   case "$iteration" in
-    1|2|3)
-      DEV_REQUESTED_MODEL="$AUTOMATIC_REPAIR_MODEL"
-      DEV_DISPATCH_MODEL="$AUTOMATIC_REPAIR_MODEL"
+    1)
+      DEV_REQUESTED_MODEL="glm-5.2"
+      if [[ "$GLM_MODEL" == "gpt-5.4" ]]; then
+        DEV_DISPATCH_MODEL="gpt-5.4"
+        DEV_DISPATCH_KIND="codex"
+      else
+        DEV_DISPATCH_MODEL="$GLM_MODEL"
+        DEV_DISPATCH_KIND="hermes"
+      fi
+      DEV_FALLBACK_REASON="$GLM_FALLBACK"
+      ;;
+    2)
+      DEV_REQUESTED_MODEL="codex:gpt-5.4"
+      DEV_DISPATCH_MODEL="gpt-5.4"
+      DEV_DISPATCH_KIND="codex"
+      DEV_FALLBACK_REASON=""
+      ;;
+    3)
+      DEV_REQUESTED_MODEL="codex:gpt-5.5"
+      DEV_DISPATCH_MODEL="gpt-5.5"
       DEV_DISPATCH_KIND="codex"
       DEV_FALLBACK_REASON=""
       ;;

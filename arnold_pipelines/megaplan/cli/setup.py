@@ -128,6 +128,11 @@ def _install_owned_dir_symlink(
 
 
 def handle_setup_global(force: bool = False, home: Path | None = None) -> StepResponse:
+    # Codex skills are generated from their canonical single-source documents.
+    # Regenerate before resolving install targets so a clean/editable checkout
+    # cannot silently skip a newly declared skill because its ignored bundle has
+    # not been materialized yet.
+    handle_regen_composed()
     if home is None:
         home = Path.home()
     installed: list[dict[str, Any]] = []

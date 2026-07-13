@@ -63,3 +63,4 @@ Sprint 3 migrates consumers and cleans up: sibling operational views, shadow/war
 ## Completion Signal
 
 The epic is done only when Megaplan can explain and enforce task authority through grants, attempts, evidence-backed decisions, and deterministic views, while operator status/debug output separates execution authority from runner liveness, publication state, human gates, and recovery custody.
+

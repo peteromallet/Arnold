@@ -78,6 +78,8 @@ from arnold_pipelines.megaplan.execute.aggregation import (
     _append_scope_drift_blocker,
     _build_aggregate_execution_payload,
     _compute_scope_drift_for_execute_surface,
+    phase_quality_deviations_for_current_attempt,
+    reconcile_finalized_review_scope_claims,
 )
 from arnold_pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
@@ -1600,6 +1602,30 @@ def _count_execute_tracking(
     )
 
 
+def _durably_evidenced_finalized_task_ids(
+    tasks: Iterable[dict[str, Any]],
+) -> set[str]:
+    """Return terminal task IDs with output evidence for quality coverage.
+
+    This deliberately does not relax scheduler authority: it only keeps a
+    replayed or partial retry from erasing finalized task coverage.
+    """
+    completed: set[str] = set()
+    for task in tasks:
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        status = task.get("status")
+        if status == "done" and (task.get("files_changed") or task.get("commands_run")):
+            completed.add(task_id)
+            continue
+        if status == "skipped":
+            notes = task.get("executor_notes")
+            if isinstance(notes, str) and notes.strip():
+                completed.add(task_id)
+    return completed
+
+
 def build_blocking_reasons(
     *,
     tracked_tasks: int,
@@ -2393,6 +2419,13 @@ def handle_execute_one_batch(
             aggregate_payload.setdefault("sense_check_acknowledgments", []).extend(
                 deferred_acks
             )
+        reconcile_finalized_review_scope_claims(
+            finalize_data,
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state,
+        )
+        atomic_write_json(plan_dir / "finalize.json", finalize_data)
         # _run_and_merge_batch already wrote execution_audit.json; this handler
         # only writes the aggregate execution.json after the batch returns.
         write_plan_artifact_json(plan_dir, "execution.json", aggregate_payload, contract_context=None)
@@ -3724,6 +3757,37 @@ def handle_execute_auto_loop(
                     and isinstance(task.get("id"), str)
                     and task["id"] not in completed_task_ids
                 }
+        # A declared unavailable baseline is not a task failure.  Convert an
+        # all-baseline blocked frontier into durable deferred evidence before
+        # evaluating the ordinary blocked-task short circuit.  Otherwise a
+        # baseline capture outage consumes quality retries forever even though
+        # the final review is the authoritative verifier for this condition.
+        _initial_baseline_deviations = baseline_unavailable_checkpoint_deviations(
+            finalize_data, blocked_task_ids
+        )
+        _initial_baseline_ids = {
+            deviation.task_id
+            for deviation in _initial_baseline_deviations
+            if deviation.task_id is not None
+        }
+        if _initial_baseline_ids and _initial_baseline_ids == blocked_task_ids:
+            deferred_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
+                finalize_data
+            )
+            if deferred_ids:
+                baseline_unavailable_acks.extend(deferred_acks)
+                write_plan_artifact_json(
+                    plan_dir, "finalize.json", finalize_data, contract_context=None
+                )
+                tasks = finalize_data.get("tasks", [])
+                blocked_task_ids = {
+                    task["id"]
+                    for task in tasks
+                    if isinstance(task, dict)
+                    and task.get("status") == "blocked"
+                    and isinstance(task.get("id"), str)
+                }
+
         # Now, only short-circuit if blocked tasks remain (within-session).
         # Route blocked-task evaluation through typed policy outcomes
         # (``evaluate_blocker_recovery_policy``) while preserving the
@@ -4268,6 +4332,12 @@ def handle_execute_auto_loop(
         finalize_data,
         plan_dir=plan_dir,
     )
+    reconcile_finalized_review_scope_claims(
+        finalize_data,
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state,
+    )
     deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
         finalize_data
     )
@@ -4332,6 +4402,9 @@ def handle_execute_auto_loop(
         plan_dir=plan_dir,
         root=root,
         state=state,
+    )
+    completed_task_ids |= _durably_evidenced_finalized_task_ids(
+        finalize_data.get("tasks", [])
     )
     tracked_tasks, total_tasks, acknowledged_checks, total_checks = (
         _count_execute_tracking(
@@ -4556,6 +4629,16 @@ def handle_execute_auto_loop(
                 if notes:
                     blocked_task_notes[tid] = str(notes)
 
+    # ``execution.json`` is intentionally cumulative evidence.  The phase
+    # result drives retry policy, so it must only carry diagnostics produced by
+    # this invocation.  A no-pending resume loads old artifacts solely to
+    # corroborate completed work; none of their old deviations can gate this
+    # new transition.
+    phase_deviations, deferred_evidence = phase_quality_deviations_for_current_attempt(
+        batch_payloads if not no_pending_execution else [],
+        blocking_reasons=blocking_reasons,
+    )
+
     response: StepResponse = {
         "success": not blocked and timeout_error is None,
         "step": "execute",
@@ -4571,7 +4654,7 @@ def handle_execute_auto_loop(
             else STATE_FINALIZED if blocked or timeout_error is not None else STATE_EXECUTED
         ),
         "files_changed": aggregate_payload.get("files_changed", []),
-        "deviations": deviations,
+        "deviations": phase_deviations,
         "warnings": [summary] if blocked or timeout_error is not None else [],
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,
@@ -4579,6 +4662,8 @@ def handle_execute_auto_loop(
     }
     if active_blocked_task_ids:
         response["blocked_task_ids"] = sorted(active_blocked_task_ids)
+    if deferred_evidence:
+        response["deferred_evidence"] = deferred_evidence
     if routing_blocked:
         response["result"] = "blocked"
     if blocked_task_notes:

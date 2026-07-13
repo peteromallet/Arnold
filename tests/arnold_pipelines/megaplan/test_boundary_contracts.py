@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from arnold.workflow.boundary_evidence import BoundaryContract, BoundaryPhase
+from arnold.workflow.boundary_evidence import (
+    BoundaryContract,
+    BoundaryPhase,
+    TemplateCompatibility,
+    TemplateCompatibilityResult,
+    check_template_compatibility,
+)
 from arnold.workflow.semantic_evidence import (
     S2_CRITIQUE_ROW_ID,
     S2_GATE_ROW_ID,
@@ -31,9 +37,20 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     BOUNDARY_CONTRACTS_BY_ID,
     OVERRIDE_AUTHORITY_CONTRACTS,
+    REQUIRED_FIELD_PROFILES,
+    REQUIRED_FIELD_PROFILES_BY_KIND,
+    TYPED_BOUNDARY_TEMPLATES,
+    TYPED_BOUNDARY_TEMPLATES_BY_ID,
+    ApprovalBoundary,
+    ArtifactHandoffBoundary,
+    RevisionBoundary,
+    ValidationBoundary,
+    artifact_promotion_template,
     challenger_to_synthesis,
+    contract_satisfies_profile,
     critique_to_gate,
     decision_to_parent,
+    diff_contracts,
     execute_aggregate_promotion,
     execute_approval,
     execute_approval_denial,
@@ -42,10 +59,21 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     execute_no_review_terminal,
     execute_partial_failure,
     execute_resume_anchor,
+    execution_custody_template,
+    external_effect_template,
+    external_witness_template,
     final_projection,
     finalize_artifacts,
     finalize_fallback,
     gate_to_revise,
+    get_contract_by_id,
+    get_profile_by_kind,
+    get_template_by_id,
+    graph_join_fanout_template,
+    human_approval_waiver_template,
+    lifecycle_transition_template,
+    list_profile_kinds,
+    list_template_ids,
     override_abort_authority,
     override_adopt_execution_authority,
     override_force_proceed_authority,
@@ -57,6 +85,7 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     parent_rejoin_promotion,
     plan_to_critique,
     prep_to_plan,
+    reducer_template,
     replan_authority,
     review_cap_authority,
     review_child_outputs,
@@ -868,3 +897,520 @@ def test_s6_override_authority_contracts_capture_scope_and_evidence_contracts() 
         )
         assert contract.details["freshness_token_ref"] == "state.meta.current_invocation_id"
         assert contract.details["actor_role_ref"] == "authority_records[].{actor,role}"
+
+
+# ── Required-field profiles ────────────────────────────────────────────────
+
+
+def test_required_field_profiles_count() -> None:
+    """Exactly 12 required-field profiles must be registered."""
+    assert len(REQUIRED_FIELD_PROFILES) == 12
+    assert len(REQUIRED_FIELD_PROFILES_BY_KIND) == 12
+
+
+def test_required_field_profiles_kinds() -> None:
+    """All expected profile kinds must be present."""
+    expected = frozenset({
+        "artifact_promotion",
+        "lifecycle_transition",
+        "reducer",
+        "external_effect",
+        "execution_custody",
+        "human_approval_waiver",
+        "graph_join_fanout",
+        "external_witness",
+        "revision_boundary",
+        "validation_boundary",
+        "artifact_handoff_boundary",
+        "approval_boundary",
+    })
+    actual = frozenset(kind for kind, _fields in REQUIRED_FIELD_PROFILES)
+    assert actual == expected
+
+
+def test_required_field_profiles_non_empty() -> None:
+    """Every registered profile must be a non-empty frozenset[str]."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        assert isinstance(fields, frozenset), (
+            f"Profile {kind} must be a frozenset"
+        )
+        assert len(fields) > 0, f"Profile {kind} must not be empty"
+
+
+def test_required_field_profiles_contain_boundary_id() -> None:
+    """Every profile must require 'boundary_id'."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        assert "boundary_id" in fields, (
+            f"Profile {kind} must require 'boundary_id'"
+        )
+
+
+def test_required_field_profiles_contain_workflow_id() -> None:
+    """Every profile must require 'workflow_id'."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        assert "workflow_id" in fields, (
+            f"Profile {kind} must require 'workflow_id'"
+        )
+
+
+def test_required_field_profiles_contain_row_id() -> None:
+    """Every profile must require 'row_id'."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        assert "row_id" in fields, (
+            f"Profile {kind} must require 'row_id'"
+        )
+
+
+def test_profile_by_kind_returns_profile() -> None:
+    """get_profile_by_kind must return the matching frozenset for each registered kind."""
+    for kind, fields in REQUIRED_FIELD_PROFILES:
+        result = get_profile_by_kind(kind)
+        assert result is fields, (
+            f"get_profile_by_kind({kind!r}) must return the profile"
+        )
+
+
+def test_profile_by_kind_returns_none_for_unknown() -> None:
+    """get_profile_by_kind must return None for unknown kind."""
+    assert get_profile_by_kind("nonexistent_profile") is None
+
+
+def test_profile_by_kind_matches_registry() -> None:
+    """REQUIRED_FIELD_PROFILES_BY_KIND must match REQUIRED_FIELD_PROFILES."""
+    assert set(REQUIRED_FIELD_PROFILES_BY_KIND.keys()) == {
+        kind for kind, _fields in REQUIRED_FIELD_PROFILES
+    }
+    for kind, expected in REQUIRED_FIELD_PROFILES:
+        assert REQUIRED_FIELD_PROFILES_BY_KIND[kind] == expected
+
+
+# ── Typed boundary templates ───────────────────────────────────────────────
+
+
+def test_typed_templates_count() -> None:
+    """Exactly 12 typed templates must be registered."""
+    assert len(TYPED_BOUNDARY_TEMPLATES) == 12
+    assert len(TYPED_BOUNDARY_TEMPLATES_BY_ID) == 12
+
+
+def test_all_templates_are_boundary_contracts() -> None:
+    """Every entry in TYPED_BOUNDARY_TEMPLATES must be a BoundaryContract."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert isinstance(template, BoundaryContract), (
+            f"{template.boundary_id} must be a BoundaryContract"
+        )
+
+
+def test_template_ids_have_template_prefix() -> None:
+    """All template boundary_ids must use the 'template.*' namespace."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert template.boundary_id.startswith("template."), (
+            f"{template.boundary_id} must start with 'template.'"
+        )
+
+
+def test_template_ids_match_expected() -> None:
+    """Each template must have the expected boundary_id."""
+    expected = {
+        "template.artifact_promotion": artifact_promotion_template,
+        "template.lifecycle_transition": lifecycle_transition_template,
+        "template.reducer": reducer_template,
+        "template.external_effect": external_effect_template,
+        "template.execution_custody": execution_custody_template,
+        "template.human_approval_waiver": human_approval_waiver_template,
+        "template.graph_join_fanout": graph_join_fanout_template,
+        "template.external_witness": external_witness_template,
+        "template.revision_boundary": RevisionBoundary,
+        "template.validation_boundary": ValidationBoundary,
+        "template.artifact_handoff_boundary": ArtifactHandoffBoundary,
+        "template.approval_boundary": ApprovalBoundary,
+    }
+    for bid, template in expected.items():
+        assert template.boundary_id == bid
+        assert TYPED_BOUNDARY_TEMPLATES_BY_ID[bid] is template
+
+
+def test_templates_by_id_no_duplicates() -> None:
+    """TYPED_BOUNDARY_TEMPLATES_BY_ID must have no duplicate keys."""
+    assert len(TYPED_BOUNDARY_TEMPLATES_BY_ID) == len(TYPED_BOUNDARY_TEMPLATES)
+
+
+def test_templates_are_frozen() -> None:
+    """Every template must be immutable."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        with pytest.raises(FrozenInstanceError):
+            template.boundary_id = "mutated"  # type: ignore[misc]
+
+
+def test_templates_share_workflow_id() -> None:
+    """All templates must share the same workflow_id."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert template.workflow_id == "megaplan-review"
+
+
+def test_templates_have_contract_version() -> None:
+    """All templates must declare the expected contract version."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert template.contract_version == "arnold.workflow.boundary_contract.v1"
+
+
+def test_templates_have_phase_none() -> None:
+    """Templates do not carry a phase by default (boundary_id conveys intent)."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        assert template.phase is None, (
+            f"{template.boundary_id} phase must be None"
+        )
+
+
+def test_templates_have_description_in_details() -> None:
+    """Every template must include a non-empty description in its details."""
+    for template in TYPED_BOUNDARY_TEMPLATES:
+        desc = template.details.get("description")
+        assert desc is not None, f"{template.boundary_id} missing description"
+        assert isinstance(desc, str) and len(desc) > 0, (
+            f"{template.boundary_id} description must be a non-empty string"
+        )
+
+
+def test_approval_boundary_pascal_case() -> None:
+    """ApprovalBoundary must be the PascalCase alias for template.approval_boundary."""
+    assert ApprovalBoundary is TYPED_BOUNDARY_TEMPLATES_BY_ID["template.approval_boundary"]
+    assert ApprovalBoundary.boundary_id == "template.approval_boundary"
+    assert ApprovalBoundary.authority_required is True
+
+
+def test_artifact_handoff_boundary_pascal_case() -> None:
+    """ArtifactHandoffBoundary must be the PascalCase alias."""
+    assert ArtifactHandoffBoundary is TYPED_BOUNDARY_TEMPLATES_BY_ID["template.artifact_handoff_boundary"]
+    assert ArtifactHandoffBoundary.boundary_id == "template.artifact_handoff_boundary"
+    assert "handoff_from" in ArtifactHandoffBoundary.details
+
+
+def test_revision_boundary_pascal_case() -> None:
+    """RevisionBoundary must be the PascalCase alias."""
+    assert RevisionBoundary is TYPED_BOUNDARY_TEMPLATES_BY_ID["template.revision_boundary"]
+    assert RevisionBoundary.boundary_id == "template.revision_boundary"
+    assert "revised_content.json" in RevisionBoundary.required_artifacts
+
+
+def test_validation_boundary_pascal_case() -> None:
+    """ValidationBoundary must be the PascalCase alias."""
+    assert ValidationBoundary is TYPED_BOUNDARY_TEMPLATES_BY_ID["template.validation_boundary"]
+    assert ValidationBoundary.boundary_id == "template.validation_boundary"
+    assert "validation_result.json" in ValidationBoundary.required_artifacts
+
+
+# ── Lookup helpers ──────────────────────────────────────────────────────────
+
+
+def test_get_contract_by_id_returns_contract() -> None:
+    """get_contract_by_id must return the correct contract for a valid id."""
+    result = get_contract_by_id("prep_to_plan")
+    assert result is prep_to_plan
+    assert result.boundary_id == "prep_to_plan"
+
+
+def test_get_contract_by_id_returns_none_for_unknown() -> None:
+    """get_contract_by_id must return None for unknown id."""
+    assert get_contract_by_id("nonexistent_contract_id") is None
+
+
+def test_get_contract_by_id_consistent_with_dict() -> None:
+    """get_contract_by_id must match BOUNDARY_CONTRACTS_BY_ID for all ids."""
+    for cid in BOUNDARY_CONTRACTS_BY_ID:
+        assert get_contract_by_id(cid) is BOUNDARY_CONTRACTS_BY_ID[cid]
+
+
+def test_get_template_by_id_returns_template() -> None:
+    """get_template_by_id must return the correct template for a valid id."""
+    result = get_template_by_id("template.artifact_promotion")
+    assert result is artifact_promotion_template
+
+
+def test_get_template_by_id_returns_none_for_unknown() -> None:
+    """get_template_by_id must return None for unknown id."""
+    assert get_template_by_id("template.nonexistent") is None
+
+
+def test_get_template_by_id_returns_none_for_contract_id() -> None:
+    """get_template_by_id must return None when given a contract id (not a template id)."""
+    assert get_template_by_id("prep_to_plan") is None
+
+
+def test_get_profile_by_kind_known() -> None:
+    """get_profile_by_kind must return frozenset for known kinds."""
+    profile = get_profile_by_kind("artifact_promotion")
+    assert isinstance(profile, frozenset)
+    assert "boundary_id" in profile
+    assert "details.effect_id" in profile
+
+
+def test_list_template_ids_returns_all() -> None:
+    """list_template_ids must return all 12 template ids."""
+    ids = list_template_ids()
+    assert isinstance(ids, tuple)
+    assert len(ids) == 12
+    assert set(ids) == set(TYPED_BOUNDARY_TEMPLATES_BY_ID.keys())
+
+
+def test_list_profile_kinds_returns_all() -> None:
+    """list_profile_kinds must return all 12 profile kinds."""
+    kinds = list_profile_kinds()
+    assert isinstance(kinds, tuple)
+    assert len(kinds) == 12
+    assert set(kinds) == set(REQUIRED_FIELD_PROFILES_BY_KIND.keys())
+
+
+# ── Structural diff helpers ─────────────────────────────────────────────────
+
+
+def test_diff_contracts_identical() -> None:
+    """diff_contracts must report matching=True for identical contracts."""
+    result = diff_contracts(prep_to_plan, prep_to_plan)
+    assert result["matching"] is True
+    assert result["field_diffs"] == {}
+    assert result["detail_diffs"] == {}
+
+
+def test_diff_contracts_different_contracts() -> None:
+    """diff_contracts must detect differences between distinct contracts."""
+    result = diff_contracts(prep_to_plan, gate_to_revise)
+    assert result["matching"] is False
+    assert "boundary_id" in result["field_diffs"]
+    assert result["field_diffs"]["boundary_id"] == ("prep_to_plan", "gate_to_revise")
+
+
+def test_diff_contracts_detail_diffs() -> None:
+    """diff_contracts must detect detail-level differences."""
+    # prep_to_plan and plan_to_critique have different descriptions
+    result = diff_contracts(prep_to_plan, plan_to_critique)
+    assert result["matching"] is False
+    assert "details.description" in result["detail_diffs"]
+
+
+def test_diff_contracts_artifact_diffs() -> None:
+    """diff_contracts must detect required_artifacts differences."""
+    # prep_to_plan has artifacts; execute_no_review_terminal has none
+    result = diff_contracts(prep_to_plan, execute_no_review_terminal)
+    assert result["artifact_diffs"] is not None
+    assert len(result["artifact_diffs"]["only_in_a"]) > 0
+
+
+def test_diff_contracts_returns_all_keys() -> None:
+    """diff_contracts result must always contain matching, field_diffs, detail_diffs."""
+    result = diff_contracts(prep_to_plan, prep_to_plan)
+    assert "matching" in result
+    assert "field_diffs" in result
+    assert "detail_diffs" in result
+
+
+def test_diff_contracts_phase_diff() -> None:
+    """diff_contracts must detect phase differences between contracts."""
+    result = diff_contracts(prep_to_plan, plan_to_critique)
+    assert "phase" in result["field_diffs"]
+    assert result["field_diffs"]["phase"][0] != result["field_diffs"]["phase"][1]
+
+
+def test_diff_contracts_authority_diff() -> None:
+    """diff_contracts must detect authority_required differences."""
+    result = diff_contracts(prep_to_plan, gate_to_revise)
+    assert "authority_required" in result["field_diffs"]
+    assert result["field_diffs"]["authority_required"] == (False, True)
+
+
+# ── contract_satisfies_profile ──────────────────────────────────────────────
+
+
+def test_contract_satisfies_profile_all_satisfied() -> None:
+    """prep_to_plan satisfies the lifecycle_transition profile."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["lifecycle_transition"]
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, profile)
+    assert satisfied is True
+    assert missing == ()
+
+
+def test_contract_satisfies_profile_missing_keys() -> None:
+    """prep_to_plan does not satisfy artifact_promotion profile (missing details keys)."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["artifact_promotion"]
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, profile)
+    assert satisfied is False
+    assert len(missing) > 0
+    assert "details.effect_id" in missing
+
+
+def test_contract_satisfies_profile_missing_phase() -> None:
+    """A template without phase fails a profile that requires phase."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["lifecycle_transition"]
+    satisfied, missing = contract_satisfies_profile(artifact_promotion_template, profile)
+    # artifact_promotion_template has phase=None, lifecycle requires phase
+    assert satisfied is False
+    assert "phase" in missing
+
+
+def test_contract_satisfies_profile_empty_profile() -> None:
+    """Every contract satisfies an empty profile."""
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, frozenset())
+    assert satisfied is True
+    assert missing == ()
+
+
+def test_contract_satisfies_profile_with_custom_profile() -> None:
+    """A minimal custom profile must pass for a fully-populated contract."""
+    minimal = frozenset({"boundary_id", "workflow_id", "row_id"})
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, minimal)
+    assert satisfied is True
+    assert missing == ()
+
+
+def test_contract_satisfies_profile_missing_unknown_attr() -> None:
+    """A profile key that is not an attribute of BoundaryContract is treated as missing."""
+    bogus_profile = frozenset({"nonexistent_field"})
+    satisfied, missing = contract_satisfies_profile(prep_to_plan, bogus_profile)
+    assert satisfied is False
+    assert "nonexistent_field" in missing
+
+
+def test_contract_satisfies_profile_satisfies_approval_boundary_template() -> None:
+    """ApprovalBoundary template must satisfy the approval_boundary profile."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["approval_boundary"]
+    satisfied, missing = contract_satisfies_profile(ApprovalBoundary, profile)
+    assert satisfied is True, f"Missing: {missing}"
+
+
+def test_contract_satisfies_profile_satisfies_artifact_promotion_template() -> None:
+    """artifact_promotion_template has required_artifacts=() which is empty;
+    the artifact_promotion profile requires non-empty required_artifacts,
+    so this correctly fails."""
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND["artifact_promotion"]
+    satisfied, missing = contract_satisfies_profile(artifact_promotion_template, profile)
+    assert satisfied is False
+    assert "required_artifacts" in missing
+
+
+# ── Breaking required-field change vs non-breaking optional extension ───────
+
+
+def test_check_template_compatibility_breaking_added_required_field() -> None:
+    """Removing a required field is a breaking change — demonstrated with
+    a profile that drops a field required by the artifact_promotion profile."""
+    base_required = frozenset({"boundary_id", "workflow_id", "row_id", "phase"})
+    base_optional = frozenset({"details.description"})
+
+    # New version removes "phase" from required → breaking
+    new_required = frozenset({"boundary_id", "workflow_id", "row_id"})
+    new_optional = frozenset({"details.description", "phase"})
+
+    result = check_template_compatibility(
+        template_id="test.breaking_removed_required",
+        from_required_fields=base_required,
+        from_optional_fields=base_optional,
+        to_required_fields=new_required,
+        to_optional_fields=new_optional,
+        from_version="1.0",
+        to_version="2.0",
+    )
+    assert result.compatibility is TemplateCompatibility.BREAKING_CHANGE
+    assert len(result.removed_required_fields) > 0
+    assert "phase" in result.removed_required_fields
+    assert result.template_id == "test.breaking_removed_required"
+
+
+def test_check_template_compatibility_breaking_optional_to_required() -> None:
+    """Moving an optional field to required is a breaking change."""
+    base_required = frozenset({"boundary_id", "workflow_id", "row_id"})
+    base_optional = frozenset({"details.description"})
+
+    # New version makes details.description required → breaking
+    new_required = frozenset({"boundary_id", "workflow_id", "row_id", "details.description"})
+    new_optional: frozenset[str] = frozenset()
+
+    result = check_template_compatibility(
+        template_id="test.optional_to_required",
+        from_required_fields=base_required,
+        from_optional_fields=base_optional,
+        to_required_fields=new_required,
+        to_optional_fields=new_optional,
+    )
+    assert result.compatibility is TemplateCompatibility.BREAKING_CHANGE
+    assert "details.description" in result.removed_required_fields
+
+
+def test_check_template_compatibility_non_breaking_optional_extension() -> None:
+    """Adding optional fields without changing required fields is a
+    compatible extension (non-breaking)."""
+    base_required = frozenset({"boundary_id", "workflow_id", "row_id", "phase"})
+    base_optional = frozenset({"details.description"})
+
+    # New version adds optional field "details.new_optional_field" → compatible
+    new_required = base_required
+    new_optional = base_optional | {"details.new_optional_field"}
+
+    result = check_template_compatibility(
+        template_id="test.optional_extension",
+        from_required_fields=base_required,
+        from_optional_fields=base_optional,
+        to_required_fields=new_required,
+        to_optional_fields=new_optional,
+    )
+    assert result.compatibility is TemplateCompatibility.COMPATIBLE_EXTENSION
+    assert "details.new_optional_field" in result.added_optional_fields
+    assert result.removed_required_fields == ()
+    assert result.changed_required_fields == ()
+
+
+def test_check_template_compatibility_exact_match() -> None:
+    """Identical required and optional field sets produce EXACT_MATCH."""
+    required = frozenset({"boundary_id", "workflow_id", "row_id"})
+    optional = frozenset({"details.description"})
+
+    result = check_template_compatibility(
+        template_id="test.exact",
+        from_required_fields=required,
+        from_optional_fields=optional,
+        to_required_fields=required,
+        to_optional_fields=optional,
+    )
+    assert result.compatibility is TemplateCompatibility.EXACT_MATCH
+
+
+def test_check_template_compatibility_with_real_profiles_breaking() -> None:
+    """Using real profile data, demonstrate that a required-field profile
+    that drops a mandatory field is a BREAKING_CHANGE."""
+    # Base: artifact_promotion profile fields
+    base_profile = REQUIRED_FIELD_PROFILES_BY_KIND["artifact_promotion"]
+    # "Breaking" version: drop 'details.effect_id' from required
+    breaking_profile = frozenset(
+        f for f in base_profile
+        if f != "details.effect_id"
+    )
+
+    result = check_template_compatibility(
+        template_id="artifact_promotion",
+        from_required_fields=base_profile,
+        from_optional_fields=frozenset(),
+        to_required_fields=breaking_profile,
+        to_optional_fields=frozenset({"details.effect_id"}),
+        from_version="1.0",
+        to_version="2.0",
+    )
+    assert result.compatibility is TemplateCompatibility.BREAKING_CHANGE
+    assert "details.effect_id" in result.removed_required_fields
+
+
+def test_check_template_compatibility_with_real_profiles_non_breaking() -> None:
+    """Using real profile data, adding optional fields without changing
+    required fields is a COMPATIBLE_EXTENSION."""
+    base_profile = REQUIRED_FIELD_PROFILES_BY_KIND["lifecycle_transition"]
+
+    result = check_template_compatibility(
+        template_id="lifecycle_transition",
+        from_required_fields=base_profile,
+        from_optional_fields=frozenset(),
+        to_required_fields=base_profile,
+        to_optional_fields=frozenset({"details.new_optional_note"}),
+        from_version="1.0",
+        to_version="1.1",
+    )
+    assert result.compatibility is TemplateCompatibility.COMPATIBLE_EXTENSION
+    assert "details.new_optional_note" in result.added_optional_fields
+    assert result.removed_required_fields == ()

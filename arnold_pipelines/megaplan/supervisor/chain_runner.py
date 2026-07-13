@@ -22,6 +22,7 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.chain import spec as chain_spec
+from arnold_pipelines.megaplan.chain.advancement import policy_for_spec
 from arnold.control.interface import ControlBinding, RunStateView
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.cloud.incident_bridge import (
@@ -196,6 +197,19 @@ def run_chain(
         except Exception:
             pass
 
+    from arnold_pipelines.megaplan.chain.operator_pause import is_paused
+
+    if is_paused(chain_state):
+        return _result(
+            "paused",
+            chain_state,
+            supervisor_state,
+            milestone_results,
+            events,
+            spec=spec,
+            reason="durable operator pause is active; explicit chain resume required",
+        )
+
     start_index = max(chain_state.current_milestone_index, 0)
     if chain_state.current_milestone_index < 0:
         chain_state.current_milestone_index = 0
@@ -217,6 +231,17 @@ def run_chain(
         )
 
         while True:
+            chain_state = chain_spec.load_chain_state(spec_path)
+            if is_paused(chain_state):
+                return _result(
+                    "paused",
+                    chain_state,
+                    supervisor_state,
+                    milestone_results,
+                    events,
+                    spec=spec,
+                    reason="durable operator pause is active; explicit chain resume required",
+                )
             plan_name = chain_state.current_plan_name
             if not plan_name:
                 plan_name = pack_runner.prepare_plan(root=root, node=node)
@@ -342,6 +367,10 @@ def run_chain(
                 plan_dir=_plan_dir(root, plan_name),
                 binding=binding,
                 policy=ladder_policy,
+                automatic_pr_progression=policy_for_spec(
+                    spec,
+                    runtime_overrides=chain_spec.load_runtime_policy(spec_path),
+                ).automatic_pr_progression,
                 writer=writer,
             )
             if pr_resolution.handled:

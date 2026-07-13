@@ -215,6 +215,7 @@ def _gate_prompt(
             {{"flag_id": "conventions-1", "action": "accept_tradeoff", "evidence": "", "rationale": "Minor naming inconsistency is confined to this helper and would create churn across generated fixtures; track it as follow-up cleanup instead of blocking this fix."}}
           ],
           "accepted_tradeoffs": [],
+          "north_star_actions": [],
           "settled_decisions": [
             {{"id": "SD1", "decision": "Keep the migration as a data-only migration", "rationale": "The schema change belongs to the already-approved follow-up and should not be re-litigated during review."}}
           ]

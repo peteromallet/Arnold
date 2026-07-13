@@ -1,5 +1,9 @@
 # M2: Semantic Finding Custody And Repair Queue
 
+> Superseded as an executable milestone by C1-C6. Preserved only as historical
+> checklist material; it cannot add a prompt, gate, or policy choice to the
+> corrective chain.
+
 ## Outcome
 
 Semantic-health findings become first-class repair evidence, not prompt-only

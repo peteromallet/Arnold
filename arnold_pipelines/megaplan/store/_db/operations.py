@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from arnold_pipelines.megaplan.schemas import AutomationActor, CloudRun, ControlMessage, ProgressEvent, ResidentConversation, ScheduledJob
+from arnold_pipelines.megaplan.schemas import AutomationActor, CloudRun, ControlMessage, ProgressEvent, ResidentConversation, ResidentUserPreference, ScheduledJob
 from arnold_pipelines.megaplan.store.base import CloudRunInput, ControlMessageInput, ProgressEventInput, ResidentConversationInput, RevisionConflict, ScheduledJobInput
 
 from .common import _jb
@@ -216,6 +216,50 @@ class DBOperationsMixin:
         if row is None:
             raise RevisionConflict(f"Resident conversation {conversation_id!r} not found")
         return ResidentConversation(**row)
+
+    def load_resident_user_preference(
+        self, *, transport: str, user_id: str
+    ) -> ResidentUserPreference | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM resident_user_preferences WHERE transport = %s AND user_id = %s",
+            [transport, user_id],
+        ).fetchone()
+        return ResidentUserPreference(**row) if row else None
+
+    def upsert_resident_user_preference(
+        self,
+        *,
+        transport: str,
+        user_id: str,
+        timezone_name: str | None,
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> ResidentUserPreference:
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            INSERT INTO resident_user_preferences (
+                transport, user_id, timezone_name, metadata
+            ) VALUES (%s, %s, %s, %s)
+            ON CONFLICT (transport, user_id) DO UPDATE SET
+                timezone_name = EXCLUDED.timezone_name,
+                metadata = CASE
+                    WHEN %s THEN EXCLUDED.metadata
+                    ELSE resident_user_preferences.metadata
+                END,
+                updated_at = now()
+            RETURNING *
+            """,
+            [
+                transport,
+                user_id,
+                timezone_name,
+                _jb(dict(metadata or {})),
+                metadata is not None,
+            ],
+        ).fetchone()
+        return ResidentUserPreference(**row)
 
     def create_scheduled_job(
         self,

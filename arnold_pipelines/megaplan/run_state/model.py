@@ -25,6 +25,7 @@ class CanonicalState(Enum):
     """
 
     RUNNING = auto()
+    PAUSED = auto()
     REPAIRING = auto()
     RETRYABLE_EXECUTION_BLOCK = auto()
     REAL_IMPLEMENTATION_BLOCK = auto()
@@ -50,6 +51,8 @@ class TypedHumanGate(Enum):
     VERIFICATION = auto()            # Human verification required (policy).
     POLICY = auto()                  # Policy decision pending human input.
     USER_ACTION = auto()             # Explicit user-action record pending.
+    DESTRUCTIVE_ACTION = auto()      # Explicit consent for a destructive action.
+    PRODUCT_DECISION = auto()        # Genuine product/requirements choice.
 
 
 @dataclass(frozen=True)

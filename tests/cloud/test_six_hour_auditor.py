@@ -11,6 +11,7 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     audit_incident,
     audit_projection_input,
     build_audit_input,
+    github_sync_publication_due,
     enqueue_audit_repair_request,
     validate_audit_model_inputs,
 )
@@ -100,6 +101,43 @@ def _problem(**overrides: object) -> dict[str, object]:
         },
         **overrides,
     )
+
+
+def test_github_sync_publication_due_survives_primary_human_escalation() -> None:
+    incident_audit = {
+        "next_expected_event": "auditor_escalate_to_human",
+        "audit_complete": {
+            "outcome": "auditor_human_escalation",
+            "next_expected_event": "auditor_escalate_to_human",
+        },
+        "findings": [
+            {
+                "layer": "resolver_confidence",
+                "recommendation": "auditor_escalate_to_human",
+            },
+            {
+                "layer": "github_sync",
+                "code": "github_sync_publish_due",
+                "recommendation": "github_sync.publish",
+            },
+        ],
+    }
+
+    assert github_sync_publication_due(incident_audit) is True
+
+
+def test_github_sync_publication_due_is_false_without_publish_action() -> None:
+    assert github_sync_publication_due(
+        {
+            "next_expected_event": "auditor_escalate_to_human",
+            "findings": [
+                {
+                    "layer": "resolver_confidence",
+                    "recommendation": "auditor_escalate_to_human",
+                }
+            ],
+        }
+    ) is False
 
 
 def _resolver_state(**overrides: object) -> dict[str, object]:
@@ -296,6 +334,52 @@ def test_unhealthy_audit_routes_only_to_central_repair_request(tmp_path: Path) -
         (".megaplan", "repair-queue", "requests"),
         (".megaplan", "repair-queue", "decisions"),
     }
+
+
+def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "target-workspace"
+    workspace.mkdir()
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    evidence = {
+        "actionable": True,
+        "accepted_unclaimed_count": 1,
+        "accepted_unclaimed_request_ids": ["7473fa42"],
+        "claim_count": 0,
+        "attempt_count": 0,
+        "repair_outcome": "repair_exhausted",
+        "repair_age_min": 180,
+        "runner_dead": True,
+        "chain_incomplete": True,
+        "absent_or_stale_l2": True,
+        "retry_budget": {"claim_retries_used": 2, "claim_alerted": False},
+    }
+
+    result = enqueue_audit_repair_request(
+        {
+            "plan": "c1-contract-reality-20260711-1433",
+            "session": "workflow-boundary-contracts-corrective-20260710",
+            "workspace": str(workspace),
+            "session_header": {"kind": "chain"},
+            "deterministic_superfixer_evidence": evidence,
+        },
+        queue_root=queue_root,
+    )
+
+    assert result is not None and result["status"] == "queued"
+    request = result["request"]
+    assert request["queue_dir"] == str(queue_root)
+    assert request["workspace"] == str(workspace)
+    assert request["target"]["workspace"] == str(workspace)
+    assert request["target"]["deterministic_superfixer_evidence"] == evidence
+    assert request["problem_signature"]["failure_kind"] == "stale_l1_l2_cycle"
+    assert request["problem_signature"]["blocked_task_id"].startswith("audit:")
+    assert request["target"]["root_cause_identity"] == request["problem_signature"]["blocked_task_id"]
+    assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["7473fa42"]
+    assert request["target"]["retry_budget"] == evidence["retry_budget"]
+    assert request["target"]["retry_strategy"] == "meta_repair"
+    assert not (workspace / ".megaplan" / "repair-queue").exists()
 
 
 def test_audit_incident_emits_layer_findings_without_mutating_state() -> None:

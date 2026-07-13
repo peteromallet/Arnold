@@ -1,0 +1,112 @@
+anchors:
+  north_star: NORTHSTAR.md
+base_branch: main
+merge_policy: auto
+milestones:
+- label: m1-lifecycle-contract-and-ledger
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m1-lifecycle-contract-and-ledger.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Inventory every resident ingress, provenance, launch, acknowledgement,
+    completion-delivery, manifest, cursor, and recovery writer/reader before fixing
+    the canonical ledger and transition contract. Preserve unrelated dirty work and
+    active chains.
+  notes: Difficulty 5/5. Establishes the versioned authority, immutable identities,
+    transition table, and compatibility projections that every later sprint must use.
+- label: m2-transactional-inbound-and-burst-provenance
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m2-transactional-inbound-and-burst-provenance.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Trace every normal, attachment-only, voice/image, burst, escalation,
+    repair, scheduler, todo, replay, and compatibility ingress from authorization
+    through durable intent, quarantine/CAS, validation/scanning/policy, turn readiness,
+    and read-only request projection; identify every mutable-cursor, CDN-URL, or attachment-free
+    fallback.
+  notes: Difficulty 5/5. Adds the artifact lifecycle extension to completed M1 without
+    reopening it, making accepted messages and attachments crash-safe and provenance-preserving.
+- label: m3-idempotent-delegation-and-side-effect-fencing
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m3-idempotent-delegation-and-side-effect-fencing.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Map every resident-managed Codex launch path and profile, including
+    normal, VibeComfy, Megaplan, AgentBox, repair, scheduler, VP todo/sweep, reaper,
+    replay, and legacy manifests; locate execution fences, attachment projections,
+    credential/isolation boundaries, declaration/capture/selection paths, and all
+    bypasses.
+  notes: Difficulty 5/5. Prevents duplicate execution and stale declarations while
+    establishing one restricted attachment-bearing run and explicit artifact contract.
+- label: m4-durable-ack-and-terminal-outbox
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m4-durable-ack-and-terminal-outbox.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Trace every direct and projected acknowledgement/terminal send from
+    normal, repair, scheduler, todo, reaper, and compatibility paths; inventory artifact
+    selection, CAS reads, multipart limits, rate limits, nonces, receipts, partial
+    batches, unknown reconciliation, oversize behavior, and all mutable-target/direct-send
+    bypasses.
+  notes: Difficulty 5/5. Moves text and selected artifact batches under one durable,
+    fenced, retryable, provenance-bound outbox with honest partial/unknown outcomes.
+- label: m5-recovery-migration-and-compatibility
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m5-recovery-migration-and-compatibility.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Inventory startup/readiness and every continuous repair owner for
+    ingest, quarantine, CAS, materialization, declarations, outbox batches, unknowns,
+    retention/holds/GC, previews, voice/image/manifests, scheduler/todo/reaper, flags,
+    operator status/actions, backups, and rollback; preserve unrelated sessions.
+  notes: Difficulty 5/5. Unifies request/artifact recovery and reference-safe retention
+    with additive legacy migration, split-brain detection, cutover, and rollback.
+- label: m6-adversarial-evidence-rollout-and-observability
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m6-adversarial-evidence-rollout-and-observability.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  prep_direction: Map every North Star invariant, audit finding, attachment-design
+    acceptance case, and normal/repair/scheduler/todo/reaper/compatibility route to
+    deterministic security/fault/restart evidence, observability, canary gates, retention,
+    and rollback; keep provider, isolation, scanner, storage, and backup unknowns
+    explicit.
+  notes: Difficulty 5/5. Produces adversarial end-to-end closure and a restricted,
+    observable, canary-ready attachment rollout without destructive cleanup.
+- label: m7-resident-completion-attachments-v1
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m7-resident-completion-attachments-v1.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  depends_on:
+  - m1-lifecycle-contract-and-ledger
+  - m2-transactional-inbound-and-burst-provenance
+  - m3-idempotent-delegation-and-side-effect-fencing
+  - m4-durable-ack-and-terminal-outbox
+  - m5-recovery-migration-and-compatibility
+  - m6-adversarial-evidence-rollout-and-observability
+  prep_direction: Treat M1-M6 as fixed prerequisites, then trace the resident-managed
+    prompt/result, project-root validation and immutable capture, completion outbox,
+    Discord multipart adapter, provider reconciliation, config, and non-Discord compatibility
+    paths needed for the deliberately basic, opt-in completion-attachments v1 slice.
+  notes: Difficulty 5/5. Adds disabled-by-default structured completion attachments
+    with exact limits, durable captured-byte retries, honest partial/unknown evidence,
+    and an explicit full-access-agent exfiltration caveat; no content scanning in v1.
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 80
+  poll_sleep: 8.0
+  vendor: codex
+  prep_clarify: false

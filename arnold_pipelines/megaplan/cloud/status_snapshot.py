@@ -42,12 +42,23 @@ from arnold_pipelines.megaplan.authority.views import (
 )
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
-from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    classify_repair_dispatch,
+    is_success_outcome,
+    project_repair_custody,
+)
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
 from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
 from arnold_pipelines.run_authority import canonical_json, reduce_run_authority
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
+from arnold_pipelines.megaplan.chain.advancement import (
+    AdvancementPolicy,
+    assess_advancement,
+    policy_for_spec_path,
+)
 
 # --- canonical paths -------------------------------------------------------
 
@@ -116,7 +127,7 @@ STALE_ACTIVITY_S = 30 * 60
 REPAIR_FRESH_S = 6 * 60 * 60
 CHAIN_HEALTH_STALE_GRACE_S = 5
 
-SessionStatus = str  # one of: running | repairing | blocked | complete | attention
+SessionStatus = str  # one of: running | repairing | blocked | paused | complete | attention
 LivenessProbe = Callable[[Mapping[str, Any]], dict[str, bool]]
 
 
@@ -592,26 +603,62 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def _plan_stage_percent(plan_state: str) -> int | None:
+def _execution_task_progress(
+    workspace: Path | None, plan_name: str
+) -> tuple[int, int, int] | None:
+    """Return ``(completed_weight, total_weight, task_count)`` from finalize.
+
+    Complexity is already the executor's authoritative 1..10 composite weight,
+    so progress uses it directly.  Invalid/missing weights fail closed to 1 so
+    every task still contributes and malformed artifacts cannot inflate progress.
+    """
+    if workspace is None or not plan_name:
+        return None
+    payload = _load_json(workspace / ".megaplan" / "plans" / plan_name / "finalize.json")
+    tasks = payload.get("tasks") if isinstance(payload, Mapping) else None
+    if not isinstance(tasks, list) or not tasks:
+        return None
+    completed_weight = 0
+    total_weight = 0
+    task_count = 0
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        complexity = task.get("complexity")
+        weight = complexity if isinstance(complexity, int) and not isinstance(complexity, bool) and 1 <= complexity <= 10 else 1
+        total_weight += weight
+        task_count += 1
+        if str(task.get("status") or "").strip().lower() in {"done", "completed", "skipped"}:
+            completed_weight += weight
+    return (completed_weight, total_weight, task_count) if total_weight else None
+
+
+def _plan_stage_percent(
+    plan_state: str,
+    *,
+    execution_progress: tuple[int, int, int] | None = None,
+) -> int | None:
     """Estimate a coarse "% through the in-flight plan" from its lifecycle state.
 
-    A plan advances through a fixed ladder of stages (``PLAN_PROGRESSION_RUNGS``);
-    its recorded ``current_state`` (exposed via chain-health ``last_state``) tells
-    us how many it has completed. We map that to completed-stages / total-stages.
-    ``initialized`` is 0%; an off-ladder state (blocked / failed / awaiting_* /
-    tiebreaker_*) is not percentage-able, so we return ``None`` and let the caller
-    surface the raw state label instead. This is a deliberately coarse stage
-    estimate, not exact sub-plan progress — stages are treated as equal-weight.
+    Pre-execute work is capped at 30%.  Once finalized, the remaining 70% is
+    apportioned across the actual finalized tasks by their 1..10 complexity.
     """
     if not plan_state:
         return None
     if plan_state == STATE_INITIALIZED:
         return 0
-    try:
-        index = PLAN_PROGRESSION_RUNGS.index(plan_state)
-    except ValueError:
-        return None
-    return round((index + 1) / len(PLAN_PROGRESSION_RUNGS) * 100)
+    pre_execute = {"prepped": 6, "planned": 12, "critiqued": 18, "gated": 24, "finalized": 30}
+    if plan_state == "finalized" and execution_progress is not None:
+        completed_weight, total_weight, _task_count = execution_progress
+        return round(30 + 70 * completed_weight / total_weight)
+    if plan_state in pre_execute:
+        return pre_execute[plan_state]
+    if plan_state in {"executed", "reviewed", "done"}:
+        return 100
+    if execution_progress is not None:
+        completed_weight, total_weight, _task_count = execution_progress
+        return round(30 + 70 * completed_weight / total_weight)
+    return None
 
 
 def _session_progress(
@@ -621,6 +668,8 @@ def _session_progress(
     current_plan: str | None,
     complete: bool,
     plan_state: str | None = None,
+    execution_progress: tuple[int, int, int] | None = None,
+    presentation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Pre-calculate epic/sprint progress for one snapshot session.
 
@@ -661,7 +710,11 @@ def _session_progress(
     # actually in progress (chain not complete, milestones remain).
     has_in_flight = (not complete) and done < total
     plan_state_norm = str(plan_state).strip().lower() if plan_state else ""
-    plan_percent = _plan_stage_percent(plan_state_norm) if has_in_flight else None
+    plan_percent = (
+        _plan_stage_percent(plan_state_norm, execution_progress=execution_progress)
+        if has_in_flight
+        else None
+    )
 
     # Epic % folds the in-flight plan's stage fraction in, so the headline moves
     # as the current plan advances instead of freezing between milestones. With
@@ -685,6 +738,13 @@ def _session_progress(
                 sprint["plan"] = plan
             if plan_state_norm:
                 sprint["plan_state"] = plan_state_norm
+            if isinstance(presentation, Mapping):
+                sprint.update(
+                    {
+                        key: presentation.get(key)
+                        for key in ("active_phase", "execution_state", "display_state")
+                    }
+                )
             if plan_percent is not None:
                 sprint["plan_percent"] = plan_percent
             sprints.append(sprint)
@@ -701,8 +761,22 @@ def _session_progress(
     }
     if has_in_flight and plan_state_norm:
         progress["plan_state"] = plan_state_norm
+    if has_in_flight and isinstance(presentation, Mapping):
+        progress.update(
+            {
+                key: presentation.get(key)
+                for key in ("active_phase", "execution_state", "display_state")
+            }
+        )
     if plan_percent is not None:
         progress["plan_percent"] = plan_percent
+    if has_in_flight and execution_progress is not None:
+        completed_weight, total_weight, task_count = execution_progress
+        progress["execution_tasks"] = {
+            "completed_weight": completed_weight,
+            "total_weight": total_weight,
+            "task_count": task_count,
+        }
     return progress
 
 
@@ -822,6 +896,20 @@ def _chain_state_complete(
     return completed_len >= milestone_count
 
 
+def _chain_health_explicitly_incomplete(chain_health: Mapping[str, Any] | None) -> bool:
+    if not isinstance(chain_health, Mapping) or not chain_health:
+        return False
+    last_state = str(chain_health.get("last_state") or "").strip().lower()
+    if last_state and last_state not in {"done", "complete", "completed"}:
+        return True
+    try:
+        completed_count = int(chain_health.get("completed_count"))
+        milestone_count = int(chain_health.get("milestone_count"))
+    except (TypeError, ValueError):
+        return False
+    return milestone_count > 0 and completed_count < milestone_count
+
+
 # --- per-session classification -------------------------------------------
 
 
@@ -851,6 +939,7 @@ def _build_session_entry(
     repair_progress = _load_json(marker_dir / f"{session}.repair-progress.json")
     needs_human = _load_json(repair_data_dir / f"{session}.needs-human.json")
     watchdog_item = watchdog_by_session.get(session, {})
+    watchdog_generated_at = _parse_iso(watchdog_item.get("_report_generated_at"))
 
     chain_complete = bool(chain_health.get("chain_complete")) if chain_health else False
     completed_count = chain_health.get("completed_count") if chain_health else None
@@ -914,6 +1003,7 @@ def _build_session_entry(
         needs_human=needs_human,
         repair_progress=repair_progress,
         watchdog_item=watchdog_item,
+        watchdog_generated_at=watchdog_generated_at,
         liveness=liveness,
         superseding_sibling=superseding_sibling,
         latest_activity_dt=_parse_iso(latest_activity),
@@ -922,6 +1012,72 @@ def _build_session_entry(
         current_plan=str(current_plan or ""),
         plan_state=plan_state_doc,
         now=now,
+    )
+    watchdog_status = _watchdog_status(watchdog_item, chain_complete)
+    if (
+        status == "attention"
+        and watchdog_status == "alive"
+        and not (liveness.get("tmux") or liveness.get("process"))
+    ):
+        # The report describes an earlier sweep, not current runner truth.
+        # Keep the stale observation visible without presenting it as live.
+        watchdog_status = "stale"
+
+    try:
+        advancement_policy = policy_for_spec_path(remote_spec) if remote_spec else AdvancementPolicy(
+            merge_policy="auto",
+            clean_milestone_pr="auto",
+            auto_approve=True,
+            source="plan_default",
+        )
+
+    except Exception:
+        advancement_policy = AdvancementPolicy(
+            merge_policy="unknown",
+            clean_milestone_pr="unknown",
+            auto_approve=False,
+            source="unreadable_spec",
+        )
+    latest_failure = (
+        plan_state_doc.get("latest_failure")
+        if isinstance(plan_state_doc, Mapping)
+        and isinstance(plan_state_doc.get("latest_failure"), Mapping)
+        else {}
+    )
+    active_step_for_advancement = bool(
+        isinstance(plan_state_doc, Mapping) and plan_state_doc.get("active_step")
+    )
+    if active_step_for_advancement:
+        advancement_active_step = plan_state_doc.get("active_step")
+        raw_worker_pid = (
+            advancement_active_step.get("worker_pid")
+            if isinstance(advancement_active_step, Mapping)
+            else None
+        )
+        if raw_worker_pid not in (None, ""):
+            worker_pid = _as_int(raw_worker_pid)
+            if worker_pid is None or not _pid_is_live(worker_pid):
+                active_step_for_advancement = False
+    advancement = assess_advancement(
+        advancement_policy,
+        current_state=plan_current_state,
+        chain_last_state=(chain_health.get("last_state") if chain_health else None),
+        chain_complete=chain_complete or status == "complete",
+        pr_state=(chain_health.get("pr_state") if chain_health else None),
+        active_step=active_step_for_advancement,
+        explicit_human_gate=(operator_next if status == "blocked" else None),
+        failure_kind=latest_failure.get("kind"),
+    )
+    active_step = (
+        plan_state_doc.get("active_step")
+        if isinstance(plan_state_doc, Mapping)
+        and isinstance(plan_state_doc.get("active_step"), Mapping)
+        else None
+    )
+    presentation = plan_status_presentation(
+        plan_state_label,
+        active_step=active_step,
+        completed=chain_complete or status == "complete",
     )
 
     entry = {
@@ -932,26 +1088,31 @@ def _build_session_entry(
         "run_kind": run_kind,
         "started_at": marker.get("started_at"),
         "status": status,
-        "should_run": status not in {"complete"},
+        "should_run": status not in {"complete", "paused"} and plan_current_state != "paused",
         "tmux": liveness.get("tmux", False),
         "process": liveness.get("process", False),
-        "watchdog": _watchdog_status(watchdog_item, chain_complete),
+        "watchdog": watchdog_status,
         "repairing": status == "repairing",
         "current_plan": current_plan,
         "completed_count": completed_count,
         "milestone_count": milestone_count,
         "chain_complete": chain_complete,
+        "plan_state": plan_current_state or None,
+        **presentation,
         "progress": _session_progress(
             completed_count=completed_count,
             milestone_count=milestone_count,
             current_plan=current_plan,
             complete=chain_complete,
             plan_state=plan_state_label,
+            execution_progress=_execution_task_progress(workspace, str(current_plan or "")),
+            presentation=presentation,
         ),
         "pr_number": chain_health.get("pr_number") if chain_health else None,
         "pr_state": chain_health.get("pr_state") if chain_health else None,
         "latest_activity": latest_activity,
         "operator_next": operator_next,
+        "advancement": advancement.to_dict(),
         "evidence": {
             "marker": str(marker_path),
             "chain_health": str(marker_dir / f"{session}.chain-health.progress.json"),
@@ -981,7 +1142,102 @@ def _build_session_entry(
             now=now,
         )
     )
+    repair_projection = _compose_repair_decision_projection(
+        workspace=workspace,
+        queue_root=marker_dir.parent / "repair-queue",
+        repair_data_dir=repair_data_dir,
+        plan_state=plan_state_doc,
+        current_target=current_target_record,
+    )
+    entry.update(repair_projection)
+    custody = repair_projection.get("repair_custody")
+    dispatch = repair_projection.get("repair_dispatch")
+    custody_bucket = (
+        str(dispatch.get("custody_bucket") or "")
+        if isinstance(dispatch, Mapping)
+        else ""
+    ) or (
+        str(custody.get("custody_bucket") or "")
+        if isinstance(custody, Mapping)
+        else ""
+    )
+    if (
+        entry["status"] == "repairing"
+        and custody_bucket
+        and custody_bucket != "repairing"
+    ):
+        # A fresh legacy sidecar is not repair custody.  Once the canonical
+        # projection is available, fail closed instead of advertising work
+        # that has no active claim/attempt owner.
+        runner_live = bool(liveness.get("tmux") or liveness.get("process"))
+        entry["status"] = "running" if runner_live else "attention"
+        entry["repairing"] = False
+        if runner_live:
+            entry["operator_next"] = "live runner supersedes stale repair sidecar"
+        else:
+            rationale = dispatch.get("rationale") if isinstance(dispatch, Mapping) else None
+            entry["operator_next"] = (
+                "; ".join(str(item) for item in rationale if item)
+                if isinstance(rationale, list)
+                else str(rationale or "repair custody is absent")
+            )
     return entry
+
+
+def _compose_repair_decision_projection(
+    *,
+    workspace: Path | None,
+    queue_root: Path | None = None,
+    repair_data_dir: Path,
+    plan_state: Mapping[str, Any] | None,
+    current_target: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Use the same custody/dispatch contract consumed by watchdog dispatch."""
+
+    if workspace is None or not isinstance(plan_state, Mapping):
+        return {"repair_custody": None, "repair_dispatch": None}
+    effective_queue_root = queue_root or (workspace / ".megaplan" / "repair-queue")
+    try:
+        canonical = resolve_run_state(current_target or {})
+        custody = project_repair_custody(
+            plan_state=plan_state,
+            current_target=current_target,
+            canonical_run_state=canonical,
+            queue_root=effective_queue_root,
+            repair_data_dir=repair_data_dir,
+        )
+        dispatch = classify_repair_dispatch(
+            canonical_run_state=canonical,
+            plan_state=plan_state,
+            current_target=current_target,
+            custody_projection=custody,
+        )
+        return {
+            "repair_custody": custody,
+            "repair_dispatch": {
+                "decision": dispatch.decision,
+                "dispatch_intent": dispatch.dispatch_intent,
+                "request_id": dispatch.request_id,
+                "blocker_id": dispatch.blocker_id,
+                "failure_kind": dispatch.failure_kind,
+                "custody_bucket": dispatch.custody_bucket,
+                "rationale": list(dispatch.rationale),
+                "evidence_cursor": custody.get("evidence_cursor", {}),
+                "request_count": custody.get("request_count", 0),
+                "claim_count": custody.get("claim_count", 0),
+                "attempt_count": custody.get("attempt_count", 0),
+                "retry_budget": custody.get("retry_budget", {}),
+            },
+        }
+    except Exception as exc:
+        return {
+            "repair_custody": None,
+            "repair_dispatch": {
+                "decision": "broken_superfixer",
+                "dispatch_intent": "broken_superfixer",
+                "rationale": [f"canonical repair projection failed: {type(exc).__name__}"],
+            },
+        }
 
 
 def _compose_shadow_views(
@@ -1063,9 +1319,15 @@ def _compose_shadow_views(
 
     # --- human-gate projection -------------------------------------------------
     human_gate_signals: list[dict[str, Any]] = []
-    if needs_human and isinstance(needs_human, Mapping):
+    from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
+
+    if needs_human and isinstance(needs_human, Mapping) and typed_human_gate(needs_human) is not None:
         human_gate_signals.append({
-            "gate_type": "needs_human",
+            "gate_type": str(
+                needs_human.get("human_gate")
+                or needs_human.get("gate_type")
+                or needs_human.get("gate_kind")
+            ),
             "source": str(needs_human_path or "observation://needs-human"),
             "plan_ref": needs_human.get("plan_ref"),
             "stale_token": needs_human.get("stale_token"),
@@ -1340,6 +1602,7 @@ def _classify_session(
     needs_human: Mapping[str, Any],
     repair_progress: Mapping[str, Any],
     watchdog_item: Mapping[str, Any],
+    watchdog_generated_at: datetime | None,
     liveness: Mapping[str, bool],
     superseding_sibling: str | None,
     latest_activity_dt: datetime | None,
@@ -1376,6 +1639,14 @@ def _classify_session(
             f"completed={completed}/{total} current_milestone_index={current_index}",
         )
 
+    plan_current_state = (
+        str(plan_state.get("current_state") or "").strip().lower()
+        if isinstance(plan_state, Mapping)
+        else ""
+    )
+    if plan_current_state == "paused" or str((chain_health or {}).get("last_state") or "").lower() == "paused":
+        return "paused", "durable operator pause; explicit resume required"
+
     # Fresh repair custody is stronger than a needs-human sidecar. Repair loops
     # can leave old needs-human markers in place while a higher layer is already
     # working the case; status consumers should show that as repairing.
@@ -1392,6 +1663,12 @@ def _classify_session(
     ):
         return "running", "live runner activity supersedes older needs-human marker"
 
+    if _needs_human_superseded_by_authoritative_recovery(
+        needs_human=needs_human,
+        plan_state=plan_state,
+    ):
+        return "attention", "newer authoritative recovery evidence supersedes needs-human marker"
+
     # A current needs-human sidecar is ground truth for non-repairing active
     # work. A complete chain with no active plan has no live repair target, so
     # stale repair exhaustion markers from earlier ticks must not keep it
@@ -1407,6 +1684,12 @@ def _classify_session(
     ):
         return "blocked", _needs_human_reason(needs_human)
 
+    if _is_needs_human(needs_human) and not (chain_complete and not current_plan):
+        return (
+            "attention",
+            "needs-human marker lacks current typed decision proof; control-plane evidence needs repair",
+        )
+
     # The watchdog report is the authority on runner truth: it reads the
     # authoritative chain state every tick. The chain-health sidecar can freeze
     # at the last non-complete snapshot for a finished chain (it stops being
@@ -1415,7 +1698,14 @@ def _classify_session(
     # reports done chains as stalled attention, disagreeing with the watchdog.
     wd_status = str(watchdog_item.get("status") or "").lower()
     if wd_status in {"complete", "completed"}:
-        return "complete", "watchdog reports chain complete"
+        chain_health_updated_at = _parse_iso(chain_health.get("updated_at")) if isinstance(chain_health, Mapping) else None
+        if not (
+            watchdog_generated_at is not None
+            and chain_health_updated_at is not None
+            and chain_health_updated_at > watchdog_generated_at
+            and _chain_health_explicitly_incomplete(chain_health)
+        ):
+            return "complete", "watchdog reports chain complete"
 
     # Terminal success is the strongest signal and beats stale plan failures.
     if chain_complete:
@@ -1426,6 +1716,32 @@ def _classify_session(
 
     if liveness.get("tmux") or liveness.get("process"):
         return "running", "live runner process observed"
+
+    if plan_current_state in {"done", "complete", "completed"} and not chain_complete:
+        return (
+            "attention",
+            "terminal plan has no live runner but chain completion is not recorded; "
+            "relaunch/reconciliation required",
+        )
+
+    active_step = (
+        plan_state.get("active_step")
+        if isinstance(plan_state, Mapping)
+        and isinstance(plan_state.get("active_step"), Mapping)
+        else {}
+    )
+    active_worker_pid = active_step.get("worker_pid") if active_step else None
+    if active_worker_pid not in (None, ""):
+        try:
+            active_worker_dead = not _pid_is_live(int(active_worker_pid))
+        except (TypeError, ValueError):
+            active_worker_dead = True
+        if active_worker_dead:
+            return (
+                "attention",
+                "stale active step has dead worker PID; runner is stopped and "
+                "fresh progress/repair sidecars do not establish liveness",
+            )
 
     if latest_activity_dt is not None and (now - latest_activity_dt).total_seconds() <= STALE_ACTIVITY_S:
         return "running", "recent plan/chain activity"
@@ -1484,10 +1800,12 @@ def _load_watchdog_report(
                 continue
             name = item.get("session")
             if isinstance(name, str) and name:
+                stamped = dict(item)
+                stamped["_report_generated_at"] = report.get("timestamp_utc")
                 # Keep the most informative item per session.
                 existing = by_session.get(name)
-                if existing is None or _item_signal_rank(item) > _item_signal_rank(existing):
-                    by_session[name] = item
+                if existing is None or _item_signal_rank(stamped) > _item_signal_rank(existing):
+                    by_session[name] = stamped
     return report, by_session, []
 
 
@@ -1599,6 +1917,28 @@ def _needs_human_superseded_by_live_activity(
     recorded_at = _parse_iso(str(needs_human.get("recorded_at") or ""))
     return recorded_at is not None and latest_activity_dt > recorded_at
 
+
+def _needs_human_superseded_by_authoritative_recovery(
+    *,
+    needs_human: Mapping[str, Any] | None,
+    plan_state: Mapping[str, Any] | None,
+) -> bool:
+    """Prevent a compatibility marker from overriding a newer typed cursor."""
+
+    if not _is_needs_human(needs_human) or not isinstance(plan_state, Mapping):
+        return False
+    marker_at = _parse_iso(str(needs_human.get("recorded_at") or ""))
+    failure = plan_state.get("latest_failure")
+    failure = failure if isinstance(failure, Mapping) else {}
+    failure_at = _parse_iso(str(failure.get("recorded_at") or ""))
+    if marker_at is None or failure_at is None or failure_at <= marker_at:
+        return False
+    from arnold_pipelines.megaplan.run_state.decision_contract import (
+        is_machine_repairable_failure_kind,
+    )
+
+    return is_machine_repairable_failure_kind(failure.get("kind"))
+
 def _is_current_needs_human(
     *,
     session: str,
@@ -1629,8 +1969,23 @@ def _is_current_needs_human(
             needs_human_payload=needs_human,
         )
     except Exception:
+        classification = None
+    if classification is not None and classification.is_true_blocker:
         return True
-    return classification.should_block
+
+    from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
+
+    marker_plan = str(
+        needs_human.get("current_plan_name")
+        or needs_human.get("plan_name")
+        or needs_human.get("plan_ref")
+        or ""
+    ).strip()
+    return bool(
+        typed_human_gate(needs_human) is not None
+        and marker_plan
+        and marker_plan == current_plan
+    )
 
 def _is_needs_human(needs_human: Mapping[str, Any] | None) -> bool:
     return bool(needs_human)
@@ -1856,7 +2211,7 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
 
 
 def _summarize(sessions: Iterable[Mapping[str, Any]]) -> dict[str, int]:
-    counts = {"running": 0, "blocked": 0, "repairing": 0, "complete": 0, "attention": 0}
+    counts = {"running": 0, "blocked": 0, "repairing": 0, "paused": 0, "complete": 0, "attention": 0}
     for entry in sessions:
         status = entry.get("status")
         if status in counts:

@@ -103,6 +103,22 @@ _TERMINAL_AUTHORITY_CLAIMS = frozenset({"done", "skipped", "waived", "not_applic
 _AUDIT_RESEARCH_NOTES_MIN_LEN = 100
 
 
+def has_durable_terminal_task_evidence(task: Mapping[str, Any]) -> bool:
+    """Whether terminal finalized output must survive stale batch overlays."""
+    status = _optional_str(task.get("status"))
+    if status == "done":
+        return any(
+            _string_values(task.get(field))
+            for field in ("files_changed", "commands_run", "evidence_files", "sections_written")
+        )
+    if status == "skipped":
+        notes = _optional_str(task.get("executor_notes"))
+        return bool(notes and not is_rubber_stamp(notes, strict=True))
+    return status in {"waived", "not_applicable"}
+
+
+
+
 @dataclass(frozen=True)
 class AuthorityDecision:
     """Authority adapter decision for one task.
@@ -421,10 +437,60 @@ def effective_execute_completed_task_ids(
         if resolved_project_dir is not None
         else None
     )
+    # A replayed milestone changes recorded commit IDs without changing its
+    # declared diff. Re-anchor only terminal file evidence wholly present in
+    # that diff, then feed the same current-head refs to all execute consumers.
+    effective_tasks = list(tasks)
+    effective_nucleus = evidence_nucleus
+    chain_policy = (
+        state.get("meta", {}).get("chain_policy", {})
+        if isinstance(state, Mapping) and isinstance(state.get("meta"), Mapping)
+        else {}
+    )
+    base_ref = chain_policy.get("milestone_base_sha") if isinstance(chain_policy, Mapping) else None
+    if (
+        resolved_plan_dir is not None
+        and resolved_project_dir is not None
+        and isinstance(base_ref, str)
+        and base_ref.strip()
+        and current_head
+    ):
+        try:
+            from arnold_pipelines.megaplan.loop.git import _collect_committed_range_paths
+            committed = _collect_committed_range_paths(resolved_project_dir, base_ref=base_ref)
+            reanchored_refs: list[EvidenceRef] = []
+            reanchored_tasks: list[Mapping[str, Any]] = []
+            for task in effective_tasks:
+                files = set(_string_values(task.get("files_changed")))
+                if (
+                    has_durable_terminal_task_evidence(task)
+                    and files
+                    and files.issubset(committed)
+                ):
+                    copied = dict(task)
+                    copied["head_sha"] = current_head
+                    reanchored_tasks.append(copied)
+                    reanchored_refs.extend(
+                        _evidence_from_task_record(
+                            copied,
+                            resolved_plan_dir / "finalize.json",
+                            root=resolved_plan_dir,
+                            default_head=current_head,
+                        )
+                    )
+                else:
+                    reanchored_tasks.append(task)
+            effective_tasks = reanchored_tasks
+            if reanchored_refs:
+                existing = _normalize_refs(evidence_nucleus)
+                effective_nucleus = (*existing, *reanchored_refs)
+        except Exception:
+            pass
+
     completed = corroborated_completed_task_ids(
-        task_records,
+        effective_tasks,
         plan_dir=resolved_plan_dir,
-        evidence_nucleus=evidence_nucleus,
+        evidence_nucleus=effective_nucleus,
         current_head=current_head,
         current_code_hash=current_code_hash,
         execution_window=execution_window,
@@ -437,7 +503,7 @@ def effective_execute_completed_task_ids(
             decision.diagnostics["shadow_delegate"] = "corroborated_completed_task_ids"
     explained_skips = {
         task_id
-        for task in task_records
+        for task in effective_tasks
         if isinstance(task, Mapping)
         and isinstance(task_id := _task_id(task), str)
         and _is_explained_skip(task)
@@ -445,14 +511,14 @@ def effective_execute_completed_task_ids(
     completed |= explained_skips
     explained_noops = {
         task_id
-        for task in task_records
+        for task in effective_tasks
         if isinstance(task, Mapping)
         and isinstance(task_id := _task_id(task), str)
         and _is_explained_noop_completion(task)
     }
     completed |= explained_noops
     if decisions is not None:
-        for task in task_records:
+        for task in effective_tasks:
             if not isinstance(task, Mapping):
                 continue
             task_id = _task_id(task)
@@ -463,12 +529,12 @@ def effective_execute_completed_task_ids(
 
     authoritative_commands = {
         command
-        for task in task_records
+        for task in effective_tasks
         if isinstance(task, Mapping)
         and _task_id(task) in completed
         for command in _string_values(task.get("commands_run"))
     }
-    for task in task_records:
+    for task in effective_tasks:
         if not isinstance(task, Mapping):
             continue
         task_id = _task_id(task)

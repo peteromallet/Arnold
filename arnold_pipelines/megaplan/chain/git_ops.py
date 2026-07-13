@@ -30,6 +30,12 @@ _NON_FAST_FORWARD_PUSH_MARKERS = (
     "failed to push some refs",
 )
 
+_MISSING_PR_MARKERS = (
+    "could not resolve to a pullrequest",
+    "no pull requests found",
+    "pull request was not found",
+)
+
 _CHAIN_RUNTIME_JOURNAL_PATTERNS = (
     ".megaplan/epics/*/events.jsonl",
     ".megaplan/plans/*/events.ndjson",
@@ -880,6 +886,70 @@ def _checkout_milestone_branch(
             if ancestor.returncode == 0:
                 writer(f"[chain] {branch} already contains {fork_point}\n")
             elif ancestor.returncode == 1:
+                common = _compat().subprocess.run(
+                    ["git", "merge-base", "HEAD", fork_point],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=120,
+                )
+                if common.returncode != 0 or not common.stdout.strip():
+                    writer(
+                        f"[chain] git merge-base HEAD {fork_point} -> rc={common.returncode}; "
+                        f"no common ancestor with existing milestone branch {branch}; "
+                        "skipping automatic rebase to preserve the repair relaunch.\n"
+                    )
+                    return base_sha
+                if expected_base_ref:
+                    branch_has_expected = _compat().subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", expected_base_ref, "HEAD"],
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    fork_has_expected = _compat().subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", expected_base_ref, fork_point],
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    writer(
+                        "[chain] git merge-base --is-ancestor "
+                        f"{expected_base_ref} HEAD -> rc={branch_has_expected.returncode}\n"
+                    )
+                    writer(
+                        "[chain] git merge-base --is-ancestor "
+                        f"{expected_base_ref} {fork_point} -> rc={fork_has_expected.returncode}\n"
+                    )
+                    if (
+                        branch_has_expected.returncode == 0
+                        and fork_has_expected.returncode == 1
+                    ):
+                        writer(
+                            "[chain] skipping automatic rebase for existing milestone "
+                            f"branch {branch}: {fork_point} no longer contains the "
+                            f"recorded target base {expected_base_ref}; preserving "
+                            "the existing branch history for repair relaunch.\n"
+                        )
+                        return expected_base_ref
+                    if (
+                        branch_has_expected.returncode == 1
+                        and fork_has_expected.returncode == 0
+                    ):
+                        writer(
+                            "[chain] skipping automatic rebase for existing milestone "
+                            f"branch {branch}: HEAD does not contain the recorded "
+                            f"target base {expected_base_ref}, but {fork_point} does; "
+                            "the branch history was built on a different root and "
+                            "cannot be rebased onto the current base. Preserving the "
+                            "existing branch for repair relaunch.\n"
+                        )
+                        return expected_base_ref
                 rebase = _compat().subprocess.run(
                     ["git", "rebase", fork_point],
                     cwd=str(root),
@@ -2015,6 +2085,18 @@ def _is_transient_gh_error(exc: CliError) -> bool:
     return any(pattern in combined for pattern in _compat().GH_TRANSIENT_ERROR_PATTERNS)
 
 
+def _is_missing_pr_error(exc: CliError) -> bool:
+    combined = " ".join(
+        str(part or "")
+        for part in (
+            exc.message,
+            exc.extra.get("stdout", ""),
+            exc.extra.get("stderr", ""),
+        )
+    ).lower()
+    return any(pattern in combined for pattern in _MISSING_PR_MARKERS)
+
+
 def _pr_state(root: Path, pr_number: int, *, writer) -> str:
     for attempt in range(1, _compat().GH_PR_STATE_ATTEMPTS + 1):
         try:
@@ -2027,6 +2109,12 @@ def _pr_state(root: Path, pr_number: int, *, writer) -> str:
             )
             break
         except CliError as exc:
+            if _is_missing_pr_error(exc):
+                writer(
+                    "[chain] gh pr view reported missing PR; treating persisted PR "
+                    f"#{pr_number} as closed\n"
+                )
+                return "closed"
             if attempt >= _compat().GH_PR_STATE_ATTEMPTS or not _compat()._is_transient_gh_error(exc):
                 raise
             writer(

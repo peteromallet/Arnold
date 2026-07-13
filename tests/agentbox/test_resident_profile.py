@@ -324,11 +324,15 @@ def test_agentbox_operator_runs_through_resident_runtime_persistence_and_outboun
             conversation_key="discord:guild:g1:channel:c1",
             content="ticket filed",
             idempotency_key=outbound_message.idempotency_key,
-            metadata={
-                "conversation_id": conversation.id,
-                "message_id": outbound_message.id,
-                "turn_id": turn.id,
-            },
+                metadata={
+                    "conversation_id": conversation.id,
+                    "message_id": outbound_message.id,
+                    "turn_id": turn.id,
+                    "discord_reply_to_message_id": "m1",
+                    "discord_processing_message_ids": ["m1"],
+                    "discord_processing_turn_id": turn.id,
+                    "discord_processing_continues": False,
+                },
         )
     ]
 
@@ -342,6 +346,75 @@ def test_agentbox_operator_runs_through_resident_runtime_persistence_and_outboun
     assert ticket.title == "Runtime Persistence"
     assert ticket.codebase_id == codebase.id
     assert ticket.filed_by_actor_id == "user-1"
+
+
+def test_resident_runtime_includes_replied_to_discord_message_in_runner_context(
+    tmp_path: Path,
+) -> None:
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        allowed_user_ids=("user-1",),
+        burst_idle_delay_s=0,
+        burst_max_delay_s=1,
+    )
+    authorizer = ResidentAuthorizer(config)
+    runner = _RecordingFakeRunner([FakeAgentStep.final("handled")])
+    outbound = _FakeOutboundSink()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=AgentBoxOperatorProfile(
+            store=store,
+            authorizer=authorizer,
+            agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+        ),
+        runner=runner,
+        outbound=outbound,
+    )
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            transport="discord",
+            conversation_key="discord:guild:g1:channel:c1",
+            guild_id="g1",
+            channel_id="c1",
+        ),
+        idempotency_key="conversation-1",
+    )
+    store.create_message(
+        epic_id=None,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="prior message body",
+        discord_message_id="discord-prior",
+        idempotency_key="prior-message",
+    )
+
+    asyncio.run(
+        _receive_and_flush(
+            runtime,
+            InboundEvent(
+                idempotency_key="discord:message:reply-m1",
+                conversation_key="discord:guild:g1:channel:c1",
+                subject=AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1"),
+                content="answering that",
+                raw={
+                    "discord_message_id": "reply-m1",
+                    "discord_reference_message_id": "discord-prior",
+                },
+            ),
+        )
+    )
+
+    assert runner.captured_request is not None
+    prompt = runner.captured_request.messages[-1]
+    assert prompt["role"] == "user"
+    assert "[Discord reply ancestry — nearest parent first; current message excluded]" in prompt["content"]
+    assert "Discord message id: discord-prior" in prompt["content"]
+    assert "prior message body" in prompt["content"]
+    assert prompt["content"].endswith("Content truncated: no\nanswering that")
+    assert outbound.sent[-1].metadata["discord_reply_to_message_id"] == "reply-m1"
 
 
 def test_agentbox_operator_resident_runtime_denies_non_allowlisted_discord_author_before_execution(
@@ -1378,13 +1451,17 @@ def test_resident_runtime_injects_conversation_history_before_current_burst(
     )
 
     messages = runner.captured_request.messages
-    assert [(message["role"], message["content"]) for message in messages] == [
+    assert [(message["role"], message["content"]) for message in messages[:2]] == [
         ("user", "earlier user message"),
         ("assistant", "earlier bot reply"),
-        ("user", "current burst message"),
     ]
+    assert messages[2]["role"] == "user"
+    assert "No parent message" in messages[2]["content"]
+    assert messages[2]["content"].endswith(
+        "Content truncated: no\ncurrent burst message"
+    )
     # The already-persisted current burst is excluded from history (no double-count).
-    assert sum(1 for m in messages if m["content"] == "current burst message") == 1
+    assert sum(1 for m in messages if m["content"].endswith("\ncurrent burst message")) == 1
 
 
 def test_resident_runtime_skips_history_when_window_is_zero(tmp_path: Path) -> None:
@@ -1437,7 +1514,10 @@ def test_resident_runtime_skips_history_when_window_is_zero(tmp_path: Path) -> N
         )
     )
 
-    assert [m["content"] for m in runner.captured_request.messages] == ["current burst message"]
+    assert len(runner.captured_request.messages) == 1
+    assert runner.captured_request.messages[0]["content"].endswith(
+        "Content truncated: no\ncurrent burst message"
+    )
 
 
 def test_agentbox_search_messages_scopes_to_current_conversation(tmp_path: Path) -> None:

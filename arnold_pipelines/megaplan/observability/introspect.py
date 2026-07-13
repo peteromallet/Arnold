@@ -21,7 +21,12 @@ from typing import Any, Optional, Tuple
 from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
 from arnold_pipelines.megaplan.observability.events import EventKind, read_events
+from arnold_pipelines.megaplan.observability.liveness import (
+    has_active_in_flight_llm,
+    unmatched_llm_starts,
+)
 from arnold.runtime.outcome import RunOutcome
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
 
 # Default phase timeout (overridable from state)
 _DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
@@ -266,27 +271,14 @@ def _compute_liveness(
         if ts is not None:
             last_event_ts = ts
 
-    # Check for in-flight LLM call: unmatched llm_call_start
-    unmatched_starts: list[dict] = []
-    llm_ends: set[str] = set()
-    for ev in events:
-        if ev.get("kind") == EventKind.LLM_CALL_END:
-            rid = ev.get("payload", {}).get("request_id")
-            if rid:
-                llm_ends.add(str(rid))
-        elif ev.get("kind") == EventKind.LLM_CALL_START:
-            unmatched_starts.append(ev)
-
-    has_in_flight_llm = False
-    for ev in unmatched_starts:
-        rid = ev.get("payload", {}).get("request_id")
-        if rid and str(rid) in llm_ends:
-            continue
-        # Check if start was within the last hour (stale starts from old runs don't count)
-        start_ts = _parse_iso(ev.get("ts_utc", ""))
-        if start_ts is not None and (now_ts - start_ts) < 7200:  # within 2 hours
-            has_in_flight_llm = True
-            break
+    has_in_flight_llm = has_active_in_flight_llm(
+        events,
+        state,
+        now_ts,
+        parse_timestamp=_parse_iso,
+        start_kind=EventKind.LLM_CALL_START,
+        end_kind=EventKind.LLM_CALL_END,
+    )
 
     # Rule: timeout-imminent (always check first)
     if phase_age is not None and phase_age > 0.8 * phase_timeout:
@@ -420,7 +412,7 @@ def _compute_block_details(plan_dir: Path, state: Optional[dict]) -> dict:
 
 
 def _process_tree(plan_name: str) -> list[dict]:
-    """Return list of megaplan processes related to this plan."""
+    """Return execution processes for this plan, excluding observers/prompts."""
     try:
         import psutil
     except ImportError:
@@ -430,10 +422,13 @@ def _process_tree(plan_name: str) -> list[dict]:
     try:
         for proc in psutil.process_iter(["pid", "cmdline", "ppid", "create_time"]):
             cmdline = proc.info.get("cmdline") or []
-            cmd_str = " ".join(cmdline)
-            if "megaplan" not in cmd_str.lower():
+            if "-m" not in cmdline or "arnold_pipelines.megaplan" not in cmdline:
                 continue
-            if plan_name not in cmd_str:
+            module_index = cmdline.index("arnold_pipelines.megaplan")
+            command = cmdline[module_index + 1] if module_index + 1 < len(cmdline) else ""
+            if command in {"introspect", "doctor", "trace", "status", "progress", "watch"}:
+                continue
+            if plan_name not in cmdline:
                 continue
             procs.append({
                 "pid": proc.info["pid"],
@@ -602,19 +597,11 @@ def build_introspect_payload(plan_dir: Path) -> dict:
     }
 
     # ── In-flight LLM ───────────────────────────────────────────────────
-    llm_starts_no_end: list[dict] = []
-    llm_end_rids: set[str] = set()
-    for ev in events:
-        if ev.get("kind") == EventKind.LLM_CALL_END:
-            rid = ev.get("payload", {}).get("request_id")
-            if rid:
-                llm_end_rids.add(str(rid))
-    for ev in events:
-        if ev.get("kind") == EventKind.LLM_CALL_START:
-            rid = ev.get("payload", {}).get("request_id")
-            if rid and str(rid) in llm_end_rids:
-                continue
-            llm_starts_no_end.append(ev)
+    llm_starts_no_end = unmatched_llm_starts(
+        events,
+        start_kind=EventKind.LLM_CALL_START,
+        end_kind=EventKind.LLM_CALL_END,
+    )
     in_flight_llm: Optional[dict] = llm_starts_no_end[-1] if llm_starts_no_end else None
 
     # ── Cost ────────────────────────────────────────────────────────────
@@ -647,11 +634,18 @@ def build_introspect_payload(plan_dir: Path) -> dict:
         if isinstance(it, int):
             iteration = it
 
+    presentation = plan_status_presentation(
+        plan_state,
+        active_phase=active_phase.get("phase"),
+    )
+
     # ── Assemble payload ────────────────────────────────────────────────
     payload: dict = {
         "now_utc": now.isoformat(),
         "plan": plan_name,
         "plan_state": plan_state,
+        "display_state": presentation["display_state"],
+        "execution_state": presentation["execution_state"],
         "iteration": iteration,
         "plan_dir": str(plan_dir),
         "anchors": anchor_summary(state or {}, plan_dir),

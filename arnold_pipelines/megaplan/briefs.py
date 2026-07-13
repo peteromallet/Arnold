@@ -233,7 +233,7 @@ def write_initiative_cloud_yaml(
             "branch": base_branch,
         },
         "agents": {"default": "codex"},
-        "codex": {"model": "gpt-5.4", "reasoning": "high"},
+        "codex": {"model": "gpt-5.6-sol", "reasoning": "medium"},
         "mode": "idle",
         "chain": {"spec": f"/workspace/{normalized_slug}/chain.yaml"},
         "megaplan": {

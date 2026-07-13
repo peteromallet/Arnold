@@ -422,6 +422,18 @@ class TestWorkflowComponents:
             },
         }
 
+    def test_gate_policy_compatibility_exports_match_route_surface(self) -> None:
+        from arnold_pipelines.megaplan.workflows.components import (
+            GATE_DEBT_VISIBILITY_POLICY,
+            GATE_NORMALIZATION_POLICY,
+            GATE_REPROMPT_POLICY,
+        )
+
+        route_surface = workflows.GATE_POLICY.metadata["route_surface"]
+        assert GATE_NORMALIZATION_POLICY == route_surface["normalization_policy"]
+        assert GATE_DEBT_VISIBILITY_POLICY == route_surface["debt_visibility"]
+        assert GATE_REPROMPT_POLICY == route_surface["reprompt_policy"]
+
     def test_revise_loop_policy_exposes_bounded_gate_revise_surface(self) -> None:
         loop_surface = workflows.REVISE_LOOP_POLICY.metadata["loop_surface"]
 

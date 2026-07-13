@@ -42,6 +42,39 @@ class BoundaryPhase(StrEnum):
     EXECUTE = "execute"
 
 
+class AuthorityState(StrEnum):
+    """Stable authority state classification for transition provenance.
+
+    These states describe the authority posture of a transition decision
+    so operators and auditors can quickly classify it without inspecting
+    the full evidence chain.  They are intentionally narrow: every state
+    can be derived from the decision's own payload fields.
+    """
+
+    MISSING = "missing"
+    """No authority records or evidence refs found — nothing was checked."""
+
+    DENIED = "denied"
+    """Transition was denied by policy or explicit authority decision."""
+
+    STALE = "stale"
+    """Authority evidence exists but is past its freshness window."""
+
+    WAIVED = "waived"
+    """Authority was explicitly waived by a recognized waiver grant."""
+
+    PARTIAL = "partial"
+    """Some authority refs exist but coverage is incomplete."""
+
+    DEGRADED = "degraded"
+    """Authority evidence is present but provider errors or incomplete
+    checks reduce its reliability."""
+
+    IRREVERSIBLE = "irreversible"
+    """Allowed transition with a complete, fresh authority chain; the
+    decision cannot be rolled back by automated means."""
+
+
 class BoundaryOutcome(StrEnum):
     """Stable boundary outcome codes."""
 
@@ -65,6 +98,144 @@ class FindingSeverity(StrEnum):
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
+
+
+# ── Template / profile compatibility ──────────────────────────────────────
+
+
+class TemplateCompatibility(StrEnum):
+    """Classifies the relationship between two template versions."""
+
+    EXACT_MATCH = "exact_match"
+    COMPATIBLE_EXTENSION = "compatible_extension"
+    BREAKING_CHANGE = "breaking_change"
+    INCOMPATIBLE_RANGE = "incompatible_range"
+    DELIBERATE_UPGRADE = "deliberate_upgrade"
+
+
+@dataclass(frozen=True)
+class TemplateCompatibilityResult:
+    """Result of comparing two template/profile versions.
+
+    Produced by :func:`check_template_compatibility` and consumed by
+    registry pin/upgrade flows.  This is a declarative record, not a
+    routing decision.
+    """
+
+    compatibility: TemplateCompatibility
+    added_optional_fields: tuple[str, ...] = ()
+    removed_required_fields: tuple[str, ...] = ()
+    changed_required_fields: tuple[str, ...] = ()
+    template_id: str | None = None
+    from_version: str | None = None
+    to_version: str | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "added_optional_fields",
+            tuple(str(f) for f in self.added_optional_fields),
+        )
+        object.__setattr__(
+            self, "removed_required_fields",
+            tuple(str(f) for f in self.removed_required_fields),
+        )
+        object.__setattr__(
+            self, "changed_required_fields",
+            tuple(str(f) for f in self.changed_required_fields),
+        )
+        object.__setattr__(self, "details", _freeze_mapping(self.details))
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "compatibility": self.compatibility.value,
+        }
+        if self.added_optional_fields:
+            payload["added_optional_fields"] = list(self.added_optional_fields)
+        if self.removed_required_fields:
+            payload["removed_required_fields"] = list(self.removed_required_fields)
+        if self.changed_required_fields:
+            payload["changed_required_fields"] = list(self.changed_required_fields)
+        if self.template_id is not None:
+            payload["template_id"] = self.template_id
+        if self.from_version is not None:
+            payload["from_version"] = self.from_version
+        if self.to_version is not None:
+            payload["to_version"] = self.to_version
+        if self.details:
+            payload["details"] = _thaw_value(self.details)
+        return payload
+
+
+def check_template_compatibility(
+    template_id: str,
+    from_required_fields: frozenset[str],
+    from_optional_fields: frozenset[str],
+    to_required_fields: frozenset[str],
+    to_optional_fields: frozenset[str],
+    from_version: str | None = None,
+    to_version: str | None = None,
+) -> TemplateCompatibilityResult:
+    """Compare two template/profile field sets and classify compatibility.
+
+    A *breaking change* is any removal of a required field or a change that
+    moves a field from optional to required (which existing producers cannot
+    satisfy).  A *compatible extension* adds optional fields without removing
+    or tightening existing requirements.
+    """
+    if from_required_fields == to_required_fields and from_optional_fields == to_optional_fields:
+        return TemplateCompatibilityResult(
+            compatibility=TemplateCompatibility.EXACT_MATCH,
+            template_id=template_id,
+            from_version=from_version,
+            to_version=to_version,
+        )
+
+    removed_required = tuple(
+        sorted(f for f in from_required_fields if f not in to_required_fields)
+    )
+    changed_to_required = tuple(
+        sorted(f for f in from_optional_fields if f in to_required_fields)
+    )
+    added_optional = tuple(
+        sorted(f for f in to_optional_fields if f not in from_optional_fields and f not in from_required_fields)
+    )
+
+    if removed_required or changed_to_required:
+        return TemplateCompatibilityResult(
+            compatibility=TemplateCompatibility.BREAKING_CHANGE,
+            removed_required_fields=tuple(
+                sorted(set(removed_required) | set(changed_to_required))
+            ),
+            added_optional_fields=added_optional,
+            template_id=template_id,
+            from_version=from_version,
+            to_version=to_version,
+        )
+
+    if added_optional:
+        return TemplateCompatibilityResult(
+            compatibility=TemplateCompatibility.COMPATIBLE_EXTENSION,
+            added_optional_fields=added_optional,
+            template_id=template_id,
+            from_version=from_version,
+            to_version=to_version,
+        )
+
+    # Fields reorganized but not strictly additive or subtractive
+    changed_required = tuple(
+        sorted(
+            (from_required_fields | from_optional_fields)
+            ^ (to_required_fields | to_optional_fields)
+        )
+    )
+    return TemplateCompatibilityResult(
+        compatibility=TemplateCompatibility.INCOMPATIBLE_RANGE,
+        changed_required_fields=changed_required,
+        template_id=template_id,
+        from_version=from_version,
+        to_version=to_version,
+    )
 
 
 _TOPOLOGY_DETAIL_KEYS_BY_ROW_ID = MappingProxyType(
@@ -376,6 +547,374 @@ class SemanticFinding:
         return payload
 
 
+# ── BoundaryEvidence ──────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class BoundaryEvidence:
+    """Raw evidence record for an individual piece of boundary proof.
+
+    Distinct from :class:`BoundaryReceipt`, which composites multiple
+    evidence items into a single completion proof.  ``BoundaryEvidence``
+    captures individual artifacts, journal entries, envelopes, warrants,
+    and their fingerprints before they are assembled into a receipt.
+
+    This is the canonical shape for producer-emitted evidence that
+    semantic-health, status, repair, and auditor consumers evaluate.
+    """
+
+    evidence_id: str
+    boundary_id: str
+    workflow_id: str
+    producer_id: str | None = None
+    invocation_id: str | None = None
+    artifact_refs: tuple[str, ...] = ()
+    artifact_fingerprints: Mapping[str, str] = field(default_factory=dict)
+    event_journal_refs: tuple[str, ...] = ()
+    step_io_envelope_refs: tuple[str, ...] = ()
+    warrant_capsule_refs: tuple[str, ...] = ()
+    authority_level: str | None = None
+    evidence_profile_ref: str | None = None
+    freshness: str | None = None
+    observation_time: str | None = None
+    evidence_version: str = "arnold.workflow.boundary_evidence.v1"
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.evidence_id:
+            raise ValueError("BoundaryEvidence.evidence_id must be non-empty")
+        if not self.boundary_id:
+            raise ValueError("BoundaryEvidence.boundary_id must be non-empty")
+        if not self.workflow_id:
+            raise ValueError("BoundaryEvidence.workflow_id must be non-empty")
+        object.__setattr__(
+            self, "artifact_refs",
+            tuple(str(a) for a in self.artifact_refs),
+        )
+        object.__setattr__(
+            self, "event_journal_refs",
+            tuple(str(e) for e in self.event_journal_refs),
+        )
+        object.__setattr__(
+            self, "step_io_envelope_refs",
+            tuple(str(s) for s in self.step_io_envelope_refs),
+        )
+        object.__setattr__(
+            self, "warrant_capsule_refs",
+            tuple(str(w) for w in self.warrant_capsule_refs),
+        )
+        object.__setattr__(
+            self, "artifact_fingerprints",
+            _freeze_mapping(self.artifact_fingerprints),
+        )
+        object.__setattr__(self, "details", _freeze_mapping(self.details))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a sidecar-safe evidence payload with primitive values."""
+        payload: dict[str, Any] = {
+            "evidence_id": self.evidence_id,
+            "boundary_id": self.boundary_id,
+            "workflow_id": self.workflow_id,
+            "evidence_version": self.evidence_version,
+        }
+        if self.producer_id is not None:
+            payload["producer_id"] = self.producer_id
+        if self.invocation_id is not None:
+            payload["invocation_id"] = self.invocation_id
+        if self.artifact_refs:
+            payload["artifact_refs"] = list(self.artifact_refs)
+        if self.artifact_fingerprints:
+            payload["artifact_fingerprints"] = _thaw_value(self.artifact_fingerprints)
+        if self.event_journal_refs:
+            payload["event_journal_refs"] = list(self.event_journal_refs)
+        if self.step_io_envelope_refs:
+            payload["step_io_envelope_refs"] = list(self.step_io_envelope_refs)
+        if self.warrant_capsule_refs:
+            payload["warrant_capsule_refs"] = list(self.warrant_capsule_refs)
+        if self.authority_level is not None:
+            payload["authority_level"] = self.authority_level
+        if self.evidence_profile_ref is not None:
+            payload["evidence_profile_ref"] = self.evidence_profile_ref
+        if self.freshness is not None:
+            payload["freshness"] = self.freshness
+        if self.observation_time is not None:
+            payload["observation_time"] = self.observation_time
+        if self.details:
+            payload["details"] = _thaw_value(self.details)
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> BoundaryEvidence:
+        """Reconstruct from a serialized dict (e.g. sidecar JSON)."""
+        return cls(
+            evidence_id=data["evidence_id"],
+            boundary_id=data["boundary_id"],
+            workflow_id=data["workflow_id"],
+            producer_id=data.get("producer_id"),
+            invocation_id=data.get("invocation_id"),
+            artifact_refs=tuple(data.get("artifact_refs", ())),
+            artifact_fingerprints=data.get("artifact_fingerprints", {}),
+            event_journal_refs=tuple(data.get("event_journal_refs", ())),
+            step_io_envelope_refs=tuple(data.get("step_io_envelope_refs", ())),
+            warrant_capsule_refs=tuple(data.get("warrant_capsule_refs", ())),
+            authority_level=data.get("authority_level"),
+            evidence_profile_ref=data.get("evidence_profile_ref"),
+            freshness=data.get("freshness"),
+            observation_time=data.get("observation_time"),
+            evidence_version=data.get("evidence_version", "arnold.workflow.boundary_evidence.v1"),
+            details=data.get("details", {}),
+        )
+
+
+# ── EvidenceProfile ───────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class EvidenceProfile:
+    """Provenance and trust metadata for boundary evidence.
+
+    Describes *who* produced the evidence, *how* it was produced, and
+    what *trust level* it carries.  This is referenced by
+    :class:`BoundaryEvidence` and :class:`BoundaryReceipt` but is not
+    itself evidence — it is the profile that qualifies evidence.
+    """
+
+    profile_id: str
+    provenance: str | None = None
+    trust_level: str | None = None
+    source_type: str | None = None
+    source_kind: str | None = None
+    actor_identity: str | None = None
+    tool_version_vector: tuple[str, ...] = ()
+    confidence: str | None = None
+    privacy_class: str | None = None
+    observation_window: str | None = None
+    profile_version: str = "arnold.workflow.evidence_profile.v1"
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.profile_id:
+            raise ValueError("EvidenceProfile.profile_id must be non-empty")
+        object.__setattr__(
+            self, "tool_version_vector",
+            tuple(str(t) for t in self.tool_version_vector),
+        )
+        object.__setattr__(self, "details", _freeze_mapping(self.details))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a sidecar-safe profile payload with primitive values."""
+        payload: dict[str, Any] = {
+            "profile_id": self.profile_id,
+            "profile_version": self.profile_version,
+        }
+        if self.provenance is not None:
+            payload["provenance"] = self.provenance
+        if self.trust_level is not None:
+            payload["trust_level"] = self.trust_level
+        if self.source_type is not None:
+            payload["source_type"] = self.source_type
+        if self.source_kind is not None:
+            payload["source_kind"] = self.source_kind
+        if self.actor_identity is not None:
+            payload["actor_identity"] = self.actor_identity
+        if self.tool_version_vector:
+            payload["tool_version_vector"] = list(self.tool_version_vector)
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        if self.privacy_class is not None:
+            payload["privacy_class"] = self.privacy_class
+        if self.observation_window is not None:
+            payload["observation_window"] = self.observation_window
+        if self.details:
+            payload["details"] = _thaw_value(self.details)
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> EvidenceProfile:
+        """Reconstruct from a serialized dict."""
+        return cls(
+            profile_id=data["profile_id"],
+            provenance=data.get("provenance"),
+            trust_level=data.get("trust_level"),
+            source_type=data.get("source_type"),
+            source_kind=data.get("source_kind"),
+            actor_identity=data.get("actor_identity"),
+            tool_version_vector=tuple(data.get("tool_version_vector", ())),
+            confidence=data.get("confidence"),
+            privacy_class=data.get("privacy_class"),
+            observation_window=data.get("observation_window"),
+            profile_version=data.get("profile_version", "arnold.workflow.evidence_profile.v1"),
+            details=data.get("details", {}),
+        )
+
+
+# ── BoundaryGraph ─────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class BoundaryGraph:
+    """Declared dependency, join, and fan-out structure at a boundary.
+
+    Describes what other boundaries this boundary depends on, joins with,
+    fans out to, or fans in from — including cross-workflow refs and
+    entity lineage.  This is declarative graph metadata, not a runtime
+    route topology.
+    """
+
+    graph_id: str
+    boundary_id: str
+    dependencies: tuple[str, ...] = ()
+    joins: tuple[str, ...] = ()
+    fan_out_refs: tuple[str, ...] = ()
+    fan_in_ref: str | None = None
+    cross_workflow_refs: tuple[str, ...] = ()
+    entity_lineage: tuple[str, ...] = ()
+    peer_join_requirements: tuple[str, ...] = ()
+    graph_version: str = "arnold.workflow.boundary_graph.v1"
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.graph_id:
+            raise ValueError("BoundaryGraph.graph_id must be non-empty")
+        if not self.boundary_id:
+            raise ValueError("BoundaryGraph.boundary_id must be non-empty")
+        object.__setattr__(
+            self, "dependencies",
+            tuple(str(d) for d in self.dependencies),
+        )
+        object.__setattr__(
+            self, "joins",
+            tuple(str(j) for j in self.joins),
+        )
+        object.__setattr__(
+            self, "fan_out_refs",
+            tuple(str(f) for f in self.fan_out_refs),
+        )
+        object.__setattr__(
+            self, "cross_workflow_refs",
+            tuple(str(c) for c in self.cross_workflow_refs),
+        )
+        object.__setattr__(
+            self, "entity_lineage",
+            tuple(str(e) for e in self.entity_lineage),
+        )
+        object.__setattr__(
+            self, "peer_join_requirements",
+            tuple(str(p) for p in self.peer_join_requirements),
+        )
+        object.__setattr__(self, "details", _freeze_mapping(self.details))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a sidecar-safe graph payload with primitive values."""
+        payload: dict[str, Any] = {
+            "graph_id": self.graph_id,
+            "boundary_id": self.boundary_id,
+            "graph_version": self.graph_version,
+        }
+        if self.dependencies:
+            payload["dependencies"] = list(self.dependencies)
+        if self.joins:
+            payload["joins"] = list(self.joins)
+        if self.fan_out_refs:
+            payload["fan_out_refs"] = list(self.fan_out_refs)
+        if self.fan_in_ref is not None:
+            payload["fan_in_ref"] = self.fan_in_ref
+        if self.cross_workflow_refs:
+            payload["cross_workflow_refs"] = list(self.cross_workflow_refs)
+        if self.entity_lineage:
+            payload["entity_lineage"] = list(self.entity_lineage)
+        if self.peer_join_requirements:
+            payload["peer_join_requirements"] = list(self.peer_join_requirements)
+        if self.details:
+            payload["details"] = _thaw_value(self.details)
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> BoundaryGraph:
+        """Reconstruct from a serialized dict."""
+        return cls(
+            graph_id=data["graph_id"],
+            boundary_id=data["boundary_id"],
+            dependencies=tuple(data.get("dependencies", ())),
+            joins=tuple(data.get("joins", ())),
+            fan_out_refs=tuple(data.get("fan_out_refs", ())),
+            fan_in_ref=data.get("fan_in_ref"),
+            cross_workflow_refs=tuple(data.get("cross_workflow_refs", ())),
+            entity_lineage=tuple(data.get("entity_lineage", ())),
+            peer_join_requirements=tuple(data.get("peer_join_requirements", ())),
+            graph_version=data.get("graph_version", "arnold.workflow.boundary_graph.v1"),
+            details=data.get("details", {}),
+        )
+
+
+# ── TemporalPolicy ────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class TemporalPolicy:
+    """Time-based validity policy for boundary evidence and authority.
+
+    Separates staleness, deadline, verification timeout, minimum
+    observation duration, expiry, and sunset/renewal as distinct fields
+    rather than collapsing them into a single timestamp.
+
+    Referenced by contracts, receipts, evidence profiles, and authority
+    records to communicate how long each piece of proof remains valid.
+    """
+
+    policy_id: str
+    staleness_duration: str | None = None
+    deadline: str | None = None
+    verification_timeout: str | None = None
+    minimum_observation_duration: str | None = None
+    expiry: str | None = None
+    sunset_renewal: str | None = None
+    policy_version: str = "arnold.workflow.temporal_policy.v1"
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.policy_id:
+            raise ValueError("TemporalPolicy.policy_id must be non-empty")
+        object.__setattr__(self, "details", _freeze_mapping(self.details))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a sidecar-safe temporal policy payload."""
+        payload: dict[str, Any] = {
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+        }
+        if self.staleness_duration is not None:
+            payload["staleness_duration"] = self.staleness_duration
+        if self.deadline is not None:
+            payload["deadline"] = self.deadline
+        if self.verification_timeout is not None:
+            payload["verification_timeout"] = self.verification_timeout
+        if self.minimum_observation_duration is not None:
+            payload["minimum_observation_duration"] = self.minimum_observation_duration
+        if self.expiry is not None:
+            payload["expiry"] = self.expiry
+        if self.sunset_renewal is not None:
+            payload["sunset_renewal"] = self.sunset_renewal
+        if self.details:
+            payload["details"] = _thaw_value(self.details)
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> TemporalPolicy:
+        """Reconstruct from a serialized dict."""
+        return cls(
+            policy_id=data["policy_id"],
+            staleness_duration=data.get("staleness_duration"),
+            deadline=data.get("deadline"),
+            verification_timeout=data.get("verification_timeout"),
+            minimum_observation_duration=data.get("minimum_observation_duration"),
+            expiry=data.get("expiry"),
+            sunset_renewal=data.get("sunset_renewal"),
+            policy_version=data.get("policy_version", "arnold.workflow.temporal_policy.v1"),
+            details=data.get("details", {}),
+        )
+
+
 # ── internal helpers ──────────────────────────────────────────────────────
 
 
@@ -423,13 +962,113 @@ def boundary_contract_missing_topology_detail_keys(contract: BoundaryContract) -
     return tuple(missing)
 
 
+# ── Transition authority state classification ─────────────────────────────
+
+
+def classify_authority_state(
+    *,
+    allowed: bool,
+    authority_record_refs: tuple[str, ...],
+    checked_evidence_refs: tuple[str, ...],
+    advisory: tuple[str, ...] = (),
+    has_waiver: bool = False,
+    provider_errors: bool = False,
+    denial_reasons: tuple[str, ...] = (),
+) -> AuthorityState:
+    """Classify the authority posture of a review-to-done transition decision.
+
+    Derives one of seven stable :class:`AuthorityState` values from the
+    decision's own payload fields.  The classification is deterministic
+    and does not inspect external state.
+
+    Priority order (first match wins):
+
+    1. *denied* — transition was denied by policy.
+    2. *missing* — no authority refs and no evidence refs.
+    3. *waived* — explicit waiver grant detected.
+    4. *stale* — evidence is stale (advisory freshness warning present).
+    5. *degraded* — evidence present but provider errors degrade it.
+    6. *partial* — some authority refs exist but coverage incomplete.
+    7. *irreversible* — allowed with complete fresh authority chain.
+    """
+    if not allowed:
+        return AuthorityState.DENIED
+
+    has_any_authority = bool(authority_record_refs)
+    has_any_evidence = bool(checked_evidence_refs)
+
+    if not has_any_authority and not has_any_evidence:
+        return AuthorityState.MISSING
+
+    if has_waiver:
+        return AuthorityState.WAIVED
+
+    advisory_text = " ".join(str(a).lower() for a in advisory)
+    if "stale" in advisory_text or "could not prove" in advisory_text:
+        return AuthorityState.STALE
+
+    if provider_errors:
+        return AuthorityState.DEGRADED
+
+    if has_any_authority and not has_any_evidence:
+        return AuthorityState.PARTIAL
+
+    # Evidence present, no staleness, no degradation, no denial.
+    return AuthorityState.IRREVERSIBLE
+
+
+def compile_authority_view(
+    *,
+    boundary_id: str | None = None,
+    authority_state: AuthorityState | str,
+    authority_record_refs: tuple[str, ...] = (),
+    checked_evidence_refs: tuple[str, ...] = (),
+    status: str = "",
+    would_block_reasons: tuple[str, ...] = (),
+    operator_summary: str | None = None,
+) -> dict[str, Any]:
+    """Build a compact operator/auditor-friendly authority view dict.
+
+    The returned dict is suitable for embedding in ``routing_provenance``
+    as ``authority_view`` so operators and auditors can classify a
+    transition decision at a glance without inspecting the full evidence
+    chain.
+    """
+    state = authority_state.value if isinstance(authority_state, AuthorityState) else str(authority_state)
+    view: dict[str, Any] = {
+        "authority_state": state,
+        "status": status,
+    }
+    if boundary_id is not None:
+        view["boundary_id"] = boundary_id
+    if authority_record_refs:
+        view["authority_record_refs"] = list(authority_record_refs)
+    if checked_evidence_refs:
+        view["checked_evidence_refs"] = list(checked_evidence_refs)
+    if would_block_reasons:
+        view["would_block_reasons"] = list(would_block_reasons)
+    if operator_summary is not None:
+        view["operator_summary"] = operator_summary
+    return view
+
+
 __all__ = [
     "AuthorityRecord",
+    "AuthorityState",
     "BoundaryContract",
+    "BoundaryEvidence",
+    "BoundaryGraph",
     "BoundaryOutcome",
     "BoundaryPhase",
     "BoundaryReceipt",
+    "EvidenceProfile",
     "FindingSeverity",
     "SemanticFinding",
+    "TemplateCompatibility",
+    "TemplateCompatibilityResult",
+    "TemporalPolicy",
     "boundary_contract_missing_topology_detail_keys",
+    "check_template_compatibility",
+    "classify_authority_state",
+    "compile_authority_view",
 ]

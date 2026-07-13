@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any
@@ -120,9 +121,23 @@ def enqueue_audit_repair_request(
         for finding in incident_audit.get("findings") or []
         if isinstance(finding, dict) and finding.get("status") != "ok"
     ]
-    if not findings:
+    deterministic = (
+        audit_item.get("deterministic_superfixer_evidence")
+        if isinstance(audit_item.get("deterministic_superfixer_evidence"), dict)
+        else {}
+    )
+    deterministic_actionable = deterministic.get("actionable") is True
+    if not findings and not deterministic_actionable:
         return None
-    primary = findings[0]
+    primary = findings[0] if findings else {
+        "code": "stale_l1_l2_cycle",
+        "layer": "superfixer_custody",
+        "recommendation": "meta_repair.repair_attempt",
+        "message": (
+            "Accepted-unclaimed/exhausted L1 custody, a dead runner, an incomplete "
+            "chain, and absent or stale L2 evidence require control-plane repair."
+        ),
+    }
     session = str(audit_item.get("session") or "").strip()
     if not session:
         raise ValueError("six-hour audit repair request requires a session")
@@ -131,13 +146,54 @@ def enqueue_audit_repair_request(
     code = str(primary.get("code") or "six_hour_audit_finding").strip()
     layer = str(primary.get("layer") or "six_hour_auditor").strip()
     recommendation = str(primary.get("recommendation") or "").strip()
+    incident_id = str(incident_audit.get("incident_id") or "").strip()
+    problem_id = str(incident_audit.get("problem_id") or "").strip()
+    accepted_request_ids = sorted(
+        {
+            str(value).strip()
+            for value in deterministic.get("accepted_unclaimed_request_ids") or []
+            if str(value).strip()
+        }
+    )
+    root_cause_identity = "audit:" + sha256(
+        json.dumps(
+            {
+                "session": session,
+                "plan": plan,
+                "incident_id": incident_id,
+                "problem_id": problem_id,
+                "layer": layer,
+                "code": code,
+                "accepted_request_ids": accepted_request_ids,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    evidence_cursor = {
+        "incident_id": incident_id,
+        "problem_id": problem_id,
+        "accepted_request_ids": accepted_request_ids,
+        "layer": layer,
+        "code": code,
+    }
+    retry_budget = (
+        dict(deterministic.get("retry_budget") or {})
+        if isinstance(deterministic.get("retry_budget"), dict)
+        else {}
+    )
     signature = {
         "failure_kind": code,
-        "current_state": str((audit_item.get("incident_projection") or {}).get("state") or ""),
+        "current_state": str(
+            audit_item.get("current_state")
+            or (audit_item.get("incident_projection") or {}).get("state")
+            or deterministic.get("canonical_state")
+            or "machine_action_required"
+        ).strip(),
         "phase_or_step": layer,
         "milestone_or_plan": plan,
         "gate_recommendation": "",
-        "blocked_task_id": "",
+        "blocked_task_id": root_cause_identity,
         "event_signature": f"six_hour_auditor:{layer}:{code}",
     }
     diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
@@ -153,8 +209,15 @@ def enqueue_audit_repair_request(
         source="six_hour_auditor",
         target={
             "plan": plan,
-            "incident_id": incident_audit.get("incident_id"),
-            "problem_id": incident_audit.get("problem_id"),
+            "plan_name": plan,
+            "incident_id": incident_id,
+            "problem_id": problem_id,
+            "workspace": workspace,
+            "root_cause_identity": root_cause_identity,
+            "evidence_cursor": evidence_cursor,
+            "retry_budget": retry_budget,
+            "retry_strategy": "meta_repair",
+            "deterministic_superfixer_evidence": deterministic if deterministic_actionable else {},
         },
         workspace=workspace,
         run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
@@ -839,6 +902,7 @@ def _expected_root_cause_kinds_for_canonical_state(canonical_state: str) -> set[
             "verification",
         },
         "UNKNOWN": set(),
+        "PAUSED": {"operator_pause"},
         "COMPLETED": set(),
         "STALE_DERIVED_STATE": set(),
     }.get(canonical_state, set())
@@ -861,6 +925,7 @@ def _next_action_matches_canonical_state(canonical_state: str, next_action: str)
     valid_actions = {
         "BROKEN_STATE_MACHINE": {"escalate_broken_state_machine"},
         "COMPLETED": {"audit_cycle_complete", "no_action_run_complete"},
+        "PAUSED": {"explicit_operator_resume"},
         "HUMAN_ACTION_REQUIRED": {"await_human_action", "manual_review"},
         "REAL_IMPLEMENTATION_BLOCK": {"machine_repair_or_replan"},
         "RETRYABLE_EXECUTION_BLOCK": {"requeue_or_retry"},
@@ -1263,6 +1328,28 @@ def _next_expected_event(
         return "github_sync.publish"
     candidate = brief.get("next_expected_event") or incident.get("next_expected_event")
     return candidate if isinstance(candidate, str) and candidate else None
+
+
+def github_sync_publication_due(incident_audit: dict[str, Any]) -> bool:
+    """Return whether an audit requires GitHub publication as an independent action."""
+    audit_complete = (
+        incident_audit.get("audit_complete")
+        if isinstance(incident_audit.get("audit_complete"), dict)
+        else {}
+    )
+    raw_handoff = audit_complete.get("next_expected_event") or incident_audit.get(
+        "next_expected_event"
+    )
+    if raw_handoff == "github_sync.publish":
+        return True
+    findings = incident_audit.get("findings")
+    if not isinstance(findings, list):
+        return False
+    return any(
+        isinstance(finding, dict)
+        and finding.get("recommendation") == "github_sync.publish"
+        for finding in findings
+    )
 
 
 def _requires_human_escalation(findings: list[dict[str, Any]]) -> bool:

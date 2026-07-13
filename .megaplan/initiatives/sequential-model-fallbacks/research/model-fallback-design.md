@@ -4,6 +4,8 @@ Date: 2026-07-04
 Status: revised design recommendation after DeepSeek, GPT-5.5, and six targeted DeepSeek audits
 Scope: Megaplan profile routing, tier routing, worker dispatch, and observability
 
+> **2026-07-11 scope note:** This document remains the historical detailed design for the fallback layer. The initiative now targets the broader unified managed-agent contract in `NORTHSTAR.md`. Sprint 1's fallback-safety track must preserve these scalar/array, provider-family, observability, and quality-vs-availability rules while applying one classifier to Megaplan and resident-managed dispatchers. Its newer locked safety rule is stricter: any dispatcher, including execute, may advance only with affirmative no-mutation evidence; ambiguity fails closed. See `decisions/managed-agent-contract-boundaries.md`.
+
 ## Goal
 
 Allow a profile or tier entry to declare an ordered list of model specs. At runtime, Megaplan should try the first spec and move to the next only when the attempt fails for an availability or infrastructure reason.
