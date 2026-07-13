@@ -6513,6 +6513,14 @@ repair_unintended_stop() {
     return 0
   fi
 
+  if [[ "${REPAIR_UNHEALTHY_RESULT:-}" == "custody_missing" \
+     || "${REPAIR_UNHEALTHY_RESULT:-}" == "claim_denied" ]]; then
+    route_l1_custody_failure_to_meta \
+      "$report_items" "$session" "$workspace" "$remote_spec" \
+      "unintended-stop L1 launch/claim failed result=${REPAIR_UNHEALTHY_RESULT:-unknown}; cause=$reason"
+    return 0
+  fi
+
   case "${REPAIR_UNHEALTHY_RESULT:-capability_missing}" in
     direct_relaunch_required)
       report_item "$report_items" "$session" "repair" "direct_relaunch_required" "$reason" "$workspace" "$remote_spec"
@@ -7577,6 +7585,13 @@ PY
     if repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$health"; then
       # Repair running or just background-dispatched; it owns the relaunch.
       report_item "$report_items" "$session" "repair" "repair_running" "$health" "$workspace" "$remote_spec"
+      return 0
+    fi
+    if [[ "${REPAIR_UNHEALTHY_RESULT:-}" == "custody_missing" \
+       || "${REPAIR_UNHEALTHY_RESULT:-}" == "claim_denied" ]]; then
+      route_l1_custody_failure_to_meta \
+        "$report_items" "$session" "$workspace" "$remote_spec" \
+        "unhealthy-session L1 launch/claim failed result=${REPAIR_UNHEALTHY_RESULT:-unknown}; cause=$health"
       return 0
     fi
     local meta_repair_trigger meta_dispatch_result
