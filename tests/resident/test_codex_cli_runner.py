@@ -5,7 +5,13 @@ import json
 import os
 from pathlib import Path
 
-from arnold_pipelines.megaplan.resident.agent_loop import AgentRequest, CodexCliAgentRunner
+import pytest
+
+from arnold_pipelines.megaplan.resident.agent_loop import (
+    AgentPromptTooLargeError,
+    AgentRequest,
+    CodexCliAgentRunner,
+)
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.tool_registry import ToolRegistry
 from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
@@ -94,6 +100,55 @@ def test_codex_cli_prompt_requires_safe_path_for_resident_commands(tmp_path: Pat
     assert "python -P -m arnold_pipelines.megaplan.resident.subagent launch" in prompt
     assert "python -P -m arnold_pipelines.megaplan resident read-reply-chain" in prompt
     assert "`-P` isolation flag is mandatory" in prompt
+
+
+def test_codex_cli_prompt_uses_compact_tool_catalog(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan.resident.tool_registry import ToolRegistration
+    from arnold_pipelines.megaplan.resident.tool_schemas import ToolInput, ToolResult
+
+    class LargeInput(ToolInput):
+        value: str
+
+    tools = ToolRegistry()
+    tools.register(
+        ToolRegistration(
+            "large_tool",
+            "A useful tool.",
+            "read",
+            LargeInput,
+            ToolResult,
+            lambda _payload: ToolResult(ok=True, message="ok"),
+        )
+    )
+    runner = CodexCliAgentRunner(ResidentConfig(model_provider="codex"), cwd=tmp_path)
+
+    prompt = runner._prompt(
+        AgentRequest(
+            conversation_id="conversation-tools",
+            messages=({"role": "user", "content": "hello"},),
+            system_prompt="system prompt",
+        ),
+        tools,
+    )
+
+    assert '"arguments": ["value"]' in prompt
+    assert '"input_schema"' not in prompt
+
+
+def test_codex_cli_prompt_fails_locally_before_transport_limit(tmp_path: Path) -> None:
+    runner = CodexCliAgentRunner(
+        ResidentConfig(model_provider="codex", max_prompt_chars=2_000), cwd=tmp_path
+    )
+
+    with pytest.raises(AgentPromptTooLargeError, match="safe pre-dispatch budget"):
+        runner._prompt(
+            AgentRequest(
+                conversation_id="conversation-budget",
+                messages=({"role": "user", "content": "x" * 4_000},),
+                system_prompt="system prompt",
+            ),
+            ToolRegistry(),
+        )
 
 
 def test_codex_cli_compatibility_process_receives_validated_launch_provenance(
