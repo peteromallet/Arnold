@@ -97,6 +97,18 @@ def validate_queue_root(queue_root: str | Path) -> Path:
     return root
 
 
+def repair_queue_dir(marker_dir: str | Path) -> Path:
+    """Return the central queue adjacent to the cloud-session marker directory."""
+
+    marker_root = Path(marker_dir).resolve()
+    megaplan_root = (
+        marker_root.parent
+        if marker_root.parent.name == ".megaplan"
+        else marker_root.parent / ".megaplan"
+    )
+    return validate_queue_root(megaplan_root / QUEUE_DIR_NAME)
+
+
 def requests_dir(queue_dir: str | Path) -> Path:
     return validate_queue_root(queue_dir) / REQUESTS_DIR_NAME
 
@@ -947,6 +959,7 @@ __all__ = [
     "problem_signature_key",
     "record_malformed_file",
     "redacted_hint_hash",
+    "repair_queue_dir",
     "record_unclaimed_request_failure",
     "release_active_repair_request_claim",
     "request_id_for",
