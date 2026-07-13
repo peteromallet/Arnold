@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -86,12 +87,72 @@ def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
     assert "RUNTIME_SRC=/workspace/project/.megaplan/runtime/editable-engine" in command
     assert 'source checkout dirty; using clean runtime mirror at $RUNTIME_SRC' in command
     assert 'git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"' in command
+    assert 'git -C "$RUNTIME_SRC" remote set-url origin "$MIRROR_REMOTE"' in command
     assert 'git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"' in command
     assert 'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"' in command
     assert 'pip install -e "$MEGAPLAN_RUNTIME_SRC"' in command
     assert "arnold_pipelines.megaplan.cloud.runtime_provenance" in command
     assert '--expected-root "$MEGAPLAN_RUNTIME_SRC"' in command
     assert '--expected-revision "$RUNTIME_REVISION"' in command
+
+
+def test_dirty_source_runtime_mirror_executes_configured_upstream_ref(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    publisher = tmp_path / "publisher"
+    source = tmp_path / "source"
+    runtime = tmp_path / "runtime"
+    fake_bin = tmp_path / "bin"
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(publisher))
+    _git(publisher, "config", "user.email", "test@example.com")
+    _git(publisher, "config", "user.name", "Test User")
+    old_head = _commit(publisher, "engine.txt", "old\n", "old engine")
+    _git(publisher, "branch", "-M", "main")
+    _git(publisher, "push", "-u", "origin", "main")
+    _git(tmp_path, "clone", "--branch", "main", str(origin), str(source))
+
+    new_head = _commit(publisher, "engine.txt", "new\n", "new engine")
+    _git(publisher, "push", "origin", "main")
+    (source / "engine.txt").write_text("cloud work in progress\n", encoding="utf-8")
+
+    fake_bin.mkdir()
+    for executable in ("pip", "python"):
+        shim = fake_bin / executable
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/project.git"),
+        agents={},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(
+            ref="main",
+            repo=str(origin),
+            src_path=str(source),
+        ),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    command = _megaplan_refresh_command(spec, runtime_src_path=str(runtime))
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert _git(source, "rev-parse", "HEAD").stdout.strip() == old_head
+    assert (source / "engine.txt").read_text(encoding="utf-8") == "cloud work in progress\n"
+    assert _git(runtime, "rev-parse", "HEAD").stdout.strip() == new_head
+    assert (runtime / "engine.txt").read_text(encoding="utf-8") == "new\n"
 
 
 def test_cloud_refresh_force_clean_resets_only_editable_source() -> None:
