@@ -465,7 +465,12 @@ def _wait_for_tmux_resident(
 
 
 def _resident_descendant_pid(root_pid: int) -> int | None:
-    """Return the canonical resident PID below a pane shell, using local procfs."""
+    """Return the canonical resident PID at or below a pane root via procfs.
+
+    The tmux start command normally ends with ``exec python ... resident
+    discord``.  In that layout the pane PID is the resident PID itself rather
+    than a shell with a resident child, so the root must be considered too.
+    """
 
     pending = [root_pid]
     seen: set[int] = set()
@@ -479,7 +484,7 @@ def _resident_descendant_pid(root_pid: int) -> int | None:
         except (FileNotFoundError, PermissionError, ProcessLookupError):
             continue
         command = cmdline.replace(b"\0", b" ").decode("utf-8", errors="replace")
-        if pid != root_pid and DISCORD_RESIDENT_TMUX_COMMAND_MARKER in command:
+        if DISCORD_RESIDENT_TMUX_COMMAND_MARKER in command:
             return pid
         try:
             children = (
