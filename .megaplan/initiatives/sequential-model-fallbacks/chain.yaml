@@ -2,6 +2,7 @@ base_branch: editible-install
 anchors:
   north_star: NORTHSTAR.md
 merge_policy: auto
+validation_policy: required
 milestones:
   - label: s1-shared-foundations-and-managed-launch
     idea: .megaplan/initiatives/sequential-model-fallbacks/briefs/s1-shared-foundations-and-managed-launch.md
@@ -16,13 +17,19 @@ milestones:
       characterization, resolver/profile extraction, fallback classification/mutation gating,
       immutable custody/schema work, and launcher caller/state-machine inventory concurrently.
       Freeze shared schema and receipt revisions at an early convergence gate; then complete the
-      managed child-launch foundation against those contracts. Preserve D1-D10/D5 semantics,
+      managed child-launch foundation against those contracts. Emit and validate
+      docs/managed-agents/s1-contract-handoff.yaml with exact contract, fixture, and baseline
+      revisions before Sprint 2. Reconcile the project checkout with the pinned resident runtime
+      before resident-code edits. Preserve D1-D10/D5 semantics,
       partnered-5 arrays, scalar/v1 compatibility, affirmative no-mutation fallback, complete
       content-addressed task custody, immutable provenance, structured results, and root-only delivery.
     notes: >-
-      Aggressive delivery days 1-6 of the roughly two-week initiative. Difficulty 5/5. Parallel
+      Approximately ten skilled-engineer days (Sprint 1 of a roughly four-human-week initiative).
+      Difficulty 5/5; partnered-5/full/high @codex +prep. Parallel
       tracks are resolver/profile, fallback safety, custody/schema, and managed-launch foundations;
-      their only serialization is explicit contract convergence before launcher integration.
+      their only serialization is explicit contract convergence before launcher integration. The
+      required handoff is docs/managed-agents/s1-contract-handoff.yaml plus the versioned contracts
+      and machine-readable fixtures it hashes.
 
   - label: s2-enforcement-integration-and-rollout
     idea: .megaplan/initiatives/sequential-model-fallbacks/briefs/s2-enforcement-integration-and-rollout.md
@@ -34,17 +41,25 @@ milestones:
     with_prep: true
     depends_on: [s1-shared-foundations-and-managed-launch]
     prep_direction: >-
-      Consume Sprint 1's versioned contracts and run three tracks concurrently: transactional
+      Refuse to proceed unless docs/managed-agents/s1-contract-handoff.yaml validates against the
+      landed Sprint 1 contracts and fixtures. Then run three tracks concurrently: transactional
       ancestry/authority/tree/root-budget enforcement; Megaplan and resident dispatcher integration
-      with additive v1/v2 migration and restart reconciliation; and adversarial conformance,
+      with additive current/vNext migration and restart reconciliation; and adversarial conformance,
       observability, operator documentation, and staged rollout/rollback preparation. Build fixtures
       and shadow comparisons while integration lands, then close on one traceability matrix and
       deterministic cross-dispatcher/fault-injection gate. Coordinate, but do not absorb, Discord
       provenance and delivery ownership.
     notes: >-
-      Aggressive delivery days 7-10, with contingency inside a roughly two-week total. Difficulty
-      5/5. Completes enforcement, integration, migration, restart evidence, adversarial conformance,
-      and rollout readiness; production enablement remains human gated.
+      Approximately ten skilled-engineer days (Sprint 2, days 11-20 of a roughly four-human-week
+      initiative). Difficulty 5/5; partnered-5/full/high @codex +prep. Completes enforcement,
+      integration, migration, restart evidence, adversarial conformance, and rollout readiness;
+      production enablement remains human gated.
+    validate:
+      - kind: final_conformance_gate
+        traceability: docs/managed-agents/north-star-traceability.yaml
+        conformance: docs/managed-agents/managed-agent-conformance.yaml
+        validator: scripts/validate_managed_agent_conformance.py
+        proof_map: .megaplan/initiatives/sequential-model-fallbacks/assets/proof-map.json
 
 on_failure:
   abort: stop_chain
@@ -57,3 +72,4 @@ driver:
   max_iterations: 80
   poll_sleep: 8.0
   require_anchor: true
+  require_clean_base: true

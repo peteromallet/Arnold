@@ -1,6 +1,6 @@
 # Task: Extend Sequential Model Fallbacks into the managed-agent profile epic
 
-Status: originally shaped as seven milestones on 2026-07-11, then consolidated into the two-sprint execution contract described by `README.md`, `NORTHSTAR.md`, and `chain.yaml`. This file retains the original request; the authoritative execution inputs are the two sprint briefs and locked decision record.
+Status: originally shaped as seven milestones on 2026-07-11, then consolidated into the two-sprint execution contract described by `README.md`, `NORTHSTAR.md`, and `chain.yaml`. Sizing was revalidated on 2026-07-13: the authoritative shape is two sprints of roughly two human-weeks each, connected by a machine-readable Sprint 1 contract handoff. This file retains the original request; the authoritative execution inputs are the two sprint briefs and locked decision record.
 
 The user wants a Megaplan epic for one unified managed-agent system covering both resident-launched agents and subagents launched by those agents.
 
