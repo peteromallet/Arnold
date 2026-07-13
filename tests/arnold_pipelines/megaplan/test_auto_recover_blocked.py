@@ -633,6 +633,58 @@ def test_drive_internal_error_ignores_warning_only_stderr_when_stdout_has_failur
     assert "M_WARN_ROUTING_DEGRADED" in phase_failure["metadata"]["stderr_raw"]
 
 
+def test_drive_bounds_identical_structural_phase_failures(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "critiqued"}),
+        encoding="utf-8",
+    )
+    detail = (
+        "worker_structural_audit_failed: missing_required at "
+        "/north_star_actions"
+    )
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(
+        auto,
+        "_status",
+        lambda plan, **kwargs: {
+            "state": "critiqued",
+            "next_step": "gate",
+            "valid_next": ["gate"],
+            "progress": {},
+        },
+    )
+
+    def fail_gate(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="gate",
+                invocation_id="test",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return 1, detail, ""
+
+    failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_run_planning_phase", fail_gate)
+    monkeypatch.setattr(
+        auto, "_record_lifecycle_failure", lambda **kwargs: failures.append(kwargs)
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=10, poll_sleep=0)
+
+    assert outcome.status == "blocked"
+    assert outcome.iterations == 3
+    terminal = failures[-1]
+    assert terminal["kind"] == "deterministic_phase_failure"
+    assert terminal["resume_cursor"]["retry_strategy"] == "repair_phase_contract"
+    assert terminal["metadata"]["count"] == 3
+
+
 def test_drive_phase_failure_preserves_native_exception_forensics(
     monkeypatch,
     tmp_path: Path,

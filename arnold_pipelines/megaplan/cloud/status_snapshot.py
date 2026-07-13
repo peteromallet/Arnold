@@ -1142,15 +1142,31 @@ def _build_session_entry(
             now=now,
         )
     )
-    entry.update(
-        _compose_repair_decision_projection(
-            workspace=workspace,
-            queue_root=marker_dir.parent / "repair-queue",
-            repair_data_dir=repair_data_dir,
-            plan_state=plan_state_doc,
-            current_target=current_target_record,
-        )
+    repair_projection = _compose_repair_decision_projection(
+        workspace=workspace,
+        queue_root=marker_dir.parent / "repair-queue",
+        repair_data_dir=repair_data_dir,
+        plan_state=plan_state_doc,
+        current_target=current_target_record,
     )
+    entry.update(repair_projection)
+    custody = repair_projection.get("repair_custody")
+    dispatch = repair_projection.get("repair_dispatch")
+    if (
+        entry["status"] == "repairing"
+        and isinstance(custody, Mapping)
+        and custody.get("bucket") != "repairing"
+    ):
+        # A fresh legacy sidecar is not repair custody.  Once the canonical
+        # projection is available, fail closed instead of advertising work
+        # that has no active claim/attempt owner.
+        entry["status"] = "attention"
+        entry["repairing"] = False
+        entry["operator_next"] = (
+            "repair custody is absent"
+            if not isinstance(dispatch, Mapping)
+            else str(dispatch.get("rationale") or "repair custody is absent")
+        )
     return entry
 
 

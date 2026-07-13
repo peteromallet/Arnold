@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -180,6 +181,33 @@ def _extract_gather_function(name: str, next_name: str) -> str:
     return text[start:end]
 
 
+def test_deterministic_phase_history_surfaces_structural_retry_loop() -> None:
+    program = _extract_gather_program()
+    start = program.index("def _deterministic_phase_history_evidence(")
+    end = program.index("\ndef _event_seq(", start)
+    namespace = {
+        "re": __import__("re"),
+        "cutoff": datetime(2026, 7, 13, 16, 0, tzinfo=timezone.utc),
+        "_parse_iso": lambda value: datetime.fromisoformat(value.replace("Z", "+00:00")),
+    }
+    exec(program[start:end], namespace)
+    history = [
+        {
+            "step": "gate",
+            "result": "error",
+            "message": "missing_required at /north_star_actions",
+            "timestamp": f"2026-07-13T16:0{index}:00Z",
+        }
+        for index in range(3)
+    ]
+
+    evidence = namespace["_deterministic_phase_history_evidence"](history)
+
+    assert evidence["count"] == 3
+    assert evidence["phase"] == "gate"
+    assert evidence["source"] == "state.history"
+
+
 def _extract_auditor_function(name: str) -> str:
     text = _wrapper("arnold-progress-auditor")
     start = text.index(f"{name}() {{")
@@ -327,6 +355,71 @@ def _run_gather_program(
     )
     assert result.returncode == 0, f"gather program failed: {result.stderr}"
     return json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))
+
+
+def test_gather_detects_deterministic_llm_retry_when_latest_failure_is_empty(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "gate-loop"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "gate-loop",
+                "current_state": "critiqued",
+                "iteration": 1,
+                "latest_failure": None,
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    timestamp = datetime.now(timezone.utc).isoformat()
+    message = (
+        "worker_structural_audit_failed: model output structural audit failed: "
+        "missing_required at /north_star_actions"
+    )
+    events = [
+        {
+            "kind": "llm_call_error",
+            "phase": "gate",
+            "payload": {"message": message},
+            "ts_utc": timestamp,
+            "seq": seq,
+        }
+        for seq in range(1, 5)
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": "gate-loop",
+                "session": "gate-loop-session",
+                "kind": "plan",
+                "sources": ["fixture"],
+            }
+        ],
+        tmp_path,
+    )
+
+    assert len(payload["findings"]) == 1
+    finding = payload["findings"][0]
+    assert finding["latest_failure_kind"] is None
+    assert finding["deterministic_retry_evidence"]["count"] == 4
+    assert finding["deterministic_retry_evidence"]["phase"] == "gate"
+    assert any(
+        reason.startswith("deterministic_retry_exhaustion:")
+        for reason in finding["reasons"]
+    )
+    patterns = payload["root_cause_patterns"]["repeated_failure_signatures"]
+    assert patterns[0]["total_occurrences"] == 4
+    assert patterns[0]["affected_plans"] == ["gate-loop"]
 
 
 def _run_report_assembler(

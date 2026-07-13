@@ -188,7 +188,7 @@ def _make_session_dir(tmp_path: Path, session: str) -> Path:
 class TestTriggerPriority:
     def test_all_triggers_have_priority(self) -> None:
         for trigger in MetaRepairTrigger:
-            assert trigger_priority(trigger) in range(1, 7)
+            assert trigger_priority(trigger) in range(1, 8)
 
     def test_non_trigger_has_no_priority(self) -> None:
         assert trigger_priority("none") == 99  # type: ignore[arg-type]
@@ -1504,7 +1504,7 @@ class TestEdgeCases:
         assert result.trigger == MetaRepairTrigger.PERSISTENT_RECURRING_RETRY
 
     def test_all_triggers_represented(self) -> None:
-        """Ensure all six trigger enum values are distinct and enumerable."""
+        """Ensure all seven trigger enum values are distinct and enumerable."""
         triggers = set(t.value for t in MetaRepairTrigger)
         assert triggers == {
             "repair_timeout",
@@ -1513,8 +1513,9 @@ class TestEdgeCases:
             "model_tool_launch_failure",
             "partial_liveness_recurrence",
             "discord_delivery_failure",
+            "l1_custody_failure",
         }
-        assert len(triggers) == 6
+        assert len(triggers) == 7
 
     def test_trigger_label_for_non_trigger(self) -> None:
         result = classify_repair_system_failure(session="edge-5")
@@ -2352,6 +2353,50 @@ class TestCheckMetaRepairRecursion:
         )
         assert result.recursing is False
         assert result.existing_meta_repair_ids == ()
+
+    def test_one_commit_custody_failure_allows_bounded_retry(self, tmp_path: Path) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "mr-custody-1.json").write_text(
+            json.dumps({
+                "meta_repair_id": "mr-custody-1",
+                "session": "recursion-test",
+                "outcome": "commit_custody_failed",
+            }),
+            encoding="utf-8",
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test", repair_data_dir=repair_dir
+        )
+
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
+
+    def test_repeated_commit_custody_failure_escalates(self, tmp_path: Path) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        for index in (1, 2):
+            (meta_dir / f"mr-custody-{index}.json").write_text(
+                json.dumps({
+                    "meta_repair_id": f"mr-custody-{index}",
+                    "session": "recursion-test",
+                    "outcome": "commit_custody_failed",
+                }),
+                encoding="utf-8",
+            )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test", repair_data_dir=repair_dir
+        )
+
+        assert result.recursing is True
+        assert result.existing_meta_repair_ids == (
+            "mr-custody-1",
+            "mr-custody-2",
+        )
 
     def test_input_too_large_record_does_not_poison_recursion(
         self, tmp_path: Path

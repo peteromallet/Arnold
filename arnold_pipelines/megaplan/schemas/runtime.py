@@ -587,6 +587,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "settled_decisions",
             "flag_resolutions",
             "accepted_tradeoffs",
+            "north_star_actions",
         ],
     },
     "critique.json": {

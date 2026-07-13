@@ -26,6 +26,7 @@ class GatePayload(TypedDict):
     signals_assessment: str
     warnings: list[str]
     settled_decisions: list[SettledDecision]
+    north_star_actions: list[NorthStarAction]
 
 
 class GateArtifact(TypedDict, total=False):
