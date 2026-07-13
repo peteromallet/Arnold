@@ -1304,6 +1304,185 @@ assert len(BOUNDARY_CONTRACTS_BY_ID) == 35, (
     "(duplicate boundary_id detected)"
 )
 
+# ── Provider lookup helpers ────────────────────────────────────────────────
+# Thin wrappers over the existing registry dicts so callers get consistent
+# optional-lookup semantics without importing internal registry shapes.
+
+
+def get_contract_by_id(contract_id: str) -> BoundaryContract | None:
+    """Look up a :class:`BoundaryContract` by its ``boundary_id``.
+
+    Returns ``None`` when *contract_id* is not a key in
+    :data:`BOUNDARY_CONTRACTS_BY_ID`.  This preserves the existing
+    registry structure while giving callers a named, documented
+    entrance point that does not need to know about the internal dict.
+    """
+    return BOUNDARY_CONTRACTS_BY_ID.get(contract_id)
+
+
+def get_template_by_id(template_id: str) -> BoundaryContract | None:
+    """Look up a typed boundary template by its ``boundary_id``.
+
+    Templates are stored in :data:`TYPED_BOUNDARY_TEMPLATES_BY_ID`
+    and use a ``template.*`` namespace prefix.  Returns ``None``
+    when no match is found.
+    """
+    return TYPED_BOUNDARY_TEMPLATES_BY_ID.get(template_id)
+
+
+def get_profile_by_kind(kind: str) -> frozenset[str] | None:
+    """Look up a required-field profile by its kind label.
+
+    Profiles are stored in :data:`REQUIRED_FIELD_PROFILES_BY_KIND`.
+    Returns ``None`` when *kind* is not a registered profile.
+    """
+    return REQUIRED_FIELD_PROFILES_BY_KIND.get(kind)
+
+
+def list_template_ids() -> tuple[str, ...]:
+    """Return all registered template ``boundary_id`` values."""
+    return tuple(TYPED_BOUNDARY_TEMPLATES_BY_ID.keys())
+
+
+def list_profile_kinds() -> tuple[str, ...]:
+    """Return all registered profile kind labels."""
+    return tuple(REQUIRED_FIELD_PROFILES_BY_KIND.keys())
+
+
+# ── Structural diff helpers ────────────────────────────────────────────────
+
+
+def diff_contracts(
+    a: BoundaryContract,
+    b: BoundaryContract,
+) -> dict[str, object]:
+    """Return a structural diff between two :class:`BoundaryContract` instances.
+
+    The returned dict has these keys:
+
+    * ``matching``: :class:`bool` — ``True`` when the two contracts are
+      structurally identical.
+    * ``field_diffs``: :class:`dict` — maps field name to ``(old_value, new_value)``
+      for every top-level contract field that differs.
+    * ``detail_diffs``: :class:`dict` — maps ``details.<key>`` to
+      ``(old_value, new_value)`` for every nested detail that differs.
+    * ``artifact_diffs``: :class:`dict` — ``{'only_in_a': [...], 'only_in_b': [...]}``
+      when ``required_artifacts`` differ (absent when identical).
+
+    Enum values are converted to their ``.value`` strings for readability.
+    Empty :class:`MappingProxyType` details are compared as ``{}``.
+    """
+    field_diffs: dict[str, tuple[object, object]] = {}
+
+    # ── top-level fields ───────────────────────────────────────────────
+    _comparable = (
+        "boundary_id",
+        "workflow_id",
+        "row_id",
+        "phase",
+        "expected_state_delta",
+        "expected_history_entry",
+        "phase_result_required",
+        "receipt_required",
+        "authority_required",
+        "contract_version",
+    )
+    for field_name in _comparable:
+        old_val = getattr(a, field_name)
+        new_val = getattr(b, field_name)
+        # Normalize enum → str for comparison and readability
+        if hasattr(old_val, "value"):
+            old_val = old_val.value
+        if hasattr(new_val, "value"):
+            new_val = new_val.value
+        if old_val != new_val:
+            field_diffs[field_name] = (old_val, new_val)
+
+    # ── required_artifacts ─────────────────────────────────────────────
+    artifacts_a = set(a.required_artifacts)
+    artifacts_b = set(b.required_artifacts)
+    artifact_diffs: dict[str, tuple[str, ...]] | None = None
+    if artifacts_a != artifacts_b:
+        artifact_diffs = {
+            "only_in_a": tuple(sorted(artifacts_a - artifacts_b)),
+            "only_in_b": tuple(sorted(artifacts_b - artifacts_a)),
+        }
+
+    # ── details ────────────────────────────────────────────────────────
+    details_a = dict(a.details)
+    details_b = dict(b.details)
+    detail_diffs: dict[str, tuple[object, object]] = {}
+    all_detail_keys = sorted(set(details_a) | set(details_b))
+    for key in all_detail_keys:
+        old_val = details_a.get(key)
+        new_val = details_b.get(key)
+        if old_val != new_val:
+            detail_diffs[f"details.{key}"] = (old_val, new_val)
+
+    matching = not field_diffs and not detail_diffs and artifact_diffs is None
+
+    result: dict[str, object] = {
+        "matching": matching,
+        "field_diffs": field_diffs,
+        "detail_diffs": detail_diffs,
+    }
+    if artifact_diffs is not None:
+        result["artifact_diffs"] = artifact_diffs
+    return result
+
+
+def contract_satisfies_profile(
+    contract: BoundaryContract,
+    profile: frozenset[str],
+) -> tuple[bool, tuple[str, ...]]:
+    """Check whether *contract* satisfies every key in *profile*.
+
+    Returns ``(satisfied, missing_keys)``.  A key is considered missing
+    when:
+
+    * Top-level fields (e.g. ``"boundary_id"``, ``"phase"``): the
+      attribute is ``None``, ``False``, or an empty tuple / mapping.
+    * ``"details.<key>"`` entries: the nested key is absent, ``None``,
+      or an empty string / tuple.
+
+    Non-string scalars (e.g. ``True`` for ``phase_result_required``) are
+    treated as satisfied even though they are not ``str``-typed.
+    """
+    missing: list[str] = []
+    for key in sorted(profile):
+        if key.startswith("details."):
+            detail_key = key[len("details."):]
+            value = contract.details.get(detail_key)
+            if _is_empty_value(value):
+                missing.append(key)
+        else:
+            try:
+                value = getattr(contract, key)
+            except AttributeError:
+                missing.append(key)
+                continue
+            if _is_empty_value(value):
+                missing.append(key)
+    satisfied = len(missing) == 0
+    return satisfied, tuple(missing)
+
+
+def _is_empty_value(value: object) -> bool:
+    """Return ``True`` when *value* is semantically empty."""
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        # Booleans are never "empty" — a required bool is always a value.
+        return False
+    if isinstance(value, str) and not value:
+        return True
+    if isinstance(value, (tuple, list)) and len(value) == 0:  # type: ignore[arg-type]
+        return True
+    if isinstance(value, dict) and len(value) == 0:
+        return True
+    return False
+
+
 __all__ = [
     "ApprovalBoundary",
     "ArtifactHandoffBoundary",
@@ -1330,8 +1509,10 @@ __all__ = [
     "ValidationBoundary",
     "artifact_promotion_template",
     "challenger_to_synthesis",
+    "contract_satisfies_profile",
     "critique_to_gate",
     "decision_to_parent",
+    "diff_contracts",
     "execute_aggregate_promotion",
     "execute_approval",
     "execute_approval_denial",
@@ -1347,9 +1528,14 @@ __all__ = [
     "finalize_artifacts",
     "finalize_fallback",
     "gate_to_revise",
+    "get_contract_by_id",
+    "get_profile_by_kind",
+    "get_template_by_id",
     "graph_join_fanout_template",
     "human_approval_waiver_template",
     "lifecycle_transition_template",
+    "list_profile_kinds",
+    "list_template_ids",
     "parent_rejoin_promotion",
     "plan_to_critique",
     "prep_to_plan",
