@@ -224,6 +224,38 @@ def test_active_repair_overrides_stale_needs_human_marker(fx):
     assert snap["summary"]["repairing"] == 1
     assert snap["summary"]["blocked"] == 0
 
+
+def test_repair_sidecar_without_canonical_custody_is_not_reported_as_repairing(
+    fx, monkeypatch
+):
+    fx.add_session("uncustodied", plan_name="planR")
+    fx.add_chain_health(
+        "uncustodied",
+        current_plan_name="planR",
+        last_state="blocked",
+        updated_at=NOW - timedelta(hours=3),
+    )
+    fx.add_repair_progress("uncustodied", updated_at=NOW - timedelta(minutes=2))
+    fx.add_repair_data("uncustodied", outcome="repairing")
+    monkeypatch.setattr(
+        ss,
+        "_compose_repair_decision_projection",
+        lambda **_kwargs: {
+            "repair_custody": {"custody_bucket": "repairable_not_repairing"},
+            "repair_dispatch": {
+                "decision": "broken_superfixer",
+                "custody_bucket": "repairable_not_repairing",
+                "rationale": ["accepted request has no active claim or attempt"],
+            },
+        },
+    )
+
+    entry = _by_session(fx.build(), "uncustodied")
+
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
+    assert entry["operator_next"] == "accepted request has no active claim or attempt"
+
 def test_completed_not_counted_as_active_even_with_stale_failure(fx):
     fx.add_session("done", plan_name="planDone")
     fx.add_chain_health(

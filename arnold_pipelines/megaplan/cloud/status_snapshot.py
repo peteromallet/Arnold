@@ -1152,10 +1152,19 @@ def _build_session_entry(
     entry.update(repair_projection)
     custody = repair_projection.get("repair_custody")
     dispatch = repair_projection.get("repair_dispatch")
+    custody_bucket = (
+        str(dispatch.get("custody_bucket") or "")
+        if isinstance(dispatch, Mapping)
+        else ""
+    ) or (
+        str(custody.get("custody_bucket") or "")
+        if isinstance(custody, Mapping)
+        else ""
+    )
     if (
         entry["status"] == "repairing"
-        and isinstance(custody, Mapping)
-        and custody.get("custody_bucket") != "repairing"
+        and custody_bucket
+        and custody_bucket != "repairing"
     ):
         # A fresh legacy sidecar is not repair custody.  Once the canonical
         # projection is available, fail closed instead of advertising work
@@ -1166,10 +1175,11 @@ def _build_session_entry(
         if runner_live:
             entry["operator_next"] = "live runner supersedes stale repair sidecar"
         else:
+            rationale = dispatch.get("rationale") if isinstance(dispatch, Mapping) else None
             entry["operator_next"] = (
-                "repair custody is absent"
-                if not isinstance(dispatch, Mapping)
-                else str(dispatch.get("rationale") or "repair custody is absent")
+                "; ".join(str(item) for item in rationale if item)
+                if isinstance(rationale, list)
+                else str(rationale or "repair custody is absent")
             )
     return entry
 
