@@ -1,9 +1,10 @@
 """Durable Discord transaction state for the canonical resident restart.
 
-Acceptance is committed before shutdown and terminal confirmation remains
-ineligible until an external supervisor or replacement startup verifies that
-the canonical process identity changed.  Both messages use retryable,
-provider-idempotent outbox state tied to the exact initiating Discord message.
+Exactly one user-visible message is eligible for each restart transaction: the
+terminal success or failure outcome.  It remains ineligible until an external
+supervisor or replacement startup has determined that outcome, then uses
+retryable, provider-idempotent outbox state tied to the initiating Discord
+message or the configured fallback conversation.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ import json
 import os
 from pathlib import Path
 import tempfile
-import time
 from typing import Any
 from uuid import uuid4
 
@@ -30,7 +30,8 @@ DEFAULT_NOTIFICATION_ROOT = Path("/workspace/.megaplan/resident/reset_notificati
 _RETRY_BASE_SECONDS = 30
 _RETRY_MAX_SECONDS = 60 * 60
 _MAX_ATTEMPTS = 8
-_TERMINAL_DELIVERY_STATES = frozenset({"delivered", "failed", "restart_failed"})
+_CLAIM_LEASE_SECONDS = 60
+_TERMINAL_DELIVERY_STATES = frozenset({"delivered", "failed", "suppressed"})
 _ACTIVE_RESTART_STATES = frozenset({"prepared", "supervisor_started", "restarting"})
 
 
@@ -124,22 +125,6 @@ def prepare_reset_notification(
                 }
             ],
         },
-        "acknowledgement": {
-            "transport": "discord",
-            "status": "pending",
-            "attempt_count": 0,
-            "idempotency_key": f"agentbox-resident-reset-accepted:{notification_id}",
-            "discord_nonce": _nonce(notification_id, phase="accepted"),
-            "content": "Discord resident restart accepted. A supervisor will verify the replacement process.",
-            "emitted_at": _timestamp(now),
-            "state_history": [
-                {
-                    "status": "pending",
-                    "at": _timestamp(now),
-                    "evidence": "durable_restart_acceptance_emitted_before_shutdown",
-                }
-            ],
-        },
         "delivery": {
             "transport": "discord",
             "status": "prepared",
@@ -173,11 +158,9 @@ def prepare_reset_notification(
             "source_record_id": provenance["source_record_id"],
             "kind": "reply",
         }
-        record["acknowledgement"]["reply_target"] = dict(target)
         record["delivery"]["reply_target"] = dict(target)
     else:
         fallback = os.environ.get(RESET_FALLBACK_CONVERSATION_ENV) or None
-        record["acknowledgement"]["fallback_target"] = fallback
         record["delivery"]["fallback_target"] = fallback
     try:
         with _root_lock(root):
@@ -228,7 +211,6 @@ def mark_reset_restarting(
     reservation: ResetNotificationReservation,
     *,
     supervisor_pid: int | None = None,
-    acknowledgement_status: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
@@ -245,42 +227,10 @@ def mark_reset_restarting(
             restart["status"] = "restarting"
             if supervisor_pid is not None:
                 restart["supervisor_pid"] = int(supervisor_pid)
-            if acknowledgement_status:
-                restart["acknowledgement_before_shutdown"] = str(
-                    acknowledgement_status
-                )
             record["restart"] = restart
             record["updated_at"] = _timestamp(now)
             _atomic_json(reservation.path, record)
         return _public_record(record)
-
-
-def wait_for_reset_acknowledgement(
-    reservation: ResetNotificationReservation,
-    *,
-    timeout_s: float = 12.0,
-) -> str:
-    """Give the live resident a bounded chance to deliver acceptance pre-stop."""
-
-    if reservation.provenance_mode != "discord_reply":
-        return "not_applicable"
-    deadline = time.monotonic() + max(0.0, timeout_s)
-    while True:
-        try:
-            with _locked_record(reservation.path) as record:
-                acknowledgement = record.get("acknowledgement")
-                status = (
-                    str(acknowledgement.get("status") or "pending")
-                    if isinstance(acknowledgement, Mapping)
-                    else "missing"
-                )
-        except (OSError, ValueError, TypeError):
-            return "unavailable"
-        if status in {"delivered", "failed"}:
-            return status
-        if time.monotonic() >= deadline:
-            return "durable_pending_timeout"
-        time.sleep(0.1)
 
 
 def mark_reset_succeeded(
@@ -340,30 +290,30 @@ def mark_reset_failed(
     restart_evidence: Mapping[str, Any],
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Persist a failed reset without making its confirmation deliverable."""
+    """Make the truthful terminal failure outcome deliverable."""
 
     now = now or datetime.now(UTC)
     with _locked_record(reservation.path) as record:
         _assert_record(record, reservation)
+        restart = dict(record.get("restart") or {})
+        if restart.get("status") in {"succeeded", "failed"}:
+            return _public_record(record)
         delivery = dict(record.get("delivery") or {})
         history = list(delivery.get("state_history") or [])
         history.append(
             {
-                "status": "restart_failed",
+                "status": "pending",
                 "at": _timestamp(now),
                 "evidence": "guarded_restart_reported_failure",
             }
         )
         delivery.update(
             {
-                "status": "restart_failed",
+                "status": "pending",
                 "updated_at": _timestamp(now),
                 "state_history": history[-20:],
             }
         )
-        restart = dict(record.get("restart") or {})
-        if restart.get("status") == "succeeded":
-            return _public_record(record)
         _append_restart_state(
             restart,
             status="failed",
@@ -391,7 +341,7 @@ async def sweep_reset_notifications(
     notification_root: str | Path | None = None,
     now: datetime | None = None,
 ) -> ResetNotificationSweepResult:
-    """Deliver all due successful-reset confirmations exactly once per outbox item."""
+    """Deliver each due terminal restart outcome exactly once per outbox item."""
 
     now = now or datetime.now(UTC)
     root = Path(notification_root) if notification_root is not None else reset_notification_root()
@@ -399,28 +349,7 @@ async def sweep_reset_notifications(
     delivered = retry_pending = failed = waiting_for_target = skipped = 0
     fallback = _fallback_conversation(store)
     for path in paths:
-        acknowledgement = _claim_delivery(
-            path,
-            now=now,
-            fallback_conversation=fallback,
-            phase="acknowledgement",
-        )
-        if acknowledgement is not None:
-            record, target = acknowledgement
-            outcome = await _deliver_claimed_notification(
-                outbound=outbound,
-                path=path,
-                record=record,
-                target=target,
-                phase="acknowledgement",
-                now=now,
-            )
-            delivered += int(outcome == "delivered")
-            retry_pending += int(outcome == "retry_pending")
-            failed += int(outcome == "failed")
-            if outcome != "delivered":
-                continue
-
+        _suppress_legacy_acknowledgement(path, now=now)
         claim = _claim_delivery(
             path,
             now=now,
@@ -442,7 +371,6 @@ async def sweep_reset_notifications(
             path=path,
             record=record,
             target=target,
-            phase="delivery",
             now=now,
         )
         delivered += int(outcome == "delivered")
@@ -464,27 +392,21 @@ async def _deliver_claimed_notification(
     path: Path,
     record: Mapping[str, Any],
     target: Mapping[str, str],
-    phase: str,
     now: datetime,
 ) -> str:
     from arnold_pipelines.megaplan.resident.runtime import OutboundMessage
 
-    delivery = dict(record[phase])
+    delivery = dict(record["delivery"])
     metadata: dict[str, Any] = {
         "resident_reset_notification": True,
-        "resident_reset_notification_phase": (
-            "accepted" if phase == "acknowledgement" else "terminal"
-        ),
+        "resident_reset_notification_phase": "terminal",
+        "resident_reset_notification_outcome": str(record["restart"]["status"]),
         "resident_reset_notification_id": record["notification_id"],
         "discord_nonce": delivery["discord_nonce"],
     }
     if target.get("kind") == "reply":
         metadata["discord_reply_to_message_id"] = target["message_id"]
-    content = (
-        str(delivery.get("content") or "Discord resident restart accepted.")
-        if phase == "acknowledgement"
-        else _confirmation_content(target)
-    )
+    content = _terminal_content(record, target)
     try:
         await outbound.send(
             OutboundMessage(
@@ -495,9 +417,9 @@ async def _deliver_claimed_notification(
             )
         )
     except Exception as exc:
-        return _record_delivery_failure(path, phase=phase, now=now, exc=exc)
+        return _record_delivery_failure(path, phase="delivery", now=now, exc=exc)
     message_ids = [str(item) for item in metadata.get("discord_message_ids", []) if str(item)]
-    _record_delivery_success(path, phase=phase, now=now, message_ids=message_ids)
+    _record_delivery_success(path, phase="delivery", now=now, message_ids=message_ids)
     return "delivered"
 
 
@@ -736,21 +658,38 @@ def _claim_delivery(
             if not delivery:
                 return None
             if phase == "delivery":
-                if not isinstance(restart, Mapping) or restart.get("status") != "succeeded":
-                    return None
-                acknowledgement = record.get("acknowledgement")
                 if (
-                    isinstance(acknowledgement, Mapping)
-                    and acknowledgement.get("status") != "delivered"
+                    not isinstance(restart, Mapping)
+                    or restart.get("status") not in {"succeeded", "failed"}
                 ):
                     return None
             status = str(delivery.get("status") or "prepared")
+            if status == "restart_failed":
+                # v1 records used this as a non-deliverable terminal marker.
+                # The single-notification contract reports that failure instead.
+                status = "pending"
+                delivery["status"] = status
+                _append_state(
+                    delivery,
+                    status=status,
+                    now=now,
+                    evidence="legacy_terminal_failure_made_deliverable",
+                )
             if status in _TERMINAL_DELIVERY_STATES:
                 return None
             due_at = _parse_timestamp(delivery.get("next_attempt_at"))
             if status == "retry_pending" and due_at is not None and due_at > now:
                 return None
             if status == "sending":
+                lease_expires_at = _parse_timestamp(delivery.get("claim_expires_at"))
+                claimer_pid = _optional_positive_int(delivery.get("claimer_pid"))
+                if (
+                    lease_expires_at is not None
+                    and lease_expires_at > now
+                    and claimer_pid is not None
+                    and _pid_is_live(claimer_pid)
+                ):
+                    return None
                 _append_state(
                     delivery,
                     status="unknown",
@@ -799,6 +738,10 @@ def _claim_delivery(
                     "claim_state": "sending",
                     "attempt_count": attempt,
                     "attempt_id": f"{record['notification_id']}:{attempt}",
+                    "claimer_pid": os.getpid(),
+                    "claim_expires_at": _timestamp(
+                        now + timedelta(seconds=_CLAIM_LEASE_SECONDS)
+                    ),
                     "last_attempt_at": _timestamp(now),
                     "updated_at": _timestamp(now),
                 }
@@ -844,6 +787,8 @@ def _record_delivery_success(
             }
         )
         delivery.pop("claim_state", None)
+        delivery.pop("claimer_pid", None)
+        delivery.pop("claim_expires_at", None)
         delivery.pop("next_attempt_at", None)
         record[phase] = delivery
         record["updated_at"] = _timestamp(now)
@@ -893,6 +838,8 @@ def _record_delivery_failure(
             attempt_id=delivery.get("attempt_id"),
         )
         delivery.pop("claim_state", None)
+        delivery.pop("claimer_pid", None)
+        delivery.pop("claim_expires_at", None)
         if status == "retry_pending":
             delay = min(_RETRY_MAX_SECONDS, _RETRY_BASE_SECONDS * (2 ** min(attempt - 1, 7)))
             delivery["next_attempt_at"] = _timestamp(now + timedelta(seconds=delay))
@@ -944,13 +891,55 @@ def _fallback_conversation(store: Any | None) -> str | None:
     return str(latest.conversation_key)
 
 
-def _confirmation_content(target: Mapping[str, str]) -> str:
-    if target.get("kind") == "reply":
-        return "Discord resident reset complete."
-    return (
-        "Discord resident reset complete. This is a fallback notification for a "
-        "manual/non-Discord reset, not a reply to an initiating message."
+def _terminal_content(
+    record: Mapping[str, Any], target: Mapping[str, str]
+) -> str:
+    restart = record.get("restart")
+    succeeded = isinstance(restart, Mapping) and restart.get("status") == "succeeded"
+    content = (
+        "Discord resident restart complete."
+        if succeeded
+        else "Discord resident restart failed. The replacement process was not verified."
     )
+    if target.get("kind") == "reply":
+        return content
+    return (
+        f"{content} This is a fallback notification for a manual/non-Discord "
+        "restart, not a reply to an initiating message."
+    )
+
+
+def _suppress_legacy_acknowledgement(path: Path, *, now: datetime) -> None:
+    """Make a pre-correction acceptance item permanently ineligible."""
+
+    try:
+        with _locked_record(path) as record:
+            acknowledgement = dict(record.get("acknowledgement") or {})
+            if not acknowledgement:
+                return
+            status = str(acknowledgement.get("status") or "pending")
+            if status in {"delivered", "failed", "suppressed"}:
+                return
+            acknowledgement.update(
+                {
+                    "status": "suppressed",
+                    "updated_at": _timestamp(now),
+                    "suppressed_by_contract": "single_terminal_restart_notification",
+                }
+            )
+            acknowledgement.pop("claim_state", None)
+            acknowledgement.pop("next_attempt_at", None)
+            _append_state(
+                acknowledgement,
+                status="suppressed",
+                now=now,
+                evidence="acceptance_delivery_removed_by_single_terminal_contract",
+            )
+            record["acknowledgement"] = acknowledgement
+            record["updated_at"] = _timestamp(now)
+            _atomic_json(path, record)
+    except (OSError, ValueError, TypeError):
+        return
 
 
 def _delivery_status(path: Path, *, phase: str = "delivery") -> str | None:
@@ -1188,12 +1177,12 @@ def _set_reconciled_failure(
     now: datetime,
 ) -> None:
     delivery = dict(record.get("delivery") or {})
-    delivery["status"] = "restart_failed"
+    delivery["status"] = "pending"
     _append_state(
         delivery,
-        status="restart_failed",
+        status="pending",
         now=now,
-        evidence="startup_found_no_supervisor_and_unchanged_identity",
+        evidence="startup_found_no_supervisor_and_unchanged_identity_failure_deliverable",
     )
     _append_restart_state(
         restart,
@@ -1311,6 +1300,7 @@ def _public_record(record: Mapping[str, Any]) -> dict[str, Any]:
         "provenance_mode": record.get("provenance_mode"),
         "initiator": dict(record.get("initiator") or {}),
         "restart": dict(record.get("restart") or {}),
+        # Kept as an empty/legacy-only projection for callers reading v1 state.
         "acknowledgement": dict(record.get("acknowledgement") or {}),
         "delivery": dict(record.get("delivery") or {}),
         "interrupted_turn_replay": dict(record.get("interrupted_turn_replay") or {}),
@@ -1339,5 +1329,4 @@ __all__ = [
     "reset_notification_root",
     "reset_transaction_request",
     "sweep_reset_notifications",
-    "wait_for_reset_acknowledgement",
 ]
