@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.resident.subagent import (
     list_managed_resident_agents,
     sweep_managed_agent_deliveries,
 )
+from arnold_pipelines.megaplan.store import FileStore
 
 
 def test_local_resident_launch_seam_uses_injected_provenance(tmp_path, monkeypatch, capsys) -> None:
@@ -68,9 +69,6 @@ def test_local_resident_launch_seam_uses_injected_provenance(tmp_path, monkeypat
     assert observed["task"] == "do durable work"
     assert observed["difficulty"] == 7
     assert json.loads(capsys.readouterr().out)["run_id"] == "run-1"
-from arnold_pipelines.megaplan.store import FileStore
-
-
 class _Completed:
     def __init__(self, *, stdout: str, stderr: str = "", returncode: int = 0) -> None:
         self.stdout = stdout
@@ -248,6 +246,13 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert Path(manifest["result_path"]).is_file()
     prompt = Path(manifest["prompt_path"]).read_text()
     assert prompt.startswith("do the work\n\n[Completion delivery contract]")
+    assert "[Delegated context directory]" in prompt
+    assert "full resident/cloud/conversation state is deliberately not embedded" in prompt
+    assert "resident context --node root" in prompt
+    assert "context-search --scope '<scope>'" in prompt
+    assert manifest["context_directory"]["project_worktree"] == str(tmp_path)
+    assert manifest["context_directory"]["resident_conversation_id"] == "rconv_conversation1"
+    assert "resident_runtime_source" in manifest["context_directory"]
     assert FINAL_SUMMARY_INSTRUCTION in prompt
     assert manifest["discord_origin"]["conversation_key"] == "discord:guild:12:channel:34:thread:56"
     assert manifest["discord_origin"]["reply_to_message_id"] == "987"
@@ -260,6 +265,19 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert "arnold_pipelines.megaplan.resident.subagent_worker" in captured["argv"]
     assert captured["kwargs"]["stdin"] is _subprocess.DEVNULL
     assert captured["kwargs"]["start_new_session"] is True
+
+
+def test_managed_launch_rejects_oversized_task_before_creating_run(tmp_path) -> None:
+    with pytest.raises(ValueError, match="delegated task exceeds"):
+        asyncio.run(
+            launch_subagent_task(
+                ResidentConfig(),
+                task="x" * (subagent_module.MAX_DELEGATED_TASK_CHARS + 1),
+                project_dir=str(tmp_path),
+            )
+        )
+
+    assert not (tmp_path / ".megaplan/plans/resident-subagents").exists()
 
 
 def test_codex_background_launch_resolves_resident_message_record_to_discord_id(
