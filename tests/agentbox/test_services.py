@@ -15,10 +15,25 @@ from agentbox.services import (
     DISCORD_RESIDENT_TMUX_COMMAND_MARKER,
     DISCORD_RESIDENT_RESTART_COMMAND,
     _resident_descendant_pid,
+    execute_prepared_restart,
     list_services,
     restart_service,
     service_logs,
 )
+from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
+
+
+@pytest.fixture(autouse=True)
+def _clear_resident_delegation_context(monkeypatch) -> None:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+
+
+class _DetachedProcess:
+    pid = 424242
+
+
+def _fake_detached_popen(*_args, **_kwargs):
+    return _DetachedProcess()
 
 
 def test_resident_health_accepts_exec_replaced_tmux_root_process() -> None:
@@ -100,16 +115,17 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    popen_calls = []
-
-    class _Helper:
-        pid = 2000000
-
-    def fake_popen(argv, **kwargs):
-        popen_calls.append((argv, kwargs))
-        return _Helper()
-
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(subprocess, "Popen", _fake_detached_popen)
+    monkeypatch.setattr(
+        "agentbox.services._wait_for_tmux_resident",
+        lambda pane_id, *, old_pane_pid: {
+            "ok": True,
+            "pane_id": pane_id,
+            "old_pane_pid": old_pane_pid,
+            "pane_pid": 2000001,
+            "resident_pid": 2000002,
+        },
+    )
 
     result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
 
@@ -118,9 +134,9 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
     assert result["safety"]["stop_scope"] == (
         "canonical Discord resident tmux pane only"
     )
-    assert result["restart_status"] == "scheduled"
-    assert result["helper_pid"] == 2000000
-    assert result["notification"]["delivery"]["status"] == "prepared"
+    assert result["accepted"] is True
+    assert result["restart_completed"] is False
+    assert result["notification"]["acknowledgement"]["status"] == "pending"
     assert calls[0][:5] == [
         "tmux",
         "list-panes",
@@ -128,18 +144,17 @@ def test_resident_restart_uses_guarded_tmux_pane_without_systemctl(
         "=megaplan-resident-discord",
         "-F",
     ]
-    assert len(calls) == 1
-    argv, kwargs = popen_calls[0]
-    assert argv[:3] == [sys.executable, "-m", "agentbox.tmux_restart_worker"]
-    assert argv[argv.index("--pane-id") + 1] == "%39"
-    assert argv[argv.index("--old-pane-pid") + 1] == "1989952"
-    assert kwargs["start_new_session"] is True
-    assert kwargs["stdin"] is subprocess.DEVNULL
-    assert kwargs["stdout"] is subprocess.DEVNULL
-    assert kwargs["stderr"] is subprocess.DEVNULL
+    finalized = execute_prepared_restart(
+        result["notification"]["notification_id"], notification_root=tmp_path
+    )
+    assert finalized["ok"] is True
+    assert finalized["health"]["resident_pid"] == 2000002
+    assert calls[2] == ["tmux", "respawn-pane", "-k", "-t", "%39"]
+    state = list_reset_notifications(notification_root=tmp_path)["records"][0]
+    assert state["restart"]["status"] == "succeeded"
 
 
-def test_resident_tmux_restart_marks_notification_failed_when_worker_cannot_launch(
+def test_resident_tmux_restart_marks_notification_failed_when_supervisor_cannot_launch(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setattr(
@@ -230,6 +245,8 @@ def test_resident_restart_refuses_unsafe_installed_kill_mode(monkeypatch) -> Non
             "ExecStop",
             "-p",
             "ExecStopPost",
+            "-p",
+            "MainPID",
             "agentbox-discord-resident.service",
         ]
     ]
@@ -243,17 +260,19 @@ def test_resident_restart_targets_only_guarded_service(monkeypatch, tmp_path) ->
     def fake_run(argv, **kwargs):
         calls.append(argv)
         stdout = (
-            "KillMode=process\nExecStop=\nExecStopPost=\n"
+            "KillMode=process\nExecStop=\nExecStopPost=\nMainPID=12345\n"
             if argv[1] == "show"
             else ""
         )
         return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", _fake_detached_popen)
 
     result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
 
     assert result["ok"] is True
+    assert result["accepted"] is True
     assert result["safety"]["stop_scope"] == "resident main process only"
     assert result["safety"]["preserves"] == [
         "resident-managed detached subagents",
@@ -269,12 +288,13 @@ def test_resident_restart_targets_only_guarded_service(monkeypatch, tmp_path) ->
             "ExecStop",
             "-p",
             "ExecStopPost",
+            "-p",
+            "MainPID",
             "agentbox-discord-resident.service",
         ],
-        ["systemctl", "restart", "agentbox-discord-resident.service"],
     ]
-    assert result["notification"]["restart"]["status"] == "succeeded"
-    assert result["notification"]["delivery"]["status"] == "pending"
+    assert result["notification"]["restart"]["status"] == "supervisor_started"
+    assert result["notification"]["acknowledgement"]["status"] == "pending"
 
 
 def test_failed_guarded_restart_never_enables_a_success_confirmation(
@@ -287,18 +307,23 @@ def test_failed_guarded_restart_never_enables_a_success_confirmation(
             return subprocess.CompletedProcess(
                 argv,
                 0,
-                stdout="KillMode=process\nExecStop=\nExecStopPost=\n",
+                stdout="KillMode=process\nExecStop=\nExecStopPost=\nMainPID=12345\n",
                 stderr="",
             )
         return subprocess.CompletedProcess(argv, 1, stdout="", stderr="restart failed")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", _fake_detached_popen)
 
     result = restart_service("agentbox-discord-resident", notification_root=tmp_path)
 
-    assert result["ok"] is False
-    assert result["notification"]["restart"]["status"] == "failed"
-    assert result["notification"]["delivery"]["status"] == "restart_failed"
+    assert result["ok"] is True
+    finalized = execute_prepared_restart(
+        result["notification"]["notification_id"], notification_root=tmp_path
+    )
+    assert finalized["ok"] is False
+    assert finalized["notification"]["restart"]["status"] == "failed"
+    assert finalized["notification"]["delivery"]["status"] == "restart_failed"
     state = list_reset_notifications(notification_root=tmp_path)
     assert state["delivery_status_counts"] == {"restart_failed": 1}
 

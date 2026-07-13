@@ -36,6 +36,7 @@ from arnold_pipelines.megaplan.schemas import (
     PlanArtifact,
     ProgressEvent,
     ResidentConversation,
+    ResidentUserPreference,
     ScheduledJob,
     SecondOpinion,
     Sprint,
@@ -609,6 +610,7 @@ class MultiStore(Store):
         direction: str,
         content: str,
         discord_message_id: str | None = None,
+        discord_reply_provenance: dict[str, Any] | None = None,
         bot_turn_id: str | None = None,
         has_code_attachment: bool = False,
         has_image_attachment: bool = False,
@@ -626,6 +628,7 @@ class MultiStore(Store):
             direction=direction,
             content=content,
             discord_message_id=discord_message_id,
+            discord_reply_provenance=discord_reply_provenance,
             bot_turn_id=bot_turn_id,
             has_code_attachment=has_code_attachment,
             has_image_attachment=has_image_attachment,
@@ -647,6 +650,22 @@ class MultiStore(Store):
             for message in backend.load_messages(message_ids):
                 seen[message.id] = message
         return [seen[mid] for mid in message_ids if mid in seen]
+
+    def find_conversation_message_by_discord_id(
+        self, conversation_id: str, discord_message_id: str
+    ) -> Message | None:
+        matches = [
+            match
+            for backend in (self.file, self.db)
+            if (
+                match := backend.find_conversation_message_by_discord_id(
+                    conversation_id, discord_message_id
+                )
+            )
+            is not None
+        ]
+        matches.sort(key=lambda message: (message.sent_at, message.id), reverse=True)
+        return matches[0] if matches else None
 
     def update_message(self, message_id: str, *, idempotency_key: str | None = None, **changes: Any) -> Message:
         return self._route_by_loaded_method("load_message", message_id, context="Message").update_message(
@@ -1108,6 +1127,18 @@ class MultiStore(Store):
 
     def update_resident_conversation(self, conversation_id: str, *, idempotency_key: str | None = None, **changes: Any) -> ResidentConversation:
         return self.db.update_resident_conversation(conversation_id, idempotency_key=idempotency_key, **changes)
+
+    def load_resident_user_preference(self, *, transport: str, user_id: str) -> ResidentUserPreference | None:
+        return self.db.load_resident_user_preference(transport=transport, user_id=user_id)
+
+    def upsert_resident_user_preference(self, *, transport: str, user_id: str, timezone_name: str | None, metadata: dict[str, Any] | None = None, idempotency_key: str | None = None) -> ResidentUserPreference:
+        return self.db.upsert_resident_user_preference(
+            transport=transport,
+            user_id=user_id,
+            timezone_name=timezone_name,
+            metadata=metadata,
+            idempotency_key=idempotency_key,
+        )
 
     def create_scheduled_job(self, job: ScheduledJobInput, *, idempotency_key: str | None = None) -> ScheduledJob:
         return self.db.create_scheduled_job(job, idempotency_key=idempotency_key)

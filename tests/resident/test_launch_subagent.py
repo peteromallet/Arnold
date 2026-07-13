@@ -234,9 +234,9 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert result.status == "running"
     assert result.pid == 4321
     manifest = json.loads(Path(result.manifest_path).read_text())
-    assert manifest["schema_version"] == "arnold-resident-agent-run-v1"
+    assert manifest["schema_version"] == "arnold-managed-agent-run-v2"
     assert manifest["run_kind"] == "resident_delegated_agent"
-    assert manifest["custodian"] == "arnold.megaplan.resident"
+    assert manifest["custodian"] == "arnold.megaplan.managed_agent"
     assert manifest["sandbox"] == "danger-full-access"
     assert manifest["model"] == "gpt-test"
     assert manifest["task_kind"] == "routine"
@@ -758,6 +758,7 @@ def test_completion_sweep_replies_once_and_persists_evidence(tmp_path) -> None:
     assert len(outbound.sent) == 1
     assert outbound.sent[0].content == "Done safely."
     assert outbound.sent[0].metadata["discord_reply_to_message_id"] == "1001"
+    assert outbound.sent[0].metadata["discord_processing_message_ids"] == ["1001"]
     manifest = json.loads(manifest_path.read_text())
     assert manifest["completion_delivery"]["status"] == "delivered"
     assert manifest["completion_delivery"]["discord_message_ids"] == ["reply-1"]
@@ -1564,6 +1565,7 @@ def test_terminal_agents_without_successful_result_send_honest_notice(
 
         async def send(self, message):
             self.sent.append(message)
+            message.metadata["discord_message_ids"] = ["honest-terminal-notice"]
 
     outbound = _Outbound()
     sweep = asyncio.run(

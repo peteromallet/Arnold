@@ -3351,8 +3351,10 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
     # repair on one session cannot block the tick from scanning/reporting the
     # other sessions.
     assert "dispatch_kimi_repair()" in text
-    assert 'setsid bash -c \'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"\'' in text
-    assert 'PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"' in text
+    assert "python3 -m arnold_pipelines.megaplan.managed_agent run" in text
+    assert "--run-kind automatic_repair" in text
+    assert 'setsid "${managed_cmd[@]}"' in text
+    assert 'PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"' in text
     assert "kimi_dispatch_marker_set" in text
     assert "mechanical_relaunch_attempted_previously" in text
     assert "kimi_dispatch_failed_previously" in text
@@ -3698,6 +3700,7 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
             "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
             f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
             f"PLAN_STATUS_REQUEST_ID={request_id!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
@@ -3731,6 +3734,8 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
     blocker_id = "blocker:v1:test-stale"
     request_id = "req-live"
     queue_root = tmp_path / ".megaplan" / "repair-queue"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     repair_requests.claim_active_repair_request(
         queue_root,
         blocker_id=blocker_id,
@@ -3763,17 +3768,22 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
             "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
             f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
             f"PLAN_STATUS_REQUEST_ID={request_id!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
-dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
+dispatch_kimi_repair demo-a __WORKSPACE__ /tmp/spec
 echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
-""".strip(),
+""".replace("__WORKSPACE__", shlex.quote(str(workspace))).strip(),
         ]
     )
 
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines() == ["status:dispatched"]
+    for _ in range(50):
+        if launch_log.exists():
+            break
+        time.sleep(0.02)
     assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
 
 
@@ -3836,9 +3846,10 @@ fi
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines() == ["first:dispatched", "second:busy"]
     payloads = _read_incident_event_payloads(workspace)
-    assert [payload["outcome"] for payload in payloads] == ["dispatched", "busy"]
-    assert all(payload["type"] == "dispatch" for payload in payloads)
-    assert payloads[0]["decision"]["repair_actor"] == "immediate_repair"
+    dispatch_payloads = [payload for payload in payloads if payload["type"] == "dispatch"]
+    assert [payload["outcome"] for payload in dispatch_payloads] == ["dispatched", "busy"]
+    assert {payload["type"] for payload in payloads} >= {"claim.acquired", "repair_attempt"}
+    assert dispatch_payloads[0]["decision"]["repair_actor"] == "immediate_repair"
 
 
 def test_watchdog_meta_dispatch_emits_incident_statuses(tmp_path: Path) -> None:
@@ -8086,8 +8097,8 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "sandbox_refused_outside_project_root" in text
     assert "run_kimi_launch_turn()" in text
     assert 'timeout "$dev_timeout"' in text
-    assert '- < "$prompt_path"' in text
-    assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
+    assert '--stdin-file "$prompt_path"' in text
+    assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent' in text
     assert '--query_file="$prompt_path"' in text
     assert '--query="$(cat "$prompt_path")"' not in text
     assert "prepare_repair_agent_exec_env()" in text
@@ -13180,7 +13191,8 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
 
     assert 'cd "$ARNOLD_SRC" || exit 1' in text
     assert 'codex exec --skip-git-repo-check --sandbox danger-full-access' in text
-    assert 'codex exec --skip-git-repo-check --sandbox danger-full-access - < "$BRIEF_PATH"' in text
+    assert "--run-kind automatic_meta_repair_worker" in text
+    assert '--stdin-file "$BRIEF_PATH"' in text
     assert '$(cat "$BRIEF_PATH")' not in text
     assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"' in text
     assert 'BRIEF_PREFLIGHT_MAX_CHARS="${MEGAPLAN_META_BRIEF_PREFLIGHT_MAX_CHARS:-900000}"' in text

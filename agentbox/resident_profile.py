@@ -18,6 +18,10 @@ from agentbox.config import AgentBoxConfig, load_agentbox_config
 from agentbox.operation_resolver import OperationResolveResult, resolve_operation
 from agentbox.operation_views import logs_view, status_view
 from agentbox.operations import list_agentbox_operations, load_agentbox_operation
+from arnold_pipelines.megaplan.resident.timezone import (
+    TimezoneService,
+    add_localized_timestamp_fields,
+)
 
 AGENTBOX_OPERATOR_PROMPT_VERSION = "agentbox-operator-v1"
 MEGAPLAN_CHAIN_OPERATION_TYPE = "megaplan_chain"
@@ -38,6 +42,7 @@ AGENTBOX_OPERATOR_TOOL_NAMES = (
     "cleanup_survey",
     "cleanup_apply",
     "search_messages",
+    "read_reply_chain",
     "subagent",
 )
 
@@ -94,6 +99,12 @@ class SearchMessagesInput(BaseModel):
     limit: int = Field(default=10, gt=0, le=50)
 
 
+class ReadReplyChainInput(BaseModel):
+    source_message_id: str | None = None
+    cursor: str | None = None
+    limit: int = Field(default=5, gt=0, le=10)
+
+
 class SubagentInput(BaseModel):
     prompt: str
     model: str | None = None
@@ -122,7 +133,12 @@ class AgentBoxOperatorProfile:
             "You are the AgentBox Operator for Discord. Keep responses concise, "
             "include operation ids whenever an operation is involved, inspect "
             "ambiguous machine state before asking, and ask exactly one concrete "
-            "clarifying question when intent or target state is ambiguous."
+            "clarifying question when intent or target state is ambiguous. Up to three "
+            "exact Discord reply ancestors are preloaded nearest-first. Never infer reply "
+            "ancestry from recent messages; use `read_reply_chain` with the supplied cursor "
+            "when older ancestors remain. Hot context's `user_timezone` is the presentation "
+            "authority: render absolute user-visible times from deterministic `*_local` fields, "
+            "keep stored/control-plane timestamps in UTC, and preserve relative durations."
         )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
@@ -161,7 +177,20 @@ class AgentBoxOperatorProfile:
         except Exception as exc:
             base["recent_operations"] = []
             base["agentbox_context_error"] = f"{exc.__class__.__name__}: {exc}"
-        return base
+        subject_user_id = None
+        if conversation is not None:
+            subject_user_id = str(
+                conversation.metadata.get("last_subject_user_id")
+                or conversation.dm_user_id
+                or ""
+            ) or None
+        resolved = TimezoneService(self.store, self.config).resolve(
+            user_id=subject_user_id,
+            conversation=conversation,
+            guild_id=(conversation.guild_id if conversation is not None else None),
+        )
+        base["user_timezone"] = resolved.hot_context()
+        return add_localized_timestamp_fields(base, resolved.name)
 
     def tools(self) -> Any:
         return self.tool_registry
@@ -179,6 +208,7 @@ class AgentBoxOperatorProfile:
             ToolRegistration("cleanup_survey", "Survey AgentBox resources and classify cleanup recommendations.", "read", CleanupSurveyInput, ToolResult, self._cleanup_survey),
             ToolRegistration("cleanup_apply", "Apply a cleanup action to a surveyed finding.", "reconcile_apply", CleanupApplyInput, ToolResult, self._cleanup_apply),
             ToolRegistration("search_messages", "Search earlier messages in this conversation.", "read", SearchMessagesInput, ToolResult, self._search_messages),
+            ToolRegistration("read_reply_chain", "Read bounded, store-backed Discord reply ancestry inside this conversation.", "read", ReadReplyChainInput, ToolResult, self._read_reply_chain),
             ToolRegistration("subagent", "Dispatch a one-shot subagent on a configurable model to investigate and report back inline.", "read", SubagentInput, ToolResult, self._subagent),
         )
         for registration in registrations:
@@ -539,6 +569,88 @@ class AgentBoxOperatorProfile:
                 count=len(rows),
                 limit=payload.limit,
                 messages=[_message_hit_payload(row) for row in rows],
+            ),
+        )
+
+    def _read_reply_chain(self, payload: ReadReplyChainInput) -> Any:
+        ToolResult = _resident_symbol("tool_schemas", "ToolResult")
+        subject = _runtime_subject()
+        if subject is None:
+            return ToolResult(
+                ok=False,
+                message="read_reply_chain requires an authorized runtime subject.",
+                data={"profile": "agentbox_operator", "error": "runtime_subject_required"},
+            )
+        if denied := self._authorization_denied(subject, "read"):
+            return denied
+        context = _runtime_context()
+        conversation_id = getattr(context, "conversation_id", None)
+        if self.store is None or not conversation_id:
+            return ToolResult(
+                ok=False,
+                message="read_reply_chain requires a store and active conversation.",
+                data={"profile": "agentbox_operator", "error": "conversation_required"},
+            )
+        from arnold_pipelines.megaplan.resident.reply_chain import (
+            decode_reply_cursor,
+            reply_chain_page,
+        )
+
+        cursor_source = None
+        offset = 0
+        if payload.cursor:
+            try:
+                cursor_source, offset = decode_reply_cursor(payload.cursor)
+            except ValueError as exc:
+                return ToolResult(
+                    ok=False,
+                    message=str(exc),
+                    data={"profile": "agentbox_operator", "error": "invalid_cursor"},
+                )
+        requested = (payload.source_message_id or "").strip() or cursor_source
+        launch_origin = getattr(context, "launch_origin", None)
+        if requested is None and isinstance(launch_origin, dict):
+            requested = str(
+                launch_origin.get("source_record_id")
+                or launch_origin.get("discord_message_id")
+                or ""
+            ).strip() or None
+        if requested is None:
+            return ToolResult(
+                ok=False,
+                message="source_message_id is required when the current source is ambiguous.",
+                data={"profile": "agentbox_operator", "error": "source_message_required"},
+            )
+        message = self.store.load_message(requested)
+        if message is not None and message.conversation_id != conversation_id:
+            return ToolResult(
+                ok=False,
+                message="reply-chain source is outside the active conversation.",
+                data={"profile": "agentbox_operator", "error": "cross_conversation_rejected"},
+            )
+        if message is None:
+            message = self.store.find_conversation_message_by_discord_id(
+                conversation_id, requested
+            )
+        if message is None:
+            return ToolResult(
+                ok=False,
+                message="reply-chain source was not found in the active conversation.",
+                data={"profile": "agentbox_operator", "error": "source_not_found"},
+            )
+        if cursor_source is not None and cursor_source != message.id:
+            return ToolResult(
+                ok=False,
+                message="cursor does not belong to the requested source message.",
+                data={"profile": "agentbox_operator", "error": "cursor_source_mismatch"},
+            )
+        return ToolResult(
+            ok=True,
+            message="reply ancestry read",
+            data=_tool_payload(
+                action="read_reply_chain",
+                next_state="reply_ancestry_read",
+                **reply_chain_page(message, offset=offset, limit=payload.limit),
             ),
         )
 

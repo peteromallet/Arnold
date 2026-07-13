@@ -274,6 +274,90 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     assert projection["attempts"][0]["terminal"] is False
 
 
+def test_custody_projection_uses_managed_execution_as_formal_attempt(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    managed_dir = tmp_path / "managed" / "managed-automatic-repair-test"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    managed_dir.mkdir(parents=True)
+
+    queued = repair_requests.enqueue_repair_request(
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="dispatch me",
+        created_at="2026-07-04T01:00:00Z",
+    )
+    request_id = queued["request"]["request_id"]
+    expected_blocker_id = blocker_id_for_fingerprint(_fingerprint())
+    manifest_path = managed_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-managed-agent-run-v2",
+                "custodian": "arnold.megaplan.managed_agent",
+                "run_id": managed_dir.name,
+                "run_kind": "automatic_repair",
+                "status": "completed",
+                "terminal_outcome": "completed",
+                "created_at": "2026-07-04T01:05:00Z",
+                "updated_at": "2026-07-04T01:06:00Z",
+                "links": {
+                    "repair_request_id": request_id,
+                    "blocker_id": expected_blocker_id,
+                    "cloud_session": "demo-session",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "attempts": [],
+                "current_attempt_id": None,
+                "outcome": "repairing",
+                "managed_agent_runs": [
+                    {
+                        "run_id": managed_dir.name,
+                        "manifest_path": str(manifest_path),
+                        "repair_request_id": request_id,
+                        "blocker_id": expected_blocker_id,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert len(projection["attempts"]) == 1
+    attempt = projection["attempts"][0]
+    assert attempt["attempt_id"] == managed_dir.name
+    assert attempt["request_id"] == request_id
+    assert attempt["source"] == "managed_agent_execution"
+    assert attempt["state"] == "succeeded"
+    assert attempt["terminal"] is True
+
+
 def test_custody_projection_drops_stale_request_from_advanced_plan_target(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_data_dir = marker_dir / "repair-data"
