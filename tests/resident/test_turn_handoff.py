@@ -272,3 +272,62 @@ def test_runtime_ack_and_terminal_custody_keep_exact_inbound_reply_owner(
         "Launched resident-managed run `subagent-exact-owner`. "
         "Terminal results will reply automatically to this message."
     )
+
+
+def test_runtime_delivers_user_visible_reply_when_model_invocation_fails(tmp_path) -> None:
+    class FailingRunner:
+        async def run(self, _request, _tools):
+            raise RuntimeError("input_too_large: internal diagnostic payload")
+
+    class CapturingOutbound:
+        def __init__(self) -> None:
+            self.sent: list[OutboundMessage] = []
+
+        async def mark_processing(self, **_kwargs) -> None:
+            return None
+
+        async def send(self, message: OutboundMessage) -> None:
+            self.sent.append(message)
+
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig(
+        allowed_user_ids=("user-1",),
+        burst_idle_delay_s=0,
+        burst_max_delay_s=1,
+    )
+    authorizer = ResidentAuthorizer(config)
+    outbound = CapturingOutbound()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=MegaplanResidentProfile(
+            store=store, authorizer=authorizer, config=config
+        ),
+        runner=FailingRunner(),
+        outbound=outbound,
+    )
+
+    async def run_case() -> None:
+        await runtime.receive(
+            InboundEvent(
+                idempotency_key="discord:message:1525000000000000999",
+                conversation_key="discord:guild:12:channel:34",
+                subject=AuthorizationSubject(
+                    user_id="user-1", guild_id="12", channel_id="34"
+                ),
+                content="what is running?",
+                raw={"discord_message_id": "1525000000000000999"},
+            )
+        )
+        await runtime.coalescer.flush_all()
+
+    asyncio.run(run_case())
+
+    assert len(outbound.sent) == 1
+    assert "internal context exceeded" in outbound.sent[0].content
+    assert outbound.sent[0].metadata["discord_reply_to_message_id"] == "1525000000000000999"
+    turn = store.list_recent_turns(n=1)[0]
+    assert turn.status == "failed"
+    assert turn.message_sent is True
+    assert turn.final_output_message_id is not None

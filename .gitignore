@@ -24,6 +24,7 @@ __pycache__/
 .megaplan/worker_tmp/
 .megaplan/.state-locks/
 .megaplan/cloud-chain.log
+.megaplan/cloud-chain-*.log
 .megaplan/m2-auto.log
 .megaplan/m6-test.log
 .megaplan/system_logs/

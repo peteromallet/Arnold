@@ -17,10 +17,14 @@ from .cloud import CloudCliBackend
 from .config import ResidentConfig
 from .discord import DiscordOutboundSink, ResidentDiscordService, discord_token_from_env
 from .profile import MegaplanResidentProfile
+from .profile import _sanitize_stale_snapshot
 from .provenance import provenance_from_environment
 from .reply_chain import decode_reply_cursor, reply_chain_page
 from .runtime import ResidentRuntime
 from .scheduler import make_store_scheduler
+from .status_tree import DEFAULT_NODE_LIMIT, MAX_NODE_LIMIT, read_cloud_status_node
+from .context_tree import read_context_node, search_context
+from arnold_pipelines.megaplan.cloud import status_snapshot
 
 
 def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
@@ -55,6 +59,32 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     reply_parser.add_argument("--cursor", help="Opaque next cursor from the prompt or prior page")
     reply_parser.add_argument("--limit", type=int, default=5)
 
+    status_tree_parser = sub.add_parser(
+        "status-tree",
+        parents=[shared],
+        help="Read one bounded branch of the canonical cloud status tree",
+    )
+    status_tree_parser.add_argument("--node", default="root", help="Node ID from the root or prior response")
+    status_tree_parser.add_argument("--cursor", type=int, default=0)
+    status_tree_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
+
+    context_parser = sub.add_parser(
+        "context", parents=[shared], help="Read one typed branch of the resident context tree"
+    )
+    context_parser.add_argument("--node", default="root")
+    context_parser.add_argument("--conversation-id")
+    context_parser.add_argument("--cursor", type=int, default=0)
+    context_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
+
+    search_parser = sub.add_parser(
+        "context-search", parents=[shared], help="Search one resident context namespace"
+    )
+    search_parser.add_argument("--scope", required=True)
+    search_parser.add_argument("--query", default="")
+    search_parser.add_argument("--conversation-id")
+    search_parser.add_argument("--cursor", type=int, default=0)
+    search_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
+
 
 def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     config = _resident_config(args)
@@ -69,6 +99,25 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
             return _resident_read_reply_chain(
                 store,
                 source_message_id=args.source_message_id,
+                cursor=args.cursor,
+                limit=args.limit,
+            )
+        if action == "status-tree":
+            return _resident_status_tree(
+                config,
+                node_id=args.node,
+                cursor=args.cursor,
+                limit=args.limit,
+            )
+        if action in {"context", "context-search"}:
+            return _resident_context_tree(
+                store,
+                config,
+                action=action,
+                conversation_id=args.conversation_id,
+                node_id=getattr(args, "node", "root"),
+                scope=getattr(args, "scope", None),
+                query=getattr(args, "query", ""),
                 cursor=args.cursor,
                 limit=args.limit,
             )
@@ -196,6 +245,81 @@ def _resident_read_reply_chain(
         "action": "read-reply-chain",
         **reply_chain_page(message, offset=offset, limit=limit),
     }
+
+
+def _resident_status_tree(
+    config: ResidentConfig,
+    *,
+    node_id: str,
+    cursor: int,
+    limit: int,
+) -> dict[str, Any]:
+    if cursor < 0:
+        raise CliError("invalid_args", "status-tree --cursor must be non-negative")
+    if limit < 1 or limit > MAX_NODE_LIMIT:
+        raise CliError(
+            "invalid_args", f"status-tree --limit must be between 1 and {MAX_NODE_LIMIT}"
+        )
+    snapshot, degraded_reason = status_snapshot.load_cloud_status_snapshot(
+        config.status_snapshot_path,
+        max_age_s=2 * 60 * 60,
+    )
+    if snapshot is None:
+        raise CliError(
+            "status_unavailable",
+            degraded_reason or "canonical cloud status snapshot is unavailable",
+        )
+    if degraded_reason:
+        snapshot = _sanitize_stale_snapshot(snapshot, degraded_reason)
+    result = read_cloud_status_node(snapshot, node_id=node_id, cursor=cursor, limit=limit)
+    if not result.get("success"):
+        raise CliError("status_node_not_found", str(result.get("error") or "node read failed"))
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "status-tree",
+        "degraded_reason": degraded_reason,
+        "node": result["node"],
+    }
+
+
+def _resident_context_tree(
+    store: Store,
+    config: ResidentConfig,
+    *,
+    action: str,
+    conversation_id: str | None,
+    node_id: str,
+    scope: str | None,
+    query: str,
+    cursor: int,
+    limit: int,
+) -> dict[str, Any]:
+    if cursor < 0 or limit < 1 or limit > MAX_NODE_LIMIT:
+        raise CliError("invalid_args", f"cursor must be non-negative and limit 1..{MAX_NODE_LIMIT}")
+    resolved_conversation = conversation_id
+    if not resolved_conversation:
+        provenance = provenance_from_environment(strict=False)
+        if provenance:
+            resolved_conversation = str(provenance.get("resident_conversation_id") or "") or None
+    resolved_conversation = resolved_conversation or "cli-context"
+    profile = MegaplanResidentProfile(store=store, config=config)
+    asyncio.run(profile.load_hot_context(resolved_conversation))
+    sources = profile._context_source_cache[resolved_conversation]
+    result = (
+        read_context_node(sources, node_id=node_id, cursor=cursor, limit=limit)
+        if action == "context"
+        else search_context(
+            sources,
+            scope=str(scope or ""),
+            query=query,
+            cursor=cursor,
+            limit=limit,
+        )
+    )
+    if not result.get("success"):
+        raise CliError("context_node_error", str(result.get("error") or "context read failed"))
+    return {"success": True, "step": "resident", "action": action, "node": result["node"]}
 
 
 async def _resident_scheduler_once(store: Store, config: ResidentConfig, *, worker_id: str) -> dict[str, Any]:

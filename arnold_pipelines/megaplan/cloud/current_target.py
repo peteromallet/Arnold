@@ -19,6 +19,18 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
 _FINGERPRINT_ALGORITHM = "sha256"
 _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
 
+_PARTIAL_EVIDENCE_KINDS = {
+    "invalid_marker_json",
+    "invalid_needs_human_json",
+    "missing_chain_state",
+    "missing_plan_state",
+}
+_MISSING_EVIDENCE_KINDS = {
+    "missing_marker_json",
+    "spec_missing",
+    "workspace_missing",
+}
+
 SessionLiveProbe = Callable[[str], bool | None]
 PidLiveProbe = Callable[[int], bool | None]
 
@@ -62,6 +74,7 @@ def resolve_current_target(
     *,
     marker_dir: str | Path,
     repair_data_dir: str | Path | None = None,
+    workspace_hint: str | Path | None = None,
     session_is_live: SessionLiveProbe | None = None,
     pid_is_live: PidLiveProbe | None = None,
 ) -> dict[str, Any]:
@@ -94,6 +107,7 @@ def resolve_current_target(
             "sibling_sessions": [],
             "ignored_artifacts": [],
             "stale_evidence": [],
+            "evidence_state": _evidence_state("missing", ["resolver_observe_disabled"]),
             "rationale": ["resolver observe disabled via ARNOLD_RESOLVER_OBSERVE"],
         }
 
@@ -101,7 +115,7 @@ def resolve_current_target(
     data_root = Path(repair_data_dir) if repair_data_dir is not None else markers_root / "repair-data"
     marker_path = markers_root / f"{session}.json"
     marker = _safe_load_dict(marker_path)
-    workspace = _safe_path(marker.get("workspace"))
+    workspace = _safe_path(marker.get("workspace")) or _safe_path(str(workspace_hint or ""))
     remote_spec = _resolve_remote_spec(workspace, marker.get("remote_spec"))
     run_kind = _resolve_run_kind(marker.get("run_kind"), remote_spec)
     marker_plan_name = _safe_plan_name(marker.get("plan_name"))
@@ -145,7 +159,7 @@ def resolve_current_target(
         stale_evidence.append(_artifact(kind="missing_marker_json", path=marker_path))
         rationale.append("marker JSON missing")
 
-    if remote_spec is None:
+    if remote_spec is None and run_kind != "plan":
         stale_evidence.append(_artifact(kind="spec_missing", path=_safe_text(marker.get("remote_spec"))))
         rationale.append("marker did not provide a usable remote spec")
     if workspace is None:
@@ -154,6 +168,8 @@ def resolve_current_target(
     elif not workspace.exists():
         stale_evidence.append(_artifact(kind="workspace_missing", path=workspace))
         rationale.append("marker workspace path does not exist")
+    elif not _safe_path(marker.get("workspace")) and workspace_hint:
+        rationale.append("wrapper workspace argument supplied the missing marker workspace")
     if (
         remote_spec is not None
         and run_kind in {"chain", "epic_chain"}
@@ -195,6 +211,18 @@ def resolve_current_target(
 
     plan_current_state = _safe_text(plan_state.get("current_state"))
     chain_last_state = _safe_text(chain_state.get("last_state"))
+
+    plan_state_name = _safe_plan_name(plan_state.get("name"))
+    if chain_current_plan and plan_state_name and chain_current_plan != plan_state_name:
+        stale_evidence.append(
+            _artifact(
+                kind="contradictory_plan_identity",
+                path=plan_state_path,
+                chain_current_plan=chain_current_plan,
+                plan_state_name=plan_state_name,
+            )
+        )
+        rationale.append("chain and plan state identify different current plans")
 
     if chain_current_plan and marker_plan_name and chain_current_plan != marker_plan_name:
         stale_evidence.append(
@@ -265,6 +293,7 @@ def resolve_current_target(
     if not rationale:
         rationale.append("marker is the only available evidence")
 
+    sorted_evidence = sorted(stale_evidence, key=_artifact_sort_key)
     return {
         "schema_version": 1,
         "session": session,
@@ -325,9 +354,42 @@ def resolve_current_target(
         "resume_authority_failure": resume_authority_failure,
         "sibling_sessions": siblings,
         "ignored_artifacts": sorted(ignored_artifacts, key=_artifact_sort_key),
-        "stale_evidence": sorted(stale_evidence, key=_artifact_sort_key),
+        "stale_evidence": sorted_evidence,
+        "evidence_state": _classify_evidence_state(sorted_evidence),
         "rationale": sorted(set(rationale)),
     }
+
+
+def _evidence_state(unknown_type: str, issue_kinds: list[str]) -> dict[str, Any]:
+    """Return the typed resolver state consumed across wrapper boundaries."""
+
+    is_unknown = bool(unknown_type)
+    return {
+        "status": "unknown" if is_unknown else "resolved",
+        "unknown_type": unknown_type,
+        "issue_kinds": sorted(set(issue_kinds)),
+        # Target evidence is never itself authority.  A resolved target is only
+        # eligible for the independent master-plus-path mutation predicate.
+        "mutation_eligible": not is_unknown,
+        "authorizes_mutation": False,
+        # Resolution proves identity/custody, not health, so it never projects
+        # a green health result on its own.
+        "green": False,
+    }
+
+
+def _classify_evidence_state(evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    kinds = [str(item.get("kind") or "").strip() for item in evidence]
+    kinds = [kind for kind in kinds if kind]
+    if any(kind.startswith("contradictory_") for kind in kinds):
+        return _evidence_state("contradictory", kinds)
+    if any(kind.startswith("stale_") or kind.startswith("superseded_") for kind in kinds):
+        return _evidence_state("stale", kinds)
+    if any(kind in _PARTIAL_EVIDENCE_KINDS for kind in kinds):
+        return _evidence_state("partial", kinds)
+    if any(kind in _MISSING_EVIDENCE_KINDS for kind in kinds):
+        return _evidence_state("missing", kinds)
+    return _evidence_state("", kinds)
 
 
 def _safe_load_dict(path: Path | None) -> dict[str, Any]:

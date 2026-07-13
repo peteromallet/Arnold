@@ -165,6 +165,45 @@ BLOCKED_REFUSAL_REASONS: dict[str, str] = {
 }
 
 
+def enqueue_supervisor_repair_request(
+    *,
+    queue_root: str | Path,
+    marker_dir: str | Path,
+    session: str,
+    workspace: str | Path,
+    remote_spec: str,
+    run_kind: str,
+    reason: str,
+    log_path: str,
+) -> dict[str, Any]:
+    """Queue an exhausted supervised run in the validated central queue."""
+
+    from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+
+    return enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session=session,
+        source="arnold_supervise_exit",
+        workspace=workspace,
+        run_kind=run_kind,
+        target={
+            "workspace": str(workspace),
+            "remote_spec": remote_spec,
+            "supervise_log": log_path,
+        },
+        problem_signature={
+            "failure_kind": "supervised_run_exhausted",
+            "current_state": "process_exited",
+            "phase_or_step": "arnold-supervise",
+            "milestone_or_plan": remote_spec,
+            "gate_recommendation": "",
+            "blocked_task_id": "",
+        },
+        root_cause_hint={"reason": reason, "supervise_log": log_path},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main tick logic
 # ---------------------------------------------------------------------------
@@ -192,6 +231,7 @@ def cloud_supervise_tick(
         _tmux_chain_restart_command,
         cloud_chain_status_payload,
     )
+    from arnold_pipelines.megaplan.cloud import feature_flags
 
     # ------------------------------------------------------------------
     # (a) Read initial chain status
@@ -235,13 +275,36 @@ def cloud_supervise_tick(
         {"status": "unavailable", "reason": "not probed"},
     )
 
+    def l1_mutation_blocked_report(action: str) -> dict[str, Any]:
+        """Return a truthful observation when an L1 effect is unauthorized."""
+        return _tick_report(
+            success=True,
+            event="supervisor_blocked",
+            spec=remote_spec,
+            effective_status=status,
+            next_action="blocked",
+            acted=False,
+            refused_reason=(
+                f"observed {action}; L1 mutation requires ARNOLD_AUTONOMY "
+                "and ARNOLD_REPAIR_TRIGGER_ENABLED"
+            ),
+            runner=runner,
+            sync=sync_info,
+            pr=pr_info,
+            logs=logs_info,
+            sync_refresh=sync_refresh,
+            provider_consistency=provider_consistency,
+            extra_repo_sync=extra_repo_sync_info,
+            human_verification=human_verification,
+        )
+
     # ------------------------------------------------------------------
     # (b) Refresh branch/PR sync — BEFORE any restart/advance/wake decisions
     # ------------------------------------------------------------------
     ssh_meth = getattr(provider, "ssh_exec", None)
     sync_refresh: dict[str, Any] = {"status": "skipped", "reason": "no ssh_exec"}
     sync_refreshed = False
-    if ssh_meth is not None:
+    if ssh_meth is not None and feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
         try:
             chain_state_raw = payload.get("chain_state", {})
             pr_number_raw = (
@@ -267,6 +330,11 @@ def cloud_supervise_tick(
         except Exception as exc:
             # Sync refresh failure is now visible in the tick report.
             sync_refresh = {"status": "failed", "reason": str(exc)}
+    elif ssh_meth is not None:
+        sync_refresh = {
+            "status": "blocked",
+            "reason": "L1 mutation authorization required for remote sync-state refresh",
+        }
 
     # ------------------------------------------------------------------
     # (c) Re-read chain status after sync refresh
@@ -475,6 +543,8 @@ def cloud_supervise_tick(
 
         if pr_state_output == "merged":
             # PR merged — advance with one-shot tick
+            if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+                return l1_mutation_blocked_report("merged PR eligible for advance")
             try:
                 restart_cmd = _tmux_chain_restart_command(
                     resolved_workspace, remote_spec, session_name=resolved_session
@@ -542,6 +612,8 @@ def cloud_supervise_tick(
     if status == "stale_bookkeeping":
         runner_status = runner.get("status", "unavailable") if isinstance(runner, dict) else "unavailable"
         if runner_status in ("dead", "unavailable") and ssh_meth is not None:
+            if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+                return l1_mutation_blocked_report("stale bookkeeping eligible for restart")
             try:
                 restart_cmd = _tmux_chain_restart_command(
                     resolved_workspace, remote_spec, session_name=resolved_session
@@ -674,6 +746,8 @@ def cloud_supervise_tick(
             else "unavailable"
         )
         if runner_status in ("dead", "unavailable") and ssh_meth is not None:
+            if not feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1):
+                return l1_mutation_blocked_report("verified runner eligible for wake")
             try:
                 restart_cmd = _tmux_chain_restart_command(
                     resolved_workspace,

@@ -1,19 +1,19 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-07T13:29:44.807228+00:00",
+  "generated_at": "2026-07-11T13:41:18.496850+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-demo-session"
   ],
   "next_review_ts": null,
-  "occurrence_count": 138,
+  "occurrence_count": 234,
   "owner_actor": "immediate_repair",
   "problem_id": "problem-6e386e382223",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:8c80f44e6634cba0574620716302c91c608f8e33e973547f4eef72e23785616e",
-    "last_seq": 209,
+    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
+    "last_seq": 342,
     "projection": "problems"
   },
   "status": "open",

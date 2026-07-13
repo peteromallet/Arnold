@@ -33,6 +33,7 @@ from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_github_issue_publish_failed,
     append_github_issue_published,
     append_meta_repair_attempt,
+    append_recovery_observation,
     append_six_hour_auditor_audit_complete,
     append_six_hour_auditor_diagnosis,
     append_verified_recovered,
@@ -43,6 +44,24 @@ from arnold_pipelines.megaplan.incident import IncidentLedger
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+def _recovery_verification(
+    *, observation: dict[str, object] | None = None
+) -> dict[str, object]:
+    return {
+        "repair_completed_at": "2026-07-03T19:59:00+00:00",
+        "original_blocker": {"blocker_id": "blocker-100"},
+        "observation": observation
+        or {
+            "kind": "plan_state",
+            "blocker_id": "blocker-100",
+            "blocker_cleared": True,
+            "directly_observed": True,
+            "independent": True,
+            "observed_at": "2026-07-03T20:00:00+00:00",
+        },
+    }
 
 
 def _repair_payload(
@@ -67,6 +86,7 @@ def _repair_payload(
             "is_success": repair_contract.is_success_outcome(outcome),
             "is_terminal": repair_contract.is_terminal_outcome(outcome),
             "recorded_at": "2026-07-03T20:00:00+00:00",
+            **_recovery_verification(),
         },
     }
 
@@ -211,9 +231,9 @@ def test_noop_save_preserves_index_but_not_events(tmp_path: Path) -> None:
     path = repair_dir / "demo-session.repair-data.json"
 
     repair_contract.save_repair_data(path, _repair_payload(outcome=REPAIRING), root=tmp_path)
-    # Modify a non-outcome field and re-save with same outcome
+    # Modify a non-outcome/non-attempt-identity field and re-save.
     modified = _repair_payload(outcome=REPAIRING)
-    modified["attempt_ids"] = ["attempt-1", "attempt-2"]
+    modified["summary"] = "same repair attempt, richer summary"
     repair_contract.save_repair_data(path, modified, root=tmp_path)
 
     events = _read_ledger_events(tmp_path)
@@ -221,7 +241,7 @@ def test_noop_save_preserves_index_but_not_events(tmp_path: Path) -> None:
 
     # Index still updated
     index = json.loads((repair_dir / "index.json").read_text(encoding="utf-8"))
-    assert index["sessions"]["demo-session"]["attempt_ids"] == ["attempt-1", "attempt-2"]
+    assert index["sessions"]["demo-session"]["attempt_ids"] == ["attempt-1"]
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +328,7 @@ def test_bridge_append_verified_recovered_creates_event(tmp_path: Path) -> None:
     result = append_verified_recovered(
         incident_id="inc-300",
         summary="Full chain verified: source-fix → install-sync → retrigger → recovered",
+        recovery_verification=_recovery_verification(),
         session_id="session-abc",
         root=tmp_path,
     )
@@ -319,6 +340,62 @@ def test_bridge_append_verified_recovered_creates_event(tmp_path: Path) -> None:
 
     events = _read_ledger_events(tmp_path)
     assert len(events) == 1
+
+
+def test_bridge_rejects_verified_recovered_from_liveness_only(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="blocker-specific evidence"):
+        append_verified_recovered(
+            incident_id="inc-unverified",
+            summary="Process is alive",
+            recovery_verification=_recovery_verification(
+                observation={"kind": "process", "pid_alive": True}
+            ),
+            root=tmp_path,
+        )
+
+    assert _read_ledger_events(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("observation", "expected_status", "expected_unknown_type"),
+    [
+        ({"kind": "heartbeat", "heartbeat_active": True}, "provisional", ""),
+        ({"evidence_state": {"unknown_type": "stale"}}, "unknown", "stale"),
+        (
+            {
+                "kind": "plan_state",
+                "blocker_id": "different-blocker",
+                "blocker_cleared": True,
+                "directly_observed": True,
+                "independent": True,
+                "observed_at": "2026-07-03T20:00:00+00:00",
+            },
+            "unknown",
+            "contradictory",
+        ),
+    ],
+)
+def test_recovery_observation_preserves_non_verified_evidence_state(
+    tmp_path: Path,
+    observation: dict[str, object],
+    expected_status: str,
+    expected_unknown_type: str,
+) -> None:
+    result = append_recovery_observation(
+        incident_id="inc-observation",
+        summary="Recovery observation",
+        recovery_verification=_recovery_verification(observation=observation),
+        session_id="session-observation",
+        root=tmp_path,
+    )
+
+    payload = result["payload"]
+    assert payload["type"] == "repair_attempt"
+    assert payload["outcome"] != "recovered"
+    projected = payload["evidence"][-1]["data"]
+    assert projected["status"] == expected_status
+    assert projected["unknown_type"] == expected_unknown_type
+    assert projected["authorizes_verified_recovered"] is False
 
 
 def test_bridge_append_six_hour_auditor_diagnosis_creates_event(tmp_path: Path) -> None:
@@ -545,6 +622,7 @@ def test_event_evidence_includes_verification_and_attempt_ids(tmp_path: Path) ->
         "is_terminal": True,
         "recorded_at": "2026-07-03T20:00:00+00:00",
         "delta_summary": "All checks passed",
+        **_recovery_verification(),
     }
     payload["attempt_ids"] = ["attempt-1", "attempt-2", "attempt-3"]
 

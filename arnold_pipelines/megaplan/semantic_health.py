@@ -36,6 +36,10 @@ from arnold_pipelines.megaplan.orchestration.override_authority import (
 )
 from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
+    contract_satisfies_profile,
+    diff_contracts,
+    get_profile_by_kind,
+    get_template_by_id,
 )
 
 log = logging.getLogger(__name__)
@@ -176,6 +180,11 @@ def _inspect_contract(
             state=state,
             history=history,
         )
+    )
+
+    # --- profile/template metadata compliance ---
+    findings.extend(
+        _check_profile_template_metadata(contract)
     )
 
     return findings
@@ -570,6 +579,133 @@ def _check_authority_records(
     except (json.JSONDecodeError, OSError):
         # Already reported by _check_boundary_receipt
         pass
+
+    return findings
+
+
+# ── profile/template metadata compliance ───────────────────────────────
+
+
+def _check_profile_template_metadata(
+    contract: Any,
+) -> list[SemanticFinding]:
+    """Derive expectations from declared profile/template metadata.
+
+    When a contract declares ``profile_kind`` or ``template_ref`` in its
+    ``details`` mapping, this check validates the contract against the
+    referenced profile and template.  It generates:
+
+    * **profile-satisfaction** findings when a declared profile is not
+      satisfied (missing required fields).
+    * **template-compatibility** findings when a declared template ref
+      is not structurally compatible with the contract.
+
+    This is intentionally read-only — it never mutates contracts, state,
+    or runtime registries.
+    """
+    findings: list[SemanticFinding] = []
+    bid = contract.boundary_id
+    details = getattr(contract, "details", {}) or {}
+
+    profile_kind = details.get("profile_kind")
+    template_ref = details.get("template_ref")
+
+    # ── profile satisfaction check ──────────────────────────────────
+    if isinstance(profile_kind, str) and profile_kind:
+        profile = get_profile_by_kind(profile_kind)
+        if profile is None:
+            findings.append(
+                SemanticFinding(
+                    finding_id=f"SH-{bid}-profile-kind-unknown",
+                    boundary_id=bid,
+                    description=(
+                        f"contract '{bid}' declares profile_kind "
+                        f"'{profile_kind}' which is not a registered profile"
+                    ),
+                    severity=FindingSeverity.ERROR,
+                    diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                    contract_ref=bid,
+                    details={"profile_kind": profile_kind},
+                )
+            )
+        else:
+            satisfied, missing_keys = contract_satisfies_profile(
+                contract, profile
+            )
+            if not satisfied:
+                findings.append(
+                    SemanticFinding(
+                        finding_id=f"SH-{bid}-profile-unsatisfied",
+                        boundary_id=bid,
+                        description=(
+                            f"contract '{bid}' does not satisfy its declared "
+                            f"profile '{profile_kind}': missing required "
+                            f"fields {sorted(missing_keys)}"
+                        ),
+                        severity=FindingSeverity.ERROR,
+                        diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                        contract_ref=bid,
+                        details={
+                            "profile_kind": profile_kind,
+                            "missing_fields": sorted(missing_keys),
+                        },
+                    )
+                )
+
+    # ── template compatibility check ────────────────────────────────
+    if isinstance(template_ref, str) and template_ref:
+        template = get_template_by_id(template_ref)
+        if template is None:
+            findings.append(
+                SemanticFinding(
+                    finding_id=f"SH-{bid}-template-ref-unknown",
+                    boundary_id=bid,
+                    description=(
+                        f"contract '{bid}' declares template_ref "
+                        f"'{template_ref}' which is not a registered "
+                        f"typed boundary template"
+                    ),
+                    severity=FindingSeverity.ERROR,
+                    diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                    contract_ref=bid,
+                    details={"template_ref": template_ref},
+                )
+            )
+        else:
+            diff = diff_contracts(template, contract)
+            if not diff.get("matching"):
+                findings.append(
+                    SemanticFinding(
+                        finding_id=f"SH-{bid}-template-mismatch",
+                        boundary_id=bid,
+                        description=(
+                            f"contract '{bid}' deviates from its declared "
+                            f"template '{template_ref}': "
+                            f"{len(diff.get('field_diffs', {}))} field diffs, "
+                            f"{len(diff.get('detail_diffs', {}))} detail diffs"
+                            f"{', plus artifact diffs' if diff.get('artifact_diffs') else ''}"
+                        ),
+                        severity=FindingSeverity.WARNING,
+                        diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                        contract_ref=bid,
+                        details={
+                            "template_ref": template_ref,
+                            "field_diffs": {
+                                k: list(v)
+                                for k, v in diff.get("field_diffs", {}).items()
+                            },
+                            "detail_diffs": {
+                                k: list(v)
+                                for k, v in diff.get("detail_diffs", {}).items()
+                            },
+                            **(
+                                {"artifact_diffs": diff["artifact_diffs"]}
+                                if diff.get("artifact_diffs")
+                                else {}
+                            ),
+                        },
+                    )
+                )
 
     return findings
 

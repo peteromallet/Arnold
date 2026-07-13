@@ -13,6 +13,25 @@ SESSION=megaplan-resident-discord
 now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 log() { printf "[%s] %s\n" "$(now)" "$*" >> "$LOG"; }
 
+resident_healthy() {
+  docker exec "$CONTAINER" bash -lc '
+    set -euo pipefail
+    tmux has-session -t megaplan-resident-discord
+    pane_pid="$(tmux list-panes -t megaplan-resident-discord -F "#{pane_pid}" | head -1)"
+    tr "\0" "\n" < "/proc/$pane_pid/cmdline" | grep -Fx -- "--store-root" >/dev/null
+    set -a
+    . /workspace/.secrets/megaplan-resident-discord.env
+    [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env
+    set +a
+    runtime_src="${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}"
+    store_root="${MEGAPLAN_RESIDENT_STORE_ROOT:-/workspace/arnold/.megaplan/resident}"
+    PYTHONSAFEPATH=1 PYTHONPATH="$runtime_src:${PYTHONPATH:-}" \
+      python -P -m arnold_pipelines.megaplan resident health \
+        --mode "${MEGAPLAN_RESIDENT_MODE:-production}" \
+        --store-root "$store_root" >/dev/null
+  ' >/dev/null 2>&1
+}
+
 if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
   log "container_missing container=$CONTAINER"
   exit 1
@@ -26,12 +45,17 @@ if [[ "$running" != "true" ]]; then
   exit 0
 fi
 
-if docker exec "$CONTAINER" bash -lc "tmux has-session -t $SESSION" >/dev/null 2>&1; then
+if resident_healthy; then
   log "resident_alive container=$CONTAINER"
   exit 0
 fi
 
-log "resident_missing starting container=$CONTAINER"
+if docker exec "$CONTAINER" bash -lc "tmux has-session -t $SESSION" >/dev/null 2>&1; then
+  log "resident_unhealthy restarting container=$CONTAINER"
+  docker exec "$CONTAINER" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
+else
+  log "resident_missing starting container=$CONTAINER"
+fi
 # Canonical resident launch (mirrors entrypoint.sh.tmpl). The heredoc is quoted
 # ('EOS') so \$ and \${...} stay literal until the resident's bash -lc expands
 # them AFTER sourcing the env — exactly like the entrypoint's invocation.
@@ -45,11 +69,11 @@ if docker exec -i "$CONTAINER" bash >>"$LOG" 2>&1 <<'EOS'; then
     echo "resident_already_up"
     exit 0
   fi
-  tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; set +a; export PYTHONPATH=/workspace/arnold:\${PYTHONPATH:-}; export MEGAPLAN_RESIDENT_MODE=production MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=production; echo [resident-start] \$(date -Iseconds) provider=\${MEGAPLAN_RESIDENT_MODEL_PROVIDER} model=\${MEGAPLAN_RESIDENT_MODEL} >> /workspace/megaplan-resident-discord.log; python -m arnold_pipelines.megaplan resident discord --mode production --store-root /workspace/arnold/.megaplan/resident >> /workspace/megaplan-resident-discord.log 2>&1'"
+  tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=\${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}; store_root=\${MEGAPLAN_RESIDENT_STORE_ROOT:-/workspace/arnold/.megaplan/resident}; export PYTHONPATH=\$runtime_src:\${PYTHONPATH:-}; export MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=\${MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE:-production}; echo [resident-start] \$(date -Iseconds) provider=\${MEGAPLAN_RESIDENT_MODEL_PROVIDER} model=\${MEGAPLAN_RESIDENT_MODEL} store_root=\$store_root >> /workspace/megaplan-resident-discord.log; exec python -P -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-production} --store-root \"\$store_root\" >> /workspace/megaplan-resident-discord.log 2>&1'"
   echo "resident_started"
 EOS
-  sleep 2
-  if docker exec "$CONTAINER" bash -lc "tmux has-session -t $SESSION" >/dev/null 2>&1; then
+  sleep 5
+  if resident_healthy; then
     log "resident_restarted container=$CONTAINER"
     exit 0
   fi

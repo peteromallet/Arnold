@@ -172,6 +172,29 @@ class TestReviewSignals:
         calls = _called_names(_function_node(REVIEW_PATH, "handle_review"))
         assert calls.isdisjoint(FORBIDDEN_TRANSITION_HELPERS)
 
+    def test_finalize_review_loads_criteria_only_after_assignment(self) -> None:
+        func = _function_node(REVIEW_PATH, "_finalize_review_outcome")
+        assignments = [
+            node.lineno
+            for node in ast.walk(func)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "criteria"
+                for target in node.targets
+            )
+        ]
+        loads = [
+            node.lineno
+            for node in ast.walk(func)
+            if isinstance(node, ast.Name)
+            and node.id == "criteria"
+            and isinstance(node.ctx, ast.Load)
+        ]
+
+        assert assignments, "review finalization must bind the normalized criteria payload"
+        assert loads, "review finalization must use the normalized criteria payload"
+        assert min(assignments) < min(loads)
+
     def test_review_outcome_resolver_delegates_route_authority_to_policy_helpers(self) -> None:
         func = _function_node(REVIEW_PATH, "_resolve_review_outcome")
         calls = _called_names(func)

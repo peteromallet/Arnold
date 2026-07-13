@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Callable
 from typing import Any, Mapping
 
+from arnold_pipelines.megaplan.orchestration.phase_result import (
+    is_superseded_recovered_phase_result,
+)
 from arnold_pipelines.megaplan.watchdog.signals import compute_signal_bundle
 
 PROBLEM_SIGNATURE_FIELDS = (
@@ -464,21 +467,37 @@ def _phase_result_signature_field(
     context: Mapping[str, Any],
     plan_failure: Mapping[str, Any],
 ) -> str:
+    state = _as_dict(context.get("plan_runtime_state"))
     phase_result = _as_dict(_as_dict(context.get("execute_attempt_context")).get("phase_result"))
     if not phase_result:
         plan_dir = _resolve_plan_dir(context, workspace=_as_path(context.get("workspace")))
         if plan_dir is not None:
+            state_path = plan_dir / "state.json"
+            if state_path.exists():
+                disk_state = _read_json_file(state_path)
+                if disk_state:
+                    merged_state = dict(disk_state)
+                    merged_state.update(state)
+                    state = merged_state
             phase_result_path = plan_dir / "phase_result.json"
             try:
                 loaded = json.loads(phase_result_path.read_text(encoding="utf-8"))
             except Exception:
                 loaded = {}
             phase_result = _as_dict(loaded)
+    if not state:
+        state = _as_dict(context.get("plan_runtime_state"))
     if not phase_result:
         return ""
     exit_kind = _as_text(phase_result.get("exit_kind"))
     phase = _as_text(phase_result.get("phase")) or _as_text(plan_failure.get("phase"))
     if not exit_kind:
+        return ""
+    if is_superseded_recovered_phase_result(
+        phase=phase,
+        exit_kind=exit_kind,
+        state=state,
+    ):
         return ""
     blocked_tasks = [
         _as_text(_as_dict(item).get("task_id") or _as_dict(item).get("id"))

@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from arnold_pipelines.megaplan._core.io import atomic_write_json
 from arnold_pipelines.megaplan.orchestration.evidence_contract import (
@@ -15,15 +15,49 @@ from arnold_pipelines.megaplan.orchestration.evidence_contract import (
     TrustClass,
 )
 from arnold_pipelines.megaplan.planning.state import STATE_DONE
+from arnold.workflow.boundary_evidence import (
+    AuthorityState,
+    compile_authority_view,
+)
 
 TRANSITION_DECISION_REVIEW_DONE_FILENAME = "transition_decision_review_done.json"
 
 
 @dataclass(frozen=True)
 class TransitionPolicyDecision:
+    """The verdict returned by ``TransitionPolicy.evaluate_review_done``.
+
+    ``allowed`` is the authoritative gate flag consumed by the review
+    handler when it writes the transition decision. ``reasons`` are the
+    hard denial reasons (empty when allowed). ``advisory`` are non-blocking
+    notes that surface in the written decision but never flip ``allowed``.
+    """
+
     allowed: bool
     reasons: tuple[str, ...] = ()
     advisory: tuple[str, ...] = ()
+
+    def merge_denial_reasons(self, extra_reasons: Sequence[str]) -> "TransitionPolicyDecision":
+        """Return a copy forced denied with the extra hard denial reasons appended.
+
+        Used by review-side pre-checks (e.g. the North Star closeout blocker
+        gate) that must deny the review→done transition *independently* of the
+        normal policy evaluation, while still routing through the existing
+        denial path. The decision becomes denied whenever any extra reason is
+        present; with no extra reasons the decision is returned unchanged.
+
+        This intentionally does not change the ``TransitionPolicy`` API: the
+        North Star check stays a separate pre-check and the policy keeps its
+        existing concerns (evidence freshness, completion status).
+        """
+        extras = tuple(str(reason) for reason in extra_reasons if str(reason).strip())
+        if not extras:
+            return self
+        return TransitionPolicyDecision(
+            allowed=False,
+            reasons=self.reasons + extras,
+            advisory=self.advisory,
+        )
 
 
 class TransitionWriter:
@@ -39,6 +73,7 @@ class TransitionWriter:
         denial_kind: str | None = None,
         operator_summary: str | None = None,
         fresh_evidence_path: str = "review_evidence.json",
+        authority_state: AuthorityState | str | None = None,
     ) -> Path:
         compact_evidence_refs = [
             {
@@ -60,6 +95,35 @@ class TransitionWriter:
                 "evidence_refs_compact": compact_evidence_refs,
             }
         )
+        # ── S2 T11: Persist boundary authority refs for operator visibility ──
+        if decision.boundary_id is not None:
+            routing_provenance.setdefault("boundary_id", decision.boundary_id)
+        if decision.checked_evidence_refs:
+            routing_provenance.setdefault(
+                "checked_evidence_refs", list(decision.checked_evidence_refs)
+            )
+        if decision.authority_record_refs:
+            routing_provenance.setdefault(
+                "authority_record_refs", list(decision.authority_record_refs)
+            )
+        # ── S2 T12: Inject authority state and compact operator/auditor view ─
+        state = (
+            authority_state.value
+            if isinstance(authority_state, AuthorityState)
+            else authority_state
+        )
+        if state is not None:
+            routing_provenance["authority_state"] = state
+        routing_provenance["authority_view"] = compile_authority_view(
+            boundary_id=decision.boundary_id,
+            authority_state=state if state is not None else AuthorityState.MISSING,
+            authority_record_refs=decision.authority_record_refs,
+            checked_evidence_refs=decision.checked_evidence_refs,
+            status=decision.status,
+            would_block_reasons=decision.would_block_reasons,
+            operator_summary=operator_summary,
+        )
+        # ──────────────────────────────────────────────────────────────────────
         payload = TransitionDecision(
             decision_id=decision.decision_id,
             subject=decision.subject,
@@ -77,6 +141,9 @@ class TransitionWriter:
             code_hash=decision.code_hash,
             routing_provider=decision.routing_provider,
             routing_provenance=routing_provenance,
+            boundary_id=decision.boundary_id,
+            checked_evidence_refs=decision.checked_evidence_refs,
+            authority_record_refs=decision.authority_record_refs,
         ).to_dict()
         output_path = plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME
         atomic_write_json(output_path, payload)

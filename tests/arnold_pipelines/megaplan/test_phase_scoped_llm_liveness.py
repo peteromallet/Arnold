@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from arnold_pipelines.megaplan.observability.introspect import _compute_liveness
+from arnold_pipelines.megaplan.observability.introspect import _compute_liveness, _process_tree
 from arnold_pipelines.megaplan.observability.liveness import unmatched_llm_starts
 from arnold_pipelines.megaplan.watchdog.signals import compute_signal_bundle
 
@@ -79,6 +79,46 @@ def test_same_phase_wrong_model_in_flight_llm_cannot_mask_stall(tmp_path: Path) 
     liveness, _ = _compute_liveness(events, tmp_path, state, now.timestamp())
 
     assert liveness == "stalled"
+
+
+def test_matched_call_transaction_is_not_left_in_flight() -> None:
+    now = datetime.now(timezone.utc)
+    start = _event("llm_call_start", now - timedelta(seconds=120), phase="gate", model="deepseek-v4")
+    end = _event("llm_call_end", now - timedelta(seconds=60), phase="gate", model="deepseek-v4")
+    start["payload"]["call_transaction_id"] = "call-7"
+    end["payload"]["call_transaction_id"] = "call-7"
+    assert unmatched_llm_starts([start, end]) == []
+
+
+def test_legacy_requestless_start_is_closed_by_same_phase_end() -> None:
+    now = datetime.now(timezone.utc)
+    start = _event("llm_call_start", now - timedelta(seconds=120), phase="gate", model="deepseek-v4")
+    end = _event(
+        "llm_call_end",
+        now - timedelta(seconds=60),
+        phase="gate",
+        model="deepseek-v4",
+        request_id="known-only-at-end",
+    )
+    assert unmatched_llm_starts([start, end]) == []
+
+
+def test_introspection_process_discovery_excludes_self_and_unrelated_prompt(monkeypatch) -> None:
+    class Proc:
+        def __init__(self, pid, cmdline):
+            self.info = {"pid": pid, "ppid": 1, "cmdline": cmdline, "create_time": 1.0}
+
+    class Psutil:
+        @staticmethod
+        def process_iter(_fields):
+            return [
+                Proc(1, ["python", "-m", "arnold_pipelines.megaplan", "introspect", "--plan", "demo"]),
+                Proc(2, ["codex", "exec", "please inspect megaplan plan demo"]),
+                Proc(3, ["python", "-m", "arnold_pipelines.megaplan", "revise", "--plan", "demo"]),
+            ]
+
+    monkeypatch.setitem(__import__("sys").modules, "psutil", Psutil)
+    assert [item["pid"] for item in _process_tree("demo")] == [3]
 
 
 def test_requestless_start_is_closed_by_later_same_phase_end() -> None:

@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 PHASE_RESULT_SCHEMA = "megaplan.phase_result"
 PHASE_RESULT_SCHEMA_VERSION = 1
@@ -406,6 +406,57 @@ def read_phase_result(plan_dir: Path) -> PhaseResult | None:
     raw = read_json(path)
     validate_phase_result(raw)
     return PhaseResult.from_dict(raw)
+
+
+def is_superseded_recovered_phase_result(
+    *,
+    phase: str,
+    exit_kind: str,
+    state: Mapping[str, Any] | None,
+) -> bool:
+    """Return True when a recover-blocked override supersedes a phase_result.
+
+    Older ``recover-blocked`` recoveries moved ``state.current_state`` back to
+    the predecessor phase but left the terminal ``phase_result.json`` in place.
+    Reader paths must treat that artifact as historical context once the same
+    phase is being resumed.
+    """
+
+    if exit_kind == ExitKind.success.value:
+        return False
+    if not isinstance(state, Mapping):
+        return False
+
+    current_state = state.get("current_state")
+    if not isinstance(current_state, str) or not current_state:
+        return False
+
+    resume_cursor = state.get("resume_cursor")
+    if not isinstance(resume_cursor, Mapping):
+        return False
+    resume_phase = resume_cursor.get("phase")
+    if not isinstance(resume_phase, str) or resume_phase != phase:
+        return False
+
+    meta = state.get("meta")
+    overrides = meta.get("overrides") if isinstance(meta, Mapping) else None
+    if not isinstance(overrides, list):
+        return False
+
+    for entry in reversed(overrides):
+        if not isinstance(entry, Mapping) or entry.get("action") != "recover-blocked":
+            continue
+        entry_resume = entry.get("resume_cursor")
+        if not isinstance(entry_resume, Mapping):
+            continue
+        entry_phase = entry_resume.get("phase")
+        if not isinstance(entry_phase, str) or entry_phase != phase:
+            continue
+        entry_to_state = entry.get("to_state")
+        if isinstance(entry_to_state, str) and entry_to_state and entry_to_state != current_state:
+            continue
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------

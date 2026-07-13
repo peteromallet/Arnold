@@ -267,13 +267,14 @@ def test_m2_authority_readers_every_route_has_disposition_and_reason():
     """Every route must have a valid disposition and a non-empty owner_or_reason."""
     from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
-        MIGRATED,
-        TESTED,
+        ENFORCED,
+        WARN_ONLY,
+        SHADOW_ONLY,
         DEFERRED,
         INFORMATIONAL,
     )
 
-    valid_dispositions = {MIGRATED, TESTED, DEFERRED, INFORMATIONAL}
+    valid_dispositions = {ENFORCED, WARN_ONLY, SHADOW_ONLY, DEFERRED, INFORMATIONAL}
     for route in AUTHORITY_ROUTES:
         assert route.disposition in valid_dispositions, (
             f"Route {route.id}: disposition {route.disposition!r} not in "
@@ -301,14 +302,15 @@ def test_m2_authority_readers_no_unclassified_routes():
     """No route may have an unrecognized disposition."""
     from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
-        MIGRATED,
-        TESTED,
+        ENFORCED,
+        WARN_ONLY,
+        SHADOW_ONLY,
         DEFERRED,
         INFORMATIONAL,
     )
 
     for route in AUTHORITY_ROUTES:
-        assert route.disposition in {MIGRATED, TESTED, DEFERRED, INFORMATIONAL}, (
+        assert route.disposition in {ENFORCED, WARN_ONLY, SHADOW_ONLY, DEFERRED, INFORMATIONAL}, (
             f"Route {route.id}: unrecognized disposition {route.disposition!r}"
         )
 
@@ -399,16 +401,16 @@ def test_m2_authority_readers_supervisor_routes_have_key_sites():
 
 
 def test_m2_authority_readers_status_routes_are_deferred_or_informational():
-    """Status/shadow routes must be deferred or informational, not migrated."""
+    """Status/shadow routes must be deferred or informational, not enforced or warn-only."""
     from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
-        MIGRATED,
-        TESTED,
+        ENFORCED,
+        WARN_ONLY,
     )
 
     for route in AUTHORITY_ROUTES:
         if route.route_family == "status":
-            assert route.disposition not in (MIGRATED, TESTED), (
+            assert route.disposition not in (ENFORCED, WARN_ONLY), (
                 f"Route {route.id}: status/informational route should not be "
                 f"marked '{route.disposition}' — status/shadow reads are "
                 f"fail-open and non-blocking (SD3)"
@@ -507,12 +509,12 @@ def test_m2_informational_status_read_remains_fail_open():
     from arnold_pipelines.megaplan.orchestration.authority_readers import (
         AUTHORITY_ROUTES,
         INFORMATIONAL,
-        MIGRATED,
-        TESTED,
+        ENFORCED,
+        WARN_ONLY,
     )
 
     status_route = next(route for route in AUTHORITY_ROUTES if route.id == "STATUS-01")
     assert status_route.file == "arnold_pipelines/megaplan/cli/status_view.py"
     assert status_route.disposition == INFORMATIONAL
-    assert status_route.disposition not in {MIGRATED, TESTED}
+    assert status_route.disposition not in {ENFORCED, WARN_ONLY}
     assert "does not skip" in status_route.owner_or_reason.lower()

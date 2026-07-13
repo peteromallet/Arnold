@@ -308,6 +308,8 @@ def _check_llm_liveness(plan_dir: Path, *, composition: object | None = None) ->
 
     now = time.time()
     events = list(read_events(plan_dir))
+    from arnold_pipelines.megaplan.observability.liveness import unmatched_llm_starts
+
     unmatched_starts = unmatched_llm_starts(
         events,
         start_kind=EventKind.LLM_CALL_START,

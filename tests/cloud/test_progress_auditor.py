@@ -15,8 +15,12 @@ import stat
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
+from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +32,23 @@ def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
 
 
+def test_installed_auditor_trampoline_honors_deployed_source_root() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    hot_env_at = text.index(". /workspace/.cloud-hot-env")
+    source_root_at = text.index('AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-')
+    reexec_at = text.index('exec "$SOURCE_AUDITOR" "$@"')
+    assert hot_env_at < source_root_at < reexec_at
+    assert 'CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold' in text
+
+
+def test_auditor_gather_prefers_deployed_source_over_caller_cwd() -> None:
+    program = _extract_gather_program()
+    cwd_at = program.index("sys.path.insert(0, str(pathlib.Path.cwd()))")
+    deployed_source_at = program.index("sys.path.insert(0, arnold_src)")
+
+    assert cwd_at < deployed_source_at
+
+
 def _systemd_file(name: str) -> str:
     return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
@@ -37,8 +58,10 @@ def _extract_report_assembler() -> str:
     text = _wrapper("arnold-progress-auditor")
     # The report assembler is the last python3 - ... <<'PY' block
     marker = (
-        'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" '
-        '"$TS" "$RECOVERY_EVIDENCE" "$AUDIT_CODEX_MODEL" <<\'PY\''
+        'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" '
+        '"$REPORT_LOG" "$TS" "$AUDIT_MUTATION_AUTHORIZED_FLAG" '
+        '"$AUDIT_LAUNCH_ATTEMPTED" "$RECOVERY_EVIDENCE" '
+        '"$AUDIT_CODEX_MODEL" <<\'PY\''
     )
     py_start = text.index(marker)
     py_start = text.index("\n", py_start) + 1
@@ -58,11 +81,131 @@ def _extract_gather_program() -> str:
     return text[py_start:py_end]
 
 
+def _load_superfixer_cycle_functions() -> dict[str, object]:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _superfixer_cycle_evidence(ev):")
+    end = text.index("\ndef _meta_repair_gap_is_primary", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+    }
+    exec(text[start:end], namespace)
+    return namespace
+
+
+def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
+    return {
+        "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},
+        "repair_custody_summary": {
+            "accepted_unclaimed_request_ids": ["7473fa42"],
+            "request_status_counts": {"accepted": 1},
+            "claim_count": 0,
+            "attempt_count": 0,
+            "claim_retry_counts": {"7473fa42": 2},
+            "claim_alert_request_ids": [],
+            "retry_budget": {"claim_retries_remaining": 1},
+        },
+        "repair_data_summary": {
+            "exists": True,
+            "outcome": "repair_exhausted",
+            "mtime_age_min": 180,
+        },
+        "meta_repair_summary": {
+            "meta_record_count": 0,
+            "meta_run_log_count": 0,
+            "failed_meta_run_count": 0,
+            "failed_meta_record_count": 0,
+        },
+        "current_target": {"tmux_process": {"live_status": "stopped"}},
+        "active_step_liveness": {
+            "present": True,
+            "worker_pid_alive": False,
+        },
+        "chain_state_summary": {
+            "current": {
+                "last_state": "blocked",
+                "completed_count": 0,
+                "total_milestones": 4,
+            }
+        },
+        "meta_repair_refs": [],
+        "prior_watchdog_report_refs": [],
+    }
+
+
+def test_superfixer_cycle_detects_wbc_accepted_unclaimed_exhaustion() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is True
+    assert projected["accepted_unclaimed_count"] == 1
+    assert projected["claim_count"] == 0
+    assert projected["attempt_count"] == 0
+    assert projected["runner_dead"] is True
+    assert projected["absent_or_stale_l2"] is True
+
+
+def test_superfixer_cycle_excludes_typed_human_gate() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["resolver_state"] = {"canonical_state": "HUMAN_ACTION_REQUIRED"}
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason == ""
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is False
+    assert projected["excluded_typed_human_gate"] is True
+
+
+def test_superfixer_cycle_fails_closed_on_unknown_custody_evidence() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["repair_custody_summary"]["projection_error"] = "runtime skew"
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("broken_superfixer_unknown_evidence:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is False
+    assert projected["unknown_evidence"] is True
+
+
 def _extract_gather_function(name: str, next_name: str) -> str:
     text = _extract_gather_program()
     start = text.index(f"def {name}(")
     end = text.index(f"\ndef {next_name}(", start)
     return text[start:end]
+
+
+def test_deterministic_phase_history_surfaces_structural_retry_loop() -> None:
+    program = _extract_gather_program()
+    start = program.index("def _deterministic_phase_history_evidence(")
+    end = program.index("\ndef _event_seq(", start)
+    namespace = {
+        "re": __import__("re"),
+        "cutoff": datetime(2026, 7, 13, 16, 0, tzinfo=timezone.utc),
+        "_parse_iso": lambda value: datetime.fromisoformat(value.replace("Z", "+00:00")),
+    }
+    exec(program[start:end], namespace)
+    history = [
+        {
+            "step": "gate",
+            "result": "error",
+            "message": "missing_required at /north_star_actions",
+            "timestamp": f"2026-07-13T16:0{index}:00Z",
+        }
+        for index in range(3)
+    ]
+
+    evidence = namespace["_deterministic_phase_history_evidence"](history)
+
+    assert evidence["count"] == 3
+    assert evidence["phase"] == "gate"
+    assert evidence["source"] == "state.history"
 
 
 def _extract_auditor_function(name: str) -> str:
@@ -186,6 +329,11 @@ def _run_gather_program(
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT)
+    env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(tmp_path / ".megaplan" / "repair-queue")
+    # Synthetic sessions may intentionally reuse a production incident name;
+    # never let live marker or meta-run evidence alter the deterministic fixture.
+    env["MEGAPLAN_AUDIT_MARKER_DIR"] = str(tmp_path / ".megaplan" / "cloud-sessions")
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / ".megaplan" / "meta-runs")
     if extra_env:
         env.update(extra_env)
 
@@ -209,8 +357,78 @@ def _run_gather_program(
     return json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))
 
 
+def test_gather_detects_deterministic_llm_retry_when_latest_failure_is_empty(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "gate-loop"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "gate-loop",
+                "current_state": "critiqued",
+                "iteration": 1,
+                "latest_failure": None,
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    timestamp = datetime.now(timezone.utc).isoformat()
+    message = (
+        "worker_structural_audit_failed: model output structural audit failed: "
+        "missing_required at /north_star_actions"
+    )
+    events = [
+        {
+            "kind": "llm_call_error",
+            "phase": "gate",
+            "payload": {"message": message},
+            "ts_utc": timestamp,
+            "seq": seq,
+        }
+        for seq in range(1, 5)
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": "gate-loop",
+                "session": "gate-loop-session",
+                "kind": "plan",
+                "sources": ["fixture"],
+            }
+        ],
+        tmp_path,
+    )
+
+    assert len(payload["findings"]) == 1
+    finding = payload["findings"][0]
+    assert finding["latest_failure_kind"] is None
+    assert finding["deterministic_retry_evidence"]["count"] == 4
+    assert finding["deterministic_retry_evidence"]["phase"] == "gate"
+    assert any(
+        reason.startswith("deterministic_retry_exhaustion:")
+        for reason in finding["reasons"]
+    )
+    patterns = payload["root_cause_patterns"]["repeated_failure_signatures"]
+    assert patterns[0]["total_occurrences"] == 4
+    assert patterns[0]["affected_plans"] == ["gate-loop"]
+
+
 def _run_report_assembler(
-    findings_data: dict, tmp_path: Path, ts: str = "20260702T220000Z"
+    findings_data: dict,
+    tmp_path: Path,
+    ts: str = "20260702T220000Z",
+    *,
+    autofix_authorized: bool = False,
+    launch_attempted: bool = False,
 ) -> tuple[dict, str]:
     """Run the report assembler with synthetic findings data and return (json_payload, markdown_text)."""
     program = _extract_report_assembler()
@@ -244,11 +462,13 @@ def _run_report_assembler(
             str(findings_path),
             str(json_out),
             str(md_out),
-                str(log_path),
-                ts,
-                str(recovery_path),
-                "gpt-5.6-sol",
-            ],
+            str(log_path),
+            ts,
+            "1" if autofix_authorized else "0",
+            "1" if launch_attempted else "0",
+            str(recovery_path),
+            "gpt-5.6-sol",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -279,6 +499,7 @@ def _run_dispatch_one(
     codex = tmp_path / "codex"
     codex.write_text(
         "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(tmp_path / 'codex.argv'))}\n"
         f"printf '%s' {shlex.quote(codex_stdout)}\n"
         + (
             f"printf '%s' {shlex.quote(codex_stderr)} >&2\n"
@@ -297,20 +518,29 @@ def _run_dispatch_one(
             _extract_auditor_function("audit_flag_enabled"),
             _extract_auditor_function("autofix_allowed_targets_markdown"),
             _extract_auditor_function("autofix_policy_markdown"),
+            _extract_auditor_function("audit_dispatch_receipt_root"),
+            _extract_auditor_function("initialize_audit_dispatch_receipt"),
+            _extract_auditor_function("record_audit_dispatch_started"),
+            _extract_auditor_function("finalize_audit_dispatch_receipt"),
             _extract_auditor_function("dispatch_one"),
             f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
             f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             f"GATHER_DIR={shlex.quote(str(gather_dir))}",
+            f"REPORT_DIR={shlex.quote(str(tmp_path / 'reports'))}",
             "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
+            "AUDIT_CODEX_MODEL=gpt-5.6-sol",
             "SUBAGENT_PROFILE=partnered-5",
             "CODEX_TIMEOUT=30",
             'AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"',
+            'AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"',
             'AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"',
             "dispatch_one " + shlex.quote(str(gather_file)),
         ]
     )
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
+    env.setdefault("ARNOLD_AUTONOMY", "1")
+    env.setdefault("ARNOLD_AUDIT_AUTOFIX_ENABLED", "1")
     if extra_env:
         env.update(extra_env)
     result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, env=env, check=False)
@@ -322,6 +552,8 @@ def _run_dispatch_one(
     err_path = gather_dir / f"resp-{plan}.err"
     err = err_path.read_text(encoding="utf-8") if err_path.exists() else ""
     updated = json.loads(gather_file.read_text(encoding="utf-8"))
+    argv_path = tmp_path / "codex.argv"
+    updated["_codex_argv"] = argv_path.read_text(encoding="utf-8").splitlines() if argv_path.exists() else []
     return brief, resp, err, updated
 
 
@@ -340,6 +572,7 @@ def _run_record_incident_audits(tmp_path: Path, findings_data: dict) -> list[dic
             "AUDIT_GITHUB_REPO=''",
             "AUDIT_GITHUB_REPO_PATH=''",
             "AUDIT_GITHUB_LABELS='incident-control-plane,persistent-problem'",
+            f"REPAIR_QUEUE_ROOT={shlex.quote(str(tmp_path / '.megaplan' / 'repair-queue'))}",
             "record_incident_audits " + shlex.quote(str(findings_path)),
         ]
     )
@@ -585,6 +818,10 @@ def audit_projection_input(audit_input, *, live_process_snapshot, now):
         }}
     )
     return AUDIT_RESULT
+
+
+def enqueue_audit_repair_request(item, *, queue_root):
+    return None
 """,
         "arnold_pipelines/megaplan/incident/summaries.py": """
 def write_projection_summaries(*, projections, root):
@@ -834,6 +1071,8 @@ class TestGreenChecksNoFindings:
                     str(md_out),
                     str(fresh_log),
                     "20260702T220000Z",
+                    "0",
+                    "0",
                     str(recovery_path),
                     "gpt-5.6-sol",
                 ],
@@ -1261,6 +1500,34 @@ class TestAuditorWrapperSyntax:
 
 
 class TestAuditorAutofixPromptGates:
+    def test_dispatch_pins_exact_codex_model_and_persists_read_only_receipt(
+        self, tmp_path: Path
+    ) -> None:
+        _brief, _resp, _err, updated = _run_dispatch_one(
+            tmp_path,
+            gather_payload={
+                "plan": "audit-model-pin",
+                "reasons": ["watchdog_report_stale"],
+                "session_header": {"kind": "chain"},
+            },
+        )
+
+        assert updated["_codex_argv"] == [
+            "exec", "--sandbox", "read-only", "-c", "model=gpt-5.6-sol", "-"
+        ]
+        receipt_path = (
+            Path(updated["dispatch_receipt_root"])
+            / "dispatch_receipts"
+            / f"{updated['dispatch_id']}.json"
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt["configured_model"] == "gpt-5.6-sol"
+        assert receipt["resolved_runtime_model"] == "gpt-5.6-sol"
+        assert receipt["subprocess_started"] is True
+        assert receipt["mutation_facts"] == {
+            "state": False, "source": False, "commit": False, "push": False
+        }
+
     def test_disabled_mode_is_report_only(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
             tmp_path,
@@ -1275,10 +1542,8 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPORT-ONLY." in brief
-        assert "Do not edit files, apply patches, or run `git commit` / `git push`." in brief
-        assert "Repair-SYSTEM PATCH-ONLY" not in brief
-        assert "commit and push" not in brief.lower()
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "Do not apply patches, create claims, launch repair agents, commit, or push." in brief
 
     def test_enabled_without_commit_gate_is_patch_only_and_bounded(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
@@ -1294,12 +1559,9 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPAIR-SYSTEM PATCH-ONLY." in brief
-        assert "Leave changes uncommitted; do not run `git commit` or `git push`." in brief
-        assert "`arnold_pipelines/megaplan/cloud/**`" in brief
-        assert "`tests/cloud/**`" in brief
-        assert "Never modify the audited run workspace" in brief
-        assert "git push to `origin/editible-install`" not in brief
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "No mutation targets." in brief
+        assert "validated central repair-request authority" in brief
 
     def test_commit_push_language_requires_explicit_commit_gate(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
@@ -1315,9 +1577,9 @@ class TestAuditorAutofixPromptGates:
             },
         )
 
-        assert "Autofix mode: REPAIR-SYSTEM PATCH + COMMIT/PUSH (explicitly gated)." in brief
-        assert "git commit` and `git push` to `origin/editible-install`." in brief
-        assert "Leave changes uncommitted" not in brief
+        assert "Auditor authority: READ-ONLY EVALUATOR." in brief
+        assert "Do not edit source, run state, plan state, repair data, or project files." in brief
+        assert "REPAIR-SYSTEM PATCH + COMMIT/PUSH" not in brief
 
     def test_prompt_and_response_artifacts_are_redacted(self, tmp_path: Path) -> None:
         secret = "Authorization: Bearer bearer-secret-token-value"
@@ -1465,6 +1727,15 @@ class TestAuditorWrapperBoundary:
         calls = _read_stub_calls(call_log)
         capture = json.loads(audit_capture.read_text(encoding="utf-8"))
         projection_input = capture["audit_input"]["projection_input"]
+
+        current_target_call = next(
+            call for call in calls if call["fn"] == "resolve_current_target"
+        )
+        assert current_target_call["kwargs"] == {
+            "marker_dir": str(tmp_path / ".megaplan" / "cloud-sessions"),
+            "repair_data_dir": str(repair_root),
+            "workspace_hint": str(workspace),
+        }
 
         assert {call["fn"] for call in calls} >= {
             "resolve_current_target",
@@ -2007,25 +2278,14 @@ class TestAuditorWrapperBoundary:
         assert events[1]["payload"]["next_expected_event"] is None
         assert events[1]["payload"]["decision"]["reconciler_next_expected_event"] == "auditor_escalate_to_human"
         assert all(event["payload"].get("next_expected_event") != "meta_repair.repair_attempt" for event in events)
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        requests = [json.loads(path.read_text(encoding="utf-8")) for path in (queue_root / "requests").glob("*.json")]
+        assert len(requests) == 1
+        assert requests[0]["source"] == "six_hour_auditor"
+        assert requests[0]["session"] == "demo-session"
+        assert requests[0]["target"]["incident_id"] == "inc-124"
         repair_data_dir = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data"
-        marker_path = repair_data_dir / "demo-session.needs-human.json"
-        assert marker_path.exists()
-        marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        assert marker["session"] == "demo-session"
-        assert marker["plan_name"] == "demo-plan"
-        assert marker["discord_status"] == "pending"
-        index_payload = json.loads((repair_data_dir / "index.json").read_text(encoding="utf-8"))
-        session_ref = index_payload["sessions"]["demo-session"]["refs"]["unresolved-escalation"]
-        assert session_ref["incident_id"] == "inc-124"
-        assert session_ref["path"] == str(marker_path)
-        escalation_path = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data.d" / "escalations" / "escalations.jsonl"
-        escalation_records = [
-            json.loads(line)
-            for line in escalation_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        assert escalation_records[-1]["event"] == "opened"
-        assert escalation_records[-1]["incident_id"] == "inc-124"
+        assert not (repair_data_dir / "demo-session.needs-human.json").exists()
 
 
 class TestLiveSignalFiltering:
@@ -2468,6 +2728,84 @@ class TestLiveSignalFiltering:
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
 
+    def test_meta_repair_summary_reconciles_partial_liveness_with_new_chain_target(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "old-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "old-plan", "current_state": "done", "latest_failure": None}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "new-plan",
+                    "last_state": "finalized",
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        sidecar_events = tmp_path / "repair-data.d" / "events"
+        repair_root.mkdir(parents=True)
+        sidecar_events.mkdir(parents=True)
+        (repair_root / "old-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "old-session",
+                    "outcome": "partial_liveness",
+                    "current_attempt_id": 1,
+                    "current_advancement_snapshot": {
+                        "milestone_or_plan": "superseded-plan",
+                        "current_state": "authority_divergence",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sidecar_events / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "session": "old-session",
+                        "run_kind": "chain",
+                        "plan_name": "superseded-plan",
+                        "health": "alive",
+                        "outcome": "partial_liveness",
+                        "recorded_at": f"2026-07-03T22:0{idx}:00+00:00",
+                    }
+                )
+                + "\n"
+                for idx in range(2)
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "old-plan",
+                    "session": "old-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert findings["findings"] == []
+        assert len(findings["green_checks"]) == 1
+
     def test_gather_flags_watchdog_complete_chain_health_disagreement(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
@@ -2677,6 +3015,153 @@ class TestLiveSignalFiltering:
         reasons = findings["findings"][0]["reasons"]
         assert any("repair_complete_incomplete_chain" in reason for reason in reasons)
         assert any("plan_active_step_ghost_worker" in reason for reason in reasons)
+
+    def test_gather_flags_wbc_accepted_unclaimed_exhausted_cycle_for_l3(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        session = "workflow-boundary-contracts-corrective-20260710"
+        plan = "c1-contract-reality-20260711-1433"
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / plan
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True)
+        chain_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": plan,
+                    "current_state": "executed",
+                    "iteration": 9,
+                    "active_step": {"phase": "execute", "worker_pid": 99999999},
+                    "latest_failure": {
+                        "kind": "blocked_recovery_not_resolved",
+                        "message": "machine repair exhausted without advancement",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-wbc.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": plan,
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "c1"}, {"label": "c2"}],
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / f"{session}.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": session,
+                    "workspace": str(workspace),
+                    "outcome": "repair_exhausted",
+                    "attempt_ids": [],
+                    "iterations": [{"iteration": value} for value in range(1, 10)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        queued = repair_requests.enqueue_repair_request(
+            queue_root=queue_root,
+            session=session,
+            workspace=workspace,
+            source="legacy_watchdog",
+            problem_signature={},
+            target={"plan_name": plan},
+        )
+        assert queued["status"] == "queued"
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": plan,
+                    "session": session,
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        assert any("stale_l1_l2_cycle" in reason for reason in finding["reasons"])
+        evidence = finding["deterministic_superfixer_evidence"]
+        assert evidence["actionable"] is True
+        assert evidence["accepted_unclaimed_count"] == 1
+        assert evidence["claim_count"] == 0
+        assert evidence["attempt_count"] == 0
+        assert evidence["repair_outcome"] == "repair_exhausted"
+        assert evidence["runner_dead"] is True
+        assert evidence["chain_incomplete"] is True
+        assert evidence["absent_or_stale_l2"] is True
+        assert evidence["retry_budget"]["remaining_attempts"] == 3
+
+    def test_superfixer_cycle_excludes_typed_human_gate_and_fails_closed_on_malformed_evidence(
+        self,
+    ) -> None:
+        namespace: dict[str, object] = {}
+        source = "\n\n".join(
+            [
+                _extract_gather_function(
+                    "_chain_state_looks_terminal", "_chain_state_looks_nonterminal"
+                ),
+                _extract_gather_function(
+                    "_chain_state_looks_nonterminal",
+                    "_watchdog_chain_health_disagreement_reason",
+                ),
+                _extract_gather_function(
+                    "_superfixer_cycle_evidence", "_stale_l1_l2_cycle_reason"
+                ),
+            ]
+        )
+        exec(source, namespace)
+        classify = namespace["_superfixer_cycle_evidence"]
+
+        human = classify({"resolver_state": {"canonical_state": "HUMAN_ACTION_REQUIRED"}})
+        assert human == {
+            "actionable": False,
+            "excluded_typed_human_gate": True,
+            "canonical_state": "HUMAN_ACTION_REQUIRED",
+        }
+
+        malformed = classify(
+            {
+                "resolver_state": {"canonical_state": "UNKNOWN"},
+                "repair_custody_summary": {"malformed_request_count": 1},
+                "repair_data_summary": {},
+                "active_step_liveness": {
+                    "present": True,
+                    "worker_pid_alive": False,
+                },
+                "current_target": {"tmux_process": {"live_status": "dead"}},
+                "chain_state_summary": {
+                    "current": {
+                        "last_state": "blocked",
+                        "chain_complete": False,
+                        "total_milestones": 2,
+                        "completed_count": 0,
+                    }
+                },
+            }
+        )
+        assert malformed["actionable"] is False
+        assert malformed["unknown_evidence"] is True
+        assert malformed["canonical_state"] == "UNKNOWN"
+        assert malformed["malformed_request_count"] == 1
+        assert malformed["excluded_typed_human_gate"] is False
 
     def test_meta_repair_summary_ignores_stale_recurring_retry_after_complete_chain(
         self, tmp_path: Path
@@ -3429,12 +3914,12 @@ class TestAutonomousFixAttemptsJsonSchema:
             "green_checks": [],
         }
         payload, _md = _run_report_assembler(findings_data, tmp_path)
-        assert len(payload["autonomous_fix_attempts"]) == 1
-        af = payload["autonomous_fix_attempts"][0]
-        assert set(af.keys()) == {"plan", "session", "commit", "summary"}
+        assert payload["autonomous_fix_attempts"] == []
+        af = payload["risky_or_deferred_fixes"][0]
+        assert set(af.keys()) == {"plan", "session", "verdict", "summary"}
         assert af["plan"] == "fixed-plan"
         assert af["session"] == "fixed-sess"
-        assert af["commit"] == "abc123def"
+        assert af["verdict"] == "INVALID_MUTATION_CLAIM"
         assert "null-pointer" in af["summary"]
 
     def test_field_ignores_non_fixed_hypotheses(self, tmp_path: Path) -> None:
@@ -3673,7 +4158,8 @@ class TestAutonomousFixAttemptsMarkdown:
         assert "## 🔧 Autonomous fix attempts" in md
         assert "**fixed-plan**" in md
         assert "deadbeef" in md
-        assert "_No autonomous fixes were attempted" not in md
+        assert "_No autonomous fixes were attempted" in md
+        assert "INVALID_MUTATION_CLAIM" in md
 
     def test_shows_multiple_fixed_attempts(self, tmp_path: Path) -> None:
         findings_data = {
@@ -3922,8 +4408,8 @@ class TestRiskyOrDeferredFixesMarkdown:
             "green_checks": [],
         }
         payload, md = _run_report_assembler(findings_data, tmp_path)
-        assert len(payload["autonomous_fix_attempts"]) == 1
-        assert len(payload["risky_or_deferred_fixes"]) == 1
+        assert payload["autonomous_fix_attempts"] == []
+        assert len(payload["risky_or_deferred_fixes"]) == 2
         assert "## 🔧 Autonomous fix attempts" in md
         assert "## ⚠️ Risky or deferred fixes" in md
         assert "**fixed-plan**" in md
@@ -4354,6 +4840,7 @@ class TestStageMetrics:
             "mode", "autofix_enabled", "repair_dispatched", "model_dispatched",
             "deepseek_dispatched", "meta_repair_dispatched", "codex_dispatched",
             "git_commit_performed", "file_edit_performed", "rationale",
+            "resolved_runtime_model", "dispatch_receipt_count",
         }
         assert set(ds.keys()) == expected_keys
 
@@ -4377,6 +4864,93 @@ class TestStageMetrics:
         assert ds["file_edit_performed"] is False
         assert "report-only" in ds["rationale"].lower()
         assert "no repair" in ds["rationale"].lower()
+
+    def test_dispatch_summary_launch_attempt_permanently_falsifies_report_only(
+        self, tmp_path: Path
+    ) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "one finding",
+            "findings": [{"plan": "p", "codex_launch_attempted": True}],
+            "green_checks": [],
+        }
+
+        payload, _md = _run_report_assembler(
+            findings_data,
+            tmp_path,
+            autofix_authorized=True,
+        )
+
+        ds = payload["dispatch_summary"]
+        assert ds["mode"] == "autofix_attempted"
+        assert ds["autofix_enabled"] is True
+        assert ds["model_dispatched"] is True
+        assert ds["codex_dispatched"] is True
+        assert "regardless of launch outcome" in ds["rationale"]
+
+    def test_dispatch_summary_uses_durable_receipt_as_model_authority(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.receipts.writer import (
+            finalize_dispatch_receipt,
+            initialize_dispatch_receipt,
+            prepare_dispatch_receipt,
+            record_dispatch_started,
+        )
+
+        receipt_root = tmp_path / "receipt-root"
+        receipt = initialize_dispatch_receipt(
+            receipt_root,
+            prepare_dispatch_receipt(action="six_hour_audit", configured_model="stale-config"),
+        )
+        receipt = record_dispatch_started(
+            receipt_root, receipt, resolved_runtime_model="gpt-5.6-sol"
+        )
+        final = finalize_dispatch_receipt(
+            receipt_root,
+            receipt,
+            outcome="failed",
+            resolved_runtime_model="gpt-5.6-sol",
+            mutation_facts={"state": False, "source": False, "commit": False, "push": False},
+        )
+        payload, _md = _run_report_assembler(
+            {
+                "findings": [{
+                    "plan": "p",
+                    "dispatch_receipt_root": str(receipt_root),
+                    "dispatch_id": final["dispatch_id"],
+                    "configured_model": "wrong-report-value",
+                }],
+                "green_checks": [],
+            },
+            tmp_path,
+        )
+
+        assert payload["dispatch_summary"]["resolved_runtime_model"] == "gpt-5.6-sol"
+        assert payload["dispatch_summary"]["mode"] == "autofix_attempted"
+        assert payload["dispatch_receipts"][0]["outcome"] == "failed"
+
+    @pytest.mark.parametrize(
+        ("master", "path", "authorized"),
+        [("0", "0", False), ("0", "1", False), ("1", "0", False), ("1", "1", True)],
+    )
+    def test_auditor_wrapper_dispatch_matrix_requires_master_and_l3_path(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        master: str,
+        path: str,
+        authorized: bool,
+    ) -> None:
+        monkeypatch.setenv("ARNOLD_AUTONOMY", master)
+        monkeypatch.setenv("ARNOLD_AUDIT_AUTOFIX_ENABLED", path)
+
+        assert feature_flags.audit_autofix_mutation_authorized() is authorized
+        wrapper = _wrapper("arnold-progress-auditor")
+        assert 'if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" ]]' in wrapper
+        assert 'AUDIT_LAUNCH_ATTEMPTED=1' in wrapper
+        assert wrapper.index("AUDIT_LAUNCH_ATTEMPTED=1") < wrapper.index(
+            'timeout "$CODEX_TIMEOUT" codex exec'
+        )
 
     # ── Multiple nonzero stages in markdown ───────────────────────────
 

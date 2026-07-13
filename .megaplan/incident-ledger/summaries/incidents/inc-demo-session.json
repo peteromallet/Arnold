@@ -1,6 +1,6 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 175,
+  "evidence_ref_count": 296,
   "evidence_refs": [
     {
       "kind": "verification_record"
@@ -195,13 +195,13 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-07T13:29:44.802352+00:00",
+  "generated_at": "2026-07-11T13:41:18.489533+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
   "latest_actor": "immediate_repair",
   "next_expected_event": "repair_attempt.verification",
-  "omitted_evidence_ref_count": 111,
-  "outcome": "discord_escalated",
+  "omitted_evidence_ref_count": 232,
+  "outcome": "attempted",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "repeated_attempts_without_new_evidence",
@@ -215,10 +215,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:8c80f44e6634cba0574620716302c91c608f8e33e973547f4eef72e23785616e",
-    "last_seq": 210,
+    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
+    "last_seq": 344,
     "projection": "incidents"
   },
   "state": "repair_attempt",
-  "summary_text": "inc-demo-session: repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
+  "summary_text": "inc-demo-session: repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-584/test_repair_loop_serializes_sa0/ws"
 }

@@ -53,6 +53,7 @@ def _payload(tmp_path: Path, *, plan_status: dict, custody_setup: str) -> dict:
     remote_spec.parent.mkdir(parents=True)
     remote_spec.write_text("milestones:\n  - label: m1\n    idea: idea.md\n", encoding="utf-8")
     marker_dir = workspace / ".megaplan" / "cloud-sessions"
+    queue_root = workspace / ".megaplan" / "repair-queue"
     repair_data_dir = marker_dir / "repair-data"
     marker_dir.mkdir(parents=True)
     repair_data_dir.mkdir()
@@ -81,6 +82,7 @@ def _payload(tmp_path: Path, *, plan_status: dict, custody_setup: str) -> dict:
     }
     if custody_setup in {"repairable_not_repairing", "repairing"}:
         queued = repair_requests.enqueue_repair_request(
+            queue_root=queue_root,
             marker_dir=marker_dir,
             session=session,
             source="watchdog",
@@ -91,7 +93,7 @@ def _payload(tmp_path: Path, *, plan_status: dict, custody_setup: str) -> dict:
         )
         if custody_setup == "repairing":
             repair_requests.write_decision(
-                repair_requests.repair_queue_dir(marker_dir),
+                queue_root,
                 request_id=queued["request"]["request_id"],
                 decision="dispatched",
                 reason="repair loop launched",
@@ -148,6 +150,50 @@ def _payload(tmp_path: Path, *, plan_status: dict, custody_setup: str) -> dict:
             plan_status=plan_status,
         ),
     )
+
+
+def test_custody_reads_only_the_explicit_central_queue(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    central_queue = workspace / ".megaplan" / "repair-queue"
+    split_queue = workspace / ".megaplan" / "cloud-sessions" / "repair-queue"
+    signature = {
+        "failure_kind": "blocked_recovery_not_resolved",
+        "current_state": "blocked",
+        "phase_or_step": "execute",
+        "milestone_or_plan": "demo",
+        "gate_recommendation": "",
+        "blocked_task_id": "T1",
+    }
+    repair_requests.enqueue_repair_request(
+        queue_root=central_queue,
+        session="demo-session",
+        source="lifecycle_failure",
+        problem_signature=signature,
+    )
+    split_request_dir = split_queue / "requests"
+    split_request_dir.mkdir(parents=True)
+    (split_request_dir / "stray.json").write_text(
+        json.dumps({"kind": "repair_request", "request_id": "stray"}),
+        encoding="utf-8",
+    )
+
+    projection = repair_contract.project_repair_custody(
+        plan_state={
+            "name": "demo",
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "blocked_recovery_not_resolved",
+                "phase": "execute",
+                "metadata": {"blocked_task_id": "T1"},
+            },
+        },
+        current_target={"session": "demo-session"},
+        queue_root=central_queue,
+    )
+
+    assert len(projection["requests"]) == 1
+    assert projection["requests"][0]["source"] == "lifecycle_failure"
 
 
 def test_cloud_status_exposes_repairing_bucket_without_changing_effective_status(tmp_path: Path) -> None:

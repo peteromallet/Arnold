@@ -1,17 +1,97 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 1,
+  "evidence_ref_count": 17,
   "evidence_refs": [
     {
       "kind": "verification_record"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260707T012914Z-audit.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260707T012914Z-audit.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260707T072938Z-audit.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260707T072938Z-audit.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "canonical-run-state-control-plane",
+      "status": "2026-07-07T12:33:03.348306+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "canonical-run-state-control-plane",
+      "status": "2026-07-07T12:33:03.348306+00:00"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/incident-ledger/summaries/incidents/inc-canonical-run-state-control-plane.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/incident-ledger/summaries/incidents/inc-canonical-run-state-control-plane.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/canonical-run-state-control-plane/arnold/.megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260707T125805Z.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260707T125805Z.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260707T125806Z.json",
+      "session_id": "canonical-run-state-control-plane"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260707T125806Z.json",
+      "session_id": "canonical-run-state-control-plane"
     }
   ],
-  "generated_at": "2026-07-07T13:29:44.800443+00:00",
+  "generated_at": "2026-07-11T13:41:18.485337+00:00",
   "incident_id": "inc-canonical-run-state-control-plane",
   "kind": "incident_summary",
-  "latest_actor": "repair_system",
+  "latest_actor": "six_hour_auditor",
   "next_expected_event": null,
-  "outcome": "recovered",
+  "outcome": "audit_cycle_complete",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "unknown",
@@ -22,10 +102,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:8c80f44e6634cba0574620716302c91c608f8e33e973547f4eef72e23785616e",
-    "last_seq": 203,
+    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
+    "last_seq": 224,
     "projection": "incidents"
   },
-  "state": "verified_recovered",
-  "summary_text": "inc-canonical-run-state-control-plane: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/canonical-run-state-control-plane/arnold"
+  "state": "six_hour_auditor.audit_complete",
+  "summary_text": "inc-canonical-run-state-control-plane: Audit completed for inc-canonical-run-state-control-plane with no blocking reconciler findings."
 }

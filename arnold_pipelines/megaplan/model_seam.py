@@ -90,6 +90,29 @@ from arnold_pipelines.megaplan.step_contracts import (
     contract_to_invocation,
 )
 
+_GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS = frozenset(
+    {
+        "recommendation",
+        "rationale",
+        "signals_assessment",
+        "warnings",
+        "settled_decisions",
+        "flag_resolutions",
+        "accepted_tradeoffs",
+        "north_star_actions",
+        "tiebreaker_question",
+        "tiebreaker_flag_ids",
+        "tiebreaker_fuzzy_group_id",
+    }
+)
+_gate_schema_properties = SCHEMAS["gate.json"].get("properties")
+if not isinstance(_gate_schema_properties, Mapping):
+    raise RuntimeError("gate.json schema must declare top-level properties")
+if _GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS != frozenset(_gate_schema_properties):
+    raise RuntimeError(
+        "Gate capture normalizer field allowlist drifted from gate.json schema properties"
+    )
+
 
 # --------------------------------------------------------------------------- #
 # Megaplan render helpers
@@ -420,6 +443,12 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
                 "files_changed",
                 "commands_run",
                 "auto_attributed_files",
+                "sections_written",
+                "stance",
+                "stop_signal",
+                "stance_violations",
+                "head_sha",
+                "code_hash",
             )
             if key in item
         }
@@ -695,21 +724,11 @@ def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_gate_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    allowed = {
-        "recommendation",
-        "rationale",
-        "signals_assessment",
-        "warnings",
-        "settled_decisions",
-        "flag_resolutions",
-        "accepted_tradeoffs",
-        "tiebreaker_question",
-        "tiebreaker_flag_ids",
-        "tiebreaker_fuzzy_group_id",
-        "known_flag_ids",
+    normalized = {
+        key: value
+        for key, value in payload.items()
+        if key in _GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS
     }
-    normalized = {key: value for key, value in payload.items() if key in allowed}
-    normalized.pop("known_flag_ids", None)
 
     resolutions = [
         item

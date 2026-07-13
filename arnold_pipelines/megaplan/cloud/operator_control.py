@@ -62,8 +62,22 @@ def resume_session(
         raise RuntimeError("session marker has no canonical relaunch command")
     if subprocess.run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
         raise RuntimeError("session already has a live runner")
+    queue_root = Path(
+        os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+        or marker_path.parent.parent / "repair-queue"
+    )
+    managed_env = {
+        "ARNOLD_REPAIR_QUEUE_ROOT": str(queue_root),
+        "ARNOLD_REPAIR_MARKER_DIR": str(marker_path.parent),
+        "ARNOLD_REPAIR_SESSION": session,
+        "ARNOLD_REPAIR_RUN_KIND": str(marker.get("run_kind") or "chain"),
+    }
+    tmux_command = ["tmux", "new-session", "-d", "-s", session, "-c", str(workspace)]
+    for key, value in managed_env.items():
+        tmux_command.extend(["-e", f"{key}={value}"])
+    tmux_command.append(relaunch)
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session, "-c", str(workspace), relaunch],
+        tmux_command,
         check=True,
     )
     marker.pop("operator_pause", None)

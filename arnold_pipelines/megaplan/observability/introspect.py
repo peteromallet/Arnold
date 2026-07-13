@@ -412,7 +412,7 @@ def _compute_block_details(plan_dir: Path, state: Optional[dict]) -> dict:
 
 
 def _process_tree(plan_name: str) -> list[dict]:
-    """Return list of megaplan processes related to this plan."""
+    """Return execution processes for this plan, excluding observers/prompts."""
     try:
         import psutil
     except ImportError:
@@ -422,10 +422,13 @@ def _process_tree(plan_name: str) -> list[dict]:
     try:
         for proc in psutil.process_iter(["pid", "cmdline", "ppid", "create_time"]):
             cmdline = proc.info.get("cmdline") or []
-            cmd_str = " ".join(cmdline)
-            if "megaplan" not in cmd_str.lower():
+            if "-m" not in cmdline or "arnold_pipelines.megaplan" not in cmdline:
                 continue
-            if plan_name not in cmd_str:
+            module_index = cmdline.index("arnold_pipelines.megaplan")
+            command = cmdline[module_index + 1] if module_index + 1 < len(cmdline) else ""
+            if command in {"introspect", "doctor", "trace", "status", "progress", "watch"}:
+                continue
+            if plan_name not in cmdline:
                 continue
             procs.append({
                 "pid": proc.info["pid"],
