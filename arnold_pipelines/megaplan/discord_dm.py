@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 from urllib import error, request
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
+from arnold_pipelines.megaplan.notification_safety import classify_user_notification
 
 LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +70,15 @@ def send_discord_dm(
 
     environment = env if env is not None else os.environ
     payload = redact_payload(payload, env=environment)
+    safety = classify_user_notification(payload=payload, env=environment)
+    if not safety.allowed:
+        LOGGER.warning("Discord DM suppressed by notification safety policy: %s", safety.reason)
+        return {
+            "ok": False,
+            "reason": "test_execution_suppressed",
+            "suppression_reason": safety.reason,
+            "message_count": 0,
+        }
     token = (environment.get("DISCORD_BOT_TOKEN") or "").strip()
     user_id = (environment.get("DISCORD_DM_USER_ID") or "").strip()
     messages = render_discord_dm(payload)

@@ -128,6 +128,7 @@ def build_receipt(
         "canonicalization_version": CANONICALIZATION_VERSION,
         "upstream_artifact_hashes": upstream_artifact_hashes(plan_dir, phase, int(state.get("iteration", 0))),
         "cost_usd": float(getattr(worker, "cost_usd", 0.0) or 0.0),
+        "cost_pricing": getattr(worker, "cost_pricing", None),
         "duration_ms": int(getattr(worker, "duration_ms", 0) or 0),
         "prompt_tokens": int(getattr(worker, "prompt_tokens", 0) or 0),
         "completion_tokens": int(getattr(worker, "completion_tokens", 0) or 0),

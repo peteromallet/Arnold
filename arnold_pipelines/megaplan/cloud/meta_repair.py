@@ -401,9 +401,122 @@ def load_redacted_evidence(
                 ][-max_attempts:]
             except Exception:
                 pass
+    partial_liveness_history = _scope_partial_liveness_history_to_current_attempt(
+        partial_liveness_history,
+        repair_data,
+    )[-max_attempts:]
     evidence["partial_liveness_history"] = partial_liveness_history
 
     return evidence
+
+
+def _repair_data_current_attempt_floor(repair_data: Mapping[str, Any]) -> float | None:
+    """Return the timestamp floor for the currently tracked repair attempt."""
+
+    latest: float | None = None
+
+    def consider(value: Any) -> None:
+        nonlocal latest
+        parsed = _parse_meta_timestamp(value)
+        if parsed is None:
+            return
+        if latest is None or parsed > latest:
+            latest = parsed
+
+    current_recurrence = repair_data.get("current_recurrence")
+    if isinstance(current_recurrence, Mapping):
+        consider(current_recurrence.get("dispatched_at"))
+
+    current_attempt_id = str(repair_data.get("current_attempt_id") or "").strip()
+    for collection_key in ("attempts", "iterations"):
+        records = repair_data.get(collection_key)
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, Mapping):
+                continue
+            record_attempt_id = str(record.get("attempt_id") or "").strip()
+            if current_attempt_id and record_attempt_id != current_attempt_id:
+                continue
+            consider(record.get("dispatched_at"))
+            consider(record.get("recorded_at"))
+            consider(record.get("attempted_at"))
+            consider(record.get("updated_at"))
+    return latest
+
+
+def _repair_data_current_plan_name(repair_data: Mapping[str, Any]) -> str:
+    current_signature = repair_data.get("current_signature")
+    if not isinstance(current_signature, Mapping):
+        current_signature = {}
+    advancement = repair_data.get("current_advancement_snapshot")
+    if not isinstance(advancement, Mapping):
+        advancement = {}
+    failure_context = repair_data.get("current_failure_context")
+    if not isinstance(failure_context, Mapping):
+        failure_context = {}
+    latest_failure = failure_context.get("plan_latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        latest_failure = {}
+    chain_state = failure_context.get("chain_state_summary")
+    if not isinstance(chain_state, Mapping):
+        chain_state = {}
+    return (
+        _meta_safe_text(current_signature.get("milestone_or_plan"))
+        or _meta_safe_text(advancement.get("milestone_or_plan"))
+        or _meta_safe_text(repair_data.get("plan_name"))
+        or _meta_safe_text(latest_failure.get("plan_name"))
+        or _meta_safe_text(chain_state.get("current_plan_name"))
+    )
+
+
+def _repair_data_current_run_kind(repair_data: Mapping[str, Any]) -> str:
+    advancement = repair_data.get("current_advancement_snapshot")
+    if not isinstance(advancement, Mapping):
+        advancement = {}
+    failure_context = repair_data.get("current_failure_context")
+    if not isinstance(failure_context, Mapping):
+        failure_context = {}
+    resolver_output = failure_context.get("resolver_output")
+    if not isinstance(resolver_output, Mapping):
+        resolver_output = {}
+    current_refs = resolver_output.get("current_refs")
+    if not isinstance(current_refs, Mapping):
+        current_refs = {}
+    return (
+        _meta_safe_text(repair_data.get("run_kind"))
+        or _meta_safe_text(advancement.get("run_kind"))
+        or _meta_safe_text(current_refs.get("run_kind"))
+    ).lower()
+
+
+def _scope_partial_liveness_history_to_current_attempt(
+    history: Sequence[Mapping[str, Any] | Any],
+    repair_data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Keep only partial-liveness ticks that belong to the current attempt window."""
+
+    floor = _repair_data_current_attempt_floor(repair_data)
+    current_plan_name = _repair_data_current_plan_name(repair_data)
+    current_run_kind = _repair_data_current_run_kind(repair_data)
+    if floor is None and not current_plan_name and not current_run_kind:
+        return [dict(item) for item in history if isinstance(item, Mapping)]
+
+    filtered: list[dict[str, Any]] = []
+    for item in history:
+        if not isinstance(item, Mapping):
+            continue
+        recorded_at = _parse_meta_timestamp(item.get("recorded_at"))
+        if floor is not None and (recorded_at is None or recorded_at < floor):
+            continue
+        run_kind = _meta_safe_text(item.get("run_kind")).lower()
+        if current_run_kind and run_kind and run_kind != current_run_kind:
+            continue
+        plan_name = _meta_safe_text(item.get("plan_name"))
+        if current_plan_name and plan_name and plan_name != current_plan_name:
+            continue
+        filtered.append(dict(item))
+    return filtered
 
 
 # ---------------------------------------------------------------------------

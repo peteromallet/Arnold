@@ -74,6 +74,7 @@ def maybe_resolve_pr_merge_wait(
     binding: ControlBinding | str,
     policy: SupervisorLadderPolicy,
     writer,
+    automatic_pr_progression: bool = True,
 ) -> PRMergeResolution:
     """Handle awaiting-human PR merge waits or return ``handled=False``.
 
@@ -84,6 +85,12 @@ def maybe_resolve_pr_merge_wait(
     cursor = parse_pr_merge_cursor(run_state)
     if cursor is None:
         return PRMergeResolution(handled=False)
+    if not automatic_pr_progression:
+        return PRMergeResolution(
+            handled=False,
+            pr_number=cursor.pr_number,
+            reason="chain policy requires human PR review/merge",
+        )
 
     pr_number = cursor.pr_number
     if pr_number is None:

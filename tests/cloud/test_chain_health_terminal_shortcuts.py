@@ -35,11 +35,21 @@ def _extract_wrapper_function(name: str) -> str:
 
 
 def _run_watchdog_shell(script: str) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    for name in (
+        "DISCORD_BOT_TOKEN",
+        "DISCORD_DM_USER_ID",
+        "DISCORD_WEBHOOK_URL",
+        "REPORT_WEBHOOK",
+        "SLACK_WEBHOOK_URL",
+    ):
+        env.pop(name, None)
+    env["DISCORD_DM_BIN"] = "/bin/false"
     return subprocess.run(
         ["bash", "-c", script],
         capture_output=True,
         text=True,
-        env=dict(os.environ),
+        env=env,
         check=False,
     )
 

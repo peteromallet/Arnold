@@ -1,5 +1,9 @@
 # M9: Chain, PR, And Cloud Boundaries
 
+> Superseded as an executable milestone by C1-C6. Preserved only as historical
+> checklist material; it cannot add a prompt, gate, or policy choice to the
+> corrective chain.
+
 ## Outcome
 
 Boundary contracts cover chain milestones, PR-ready/merge transitions, CI/check

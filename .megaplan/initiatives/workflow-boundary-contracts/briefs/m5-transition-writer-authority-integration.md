@@ -1,5 +1,9 @@
 # M5: TransitionWriter Authority Integration
 
+> Superseded as an executable milestone by C1-C6. Preserved only as historical
+> checklist material; it cannot add a prompt, gate, or policy choice to the
+> corrective chain.
+
 ## Outcome
 
 Authority-increasing state and routing changes are represented as boundary

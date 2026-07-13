@@ -1,5 +1,9 @@
 # M8: Repair Loop, Status, And Auditor Consumption
 
+> Superseded as an executable milestone by C1-C6. Preserved only as historical
+> checklist material; it cannot add a prompt, gate, or policy choice to the
+> corrective chain.
+
 ## Outcome
 
 Repair-loop, cloud status, and the 6h progress auditor consume the same
@@ -44,7 +48,8 @@ OUT:
 
 - Status renders derived views but does not become the source of truth.
 - Auditor gather surfaces suspicious facts deterministically.
-- Repeated unchanged finding after 2-3 repair attempts escalates to meta-repair.
+- A finding unchanged after 2 consecutive independently verified repair
+  attempts escalates automatically to meta-repair.
 - M8 consumes and displays custody findings produced by M9; the chain therefore
   runs M9 before M8 even though the original draft numbering is preserved.
 - Repair-stack custody must reconcile with existing `repair_contract.py`

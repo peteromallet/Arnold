@@ -169,7 +169,7 @@ Picks the thinking strength of the premium model(s) the tier brought in. Indepen
 | `high` planner / `low` critic | Brief is long OR codebase is unfamiliar. The planner needs substantial repo-reading and structural reasoning. |
 | `xhigh` / `max` planner only | Genuinely novel architectural decision. Use sparingly — most "hard" plans don't actually need this. |
 
-Available strengths: Claude is `low / medium / high / xhigh / max`; Codex is `minimal / low / medium / high`.
+Available strengths: Claude is `low / medium / high / xhigh / max`; Codex is `minimal / low / medium / high / xhigh / max`.
 
 **The asymmetry principle:** author phases (plan, revise) can scale all the way up to `max` when the work demands deliberation; sense-check phases (critique, gate, review) plateau at `low` regardless of stakes. A `claude:high` planner + `claude:low` critic is the right shape when the plan needs real thinking — not `claude:medium` everywhere.
 
@@ -254,7 +254,7 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 
 1. **`--profile`** — `partnered-3`, `partnered-4`, or `partnered-5`, chosen from the overall plan difficulty score.
 2. **`--robustness bare|light|full|thorough|extreme`** — `full` is home base.
-3. **`--depth low|medium|high|xhigh|max`** — rewrites the effort suffix on author-side claude/codex slots (plan, revise, loop_plan, tiebreaker_*) at the resolved vendor. Critic + mechanical phases plateau at their existing depth (the asymmetry principle). Defaults to whatever the profile sets (usually `:low`). Honored on vendor-locked profiles. Codex caps at `high`; Claude adds `xhigh` and `max`.
+3. **`--depth low|medium|high|xhigh|max`** — rewrites the effort suffix on author-side claude/codex slots (plan, revise, loop_plan, tiebreaker_*) at the resolved vendor. Critic + mechanical phases plateau at their existing depth (the asymmetry principle). Defaults to whatever the profile sets (usually `:low`). Honored on vendor-locked profiles. Both Codex and Claude accept `xhigh` and `max`; use them only when representative high-effort work has proved inadequate.
 
 ### The modifier flags
 

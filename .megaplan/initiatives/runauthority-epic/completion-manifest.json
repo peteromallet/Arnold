@@ -1,0 +1,52 @@
+{
+  "schema": "arnold.megaplan.chain_completion_manifest.v1",
+  "chain": {
+    "path": ".megaplan/initiatives/runauthority-epic/chain.yaml",
+    "sha256": "48c4f43649046893ad90e76a78ec9f65a3d0c5faf23358c8e9b10e296bf87d28"
+  },
+  "milestones": [
+    {
+      "label": "m1-foundation",
+      "brief_path": ".megaplan/initiatives/runauthority-epic/briefs/m1.md",
+      "brief_sha256": "a20f2c9bfaea8e6bc535e494f0443ace10ab20341c404e9560242c5e8abadbed",
+      "status": "done",
+      "plan": "sprint-1-authority-freeze-and-20260710-1935",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
+          "sha256": "c5a30561a4c4009538596f203b569f3ed9857f839f5bd3c2aa0467f790ef2b5d"
+        }
+      ]
+    },
+    {
+      "label": "m2-enforcement",
+      "brief_path": ".megaplan/initiatives/runauthority-epic/briefs/m2.md",
+      "brief_sha256": "8d00e749b9542e4b6c5cafb0ce939d0345af5eb2ec9d524c3e5338e5b6e964e5",
+      "status": "done",
+      "plan": "sprint-2-dispatch-grants-and-20260710-2200",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
+          "sha256": "c5a30561a4c4009538596f203b569f3ed9857f839f5bd3c2aa0467f790ef2b5d"
+        }
+      ]
+    },
+    {
+      "label": "m3-consumers",
+      "brief_path": ".megaplan/initiatives/runauthority-epic/briefs/m3.md",
+      "brief_sha256": "7e48786822973c611dfdbeaa3ca9a70bcc1bdf85e608baa89b49f44459ab2a57",
+      "status": "done",
+      "plan": "sprint-3-consumer-migration-20260711-0130",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
+          "sha256": "c5a30561a4c4009538596f203b569f3ed9857f839f5bd3c2aa0467f790ef2b5d"
+        }
+      ]
+    }
+  ],
+  "north_star": {
+    "path": ".megaplan/initiatives/runauthority-epic/NORTHSTAR.md",
+    "sha256": "28eafca1b7961367de6cc8f25b8bba02e495c9cfdf212ae2ec296b34a4c2a98d"
+  }
+}

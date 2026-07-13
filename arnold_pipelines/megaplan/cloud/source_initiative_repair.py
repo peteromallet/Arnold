@@ -45,6 +45,14 @@ def source_initiative_restore_available(
     if not str(remote_spec).endswith(".yaml"):
         return False
 
+    # This repair path is restoration, not synchronization.  Replacing an
+    # existing active spec can change milestone labels beneath a persisted
+    # cursor and make completed work disappear during reconciliation.  An
+    # existing initiative must be updated through an explicit, versioned
+    # migration instead of an unattended repair overlay.
+    if remote_spec.exists():
+        return False
+
     try:
         relative = remote_spec.relative_to(workspace)
     except ValueError:
@@ -102,6 +110,12 @@ def repair_source_initiative(
     remote_spec: Path,
     arnold_src: Path,
 ) -> RepairResult:
+    if remote_spec.exists():
+        return RepairResult(
+            False,
+            "source_initiative_already_present",
+            {"remote_spec": str(remote_spec)},
+        )
     if not source_initiative_restore_available(
         workspace=workspace,
         remote_spec=remote_spec,

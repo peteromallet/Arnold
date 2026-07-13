@@ -129,17 +129,20 @@ RepairCustodyBucket: TypeAlias = Literal[
     "repairing",
     "repairable_not_repairing",
     "human_required",
+    "paused",
     "broken_superfixer",
 ]
 CUSTODY_BUCKET_REPAIRING: RepairCustodyBucket = "repairing"
 CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING: RepairCustodyBucket = "repairable_not_repairing"
 CUSTODY_BUCKET_HUMAN_REQUIRED: RepairCustodyBucket = "human_required"
+CUSTODY_BUCKET_PAUSED: RepairCustodyBucket = "paused"
 CUSTODY_BUCKET_BROKEN_SUPERFIXER: RepairCustodyBucket = "broken_superfixer"
 REPAIR_CUSTODY_BUCKETS: frozenset[RepairCustodyBucket] = frozenset(
     {
         CUSTODY_BUCKET_REPAIRING,
         CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
         CUSTODY_BUCKET_HUMAN_REQUIRED,
+        CUSTODY_BUCKET_PAUSED,
         CUSTODY_BUCKET_BROKEN_SUPERFIXER,
     }
 )
@@ -686,6 +689,8 @@ def _custody_bucket_from_canonical_state(
         return CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
     if state is CanonicalState.HUMAN_ACTION_REQUIRED:
         return CUSTODY_BUCKET_HUMAN_REQUIRED
+    if state is CanonicalState.PAUSED:
+        return CUSTODY_BUCKET_PAUSED
     return CUSTODY_BUCKET_BROKEN_SUPERFIXER
 
 
@@ -924,6 +929,18 @@ def _classify_repair_dispatch_canonical(
             decision=DISPATCH_DECISION_TERMINAL,
             dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
             rationale=("resolver enforcement: canonical completed state",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if state is CanonicalState.PAUSED:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_NO_ACTION,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("resolver enforcement: durable operator pause forbids recovery",),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -1444,10 +1461,28 @@ def load_json(path: str | Path, *, default: Any | None = None) -> Any:
         return fallback
 
 
-def atomic_write_json(path: str | Path, payload: Mapping[str, Any]) -> None:
-    """Atomically write JSON using the shared fsync/replace runtime primitive."""
+def atomic_write_json(
+    path: str | Path,
+    payload: Mapping[str, Any],
+    *,
+    include_resident_provenance: bool = True,
+) -> None:
+    """Atomically write JSON using the shared fsync/replace runtime primitive.
 
-    _atomic_write_json(Path(path), dict(payload))
+    Resident provenance is additive for durable repair evidence, but callers
+    that persist an identity token (for example a lock owner record) must opt
+    out so the on-disk value remains byte-for-byte equivalent to the identity
+    they later use for guarded release.
+    """
+
+    prepared = dict(payload)
+    if include_resident_provenance:
+        from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
+
+        resident_delegation = safe_provenance_projection()
+        if resident_delegation is not None:
+            prepared.setdefault("resident_delegation", resident_delegation)
+    _atomic_write_json(Path(path), prepared)
 
 
 def read_repair_index(path: str | Path) -> dict[str, Any]:
@@ -3396,6 +3431,7 @@ __all__ = [
     "COMPLETE",
     "CUSTODY_BUCKET_BROKEN_SUPERFIXER",
     "CUSTODY_BUCKET_HUMAN_REQUIRED",
+    "CUSTODY_BUCKET_PAUSED",
     "CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING",
     "CUSTODY_BUCKET_REPAIRING",
     "CURRENT_SCHEMA_VERSION",

@@ -1311,6 +1311,26 @@ def _command_for_auto_target(next_step: str) -> list[str]:
     return [target]
 
 
+def _phase_command(
+    next_step: str,
+    substrate: "Substrate" = "subprocess_isolated",
+) -> list[str]:
+    """Preserve the legacy phase-command contract for external callers.
+
+    Command selection is owned by :func:`_command_for_auto_target`. Explicit
+    multi-token override commands retain their historical argv shape so
+    compatibility callers can continue to pass them through unchanged.
+    ``substrate`` is accepted for forward compatibility; both supported
+    substrates currently use the same command translation.
+    """
+
+    del substrate
+    parts = shlex.split(next_step)
+    if len(parts) >= 2 and parts[0] == "override":
+        return parts
+    return _command_for_auto_target(next_step)
+
+
 def _failure_resume_cursor_for_step(
     next_step: str,
     *,

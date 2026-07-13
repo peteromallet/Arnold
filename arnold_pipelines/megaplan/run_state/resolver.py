@@ -13,7 +13,8 @@ consumers (watchdog, repair-loop, status/Discord), not to this resolver.
 Classification order (first non-None match wins):
 
 1. :func:`~.classifiers.classify_completed`               (authority beats stale)
-2. :func:`~.classifiers.classify_broken_state_machine`     (genuine escalation)
+2. :func:`~.classifiers.classify_operator_paused`          (operator authority)
+3. :func:`~.classifiers.classify_broken_state_machine`     (genuine escalation)
 3. :func:`~.classifiers.classify_stale_derived_state`     (live beats stale)
 4. :func:`~.classifiers.classify_running`                 (live beats stale)
 5. :func:`~.classifiers.classify_human_action_required`   (explicit typed gate)

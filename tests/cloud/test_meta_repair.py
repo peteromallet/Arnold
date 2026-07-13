@@ -896,6 +896,138 @@ class TestLoadRedactedEvidence:
         assert classification.should_dispatch is False
         assert classification.trigger is None
 
+    def test_partial_liveness_history_ignores_ticks_before_current_attempt(self, tmp_path: Path) -> None:
+        session = "windowed-session"
+        repair_root = _make_session_dir(tmp_path, session)
+        repair_data_path = repair_root / f"{session}.repair-data.json"
+        repair_data_path.write_text(
+            json.dumps(
+                {
+                    "session": session,
+                    "outcome": PARTIAL_LIVENESS,
+                    "current_attempt_id": 2,
+                    "current_recurrence": {
+                        "attempt_id": 2,
+                        "dispatched_at": "2026-07-03T20:00:00Z",
+                    },
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                    },
+                    "attempts": [
+                        {"attempt_id": 1, "dispatched_at": "2026-07-03T19:00:00Z"},
+                        {"attempt_id": 2, "dispatched_at": "2026-07-03T20:00:00Z"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        sidecar_dir = repair_root.with_name(f"{repair_root.name}.d")
+        events_dir = sidecar_dir / "events"
+        events_dir.mkdir(parents=True, exist_ok=True)
+        events_path = events_dir / "events.jsonl"
+        events_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "session": session,
+                            "outcome": PARTIAL_LIVENESS,
+                            "recorded_at": "2026-07-03T19:05:00Z",
+                            "run_kind": "chain",
+                            "plan_name": "demo-plan",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "session": session,
+                            "outcome": PARTIAL_LIVENESS,
+                            "recorded_at": "2026-07-03T19:15:00Z",
+                            "run_kind": "chain",
+                            "plan_name": "demo-plan",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        evidence = load_redacted_evidence(session, repair_data_dir=repair_root)
+        assert evidence["partial_liveness_history"] == []
+
+        classification, _ = evaluate_meta_repair_triggers(
+            session,
+            repair_data_dir=repair_root,
+            repair_outcome=PARTIAL_LIVENESS,
+            load_evidence=True,
+        )
+        assert classification.should_dispatch is False
+        assert classification.trigger is None
+
+    def test_partial_liveness_history_keeps_current_attempt_ticks(self, tmp_path: Path) -> None:
+        session = "current-window-session"
+        repair_root = _make_session_dir(tmp_path, session)
+        repair_data_path = repair_root / f"{session}.repair-data.json"
+        repair_data_path.write_text(
+            json.dumps(
+                {
+                    "session": session,
+                    "outcome": PARTIAL_LIVENESS,
+                    "current_attempt_id": 3,
+                    "current_recurrence": {
+                        "attempt_id": 3,
+                        "dispatched_at": "2026-07-03T20:00:00Z",
+                    },
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        sidecar_dir = repair_root.with_name(f"{repair_root.name}.d")
+        events_dir = sidecar_dir / "events"
+        events_dir.mkdir(parents=True, exist_ok=True)
+        events_path = events_dir / "events.jsonl"
+        events_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "session": session,
+                            "outcome": PARTIAL_LIVENESS,
+                            "recorded_at": "2026-07-03T20:05:00Z",
+                            "run_kind": "chain",
+                            "plan_name": "demo-plan",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "session": session,
+                            "outcome": PARTIAL_LIVENESS,
+                            "recorded_at": "2026-07-03T20:06:00Z",
+                            "run_kind": "chain",
+                            "plan_name": "demo-plan",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        evidence = load_redacted_evidence(session, repair_data_dir=repair_root)
+        assert len(evidence["partial_liveness_history"]) == 2
+
+        classification, _ = evaluate_meta_repair_triggers(
+            session,
+            repair_data_dir=repair_root,
+            repair_outcome=PARTIAL_LIVENESS,
+            load_evidence=True,
+        )
+        assert classification.should_dispatch is True
+        assert classification.trigger == MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE
+
 
 # ---------------------------------------------------------------------------
 # Prompt assembly

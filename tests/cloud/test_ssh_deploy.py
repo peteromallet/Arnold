@@ -153,3 +153,18 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
     assert "MEGAPLAN_RESIDENT_STORE_ROOT" in entrypoint
     assert "--store-root" in entrypoint
     assert "python -P -m arnold_pipelines.megaplan resident discord" in entrypoint
+    assert "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE" in entrypoint
+    assert "MEGAPLAN_RESIDENT_MODE:-production" in entrypoint
+
+
+def test_resident_self_heal_starts_the_production_bot_boundary() -> None:
+    ensure_script = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-resident"
+    ).read_text()
+
+    assert "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE" in ensure_script
+    assert "MEGAPLAN_RESIDENT_MODE:-production" in ensure_script
+    assert "MEGAPLAN_RESIDENT_STORE_ROOT" in ensure_script
+    assert "python -P -m arnold_pipelines.megaplan resident discord" in ensure_script
+    assert "--store-root" in ensure_script

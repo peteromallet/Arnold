@@ -1461,9 +1461,30 @@ def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monke
     assert Path.cwd() == root
 
 
-def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
+@pytest.mark.parametrize(
+    ("pr_states", "guard_results", "expected_status"),
+    [
+        (
+            ["open", "open"],
+            [(False, "no typed no-op completion waiver found")],
+            "stopped",
+        ),
+        (
+            ["open", "merged"],
+            [
+                (False, "open PR evidence is stale"),
+                (True, "merged publication evidence is authoritative"),
+            ],
+            "done",
+        ),
+    ],
+)
+def test_run_chain_rechecks_pr_state_when_premerge_completion_guard_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pr_states: list[str],
+    guard_results: list[tuple[bool, str]],
+    expected_status: str,
 ) -> None:
     root = tmp_path / "repo"
     _init_repo(root)
@@ -1543,13 +1564,15 @@ def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
         "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
         lambda *args, **kwargs: (True, "authoritative"),
     )
+    guard_iter = iter(guard_results)
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._chain_completion_guard",
-        lambda *args, **kwargs: (False, "no typed no-op completion waiver found"),
+        lambda *args, **kwargs: next(guard_iter),
     )
+    pr_state_iter = iter(pr_states)
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._pr_state",
-        lambda *args, **kwargs: "open",
+        lambda *args, **kwargs: next(pr_state_iter),
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._mark_pr_ready",
@@ -1560,14 +1583,24 @@ def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
         lambda *args, **kwargs: merge_calls.append(1) or "merged",
     )
 
-    result = run_chain(spec_path, root, writer=lambda _message: None)
+    messages: list[str] = []
+    result = run_chain(spec_path, root, writer=messages.append)
 
-    assert result["status"] == "stopped"
-    assert "completion guard blocked before PR merge" in result["reason"]
+    assert result["status"] == expected_status
     assert ready_calls == []
     assert merge_calls == []
 
     saved = load_chain_state(spec_path)
-    assert saved.last_state == "blocked"
-    assert saved.pr_number == 80
-    assert saved.pr_state == "open"
+    if expected_status == "stopped":
+        assert "completion guard blocked before PR merge" in result["reason"]
+        assert saved.last_state == "blocked"
+        assert saved.pr_number == 80
+        assert saved.pr_state == "open"
+        assert saved.completed == []
+    else:
+        assert saved.last_state == "done"
+        assert saved.current_milestone_index == 1
+        assert saved.current_plan_name is None
+        assert saved.completed[0]["label"] == "m1"
+        assert saved.completed[0]["pr_state"] == "merged"
+        assert any("merged while completion guard was evaluating" in msg for msg in messages)

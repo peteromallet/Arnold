@@ -1,0 +1,38 @@
+{
+  "schema": "arnold.megaplan.dependency_completion_repair.v1",
+  "repaired_at": "2026-07-11T14:20:49.160223+00:00",
+  "source_workspace": "/workspace/runauthority-epic-cloud/Arnold",
+  "source_chain": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/initiatives/runauthority-epic/chain.yaml",
+  "target_chain": "/workspace/arnold/.megaplan/initiatives/runauthority-epic/chain.yaml",
+  "current_milestone_index": 3,
+  "milestone_count": 3,
+  "completed": [
+    {
+      "label": "m1-foundation",
+      "plan": "sprint-1-authority-freeze-and-20260710-1935",
+      "status": "done",
+      "local_commit_sha": null,
+      "publication_evidence": null
+    },
+    {
+      "label": "m2-enforcement",
+      "plan": "sprint-2-dispatch-grants-and-20260710-2200",
+      "status": "done",
+      "local_commit_sha": null,
+      "publication_evidence": null
+    },
+    {
+      "label": "m3-consumers",
+      "plan": "sprint-3-consumer-migration-20260711-0130",
+      "status": "done",
+      "local_commit_sha": null,
+      "publication_evidence": null
+    }
+  ],
+  "copied_nested_state": false,
+  "copied_plan_artifacts": [
+    "sprint-1-authority-freeze-and-20260710-1935",
+    "sprint-2-dispatch-grants-and-20260710-2200",
+    "sprint-3-consumer-migration-20260711-0130"
+  ]
+}

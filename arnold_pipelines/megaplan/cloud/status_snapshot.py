@@ -53,6 +53,12 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
 )
 from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
 from arnold_pipelines.run_authority import canonical_json, reduce_run_authority
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
+from arnold_pipelines.megaplan.chain.advancement import (
+    AdvancementPolicy,
+    assess_advancement,
+    policy_for_spec_path,
+)
 
 # --- canonical paths -------------------------------------------------------
 
@@ -121,7 +127,7 @@ STALE_ACTIVITY_S = 30 * 60
 REPAIR_FRESH_S = 6 * 60 * 60
 CHAIN_HEALTH_STALE_GRACE_S = 5
 
-SessionStatus = str  # one of: running | repairing | blocked | complete | attention
+SessionStatus = str  # one of: running | repairing | blocked | paused | complete | attention
 LivenessProbe = Callable[[Mapping[str, Any]], dict[str, bool]]
 
 
@@ -597,26 +603,62 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def _plan_stage_percent(plan_state: str) -> int | None:
+def _execution_task_progress(
+    workspace: Path | None, plan_name: str
+) -> tuple[int, int, int] | None:
+    """Return ``(completed_weight, total_weight, task_count)`` from finalize.
+
+    Complexity is already the executor's authoritative 1..10 composite weight,
+    so progress uses it directly.  Invalid/missing weights fail closed to 1 so
+    every task still contributes and malformed artifacts cannot inflate progress.
+    """
+    if workspace is None or not plan_name:
+        return None
+    payload = _load_json(workspace / ".megaplan" / "plans" / plan_name / "finalize.json")
+    tasks = payload.get("tasks") if isinstance(payload, Mapping) else None
+    if not isinstance(tasks, list) or not tasks:
+        return None
+    completed_weight = 0
+    total_weight = 0
+    task_count = 0
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        complexity = task.get("complexity")
+        weight = complexity if isinstance(complexity, int) and not isinstance(complexity, bool) and 1 <= complexity <= 10 else 1
+        total_weight += weight
+        task_count += 1
+        if str(task.get("status") or "").strip().lower() in {"done", "completed", "skipped"}:
+            completed_weight += weight
+    return (completed_weight, total_weight, task_count) if total_weight else None
+
+
+def _plan_stage_percent(
+    plan_state: str,
+    *,
+    execution_progress: tuple[int, int, int] | None = None,
+) -> int | None:
     """Estimate a coarse "% through the in-flight plan" from its lifecycle state.
 
-    A plan advances through a fixed ladder of stages (``PLAN_PROGRESSION_RUNGS``);
-    its recorded ``current_state`` (exposed via chain-health ``last_state``) tells
-    us how many it has completed. We map that to completed-stages / total-stages.
-    ``initialized`` is 0%; an off-ladder state (blocked / failed / awaiting_* /
-    tiebreaker_*) is not percentage-able, so we return ``None`` and let the caller
-    surface the raw state label instead. This is a deliberately coarse stage
-    estimate, not exact sub-plan progress — stages are treated as equal-weight.
+    Pre-execute work is capped at 30%.  Once finalized, the remaining 70% is
+    apportioned across the actual finalized tasks by their 1..10 complexity.
     """
     if not plan_state:
         return None
     if plan_state == STATE_INITIALIZED:
         return 0
-    try:
-        index = PLAN_PROGRESSION_RUNGS.index(plan_state)
-    except ValueError:
-        return None
-    return round((index + 1) / len(PLAN_PROGRESSION_RUNGS) * 100)
+    pre_execute = {"prepped": 6, "planned": 12, "critiqued": 18, "gated": 24, "finalized": 30}
+    if plan_state == "finalized" and execution_progress is not None:
+        completed_weight, total_weight, _task_count = execution_progress
+        return round(30 + 70 * completed_weight / total_weight)
+    if plan_state in pre_execute:
+        return pre_execute[plan_state]
+    if plan_state in {"executed", "reviewed", "done"}:
+        return 100
+    if execution_progress is not None:
+        completed_weight, total_weight, _task_count = execution_progress
+        return round(30 + 70 * completed_weight / total_weight)
+    return None
 
 
 def _session_progress(
@@ -626,6 +668,8 @@ def _session_progress(
     current_plan: str | None,
     complete: bool,
     plan_state: str | None = None,
+    execution_progress: tuple[int, int, int] | None = None,
+    presentation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Pre-calculate epic/sprint progress for one snapshot session.
 
@@ -666,7 +710,11 @@ def _session_progress(
     # actually in progress (chain not complete, milestones remain).
     has_in_flight = (not complete) and done < total
     plan_state_norm = str(plan_state).strip().lower() if plan_state else ""
-    plan_percent = _plan_stage_percent(plan_state_norm) if has_in_flight else None
+    plan_percent = (
+        _plan_stage_percent(plan_state_norm, execution_progress=execution_progress)
+        if has_in_flight
+        else None
+    )
 
     # Epic % folds the in-flight plan's stage fraction in, so the headline moves
     # as the current plan advances instead of freezing between milestones. With
@@ -690,6 +738,13 @@ def _session_progress(
                 sprint["plan"] = plan
             if plan_state_norm:
                 sprint["plan_state"] = plan_state_norm
+            if isinstance(presentation, Mapping):
+                sprint.update(
+                    {
+                        key: presentation.get(key)
+                        for key in ("active_phase", "execution_state", "display_state")
+                    }
+                )
             if plan_percent is not None:
                 sprint["plan_percent"] = plan_percent
             sprints.append(sprint)
@@ -706,8 +761,22 @@ def _session_progress(
     }
     if has_in_flight and plan_state_norm:
         progress["plan_state"] = plan_state_norm
+    if has_in_flight and isinstance(presentation, Mapping):
+        progress.update(
+            {
+                key: presentation.get(key)
+                for key in ("active_phase", "execution_state", "display_state")
+            }
+        )
     if plan_percent is not None:
         progress["plan_percent"] = plan_percent
+    if has_in_flight and execution_progress is not None:
+        completed_weight, total_weight, task_count = execution_progress
+        progress["execution_tasks"] = {
+            "completed_weight": completed_weight,
+            "total_weight": total_weight,
+            "task_count": task_count,
+        }
     return progress
 
 
@@ -944,6 +1013,60 @@ def _build_session_entry(
         plan_state=plan_state_doc,
         now=now,
     )
+    watchdog_status = _watchdog_status(watchdog_item, chain_complete)
+    if (
+        status == "attention"
+        and watchdog_status == "alive"
+        and not (liveness.get("tmux") or liveness.get("process"))
+    ):
+        # The report describes an earlier sweep, not current runner truth.
+        # Keep the stale observation visible without presenting it as live.
+        watchdog_status = "stale"
+
+    try:
+        advancement_policy = policy_for_spec_path(remote_spec) if remote_spec else AdvancementPolicy(
+            merge_policy="auto",
+            clean_milestone_pr="auto",
+            auto_approve=True,
+            source="plan_default",
+        )
+
+    except Exception:
+        advancement_policy = AdvancementPolicy(
+            merge_policy="unknown",
+            clean_milestone_pr="unknown",
+            auto_approve=False,
+            source="unreadable_spec",
+        )
+    latest_failure = (
+        plan_state_doc.get("latest_failure")
+        if isinstance(plan_state_doc, Mapping)
+        and isinstance(plan_state_doc.get("latest_failure"), Mapping)
+        else {}
+    )
+    advancement = assess_advancement(
+        advancement_policy,
+        current_state=plan_current_state,
+        chain_last_state=(chain_health.get("last_state") if chain_health else None),
+        chain_complete=chain_complete or status == "complete",
+        pr_state=(chain_health.get("pr_state") if chain_health else None),
+        active_step=bool(
+            isinstance(plan_state_doc, Mapping) and plan_state_doc.get("active_step")
+        ),
+        explicit_human_gate=(operator_next if status == "blocked" else None),
+        failure_kind=latest_failure.get("kind"),
+    )
+    active_step = (
+        plan_state_doc.get("active_step")
+        if isinstance(plan_state_doc, Mapping)
+        and isinstance(plan_state_doc.get("active_step"), Mapping)
+        else None
+    )
+    presentation = plan_status_presentation(
+        plan_state_label,
+        active_step=active_step,
+        completed=chain_complete or status == "complete",
+    )
 
     entry = {
         "session": session,
@@ -953,26 +1076,31 @@ def _build_session_entry(
         "run_kind": run_kind,
         "started_at": marker.get("started_at"),
         "status": status,
-        "should_run": status not in {"complete"},
+        "should_run": status not in {"complete", "paused"} and plan_current_state != "paused",
         "tmux": liveness.get("tmux", False),
         "process": liveness.get("process", False),
-        "watchdog": _watchdog_status(watchdog_item, chain_complete),
+        "watchdog": watchdog_status,
         "repairing": status == "repairing",
         "current_plan": current_plan,
         "completed_count": completed_count,
         "milestone_count": milestone_count,
         "chain_complete": chain_complete,
+        "plan_state": plan_current_state or None,
+        **presentation,
         "progress": _session_progress(
             completed_count=completed_count,
             milestone_count=milestone_count,
             current_plan=current_plan,
             complete=chain_complete,
             plan_state=plan_state_label,
+            execution_progress=_execution_task_progress(workspace, str(current_plan or "")),
+            presentation=presentation,
         ),
         "pr_number": chain_health.get("pr_number") if chain_health else None,
         "pr_state": chain_health.get("pr_state") if chain_health else None,
         "latest_activity": latest_activity,
         "operator_next": operator_next,
+        "advancement": advancement.to_dict(),
         "evidence": {
             "marker": str(marker_path),
             "chain_health": str(marker_dir / f"{session}.chain-health.progress.json"),
@@ -1469,6 +1597,14 @@ def _classify_session(
             f"completed={completed}/{total} current_milestone_index={current_index}",
         )
 
+    plan_current_state = (
+        str(plan_state.get("current_state") or "").strip().lower()
+        if isinstance(plan_state, Mapping)
+        else ""
+    )
+    if plan_current_state == "paused" or str((chain_health or {}).get("last_state") or "").lower() == "paused":
+        return "paused", "durable operator pause; explicit resume required"
+
     # Fresh repair custody is stronger than a needs-human sidecar. Repair loops
     # can leave old needs-human markers in place while a higher layer is already
     # working the case; status consumers should show that as repairing.
@@ -1538,6 +1674,13 @@ def _classify_session(
 
     if liveness.get("tmux") or liveness.get("process"):
         return "running", "live runner process observed"
+
+    if plan_current_state in {"done", "complete", "completed"} and not chain_complete:
+        return (
+            "attention",
+            "terminal plan has no live runner but chain completion is not recorded; "
+            "relaunch/reconciliation required",
+        )
 
     if latest_activity_dt is not None and (now - latest_activity_dt).total_seconds() <= STALE_ACTIVITY_S:
         return "running", "recent plan/chain activity"
@@ -2007,7 +2150,7 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
 
 
 def _summarize(sessions: Iterable[Mapping[str, Any]]) -> dict[str, int]:
-    counts = {"running": 0, "blocked": 0, "repairing": 0, "complete": 0, "attention": 0}
+    counts = {"running": 0, "blocked": 0, "repairing": 0, "paused": 0, "complete": 0, "attention": 0}
     for entry in sessions:
         status = entry.get("status")
         if status in counts:

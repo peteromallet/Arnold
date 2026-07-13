@@ -21,56 +21,84 @@ milestones:
   vendor: codex
   robustness: full
   depth: high
-  prep_direction: Trace Discord ingestion through persistence, authorization, coalescing,
-    profile invocation, acknowledgements, voice/transcription, escalations, history,
-    and restart behavior; identify every mutable-cursor provenance fallback.
-  notes: Difficulty 5/5. Makes accepted turns replayable and burst grouping provenance-preserving
-    before delegation changes.
+  prep_direction: Trace every normal, attachment-only, voice/image, burst, escalation,
+    repair, scheduler, todo, replay, and compatibility ingress from authorization
+    through durable intent, quarantine/CAS, validation/scanning/policy, turn readiness,
+    and read-only request projection; identify every mutable-cursor, CDN-URL, or attachment-free
+    fallback.
+  notes: Difficulty 5/5. Adds the artifact lifecycle extension to completed M1 without
+    reopening it, making accepted messages and attachments crash-safe and provenance-preserving.
 - label: m3-idempotent-delegation-and-side-effect-fencing
   idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m3-idempotent-delegation-and-side-effect-fencing.md
   profile: all-codex
   vendor: codex
   robustness: full
   depth: high
-  prep_direction: Map the complete resident delegated-agent launch/process/manifest/result
-    lifecycle, concurrent callers, request_id recovery, PID validation, and every
-    side-effect commit point before designing durable uniqueness and fences.
-  notes: Difficulty 5/5. Prevents duplicate logical execution and rejects stale-worker
-    effects across ambiguous launch/restart boundaries.
+  prep_direction: Map every resident-managed Codex launch path and profile, including
+    normal, VibeComfy, Megaplan, AgentBox, repair, scheduler, VP todo/sweep, reaper,
+    replay, and legacy manifests; locate execution fences, attachment projections,
+    credential/isolation boundaries, declaration/capture/selection paths, and all
+    bypasses.
+  notes: Difficulty 5/5. Prevents duplicate execution and stale declarations while
+    establishing one restricted attachment-bearing run and explicit artifact contract.
 - label: m4-durable-ack-and-terminal-outbox
   idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m4-durable-ack-and-terminal-outbox.md
   profile: all-codex
   vendor: codex
   robustness: full
   depth: high
-  prep_direction: Trace all acknowledgement and terminal Discord sends, retry/error
-    handling, reply target lookup, provider receipts, delivery fields/cursors, completion
-    sweeps, and interleaving tests before implementing the outbox.
-  notes: Difficulty 5/5. Moves acknowledgements and terminal replies under durable,
-    retryable, provenance-bound custody.
+  prep_direction: Trace every direct and projected acknowledgement/terminal send from
+    normal, repair, scheduler, todo, reaper, and compatibility paths; inventory artifact
+    selection, CAS reads, multipart limits, rate limits, nonces, receipts, partial
+    batches, unknown reconciliation, oversize behavior, and all mutable-target/direct-send
+    bypasses.
+  notes: Difficulty 5/5. Moves text and selected artifact batches under one durable,
+    fenced, retryable, provenance-bound outbox with honest partial/unknown outcomes.
 - label: m5-recovery-migration-and-compatibility
   idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m5-recovery-migration-and-compatibility.md
   profile: all-codex
   vendor: codex
   robustness: full
   depth: high
-  prep_direction: Inventory startup ordering, readiness, scheduled sweeps, legacy
-    manifest/record schemas, current partial-state repair paths, config flags, and
-    operator/status surfaces; design a reversible additive cutover without touching
-    unrelated sessions.
-  notes: Difficulty 5/5. Unifies startup/continuous recovery and provides additive
-    dual-read/backfill/cutover/rollback compatibility.
+  prep_direction: Inventory startup/readiness and every continuous repair owner for
+    ingest, quarantine, CAS, materialization, declarations, outbox batches, unknowns,
+    retention/holds/GC, previews, voice/image/manifests, scheduler/todo/reaper, flags,
+    operator status/actions, backups, and rollback; preserve unrelated sessions.
+  notes: Difficulty 5/5. Unifies request/artifact recovery and reference-safe retention
+    with additive legacy migration, split-brain detection, cutover, and rollback.
 - label: m6-adversarial-evidence-rollout-and-observability
   idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m6-adversarial-evidence-rollout-and-observability.md
   profile: all-codex
   vendor: codex
   robustness: full
   depth: high
-  prep_direction: Map every North Star invariant and audit finding to executable fault/restart/duplicate/burst
-    evidence plus operational metrics, alerts, staged rollout gates, and rollback;
-    identify any remaining unverifiable provider semantics explicitly.
-  notes: Difficulty 4/5. Produces adversarial closure evidence and a canary-ready,
-    observable rollout without destructive cleanup.
+  prep_direction: Map every North Star invariant, audit finding, attachment-design
+    acceptance case, and normal/repair/scheduler/todo/reaper/compatibility route to
+    deterministic security/fault/restart evidence, observability, canary gates, retention,
+    and rollback; keep provider, isolation, scanner, storage, and backup unknowns
+    explicit.
+  notes: Difficulty 5/5. Produces adversarial end-to-end closure and a restricted,
+    observable, canary-ready attachment rollout without destructive cleanup.
+- label: m7-resident-completion-attachments-v1
+  idea: .megaplan/initiatives/discord-resident-delegation-delivery-corrective/briefs/m7-resident-completion-attachments-v1.md
+  profile: all-codex
+  vendor: codex
+  robustness: full
+  depth: high
+  depends_on:
+  - m1-lifecycle-contract-and-ledger
+  - m2-transactional-inbound-and-burst-provenance
+  - m3-idempotent-delegation-and-side-effect-fencing
+  - m4-durable-ack-and-terminal-outbox
+  - m5-recovery-migration-and-compatibility
+  - m6-adversarial-evidence-rollout-and-observability
+  prep_direction: Treat M1-M6 as fixed prerequisites, then trace the resident-managed
+    prompt/result, project-root validation and immutable capture, completion outbox,
+    Discord multipart adapter, provider reconciliation, config, and non-Discord compatibility
+    paths needed for the deliberately basic, opt-in completion-attachments v1 slice.
+  notes: Difficulty 5/5. Adds disabled-by-default structured completion attachments
+    with exact limits, durable captured-byte retries, honest partial/unknown evidence,
+    and an explicit full-access-agent exfiltration caveat; no content scanning in v1.
 on_failure:
   abort: stop_chain
 on_escalate:

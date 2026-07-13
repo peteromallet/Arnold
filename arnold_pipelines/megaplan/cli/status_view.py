@@ -41,6 +41,7 @@ from arnold_pipelines.megaplan.workflows.events import (
     workflow_cursor,
 )
 from arnold.runtime.outcome import RunOutcome
+from arnold_pipelines.megaplan.status_projection import plan_status_presentation
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
     if not isinstance(timestamp, str) or not timestamp:
@@ -953,9 +954,14 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
     anchors = anchor_summary(state, plan_dir)
-    summary = (
-        f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
+    presentation = plan_status_presentation(
+        state.get("current_state"),
+        active_step=active_step,
     )
+    summary = f"Plan '{state['name']}' is currently {presentation['display_state']}"
+    if presentation["display_state"] != state["current_state"]:
+        summary += f" (lifecycle state '{state['current_state']}')"
+    summary += "."
     if is_prose_mode(state):
         summary += f" Mode: {plan_mode}. Output: {plan_output_path}."
     if active_step:
@@ -987,6 +993,7 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
         "step": "status",
         "plan": state["name"],
         "state": state["current_state"],
+        **presentation,
         "iteration": state["iteration"],
         "summary": summary,
         "next_step": next_steps[0] if next_steps else None,
