@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-13T15:39:52.197233+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-workflow-boundary-contracts-corrective-20260710"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 43,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-3bc7a5eaa27e",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
+    "last_seq": 452,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-3bc7a5eaa27e: stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live"
+}

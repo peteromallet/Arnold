@@ -9633,6 +9633,4072 @@
       "actions": [],
       "attempts": [
         {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-1",
+          "event_seqs": [
+            348
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-10",
+          "event_seqs": [
+            389
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-11",
+          "event_seqs": [
+            394
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-12",
+          "event_seqs": [
+            399
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-13",
+          "event_seqs": [
+            404
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-14",
+          "event_seqs": [
+            409
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-15",
+          "event_seqs": [
+            414
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-16",
+          "event_seqs": [
+            419
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-17",
+          "event_seqs": [
+            424
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-18",
+          "event_seqs": [
+            429
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-19",
+          "event_seqs": [
+            434
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-2",
+          "event_seqs": [
+            352
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-20",
+          "event_seqs": [
+            439
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-21",
+          "event_seqs": [
+            444
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-22",
+          "event_seqs": [
+            449
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-24",
+          "event_seqs": [
+            454
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-4",
+          "event_seqs": [
+            359
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-5",
+          "event_seqs": [
+            364
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-6",
+          "event_seqs": [
+            369
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-7",
+          "event_seqs": [
+            374
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-8",
+          "event_seqs": [
+            379
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-9",
+          "event_seqs": [
+            384
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-10",
+          "event_seqs": [
+            365
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-13",
+          "event_seqs": [
+            370
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-16",
+          "event_seqs": [
+            375
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-19",
+          "event_seqs": [
+            380
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-22",
+          "event_seqs": [
+            385
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-25",
+          "event_seqs": [
+            390
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-28",
+          "event_seqs": [
+            395
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-31",
+          "event_seqs": [
+            400
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-34",
+          "event_seqs": [
+            405
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-37",
+          "event_seqs": [
+            410
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-40",
+          "event_seqs": [
+            415
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-43",
+          "event_seqs": [
+            420
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-46",
+          "event_seqs": [
+            425
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-49",
+          "event_seqs": [
+            430
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-52",
+          "event_seqs": [
+            435
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-55",
+          "event_seqs": [
+            440
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-58",
+          "event_seqs": [
+            445
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-61",
+          "event_seqs": [
+            450
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-7",
+          "event_seqs": [
+            360
+          ],
+          "latest_outcome": "repair_exhausted",
+          "types": [
+            "repair_attempt"
+          ]
+        }
+      ],
+      "claims": [],
+      "deadline_ts": null,
+      "decisions": [
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 351
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 355
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 358
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 363
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 368
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 373
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 378
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 383
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 388
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 393
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 398
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 403
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 408
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 413
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 418
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 423
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 428
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 433
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 438
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 443
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 448
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "unavailable",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "seq": 453
+        }
+      ],
+      "event_count": 107,
+      "events": [
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-1",
+          "deadline_ts": null,
+          "event_id": "ira-0a8df55fc6f1",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 348,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-11T15:36:45.288233+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-0ee2e999f5e8",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 349,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=gated; phase=finalize; worker_pid=591931 not live",
+          "timestamp": "2026-07-11T16:37:53.282164+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-be3f9fe2afd1",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 350,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-11T22:46:01.923651+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-14182158add5",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 351,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-11T22:46:03.299023+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-2",
+          "deadline_ts": null,
+          "event_id": "ira-4b5a73da813a",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 352,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-11T22:46:15.160529+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-f32d798d2de0",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 353,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-11T22:54:56.689304+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-4e344dfb9140",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 354,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-11T22:56:39.612981+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-39dd3de38ea0",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 355,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-11T22:56:40.902659+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-37bbe5b6c023",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 356,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-11T23:58:10.015475+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-ce38dcbf42dd",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 357,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T00:59:41.701656+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-a7b1d95ecbea",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 358,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T00:59:43.018803+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-4",
+          "deadline_ts": null,
+          "event_id": "ira-52ab47511cb7",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 359,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T00:59:54.797829+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-7",
+          "deadline_ts": null,
+          "event_id": "ira-56d635341ef1",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 360,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T01:02:50.983666+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-f66b40aaee7e",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 361,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T02:01:11.107501+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-c956c86ce6af",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 362,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T03:02:44.318908+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-23c45bddbf6e",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 363,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T03:02:45.681489+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-5",
+          "deadline_ts": null,
+          "event_id": "ira-44d020b19c75",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 364,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T03:02:57.234824+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-10",
+          "deadline_ts": null,
+          "event_id": "ira-0289905e7a6f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 365,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T03:05:52.059434+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-6d1941fa4601",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 366,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T04:04:14.346672+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-99ecf5d78683",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 367,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T05:05:46.702237+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-8d40e56a66b1",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 368,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T05:05:48.024679+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-6",
+          "deadline_ts": null,
+          "event_id": "ira-a5232451724b",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 369,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T05:06:00.026459+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-13",
+          "deadline_ts": null,
+          "event_id": "ira-e5ca4c0b8eac",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 370,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T05:08:57.493708+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-13979ad0f7fa",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 371,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T06:07:14.276652+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-5de918e625c3",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 372,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T07:08:46.145168+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-9461f4765cbc",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 373,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T07:08:47.466347+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-7",
+          "deadline_ts": null,
+          "event_id": "ira-3b92e9b497cd",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 374,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T07:08:59.105934+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-16",
+          "deadline_ts": null,
+          "event_id": "ira-b85c56709e94",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 375,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T07:11:55.531084+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-aa03945bddfa",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 376,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T08:10:16.685520+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-2c80828108e2",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 377,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T09:11:49.131761+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-f71476380533",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 378,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T09:11:50.492928+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-8",
+          "deadline_ts": null,
+          "event_id": "ira-ae23d0a1fd97",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 379,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T09:12:02.381897+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-19",
+          "deadline_ts": null,
+          "event_id": "ira-d4bbbbeae4d4",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 380,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T09:14:57.759593+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-be4aeb82b4e1",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 381,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T10:13:18.666602+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-ea5bf3472623",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 382,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T11:14:50.826758+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-ae36d7174871",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 383,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T11:14:52.143547+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-9",
+          "deadline_ts": null,
+          "event_id": "ira-2c47497ab07d",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 384,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T11:15:03.867822+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-22",
+          "deadline_ts": null,
+          "event_id": "ira-787f1dbd15e5",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 385,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T11:17:59.472235+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-a79eb9ba91c3",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 386,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T12:16:19.843389+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-3861a458b8e5",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 387,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T13:17:54.998791+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-955df584b097",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 388,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T13:17:56.415704+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-10",
+          "deadline_ts": null,
+          "event_id": "ira-4243acbd85a0",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 389,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T13:18:08.429047+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-25",
+          "deadline_ts": null,
+          "event_id": "ira-5f71e4b78a5a",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 390,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T13:21:06.778804+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-320168167176",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 391,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T14:19:25.024087+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-e9c6f1e57457",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 392,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T15:20:59.302822+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-c5d72d1bcf14",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 393,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T15:21:00.623857+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-11",
+          "deadline_ts": null,
+          "event_id": "ira-0844b33b66aa",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 394,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T15:21:12.563098+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-28",
+          "deadline_ts": null,
+          "event_id": "ira-140cb1abd05f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 395,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T15:24:10.685942+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-a166f6a743ec",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 396,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T16:22:31.754879+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-1bc80f7ef344",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 397,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T17:24:06.196769+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-3dc6d0af04c7",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 398,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T17:24:07.601897+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-12",
+          "deadline_ts": null,
+          "event_id": "ira-f63d272facd6",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 399,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T17:24:19.825202+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-31",
+          "deadline_ts": null,
+          "event_id": "ira-43e788de9bfd",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 400,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T17:27:16.389629+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-198710dc7ca9",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 401,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T18:25:37.222852+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-6b44d27e3f36",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 402,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T19:27:10.189565+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-e28826cafc07",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 403,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T19:27:11.598844+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-13",
+          "deadline_ts": null,
+          "event_id": "ira-f28016467285",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 404,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T19:27:23.196481+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-34",
+          "deadline_ts": null,
+          "event_id": "ira-3a4fe6867ec8",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 405,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T19:30:19.068350+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-375e0f079e3d",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 406,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T20:28:38.019486+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-fd8b2813fa32",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 407,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T21:30:11.258703+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-fa53d9b6a2bd",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 408,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T21:30:12.698499+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-14",
+          "deadline_ts": null,
+          "event_id": "ira-cbaf72f2f283",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 409,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T21:30:24.320733+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-37",
+          "deadline_ts": null,
+          "event_id": "ira-4d4e0e6a0ef9",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 410,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T21:33:18.965293+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-e5ff76e3c127",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 411,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T22:31:41.014193+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-0c7b5eb18fde",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 412,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-12T23:33:13.998104+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-a763a1570163",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 413,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-12T23:33:15.398210+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-15",
+          "deadline_ts": null,
+          "event_id": "ira-d5c3bfb1c315",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 414,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T23:33:27.135113+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-40",
+          "deadline_ts": null,
+          "event_id": "ira-33bf3e1ebd1f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 415,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-12T23:36:26.608243+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-00ca2e863120",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 416,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T00:34:43.779556+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-cc2acccb6cd9",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 417,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T01:36:16.060727+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-98136a81132a",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 418,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-13T01:36:17.414314+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-16",
+          "deadline_ts": null,
+          "event_id": "ira-970c643bb9c4",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 419,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T01:36:29.100388+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-43",
+          "deadline_ts": null,
+          "event_id": "ira-1094adee9d04",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 420,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T01:39:25.631356+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-96ce7baea9ca",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 421,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T02:37:43.213124+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-8c4a164a908b",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 422,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T03:39:15.243687+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-93e940cd6c6b",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 423,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-13T03:39:16.571146+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-17",
+          "deadline_ts": null,
+          "event_id": "ira-465f348a0394",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 424,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T03:39:28.325254+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-46",
+          "deadline_ts": null,
+          "event_id": "ira-8a91fba321b3",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 425,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T03:42:24.358567+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-0326e74a90bb",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 426,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T04:40:47.048453+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-5b98c1329e4b",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 427,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T05:42:22.663756+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-5a0d642596d9",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 428,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-13T05:42:24.012138+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-18",
+          "deadline_ts": null,
+          "event_id": "ira-371525a12bc9",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 429,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T05:42:35.569458+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-49",
+          "deadline_ts": null,
+          "event_id": "ira-14c7e73b716c",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 430,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T05:45:32.390979+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-7e2cc4d9155e",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 431,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T06:43:55.572667+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-045a4560a4d6",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 432,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T07:45:30.813586+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-f556c8630047",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 433,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-13T07:45:32.215033+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-19",
+          "deadline_ts": null,
+          "event_id": "ira-d5ceb49781cf",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 434,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T07:45:43.741366+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-52",
+          "deadline_ts": null,
+          "event_id": "ira-c842dd727e32",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 435,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T07:48:40.908256+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-2eff518336a0",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 436,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T08:46:59.236687+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-25fc36da86a5",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 437,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T09:48:34.135637+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-7cc5f9f26231",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 438,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-13T09:48:35.549207+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-20",
+          "deadline_ts": null,
+          "event_id": "ira-d2e31425bd2a",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 439,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T09:48:47.634426+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-55",
+          "deadline_ts": null,
+          "event_id": "ira-786c69e3cfdf",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 440,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T09:51:45.516712+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-683ab15e6875",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 441,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T10:50:09.105160+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-b50a587c3413",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 442,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T11:51:47.707007+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-e89e79abe3f0",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 443,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-13T11:51:49.113689+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-21",
+          "deadline_ts": null,
+          "event_id": "ira-12e1f15a0488",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 444,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T11:52:01.969264+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-58",
+          "deadline_ts": null,
+          "event_id": "ira-1b8d65967417",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 445,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T11:55:07.750285+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-b7d14cd06aaf",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 446,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T12:53:18.671975+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-8a2a7b1907c1",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 447,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T13:55:20.411424+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-07703bc30f53",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 448,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-13T13:55:21.770096+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-22",
+          "deadline_ts": null,
+          "event_id": "ira-fb8375f4628f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 449,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T13:55:36.271900+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-repair_exhausted-61",
+          "deadline_ts": null,
+          "event_id": "ira-f79c04fda977",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "repair_exhausted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 450,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T13:58:15.317340+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-97d911d65a46",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 451,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T14:56:52.838139+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-99d0db855c47",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stale_active_step",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stale_active_step",
+          "parent": [],
+          "problem_id": null,
+          "seq": 452,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live",
+          "timestamp": "2026-07-13T14:58:45.069745+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "unavailable",
+            "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+          },
+          "event_id": "wdd-31085cf675ed",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "unavailable",
+              "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": null,
+          "outcome": "unavailable",
+          "parent": [],
+          "problem_id": null,
+          "seq": 453,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair dispatch lacks canonical request/blocker identity",
+          "timestamp": "2026-07-13T14:58:47.078157+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "workflow-boundary-contracts-corrective-20260710-attempted-24",
+          "deadline_ts": null,
+          "event_id": "ira-27d5140120c9",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 454,
+          "session_id": "workflow-boundary-contracts-corrective-20260710",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+          "timestamp": "2026-07-13T15:12:37.116700+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "stale_active_step",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "unavailable",
+          "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+        }
+      ],
+      "first_seq": 348,
+      "first_timestamp": "2026-07-11T15:36:45.288233+00:00",
+      "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
+      "last_seq": 454,
+      "last_timestamp": "2026-07-13T15:12:37.116700+00:00",
+      "latest_actor": "immediate_repair",
+      "latest_kind": "incident.repair_attempt",
+      "next_expected_event": "repair_attempt.verification",
+      "outcome": "attempted",
+      "placeholders": {
+        "install_freshness": "unknown",
+        "recurrence": "unknown",
+        "shipped_fix": "unknown"
+      },
+      "problem_ids": [
+        "problem-3bc7a5eaa27e",
+        "problem-3c52277cbfc5",
+        "problem-461ac04158b3",
+        "problem-67a765759422",
+        "problem-8628c3b9c119",
+        "problem-e20c45ae0eb0"
+      ],
+      "session_ids": [
+        "workflow-boundary-contracts-corrective-20260710"
+      ],
+      "state": "repair_attempt",
+      "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+    },
+    {
+      "actions": [],
+      "attempts": [
+        {
           "attempt_id": "demo-session-repairing",
           "event_seqs": [
             1,
@@ -11539,10 +15605,10 @@
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
-    "event_count": 347,
-    "journal_line_count": 347,
-    "last_seq": 347,
+    "digest": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
+    "event_count": 454,
+    "journal_line_count": 454,
+    "last_seq": 454,
     "malformed_line_count": 0
   }
 }

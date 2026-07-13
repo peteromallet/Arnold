@@ -3,25 +3,25 @@ merge_policy: manual
 anchors:
   north_star: NORTHSTAR.md
 milestones:
-  - label: s1-operational-semantic-health
-    idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s1-operational-semantic-health.md
-    profile: partnered-5
-    robustness: full
-  - label: s2-contract-foundation-and-authority
-    idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s2-contract-foundation-and-authority.md
-    profile: partnered-5
-    robustness: full
-    depends_on:
-      - s1-operational-semantic-health
-  - label: s3-megaplan-boundary-coverage-and-cloud-custody
-    idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s3-megaplan-boundary-coverage-and-cloud-custody.md
-    profile: partnered-5
-    robustness: full
-    depends_on:
-      - s2-contract-foundation-and-authority
-  - label: s4-consumption-and-general-conformance
-    idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s4-consumption-and-general-conformance.md
-    profile: partnered-5
-    robustness: full
-    depends_on:
-      - s3-megaplan-boundary-coverage-and-cloud-custody
+- label: s1-operational-semantic-health
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s1-operational-semantic-health.md
+  profile: partnered-5
+  robustness: full
+- label: s2-contract-foundation-and-authority
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s2-contract-foundation-and-authority.md
+  profile: partnered-5
+  robustness: full
+  depends_on:
+  - s1-operational-semantic-health
+- label: s3-megaplan-boundary-coverage-and-cloud-custody
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s3-megaplan-boundary-coverage-and-cloud-custody.md
+  profile: partnered-5
+  robustness: full
+  depends_on:
+  - s2-contract-foundation-and-authority
+- label: s4-consumption-and-general-conformance
+  idea: .megaplan/initiatives/workflow-boundary-contracts/briefs/s4-consumption-and-general-conformance.md
+  profile: partnered-5
+  robustness: full
+  depends_on:
+  - s3-megaplan-boundary-coverage-and-cloud-custody

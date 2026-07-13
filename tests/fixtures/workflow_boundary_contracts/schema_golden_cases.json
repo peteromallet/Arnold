@@ -1,0 +1,320 @@
+{
+  "schema_version": "arnold.workflow.boundary_contracts.golden.v1",
+  "description": "Deterministic compact golden cases for workflow boundary contract schemas — ledger events, identity/order failures, inline payloads, referenced payloads, retention/redaction/legal-hold classes, and persistence-failure states.",
+  "cases": {
+    "ledger_event_types": {
+      "all_event_types": [
+        "started",
+        "completed",
+        "failed",
+        "retry_scheduled",
+        "suspended",
+        "resumed",
+        "cancelled",
+        "external_effect_intent",
+        "external_effect_outcome",
+        "persistence_failed",
+        "reconciliation"
+      ],
+      "terminal_event_types": ["completed", "failed", "cancelled"],
+      "lifecycle_precedence": {
+        "started": [],
+        "completed": ["started"],
+        "failed": ["started"],
+        "retry_scheduled": ["started"],
+        "suspended": ["started"],
+        "resumed": ["suspended"],
+        "cancelled": ["started"],
+        "external_effect_intent": ["started"],
+        "external_effect_outcome": ["external_effect_intent"],
+        "persistence_failed": [],
+        "reconciliation": ["persistence_failed"]
+      }
+    },
+    "identity": {
+      "valid_minimal": {
+        "workflow_id": "wf-test-001",
+        "run_id": "run-2026-07-11-001",
+        "graph_revision": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "step_id": null,
+        "boundary_id": null,
+        "invocation_id": null,
+        "attempt_ordinal": 1,
+        "attempt_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "valid_with_scope": {
+        "workflow_id": "wf-scoped",
+        "run_id": "run-scoped-001",
+        "graph_revision": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "step_id": "step-verify",
+        "boundary_id": "boundary-input",
+        "invocation_id": "inv-001",
+        "attempt_ordinal": 2,
+        "attempt_id": "22222222-2222-2222-2222-222222222222"
+      },
+      "failure_empty_workflow_id": {
+        "workflow_id": "",
+        "error": "AttemptIdentity.workflow_id must be non-empty"
+      },
+      "failure_invalid_ordinal": {
+        "workflow_id": "wf-test",
+        "run_id": "run-test",
+        "graph_revision": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "attempt_ordinal": 0,
+        "error": "AttemptIdentity.attempt_ordinal must be >= 1"
+      },
+      "failure_invalid_attempt_id": {
+        "workflow_id": "wf-test",
+        "run_id": "run-test",
+        "graph_revision": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "attempt_ordinal": 1,
+        "attempt_id": "not-a-uuid",
+        "error": "AttemptIdentity.attempt_id must be a valid UUID"
+      }
+    },
+    "ordering": {
+      "valid_monotonic_chain": {
+        "events": [
+          {"sequence": 1, "append_position": 100, "causal_predecessor_sequence": 0},
+          {"sequence": 2, "append_position": 200, "causal_predecessor_sequence": 1},
+          {"sequence": 3, "append_position": 300, "causal_predecessor_sequence": 2}
+        ]
+      },
+      "failure_duplicate_sequence": {
+        "events": [
+          {"sequence": 1, "append_position": 100, "causal_predecessor_sequence": 0},
+          {"sequence": 1, "append_position": 200, "causal_predecessor_sequence": 0}
+        ],
+        "expected_issue": "Duplicate sequence number"
+      },
+      "failure_non_monotonic_sequence": {
+        "events": [
+          {"sequence": 1, "append_position": 100, "causal_predecessor_sequence": 0},
+          {"sequence": 3, "append_position": 200, "causal_predecessor_sequence": 1},
+          {"sequence": 2, "append_position": 300, "causal_predecessor_sequence": 3}
+        ],
+        "expected_issue": "Sequence not strictly monotonic"
+      },
+      "failure_first_event_nonzero_predecessor": {
+        "events": [
+          {"sequence": 1, "append_position": 100, "causal_predecessor_sequence": 5}
+        ],
+        "expected_issue": "First event must have causal_predecessor_sequence == 0"
+      },
+      "failure_missing_predecessor": {
+        "events": [
+          {"sequence": 1, "append_position": 100, "causal_predecessor_sequence": 0},
+          {"sequence": 3, "append_position": 200, "causal_predecessor_sequence": 2}
+        ],
+        "expected_issue": "causal_predecessor_sequence"
+      }
+    },
+    "payloads_inline": {
+      "small_payload_under_16kib": {
+        "data": {"key": "value", "count": 42},
+        "expected_mode": "inline",
+        "canonical_json_size_bytes": 21
+      },
+      "moderate_payload_under_16kib": {
+        "data": {"template": "report", "fields": ["a", "b", "c", "d", "e"], "metadata": {"source": "generator", "version": 1}},
+        "expected_mode": "inline",
+        "canonical_json_size_bytes": 89
+      },
+      "boundary_payload_at_16kib_minus": {
+        "description": "Payload just under 16KiB threshold",
+        "expected_mode": "inline"
+      },
+      "empty_payload": {
+        "data": {},
+        "expected_mode": "inline",
+        "canonical_json_size_bytes": 2
+      }
+    },
+    "payloads_reference": {
+      "large_payload_over_16kib": {
+        "description": "Payload exceeding 16KiB threshold must use DurableRef",
+        "expected_mode": "reference"
+      },
+      "durable_ref_minimal": {
+        "store_id": "s3-primary",
+        "locator": "workflows/wf-001/runs/run-001/outputs/result.json",
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "schema_type": "application/json",
+        "ref_version": "arnold.workflow.durable_ref.v1"
+      },
+      "durable_ref_full": {
+        "store_id": "gcs-audit",
+        "locator": "tenants/t-001/workflows/wf-audit/runs/run-legal/evidence/verdict.json",
+        "digest": "sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+        "schema_type": "application/json",
+        "media_type": "application/json",
+        "size_bytes": 1048576,
+        "encryption_scope": "tenant_key",
+        "access_scope": "tenant",
+        "privacy_class": "restricted",
+        "retention_class": "legal_hold",
+        "availability_class": "archive",
+        "tenant_id": "t-001",
+        "workflow_id": "wf-audit",
+        "ref_version": "arnold.workflow.durable_ref.v1",
+        "metadata": {"origin": "audit-collector", "batch": "2026-Q3"}
+      }
+    },
+    "retention_classes": {
+      "ephemeral": {
+        "retention_mode": "ephemeral",
+        "retention_seconds": 0,
+        "legal_hold": false,
+        "encryption_required_for_non_ephemeral_only": true
+      },
+      "run": {
+        "retention_mode": "run",
+        "retention_seconds": 86400,
+        "redaction_mode": "default_on",
+        "tombstone_mode": "marker",
+        "legal_hold": false
+      },
+      "audit": {
+        "retention_mode": "audit",
+        "retention_seconds": 7776000,
+        "redaction_mode": "always",
+        "tombstone_mode": "full",
+        "audit_mode": "full",
+        "legal_hold": false
+      },
+      "legal_hold": {
+        "retention_mode": "legal_hold",
+        "retention_seconds": -1,
+        "legal_hold": true,
+        "redaction_mode": "none",
+        "tombstone_mode": "full",
+        "audit_mode": "full",
+        "isolation_level": "tenant"
+      },
+      "legal_hold_ephemeral_conflict": {
+        "retention_mode": "ephemeral",
+        "legal_hold": true,
+        "expected_issue": "Legal hold is active but retention_mode is 'ephemeral'"
+      }
+    },
+    "redaction_modes": ["none", "default_on", "always"],
+    "tombstone_modes": ["none", "marker", "full"],
+    "audit_modes": ["none", "read", "read_write", "full"],
+    "isolation_levels": ["tenant", "workflow", "invocation", "shared"],
+    "persistence_failure_states": {
+      "failure_modes": [
+        "write_failed",
+        "store_unavailable",
+        "quota_exceeded",
+        "checksum_mismatch",
+        "partial_write",
+        "unknown"
+      ],
+      "recoverable_modes": ["write_failed", "store_unavailable", "partial_write"],
+      "non_recoverable_modes": ["quota_exceeded", "checksum_mismatch", "unknown"],
+      "persistence_statuses": ["durable", "persistence_failed", "indeterminate"],
+      "failure_diagnostic_minimal": {
+        "failure_mode": "write_failed",
+        "target_event_sequence": 3,
+        "observed_error": "disk full during NDJSON append"
+      },
+      "failure_diagnostic_quarantined": {
+        "failure_mode": "checksum_mismatch",
+        "target_event_sequence": 5,
+        "observed_error": "stored digest does not match computed digest",
+        "quarantined_authority_advance": true,
+        "quarantine_reason": "integrity verification failed; authority cannot safely advance"
+      },
+      "reconciliation_outcomes": [
+        "recovered",
+        "partially_recovered",
+        "unrecoverable",
+        "requires_manual_intervention",
+        "quarantined"
+      ],
+      "reconciliation_diagnostic_minimal": {
+        "reconciled_event_sequence": 5,
+        "outcome": "recovered",
+        "outcome_detail": "replayed from spool evidence and re-appended successfully"
+      }
+    },
+    "typed_payload_refs": {
+      "all_types": [
+        "InputPayload",
+        "OutputPayload",
+        "ResultPayload",
+        "VerdictPayload",
+        "StateDeltaPayload",
+        "ArtifactPayload",
+        "CheckpointPayload",
+        "AuthorityPayload",
+        "ExternalEffectPayload"
+      ],
+      "schema_versions": {
+        "InputPayload": "arnold.workflow.ledger.input_payload.v1",
+        "OutputPayload": "arnold.workflow.ledger.output_payload.v1",
+        "ResultPayload": "arnold.workflow.ledger.result_payload.v1",
+        "VerdictPayload": "arnold.workflow.ledger.verdict_payload.v1",
+        "StateDeltaPayload": "arnold.workflow.ledger.state_delta_payload.v1",
+        "ArtifactPayload": "arnold.workflow.ledger.artifact_payload.v1",
+        "CheckpointPayload": "arnold.workflow.ledger.checkpoint_payload.v1",
+        "AuthorityPayload": "arnold.workflow.ledger.authority_payload.v1",
+        "ExternalEffectPayload": "arnold.workflow.ledger.external_effect_payload.v1"
+      },
+      "mutual_exclusion": {
+        "description": "inline_data and ref are mutually exclusive; at least one of inline_data, ref, or content_digest required",
+        "valid_inline_only": {"inline_data": {"key": "val"}, "ref": null, "content_digest": null},
+        "valid_ref_only": {"inline_data": null, "ref": "uses_durable_ref", "content_digest": null},
+        "valid_digest_only": {"inline_data": null, "ref": null, "content_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+        "failure_both_inline_and_ref": {"inline_data": {"k": "v"}, "ref": "has_ref", "error": "inline_data and ref are mutually exclusive"},
+        "failure_nothing_provided": {"inline_data": null, "ref": null, "content_digest": null, "error": "at least one of inline_data, ref, or content_digest must be provided"}
+      }
+    },
+    "adapter_kinds": [
+      "arnold.pipeline.native",
+      "megaplan.phase",
+      "megaplan.reducer",
+      "megaplan.chain",
+      "megaplan.auditor",
+      "megaplan.cloud_repair",
+      "megaplan.verification"
+    ],
+    "payload_policy_defaults": {
+      "inline_policy": {
+        "threshold_bytes": 16384,
+        "schema_version": "wbc.inline.v1",
+        "max_inline_payloads": 128,
+        "allow_digest_only": false
+      },
+      "retention_policy": {
+        "retention_mode": "run",
+        "redaction_mode": "default_on",
+        "tombstone_mode": "marker",
+        "audit_mode": "read_write",
+        "isolation_level": "workflow",
+        "legal_hold": false,
+        "encryption_required": true,
+        "secret_exclusion_enforced": true,
+        "digest_only_preservation_rejected": true,
+        "schema_version": "wbc.retention.v1"
+      }
+    },
+    "durable_ref_enums": {
+      "privacy_classes": ["public", "internal", "confidential", "restricted"],
+      "availability_classes": ["immediate", "standard", "archive", "cold"],
+      "encryption_scopes": ["none", "tenant_key", "workflow_key", "field_level"],
+      "retention_classes": ["ephemeral", "run", "audit", "legal_hold"],
+      "access_scopes": ["tenant", "workflow", "invocation", "restricted"]
+    },
+    "forbidden_secret_keys": [
+      "api_key",
+      "password",
+      "secret",
+      "token",
+      "private_key",
+      "credential",
+      "bearer",
+      "authorization"
+    ]
+  }
+}

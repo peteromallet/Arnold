@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-11T13:41:18.498880+00:00",
-  "incident_count": 7,
+  "generated_at": "2026-07-13T15:39:52.200835+00:00",
+  "incident_count": 8,
   "incidents": [
     {
       "incident_id": "inc-canonical-run-state-control-plane",
@@ -27,12 +27,32 @@
       "path": ".megaplan/incident-ledger/summaries/incidents/inc-superfixer-alive-but-failed-recovery.json"
     },
     {
+      "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-workflow-boundary-contracts-corrective-20260710.json"
+    },
+    {
       "incident_id": "incident-42",
       "path": ".megaplan/incident-ledger/summaries/incidents/incident-42.json"
     }
   ],
-  "problem_count": 7,
+  "problem_count": 13,
   "problems": [
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-3bc7a5eaa27e.json",
+      "problem_id": "problem-3bc7a5eaa27e"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-3c52277cbfc5.json",
+      "problem_id": "problem-3c52277cbfc5"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-461ac04158b3.json",
+      "problem_id": "problem-461ac04158b3"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "problem_id": "problem-67a765759422"
+    },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-68a048c70af7.json",
       "problem_id": "problem-68a048c70af7"
@@ -50,6 +70,10 @@
       "problem_id": "problem-72f87afd3954"
     },
     {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-8628c3b9c119.json",
+      "problem_id": "problem-8628c3b9c119"
+    },
+    {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-9e338df241c5.json",
       "problem_id": "problem-9e338df241c5"
     },
@@ -60,6 +84,10 @@
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
       "problem_id": "problem-bef9405c197d"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-e20c45ae0eb0.json",
+      "problem_id": "problem-e20c45ae0eb0"
     }
   ],
   "schema_version": 1
