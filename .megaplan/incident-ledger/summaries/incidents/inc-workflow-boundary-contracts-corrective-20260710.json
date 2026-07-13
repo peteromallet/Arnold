@@ -1,0 +1,249 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 107,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stale_active_step"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stale_active_step"
+    }
+  ],
+  "generated_at": "2026-07-13T15:39:52.193472+00:00",
+  "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
+  "kind": "incident_summary",
+  "latest_actor": "immediate_repair",
+  "next_expected_event": "repair_attempt.verification",
+  "omitted_evidence_ref_count": 43,
+  "outcome": "attempted",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-3bc7a5eaa27e",
+    "problem-3c52277cbfc5",
+    "problem-461ac04158b3",
+    "problem-67a765759422",
+    "problem-8628c3b9c119",
+    "problem-e20c45ae0eb0"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
+    "last_seq": 454,
+    "projection": "incidents"
+  },
+  "state": "repair_attempt",
+  "summary_text": "inc-workflow-boundary-contracts-corrective-20260710: repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+}
