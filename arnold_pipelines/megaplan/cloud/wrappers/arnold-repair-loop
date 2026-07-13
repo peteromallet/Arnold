@@ -2762,7 +2762,7 @@ def _state_mismatch_analysis(
         or str(plan_latest_failure.get("message") or "").strip()
         or str(plan_latest_failure.get("state") or "").strip()
     )
-    ready_plan_states = {"planned", "finalized"}
+    ready_plan_states = {"planned", "finalized", "executed"}
     detected = (
         bool(plan_state_path)
         and bool(chain_state_path)
@@ -2783,8 +2783,8 @@ def _state_mismatch_analysis(
         "chain_state_path": chain_state_path,
         "classification": "PLAN_CHAIN_STATE_MISMATCH",
         "summary": (
-            f"state mismatch detected: plan={plan_state} is ready to execute, "
-            f"but chain last_state={chain_last_state} is stale"
+            f"state mismatch detected: plan current_state={plan_state} is ahead of "
+            f"stale chain last_state={chain_last_state}"
         ),
         "recommended_action": (
             "sync chain last_state from plan current_state and mechanically re-drive"
@@ -4795,7 +4795,19 @@ if not isinstance(stale_state, dict):
 state_mismatch = failure_context.get("state_mismatch") if isinstance(failure_context, dict) else {}
 if not isinstance(state_mismatch, dict):
     state_mismatch = {}
-has_stale_state = stale_state.get("classification") == "STALE STATE"
+resolver_output = failure_context.get("resolver_output") if isinstance(failure_context, dict) else {}
+if not isinstance(resolver_output, dict):
+    resolver_output = {}
+stale_kinds = {
+    str(item.get("kind") or "").strip()
+    for item in resolver_output.get("stale_evidence", [])
+    if isinstance(item, dict)
+}
+has_dead_active_step = (
+    stale_state.get("classification") == "NO LATEST FAILURE"
+    and "stale_active_step_dead_pid" in stale_kinds
+)
+has_stale_state = stale_state.get("classification") == "STALE STATE" or has_dead_active_step
 has_state_mismatch = bool(state_mismatch.get("detected"))
 if not has_stale_state and not has_state_mismatch:
     print("none")
@@ -4820,6 +4832,14 @@ if not isinstance(state, dict):
 
 actions: list[str] = []
 stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+if has_dead_active_step:
+    active_step = state.get("active_step")
+    if isinstance(active_step, dict) and any(
+        active_step.get(key) not in (None, "")
+        for key in ("phase", "step", "worker_pid", "pid", "session_id")
+    ):
+        state.pop("active_step", None)
+        actions.append("cleared orphaned active_step for dead worker PID")
 if has_stale_state and stale_state.get("latest_failure_stale") and state.get("latest_failure") is not None:
     state["latest_failure"] = None
     success = stale_state.get("latest_success_after_failure")
