@@ -132,8 +132,10 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     repair_data_dir = marker_dir / "repair-data"
     marker_dir.mkdir()
     repair_data_dir.mkdir()
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
 
     queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -153,7 +155,7 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     projection = project_repair_custody(
         plan_state=_plan_state(),
         current_target=_current_target(),
-        marker_dir=marker_dir,
+        queue_root=queue_root,
         repair_data_dir=repair_data_dir,
     )
 
@@ -206,8 +208,10 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     repair_data_dir = marker_dir / "repair-data"
     marker_dir.mkdir()
     repair_data_dir.mkdir()
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
 
     queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="repair_trigger",
@@ -223,7 +227,7 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
         created_at="2026-07-04T01:00:00Z",
     )
     repair_requests.write_decision(
-        repair_requests.repair_queue_dir(marker_dir),
+        queue_root,
         request_id=queued["request"]["request_id"],
         decision="dispatched",
         reason="repair loop launched",
@@ -256,7 +260,7 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     projection = project_repair_custody(
         plan_state=_plan_state(),
         current_target=_current_target(),
-        marker_dir=marker_dir,
+        queue_root=queue_root,
         repair_data_dir=repair_data_dir,
     )
 
@@ -275,8 +279,10 @@ def test_custody_projection_drops_stale_request_from_advanced_plan_target(tmp_pa
     repair_data_dir = marker_dir / "repair-data"
     marker_dir.mkdir()
     repair_data_dir.mkdir()
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
 
     stale = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -309,7 +315,7 @@ def test_custody_projection_drops_stale_request_from_advanced_plan_target(tmp_pa
             "event_cursors": {},
             "plan_state": {"fingerprint": "sha256:target-proof"},
         },
-        marker_dir=marker_dir,
+        queue_root=queue_root,
         repair_data_dir=repair_data_dir,
     )
 

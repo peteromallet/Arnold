@@ -16,6 +16,7 @@ from arnold_pipelines.megaplan.cloud import repair_contract
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import enqueue_audit_repair_request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRIGGER = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-repair-trigger"
@@ -104,6 +105,33 @@ Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], "request_id": o
     return stub
 
 
+def _custody_attempt_repair_stub(tmp_path: Path) -> Path:
+    stub = tmp_path / "custody-repair-loop"
+    log = tmp_path / "repair-args.json"
+    attempts = tmp_path / "repair-attempts.jsonl"
+    stub.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+payload = {{
+    "attempt_id": "attempt-" + os.environ["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"][:12],
+    "request_id": os.environ["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"],
+    "blocker_id": os.environ["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"],
+    "session": sys.argv[1],
+    "state": "succeeded",
+    "outcome": "complete",
+}}
+Path({str(attempts)!r}).write_text(json.dumps(payload) + "\\n", encoding="utf-8")
+Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], **payload}}), encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    return stub
+
+
 def _run_trigger(
     marker_dir: Path,
     repair_bin: Path,
@@ -112,6 +140,7 @@ def _run_trigger(
     autonomy: bool | None = None,
     lock_dir: Path | None = None,
     env_overrides: dict[str, str] | None = None,
+    meta_repair_bin: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
@@ -137,6 +166,8 @@ def _run_trigger(
         str(_queue_root(marker_dir.parent / "workspace")),
         "--repair-bin",
         str(repair_bin),
+        "--meta-repair-bin",
+        str(meta_repair_bin or repair_bin),
     ]
     if lock_dir is not None:
         cmd.extend(["--lock-dir", str(lock_dir)])
@@ -272,6 +303,101 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert payload["claim_owner_pid"].isdigit()
     assert payload["queue_root"] == str(_queue_root(workspace))
     assert not (marker_dir.parent / "repair-queue").exists()
+
+
+def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+    queued = enqueue_audit_repair_request(
+        {
+            "plan": "m3",
+            "session": "demo",
+            "workspace": str(workspace),
+            "current_state": "blocked",
+            "session_header": {"kind": "chain"},
+            "deterministic_superfixer_evidence": {
+                "actionable": True,
+                "accepted_unclaimed_request_ids": ["legacy-request"],
+                "retry_budget": {
+                    "max_attempts": 3,
+                    "remaining_attempts": 2,
+                    "claim_max_retries": 3,
+                },
+            },
+        },
+        queue_root=_queue_root(workspace),
+    )
+    assert queued is not None and queued["status"] == "queued"
+    request = queued["request"]
+    signature = request["problem_signature"]
+    plan_dir = workspace / ".megaplan" / "plans" / "m3"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "m3",
+                "current_state": "blocked",
+                "resume_cursor": {"retry_strategy": "meta_repair"},
+                "latest_failure": {
+                    "kind": signature["failure_kind"],
+                    "phase": signature["phase_or_step"],
+                    "metadata": {"blocked_task_id": signature["blocked_task_id"]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_trigger(
+        marker_dir,
+        _custody_attempt_repair_stub(tmp_path),
+        enabled=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "repair_trigger_dispatch" in result.stdout, result.stdout + result.stderr
+    attempt = _read_json_eventually(tmp_path / "repair-args.json")
+    assert attempt["request_id"] == request["request_id"]
+    assert attempt["blocker_id"]
+    assert attempt["outcome"] == "complete"
+    dispatch_event = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
+    )
+    assert dispatch_event["repair_layer"] == "l2"
+    assert attempt["argv"] == ["demo", "l1_custody_failure"]
+    claim_path = repair_requests.active_repair_claim_lock_dir(
+        _queue_root(workspace), attempt["blocker_id"]
+    ) / "owner.json"
+    claim = _read_json_eventually(claim_path)
+    assert claim["request_id"] == request["request_id"]
+    assert claim["blocker_id"] == attempt["blocker_id"]
+    decisions = [
+        item["decision"]
+        for item in _decisions(marker_dir)
+        if item["request_id"] == request["request_id"]
+    ]
+    assert set(decisions) == {"accepted", "dispatched"}
+    custody_attempts = repair_requests.iter_repair_attempts(_queue_root(workspace))
+    assert len(custody_attempts) == 1
+    assert custody_attempts[0]["request_id"] == request["request_id"]
+    assert custody_attempts[0]["blocker_id"] == attempt["blocker_id"]
+    assert custody_attempts[0]["repair_layer"] == "l2"
+    assert custody_attempts[0]["status"] == "launched"
+    attempt_history = [
+        json.loads(line)
+        for line in (tmp_path / "repair-attempts.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(attempt_history) == 1
+    assert attempt_history[0]["attempt_id"] == attempt["attempt_id"]
+    assert attempt_history[0]["request_id"] == attempt["request_id"]
+    assert attempt_history[0]["blocker_id"] == attempt["blocker_id"]
+    assert attempt_history[0]["outcome"] == "complete"
+    assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["legacy-request"]
+    assert request["target"]["retry_budget"]["remaining_attempts"] == 2
 
 
 def test_trigger_consumes_human_gate_request_from_explicit_central_queue(tmp_path: Path) -> None:

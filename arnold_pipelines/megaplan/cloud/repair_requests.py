@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.cloud.repair_recurrence import PROBLEM_SIGNATURE_
 QUEUE_DIR_NAME = "repair-queue"
 REQUESTS_DIR_NAME = "requests"
 DECISIONS_DIR_NAME = "decisions"
+ATTEMPTS_DIR_NAME = "attempts"
 ACTIVE_CLAIMS_DIR_NAME = "active-claims"
 CURRENT_SCHEMA_VERSION = 1
 
@@ -101,6 +102,10 @@ def requests_dir(queue_dir: str | Path) -> Path:
 
 def decisions_dir(queue_dir: str | Path) -> Path:
     return validate_queue_root(queue_dir) / DECISIONS_DIR_NAME
+
+
+def attempts_dir(queue_dir: str | Path) -> Path:
+    return validate_queue_root(queue_dir) / ATTEMPTS_DIR_NAME
 
 
 def active_claims_dir(queue_dir: str | Path) -> Path:
@@ -357,6 +362,45 @@ def iter_repair_decisions(
     return records
 
 
+def iter_repair_attempts(
+    queue_root: str | Path,
+    *,
+    include_malformed: bool = False,
+) -> list[dict[str, Any]]:
+    """Return immutable managed-dispatch attempts in deterministic order."""
+
+    queue_root = validate_queue_root(queue_root)
+    records: list[dict[str, Any]] = []
+    malformed: list[dict[str, Any]] = []
+    for path in sorted(attempts_dir(queue_root).glob("*.json"), key=lambda item: item.name):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            malformed.append(_malformed_attempt(path, exc))
+            continue
+        if not isinstance(payload, dict):
+            malformed.append(_malformed_attempt(path, ValueError("attempt record is not a JSON object")))
+            continue
+        required = {
+            "schema_version",
+            "kind",
+            "attempt_id",
+            "request_id",
+            "blocker_id",
+            "created_at",
+        }
+        if not required.issubset(payload) or payload.get("kind") != "repair_request_attempt":
+            malformed.append(_malformed_attempt(path, ValueError("attempt record has invalid shape")))
+            continue
+        payload = dict(payload)
+        payload["_path"] = str(path)
+        records.append(payload)
+    records.sort(key=_attempt_sort_key)
+    if include_malformed:
+        records.extend(sorted(malformed, key=lambda item: item["path"]))
+    return records
+
+
 def find_pending_by_signature(
     queue_dir: str | Path,
     problem_signature: Mapping[str, Any],
@@ -402,6 +446,53 @@ def write_decision(
         "created_at": when,
     }
     path = decisions_dir(queue_dir) / f"{when.replace(':', '').replace('-', '')}-{record['decision_id']}.json"
+    _write_once_json(path, record)
+    return {**record, "_path": str(path)}
+
+
+def write_dispatch_attempt(
+    queue_dir: str | Path,
+    *,
+    request_id: str,
+    blocker_id: str,
+    actor: str,
+    repair_layer: str,
+    command: str,
+    child_pid: int,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Write immutable proof that a claimed request launched a managed child."""
+
+    when = created_at or utc_now()
+    record = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "kind": "repair_request_attempt",
+        "attempt_id": _sha256_json(
+            {
+                "request_id": request_id,
+                "blocker_id": blocker_id,
+                "actor": actor,
+                "repair_layer": repair_layer,
+                "command": command,
+                "child_pid": child_pid,
+                "created_at": when,
+            }
+        ),
+        "request_id": str(request_id or "").strip(),
+        "blocker_id": str(blocker_id or "").strip(),
+        "actor": str(actor or "").strip(),
+        "repair_layer": str(repair_layer or "").strip(),
+        "command": str(command or "").strip(),
+        "child_pid": int(child_pid),
+        "status": "launched",
+        "created_at": when,
+    }
+    for field in ("request_id", "blocker_id", "actor", "repair_layer", "command"):
+        if not record[field]:
+            raise ValueError(f"{field} is required")
+    if record["child_pid"] <= 0:
+        raise ValueError("child_pid must be positive")
+    path = attempts_dir(queue_dir) / f"{when.replace(':', '').replace('-', '')}-{record['attempt_id']}.json"
     _write_once_json(path, record)
     return {**record, "_path": str(path)}
 
@@ -738,6 +829,10 @@ def _decision_sort_key(record: Mapping[str, Any]) -> tuple[str, str]:
     return (str(record.get("created_at") or ""), str(record.get("decision_id") or ""))
 
 
+def _attempt_sort_key(record: Mapping[str, Any]) -> tuple[str, str]:
+    return (str(record.get("created_at") or ""), str(record.get("attempt_id") or ""))
+
+
 def _malformed_record(path: Path, exc: Exception) -> dict[str, Any]:
     return {
         "kind": "malformed_repair_request",
@@ -754,8 +849,17 @@ def _malformed_decision(path: Path, exc: Exception) -> dict[str, Any]:
     }
 
 
+def _malformed_attempt(path: Path, exc: Exception) -> dict[str, Any]:
+    return {
+        "kind": "malformed_repair_attempt",
+        "path": str(path),
+        "reason": str(exc),
+    }
+
+
 __all__ = [
     "ACTIVE_CLAIMS_DIR_NAME",
+    "ATTEMPTS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
     "QUEUE_DIR_NAME",
     "ActiveRepairClaimResult",
@@ -763,11 +867,13 @@ __all__ = [
     "DecisionKind",
     "active_claims_dir",
     "active_repair_claim_lock_dir",
+    "attempts_dir",
     "claim_active_repair_request",
     "enqueue_human_gate_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
     "iter_repair_decisions",
+    "iter_repair_attempts",
     "iter_repair_requests",
     "normalize_problem_signature",
     "problem_signature_key",
@@ -778,4 +884,5 @@ __all__ = [
     "request_id_for",
     "validate_queue_root",
     "write_decision",
+    "write_dispatch_attempt",
 ]
