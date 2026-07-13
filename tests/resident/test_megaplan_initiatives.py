@@ -9,7 +9,10 @@ from pydantic import ValidationError
 
 from arnold_pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
-from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
+from arnold_pipelines.megaplan.resident.profile import (
+    MegaplanResidentProfile,
+    _compact_restart_lifecycle,
+)
 from arnold_pipelines.megaplan.store import FileStore, ResidentConversationInput
 
 
@@ -24,6 +27,42 @@ class FakeCloudBackend:
             summary="cloud_status_chain: active chain running",
             details={"payload": {"active_cloud_chains": 1}},
         )
+
+
+def test_restart_lifecycle_compacts_real_listing_shape() -> None:
+    compact = _compact_restart_lifecycle(
+        {
+            "count": 17,
+            "records": [
+                {
+                    "notification_id": "reset-one",
+                    "initiator": {"source_record_id": "msg-source"},
+                    "restart": {
+                        "status": "succeeded",
+                        "requested_at": "2026-07-13T19:07:55Z",
+                        "completed_at": "2026-07-13T19:08:00Z",
+                    },
+                    "delivery": {
+                        "status": "delivered",
+                        "delivered_at": "2026-07-13T19:08:01Z",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert compact["record_count"] == 17
+    assert compact["latest"] == [
+        {
+            "reset_id": "reset-one",
+            "restart_status": "succeeded",
+            "delivery_status": "delivered",
+            "requested_at": "2026-07-13T19:07:55Z",
+            "completed_at": "2026-07-13T19:08:00Z",
+            "delivered_at": "2026-07-13T19:08:01Z",
+            "source_record_id": "msg-source",
+        }
+    ]
 
 
 def test_megaplan_resident_tool_catalog_exposes_initiatives_policy(tmp_path: Path) -> None:

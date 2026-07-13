@@ -330,23 +330,31 @@ def _compact_activity_summary(value: Mapping[str, Any]) -> dict[str, Any]:
 def _compact_restart_lifecycle(value: object) -> dict[str, Any]:
     """Summarize durable reset receipts without embedding their full payloads."""
 
-    rows = list(value) if isinstance(value, list) else []
+    if isinstance(value, Mapping):
+        raw_rows = value.get("records")
+        rows = list(raw_rows) if isinstance(raw_rows, list) else []
+        record_count = int(value.get("count") or len(rows))
+    else:
+        rows = list(value) if isinstance(value, list) else []
+        record_count = len(rows)
     compact: list[dict[str, Any]] = []
     for row in rows[:2]:
         if not isinstance(row, Mapping):
             continue
-        compact.append(
-            {
-                key: row.get(key)
-                for key in (
-                    "reset_id", "status", "phase", "requested_at", "prepared_at", "completed_at",
-                    "delivered_at", "error", "old_pid", "new_pid",
-                )
-                if row.get(key) is not None
-            }
-        )
+        restart = row.get("restart") if isinstance(row.get("restart"), Mapping) else {}
+        delivery = row.get("delivery") if isinstance(row.get("delivery"), Mapping) else {}
+        initiator = row.get("initiator") if isinstance(row.get("initiator"), Mapping) else {}
+        compact.append({
+            "reset_id": row.get("notification_id"),
+            "restart_status": restart.get("status"),
+            "delivery_status": delivery.get("status"),
+            "requested_at": restart.get("requested_at"),
+            "completed_at": restart.get("completed_at"),
+            "delivered_at": delivery.get("delivered_at"),
+            "source_record_id": initiator.get("source_record_id"),
+        })
     return {
-        "record_count": len(rows),
+        "record_count": record_count,
         "latest": compact,
         "detail_route": "runtime/restart",
     }

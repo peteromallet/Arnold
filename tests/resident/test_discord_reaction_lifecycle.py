@@ -300,7 +300,7 @@ def test_abandoned_turn_restart_cleanup_never_adds_completion(tmp_path) -> None:
     asyncio.run(run_case())
 
 
-def test_restart_interrupted_turn_replays_promptly_once_with_exact_reply_target(
+def test_restart_interrupted_side_effectful_turn_is_consumed_without_model_replay(
     tmp_path, monkeypatch
 ) -> None:
     async def run_case() -> None:
@@ -382,15 +382,17 @@ def test_restart_interrupted_turn_replays_promptly_once_with_exact_reply_target(
 
         assert first == 1
         assert second == 0
-        assert runner.calls == 1
-        assert len(channel.sent) == 1
-        assert getattr(channel.sent[0]["reference"], "id") == 1001
-        assert channel.sent[0]["nonce"]
+        assert runner.calls == 0
+        assert channel.sent == []
         old_turn = next(row for row in store.list_recent_turns(n=20) if row.id == turn.id)
         assert old_turn.status == "abandoned"
+        assert any(
+            "automatic model replay suppressed" in warning
+            for warning in old_turn.warnings_issued
+        )
         replacement_message = store.load_message(message.id)
         assert replacement_message is not None
-        assert replacement_message.bot_turn_id != turn.id
+        assert replacement_message.bot_turn_id == turn.id
 
     asyncio.run(run_case())
 
