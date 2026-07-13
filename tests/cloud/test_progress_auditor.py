@@ -40,6 +40,14 @@ def test_installed_auditor_trampoline_honors_deployed_source_root() -> None:
     assert 'CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold' in text
 
 
+def test_auditor_gather_prefers_deployed_source_over_caller_cwd() -> None:
+    program = _extract_gather_program()
+    cwd_at = program.index("sys.path.insert(0, str(pathlib.Path.cwd()))")
+    deployed_source_at = program.index("sys.path.insert(0, arnold_src)")
+
+    assert cwd_at < deployed_source_at
+
+
 def _systemd_file(name: str) -> str:
     return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
@@ -295,7 +303,8 @@ def _run_gather_program(
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(tmp_path / ".megaplan" / "repair-queue")
     # Synthetic sessions may intentionally reuse a production incident name;
-    # never let live meta-run evidence alter the deterministic fixture.
+    # never let live marker or meta-run evidence alter the deterministic fixture.
+    env["MEGAPLAN_AUDIT_MARKER_DIR"] = str(tmp_path / ".megaplan" / "cloud-sessions")
     env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / ".megaplan" / "meta-runs")
     if extra_env:
         env.update(extra_env)
@@ -1625,6 +1634,15 @@ class TestAuditorWrapperBoundary:
         calls = _read_stub_calls(call_log)
         capture = json.loads(audit_capture.read_text(encoding="utf-8"))
         projection_input = capture["audit_input"]["projection_input"]
+
+        current_target_call = next(
+            call for call in calls if call["fn"] == "resolve_current_target"
+        )
+        assert current_target_call["kwargs"] == {
+            "marker_dir": str(tmp_path / ".megaplan" / "cloud-sessions"),
+            "repair_data_dir": str(repair_root),
+            "workspace_hint": str(workspace),
+        }
 
         assert {call["fn"] for call in calls} >= {
             "resolve_current_target",

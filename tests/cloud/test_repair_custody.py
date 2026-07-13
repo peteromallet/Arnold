@@ -171,6 +171,34 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     assert projection["requests"][0]["problem_signature"]["blocked_task_id"] == "T1"
 
 
+def test_custody_projection_surfaces_same_plan_untyped_request_as_unclaimed(
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="legacy_watchdog",
+        problem_signature={},
+        target={"plan_name": "agentic-replay-viewer"},
+        created_at="2026-07-04T01:00:00Z",
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target={**_current_target(), "session": "demo-session"},
+        queue_root=queue_root,
+    )
+
+    request_id = queued["request"]["request_id"]
+    assert projection["active_request_ids"] == [request_id]
+    assert projection["accepted_unclaimed_request_ids"] == [request_id]
+    signature = projection["requests"][0]["problem_signature"]
+    assert signature["failure_kind"] == ""
+    assert signature["phase_or_step"] == ""
+    assert signature["blocked_task_id"] == ""
+
+
 def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcomes(
     tmp_path: Path,
 ) -> None:

@@ -2071,10 +2071,15 @@ def _record_lifecycle_failure(
         )
     except (OSError, RuntimeError, ValueError):
         return
-    workspace_path = _workspace_path_for_plan_dir(plan_dir)
+    queue_root, marker_dir, repair_session, repair_run_kind = (
+        _lifecycle_repair_request_route(plan_dir)
+    )
     _enqueue_lifecycle_failure_request(
         plan_dir=plan_dir,
-        queue_root=workspace_path / ".megaplan" / "repair-queue",
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session=repair_session,
+        run_kind=repair_run_kind,
         kind=kind,
         message=message,
         current_state=current_state,
@@ -2093,6 +2098,9 @@ def _enqueue_lifecycle_failure_request(
     *,
     plan_dir: Path,
     queue_root: Path,
+    marker_dir: Path | None = None,
+    session: str | None = None,
+    run_kind: str = "plan",
     kind: str,
     message: str,
     current_state: str | None,
@@ -2109,11 +2117,11 @@ def _enqueue_lifecycle_failure_request(
         workspace_path = _workspace_path_for_plan_dir(plan_dir)
         enqueue_repair_request(
             queue_root=queue_root,
-            marker_dir=plan_dir,
-            session=plan_dir.name,
+            marker_dir=marker_dir or plan_dir,
+            session=session or plan_dir.name,
             source="lifecycle_failure",
             workspace=workspace_path,
-            run_kind="plan",
+            run_kind=run_kind,
             target={
                 "plan_dir": str(plan_dir),
                 "plan_name": plan_dir.name,
@@ -2137,6 +2145,28 @@ def _enqueue_lifecycle_failure_request(
             phase=phase,
             context={"failure_kind": kind},
         )
+
+
+def _lifecycle_repair_request_route(
+    plan_dir: Path,
+) -> tuple[Path, Path, str, str]:
+    """Resolve lifecycle failures onto the dispatcher-owned queue when set.
+
+    Local runs retain their workspace queue. Managed cloud launchers inject the
+    canonical queue, session, marker, and run-kind identity so plan-level
+    failures cannot become accepted-but-unclaimed sidecars in a nested
+    workspace queue.
+    """
+
+    workspace_path = _workspace_path_for_plan_dir(plan_dir)
+    queue_root = Path(
+        os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
+        or workspace_path / ".megaplan" / "repair-queue"
+    )
+    marker_dir = Path(os.environ.get("ARNOLD_REPAIR_MARKER_DIR") or plan_dir)
+    session = os.environ.get("ARNOLD_REPAIR_SESSION") or plan_dir.name
+    run_kind = os.environ.get("ARNOLD_REPAIR_RUN_KIND") or "plan"
+    return queue_root, marker_dir, session, run_kind
 
 
 def _workspace_path_for_plan_dir(plan_dir: Path) -> Path:

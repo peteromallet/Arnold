@@ -4850,6 +4850,10 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     assert "export ARNOLD_SUPERVISE_WORKSPACE=" in text
     assert "export ARNOLD_SUPERVISE_REMOTE_SPEC=" in text
     assert "export ARNOLD_SUPERVISE_RUN_KIND=" in text
+    assert "export ARNOLD_REPAIR_QUEUE_ROOT=" in text
+    assert "export ARNOLD_REPAIR_MARKER_DIR=" in text
+    assert "export ARNOLD_REPAIR_SESSION=" in text
+    assert "export ARNOLD_REPAIR_RUN_KIND=" in text
     assert "printf -v quoted_command_shell '%q' \"$quoted_command\"" in text
     assert 'bash -lc $quoted_command_shell' in text
     assert 'bash -lc "$quoted_command"' not in text
