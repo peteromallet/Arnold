@@ -1146,7 +1146,11 @@ def load_spec(spec_path: Path) -> ChainSpec:
     return ChainSpec.from_dict(raw or {})
 
 
-def load_chain_state(spec_path: Path) -> ChainState:
+def load_chain_state(
+    spec_path: Path,
+    *,
+    verify_execution_binding: bool = True,
+) -> ChainState:
     candidates = [path for path in _state_path_candidates_for(spec_path) if path.exists()]
     if not candidates:
         return ChainState()
@@ -1158,6 +1162,22 @@ def load_chain_state(spec_path: Path) -> ChainState:
         loaded,
         key=lambda item: _state_progress_key(item[1], path=item[0]),
     )
+    # Refuse drift before compatibility normalization can rewrite the cursor
+    # against a newly edited spec and make the stale binding look current.
+    if verify_execution_binding:
+        from arnold_pipelines.megaplan.chain.execution_binding import (
+            assert_execution_binding,
+        )
+
+        assert_execution_binding(
+            spec_path,
+            best_state,
+            operation="chain state load/resume",
+        )
+    else:
+        # Observe-only callers (notably status) must not normalize or save a
+        # cursor while presenting a binding mismatch.
+        return best_state
     original_state = best_state.to_dict()
     best_state = _normalize_stale_current_plan_reference(best_state)
     best_state = _normalize_advanced_completed_cursor(best_state, spec)

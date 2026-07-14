@@ -1657,6 +1657,9 @@ LIVE_WITH_FRESH_ACTIVITY = "live_with_fresh_activity"
 TRUE_HUMAN_BLOCKER = "true_human_blocker"
 PARTIAL_LIVENESS = "partial_liveness"
 REPAIRING = "repairing"
+RECOVERY_VERIFIED = "verified_recovered"
+RECOVERY_PROVISIONAL = "provisional"
+RECOVERY_UNKNOWN = "unknown"
 REPAIR_TIMEOUT = "repair_timeout"
 REPAIR_EXHAUSTED = "repair_exhausted"
 NEEDS_HUMAN = "needs_human"
@@ -1776,11 +1779,119 @@ def classify_verification_outcome(
     return REPAIRING
 
 
+def classify_recovery_verification(
+    *,
+    original_blocker: Mapping[str, Any] | None,
+    observation: Mapping[str, Any] | None,
+    repair_completed_at: object = None,
+) -> dict[str, Any]:
+    """Require later, independent, blocker-specific proof before recovery closes."""
+
+    blocker = _as_mapping(original_blocker)
+    observed = _as_mapping(observation)
+    evidence_state = _as_mapping(observed.get("evidence_state"))
+    if evidence_state and (
+        _as_text(evidence_state.get("status")).lower() == "unknown"
+        or bool(_as_text(evidence_state.get("unknown_type")))
+    ):
+        unknown_type = _as_text(evidence_state.get("unknown_type")) or "missing"
+        return {
+            "status": RECOVERY_UNKNOWN,
+            "unknown_type": unknown_type,
+            "reason": f"recovery evidence is {unknown_type}",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+        }
+
+    expected_id = _as_text(blocker.get("blocker_id"))
+    observed_id = _as_text(observed.get("blocker_id"))
+    if expected_id and observed_id and observed_id != expected_id:
+        return {
+            "status": RECOVERY_UNKNOWN,
+            "unknown_type": "contradictory",
+            "reason": "recovery observation belongs to a different blocker",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+        }
+
+    def parse_time(value: object) -> datetime | None:
+        text = _as_text(value)
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    completed_at = parse_time(repair_completed_at)
+    observed_at = parse_time(observed.get("observed_at"))
+    if completed_at is not None and observed_at is not None and observed_at <= completed_at:
+        return {
+            "status": RECOVERY_UNKNOWN,
+            "unknown_type": "stale",
+            "reason": "recovery proof is not later than repair completion",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+        }
+
+    proven = bool(
+        expected_id
+        and observed_id == expected_id
+        and observed.get("blocker_cleared") is True
+        and observed.get("directly_observed") is True
+        and observed.get("independent") is True
+        and observed_at is not None
+    )
+    if proven:
+        return {
+            "status": RECOVERY_VERIFIED,
+            "unknown_type": "",
+            "reason": "later independent observation proves the original blocker cleared",
+            "blocker_identity": expected_id,
+            "observed_at": observed_at.isoformat(),
+            "repair_completed_at": completed_at.isoformat() if completed_at is not None else None,
+            "recovery_verified": True,
+            "authorizes_verified_recovered": True,
+        }
+
+    provisional_signal = any(
+        observed.get(key) is True
+        for key in (
+            "pid_alive",
+            "heartbeat_active",
+            "is_live",
+            "subprocess_succeeded",
+        )
+    ) or observed.get("returncode") == 0
+    if provisional_signal:
+        return {
+            "status": RECOVERY_PROVISIONAL,
+            "unknown_type": "",
+            "reason": "liveness or subprocess success is provisional recovery evidence",
+            "recovery_verified": False,
+            "authorizes_verified_recovered": False,
+        }
+
+    return {
+        "status": RECOVERY_UNKNOWN,
+        "unknown_type": "missing",
+        "reason": "later independent blocker-specific recovery proof is missing",
+        "recovery_verified": False,
+        "authorizes_verified_recovered": False,
+    }
+
+
 def build_verification_record(
     outcome: str,
     *,
     pre_snapshot: Mapping[str, Any] | None = None,
     post_snapshot: Mapping[str, Any] | None = None,
+    original_blocker: Mapping[str, Any] | None = None,
+    observation: Mapping[str, Any] | None = None,
+    repair_completed_at: object = None,
     delta_summary: str = "",
     recorded_at: datetime | None = None,
 ) -> dict[str, Any]:
@@ -1795,6 +1906,11 @@ def build_verification_record(
     """
     if recorded_at is None:
         recorded_at = datetime.now(timezone.utc)
+    recovery_verification = classify_recovery_verification(
+        original_blocker=original_blocker,
+        observation=observation,
+        repair_completed_at=repair_completed_at,
+    )
     return {
         "outcome": outcome,
         "is_success": is_success_outcome(outcome),
@@ -1802,6 +1918,7 @@ def build_verification_record(
         "recorded_at": recorded_at.isoformat(),
         "pre_snapshot": dict(pre_snapshot) if pre_snapshot is not None else None,
         "post_snapshot": dict(post_snapshot) if post_snapshot is not None else None,
+        "recovery_verification": recovery_verification,
         "delta_summary": delta_summary,
     }
 
@@ -2827,7 +2944,11 @@ def _managed_attempts_from_snapshot(
 ) -> list[RepairCustodyAttemptRecord]:
     """Project real managed-run evidence without fabricating legacy attempts."""
 
-    from arnold_pipelines.megaplan.managed_agent import is_managed_manifest, observed_status
+    from arnold_pipelines.megaplan.managed_agent import (
+        is_managed_manifest,
+        observed_status,
+        validate_automatic_managed_manifest,
+    )
 
     projected: list[RepairCustodyAttemptRecord] = []
     for value in _as_list(payload.get("managed_agent_runs")):
@@ -2852,9 +2973,23 @@ def _managed_attempts_from_snapshot(
             # turn it into a formal claim or attempt.
             continue
 
+        run_kind = _as_scalar_text(manifest.get("run_kind")) or ""
+        if run_kind.startswith("automatic_"):
+            try:
+                validate_automatic_managed_manifest(
+                    manifest,
+                    manifest_path=manifest_path,
+                )
+            except (TypeError, ValueError):
+                continue
+
         links = _as_mapping(manifest.get("links"))
         manifest_blocker_id = _as_scalar_text(links.get("blocker_id"))
         if blocker_id and manifest_blocker_id and manifest_blocker_id != blocker_id:
+            continue
+        reference_request_id = _as_scalar_text(reference.get("repair_request_id"))
+        manifest_request_id = _as_scalar_text(links.get("repair_request_id"))
+        if reference_request_id and manifest_request_id != reference_request_id:
             continue
         status, live = observed_status(manifest, manifest_path)
         if status in {"reserved", "launching"}:
@@ -3240,6 +3375,9 @@ __all__ = [
     "REPAIR_EXHAUSTED",
     "REPAIR_TIMEOUT",
     "REPAIRING",
+    "RECOVERY_PROVISIONAL",
+    "RECOVERY_UNKNOWN",
+    "RECOVERY_VERIFIED",
     "SUCCESS_OUTCOMES",
     "TRUE_HUMAN_BLOCKER",
     "append_attempt_record",
@@ -3254,6 +3392,7 @@ __all__ = [
     "blocker_id_for_fingerprint",
     "build_verification_record",
     "classify_repair_dispatch",
+    "classify_recovery_verification",
     "durable_repair_active",
     "classify_verification_outcome",
     "cleanup_repair_data_retention",

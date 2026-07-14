@@ -1303,12 +1303,51 @@
             "repair_attempt",
             "repair_attempt"
           ]
+        },
+        {
+          "attempt_id": "managed-automatic-meta-repair-5530a94b5363c83be3c3",
+          "event_seqs": [
+            347
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "managed-automatic-meta-repair-f4dea26284a43b01a2eb",
+          "event_seqs": [
+            349
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
         }
       ],
-      "claims": [],
+      "claims": [
+        {
+          "actor": "meta_repair",
+          "claim_id": "managed:managed-automatic-meta-repair-5530a94b5363c83be3c3",
+          "deadline_ts": null,
+          "expected_transition": "meta_repair.repair_attempt",
+          "seq": 346,
+          "status": "acquired",
+          "summary": "managed automatic_meta_repair accepted execution custody"
+        },
+        {
+          "actor": "meta_repair",
+          "claim_id": "managed:managed-automatic-meta-repair-f4dea26284a43b01a2eb",
+          "deadline_ts": null,
+          "expected_transition": "meta_repair.repair_attempt",
+          "seq": 348,
+          "status": "acquired",
+          "summary": "managed automatic_meta_repair accepted execution custody"
+        }
+      ],
       "deadline_ts": null,
       "decisions": [],
-      "event_count": 296,
+      "event_count": 300,
       "events": [
         {
           "actor": "meta_repair",
@@ -8117,9 +8156,145 @@
           "timestamp": "2026-07-08T03:20:18.295672+00:00",
           "trigger": null,
           "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "mcl-53286ed1886e",
+          "evidence": [
+            {
+              "blocker_id": "",
+              "kind": "managed_agent_execution",
+              "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-5530a94b5363c83be3c3/manifest.json",
+              "repair_request_id": "",
+              "run_id": "managed-automatic-meta-repair-5530a94b5363c83be3c3"
+            }
+          ],
+          "kind": "incident.claim.acquired",
+          "next_expected_event": "meta_repair.repair_attempt",
+          "outcome": "acquired",
+          "parent": [],
+          "problem_id": null,
+          "seq": 346,
+          "session_id": "demo-session",
+          "summary": "managed automatic_meta_repair accepted execution custody",
+          "timestamp": "2026-07-13T16:31:48.837697+00:00",
+          "trigger": null,
+          "type": "claim.acquired"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "managed-automatic-meta-repair-5530a94b5363c83be3c3",
+          "deadline_ts": null,
+          "event_id": "mra-71f5fae1d741",
+          "evidence": [
+            {
+              "blocker_id": "",
+              "kind": "managed_agent_execution",
+              "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-5530a94b5363c83be3c3/manifest.json",
+              "repair_request_id": "",
+              "run_id": "managed-automatic-meta-repair-5530a94b5363c83be3c3"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [
+            "mcl-53286ed1886e"
+          ],
+          "problem_id": null,
+          "seq": 347,
+          "session_id": "demo-session",
+          "summary": "managed automatic_meta_repair execution started",
+          "timestamp": "2026-07-13T16:31:48.839694+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "mcl-948591918b8f",
+          "evidence": [
+            {
+              "blocker_id": "",
+              "kind": "managed_agent_execution",
+              "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-f4dea26284a43b01a2eb/manifest.json",
+              "repair_request_id": "",
+              "run_id": "managed-automatic-meta-repair-f4dea26284a43b01a2eb"
+            }
+          ],
+          "kind": "incident.claim.acquired",
+          "next_expected_event": "meta_repair.repair_attempt",
+          "outcome": "acquired",
+          "parent": [],
+          "problem_id": null,
+          "seq": 348,
+          "session_id": "demo-session",
+          "summary": "managed automatic_meta_repair accepted execution custody",
+          "timestamp": "2026-07-13T16:31:50.076855+00:00",
+          "trigger": null,
+          "type": "claim.acquired"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "managed-automatic-meta-repair-f4dea26284a43b01a2eb",
+          "deadline_ts": null,
+          "event_id": "mra-7bd14d0c942a",
+          "evidence": [
+            {
+              "blocker_id": "",
+              "kind": "managed_agent_execution",
+              "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-f4dea26284a43b01a2eb/manifest.json",
+              "repair_request_id": "",
+              "run_id": "managed-automatic-meta-repair-f4dea26284a43b01a2eb"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [
+            "mcl-948591918b8f"
+          ],
+          "problem_id": null,
+          "seq": 349,
+          "session_id": "demo-session",
+          "summary": "managed automatic_meta_repair execution started",
+          "timestamp": "2026-07-13T16:31:50.078354+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
         }
       ],
       "evidence_refs": [
+        {
+          "blocker_id": "",
+          "kind": "managed_agent_execution",
+          "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-5530a94b5363c83be3c3/manifest.json",
+          "repair_request_id": "",
+          "run_id": "managed-automatic-meta-repair-5530a94b5363c83be3c3"
+        },
+        {
+          "blocker_id": "",
+          "kind": "managed_agent_execution",
+          "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-5530a94b5363c83be3c3/manifest.json",
+          "repair_request_id": "",
+          "run_id": "managed-automatic-meta-repair-5530a94b5363c83be3c3"
+        },
+        {
+          "blocker_id": "",
+          "kind": "managed_agent_execution",
+          "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-f4dea26284a43b01a2eb/manifest.json",
+          "repair_request_id": "",
+          "run_id": "managed-automatic-meta-repair-f4dea26284a43b01a2eb"
+        },
+        {
+          "blocker_id": "",
+          "kind": "managed_agent_execution",
+          "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-f4dea26284a43b01a2eb/manifest.json",
+          "repair_request_id": "",
+          "run_id": "managed-automatic-meta-repair-f4dea26284a43b01a2eb"
+        },
         {
           "data": {},
           "kind": "verification_record"
@@ -9308,9 +9483,9 @@
       "first_seq": 5,
       "first_timestamp": "2026-07-03T21:24:24.562997+00:00",
       "incident_id": "inc-demo-session",
-      "last_seq": 344,
-      "last_timestamp": "2026-07-08T03:20:18.295672+00:00",
-      "latest_actor": "immediate_repair",
+      "last_seq": 349,
+      "last_timestamp": "2026-07-13T16:31:50.078354+00:00",
+      "latest_actor": "meta_repair",
       "latest_kind": "incident.repair_attempt",
       "next_expected_event": "repair_attempt.verification",
       "outcome": "attempted",
@@ -9320,160 +9495,18 @@
         "shipped_fix": "unknown"
       },
       "problem_ids": [
+        "problem-6a1177eb343e",
         "problem-6e386e382223",
         "problem-6eaee57d9632",
         "problem-9e338df241c5",
-        "problem-b3c4cc0b2599"
+        "problem-b3c4cc0b2599",
+        "problem-c7e2d7ad616b"
       ],
       "session_ids": [
         "demo-session"
       ],
       "state": "repair_attempt",
-      "summary": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-584/test_repair_loop_serializes_sa0/ws"
-    },
-    {
-      "actions": [],
-      "attempts": [
-        {
-          "attempt_id": "megaplan-north-star-sense-checks-revise-design-partial_liveness-2",
-          "event_seqs": [
-            346
-          ],
-          "latest_outcome": "partial_liveness",
-          "types": [
-            "repair_attempt"
-          ]
-        }
-      ],
-      "claims": [],
-      "deadline_ts": null,
-      "decisions": [],
-      "event_count": 1,
-      "events": [
-        {
-          "actor": "immediate_repair",
-          "attempt_id": "megaplan-north-star-sense-checks-revise-design-partial_liveness-2",
-          "deadline_ts": null,
-          "event_id": "ira-d51cb5ac3d69",
-          "evidence": [
-            {
-              "data": {},
-              "kind": "verification_record"
-            }
-          ],
-          "kind": "incident.repair_attempt",
-          "next_expected_event": "repair_attempt.verification",
-          "outcome": "partial_liveness",
-          "parent": [],
-          "problem_id": null,
-          "seq": 346,
-          "session_id": "megaplan-north-star-sense-checks-revise-design",
-          "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/megaplan-north-star-sense-checks-revise-design/arnold",
-          "timestamp": "2026-07-09T20:57:14.461326+00:00",
-          "trigger": null,
-          "type": "repair_attempt"
-        }
-      ],
-      "evidence_refs": [
-        {
-          "data": {},
-          "kind": "verification_record"
-        }
-      ],
-      "first_seq": 346,
-      "first_timestamp": "2026-07-09T20:57:14.461326+00:00",
-      "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
-      "last_seq": 346,
-      "last_timestamp": "2026-07-09T20:57:14.461326+00:00",
-      "latest_actor": "immediate_repair",
-      "latest_kind": "incident.repair_attempt",
-      "next_expected_event": "repair_attempt.verification",
-      "outcome": "partial_liveness",
-      "placeholders": {
-        "install_freshness": "unknown",
-        "recurrence": "unknown",
-        "shipped_fix": "unknown"
-      },
-      "problem_ids": [
-        "problem-72f87afd3954"
-      ],
-      "session_ids": [
-        "megaplan-north-star-sense-checks-revise-design"
-      ],
-      "state": "repair_attempt",
-      "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/megaplan-north-star-sense-checks-revise-design/arnold"
-    },
-    {
-      "actions": [],
-      "attempts": [
-        {
-          "attempt_id": "runauthority-epic-cloud-partial_liveness-3",
-          "event_seqs": [
-            347
-          ],
-          "latest_outcome": "partial_liveness",
-          "types": [
-            "repair_attempt"
-          ]
-        }
-      ],
-      "claims": [],
-      "deadline_ts": null,
-      "decisions": [],
-      "event_count": 1,
-      "events": [
-        {
-          "actor": "immediate_repair",
-          "attempt_id": "runauthority-epic-cloud-partial_liveness-3",
-          "deadline_ts": null,
-          "event_id": "ira-04b65ce3ad79",
-          "evidence": [
-            {
-              "data": {},
-              "kind": "verification_record"
-            }
-          ],
-          "kind": "incident.repair_attempt",
-          "next_expected_event": "repair_attempt.verification",
-          "outcome": "partial_liveness",
-          "parent": [],
-          "problem_id": null,
-          "seq": 347,
-          "session_id": "runauthority-epic-cloud",
-          "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/runauthority-epic-cloud/Arnold",
-          "timestamp": "2026-07-10T23:23:09.226019+00:00",
-          "trigger": null,
-          "type": "repair_attempt"
-        }
-      ],
-      "evidence_refs": [
-        {
-          "data": {},
-          "kind": "verification_record"
-        }
-      ],
-      "first_seq": 347,
-      "first_timestamp": "2026-07-10T23:23:09.226019+00:00",
-      "incident_id": "inc-runauthority-epic-cloud",
-      "last_seq": 347,
-      "last_timestamp": "2026-07-10T23:23:09.226019+00:00",
-      "latest_actor": "immediate_repair",
-      "latest_kind": "incident.repair_attempt",
-      "next_expected_event": "repair_attempt.verification",
-      "outcome": "partial_liveness",
-      "placeholders": {
-        "install_freshness": "unknown",
-        "recurrence": "unknown",
-        "shipped_fix": "unknown"
-      },
-      "problem_ids": [
-        "problem-72f87afd3954"
-      ],
-      "session_ids": [
-        "runauthority-epic-cloud"
-      ],
-      "state": "repair_attempt",
-      "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/runauthority-epic-cloud/Arnold"
+      "summary": "managed automatic_meta_repair execution started"
     },
     {
       "actions": [],
@@ -11539,10 +11572,10 @@
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
-    "event_count": 347,
-    "journal_line_count": 347,
-    "last_seq": 347,
+    "digest": "sha256:8bf61e19f10f2bd039df00037187cd798ca50aa0f75118cffc03f6f00ec3e15e",
+    "event_count": 349,
+    "journal_line_count": 349,
+    "last_seq": 349,
     "malformed_line_count": 0
   }
 }

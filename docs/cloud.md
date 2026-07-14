@@ -474,6 +474,35 @@ default; the resolver and redaction are on.
 
 All flags accept `0`/`false`/`no`/`off` to disable.  Unset uses the M1 default.
 
+### Six-hour true-stall escalation
+
+The six-hour progress auditor still gathers and renders deterministic evidence
+without repair authority. After report inputs are complete, a separate effect
+controller may act only when both `ARNOLD_AUTONOMY=1` and
+`ARNOLD_AUDIT_AUTOFIX_ENABLED=1` are present and a coherent true-stall gate
+proves all of the following: live-process state, a consistent session marker,
+the marker-resolved chain JSON, current plan/events state, chain-log freshness,
+and PR/CI state when applicable. Fresh progress or heartbeat, an operator
+pause, a human gate, completion, or an external wait is a hard no-op.
+
+Eligible findings must also prove failed L1 custody and a due-but-failed L2
+backstop using the TRACKED/FIXED/INTENT/CONTEXT audit. The controller sends a
+typed request through `arnold-repair-trigger`; it never launches a worker
+directly. The resulting D9 `gpt-5.6-sol` root-cause run has a D9 child ceiling
+and is not reported as dispatched until its canonical
+`arnold-managed-agent-run-v2` manifest, worker-start history, request/session/
+finding links, and durable run ID validate.
+
+Escalation state under
+`/workspace/.megaplan/progress-auditor-escalations/` correlates the finding,
+session, evidence digest, request, managed run, retry lineage, cooldown,
+circuit breaker, outcome artifact, and later re-verification. Recovery closes
+only after the failed fixer and missed backstop are repaired, the ordinary
+canonical recovery path is re-triggered, a later audit proves the original run
+advanced, and no completion or safety guard was weakened. The controller does
+not stop or quarantine the original chain by default; blocker-scoped custody is
+the duplicate-effect fence.
+
 ### Wrapper deployment note
 
 The editable-install sync updates the Python package but does **not** refresh
@@ -498,3 +527,30 @@ done
 ## Migration From `reigh-megaplan-dev`
 
 The historical migration runbook is archived at [docs/archive/cloud-migration-from-reigh.md](archive/cloud-migration-from-reigh.md). The important rule is: write `MIGRATED.md` first, then remove siblings while preserving that pointer file.
+
+## Session-scoped retirement
+
+`cloud retire-chain` is an archival control-plane operation for one exact,
+zero-progress chain that is already under a durable operator pause and has been
+superseded by a distinct completed chain. It is not a stop or deletion command:
+it never sends signals, never kills tmux, never removes a workspace, and never
+changes plan, chain, Git, or completion artifacts.
+
+The command fails closed unless all of the following are proven at the same
+time: exact target and superseding marker identities plus caller-supplied
+SHA-256 fences; distinct workspaces/specs with no sibling sharing the target;
+paused target marker, chain, and plan state at milestone zero; completed
+superseding chain matching an all-done completion manifest; every supplied
+milestone commit landed on the named base ref; no tmux, process, pidfile, repair
+queue, or shared repair-index ownership. `--on-box` uses the same checks without
+SSH transport.
+
+On success, only the target marker and exact target-named sidecars move under
+`<marker-dir>/retired/<session>/<retirement-id>/artifacts/`. The workspace and
+all run evidence remain in place. The returned JSON identifies the archive,
+`tombstone.json`, its SHA-256, every archived artifact and digest, supersession
+evidence, safety checks, and a freshly generated postcondition proving the
+session no longer appears in the actionable cloud-session registry. On the
+agentbox's canonical registry, the same fresh projection is atomically
+published to the derived resident status cache. Repeating the same SHA-fenced
+request returns the existing tombstone idempotently and refreshes that cache.

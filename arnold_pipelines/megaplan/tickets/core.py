@@ -747,6 +747,8 @@ def link(
     epic_id: str,
     *,
     resolves: bool = False,
+    kind: str = "associated",
+    provenance: str | None = None,
     store: Store | None = None,
     cwd: Path | None = None,
 ) -> dict[str, Any] | None:
@@ -768,11 +770,23 @@ def link(
     if found_fm is None:
         return None
 
-    epics: list[dict[str, Any]] = list(found_fm.get("epics") or [])
+    from .relationships import parse_frontmatter_links, serialize_links_to_frontmatter
+
+    # Parse existing links (normalises legacy entries)
+    links = parse_frontmatter_links(found_fm, ticket_id)
     # Remove existing entry for this epic if present (idempotent re-link)
-    epics = [e for e in epics if e.get("epic_id") != epic_id]
-    epics.append({"epic_id": epic_id, "resolves_on_complete": resolves, "linked_at": datetime.now(timezone.utc).isoformat()})
-    found_fm["epics"] = epics
+    links = [link for link in links if link.epic_id != epic_id]
+    # Build new link
+    new_link = TicketEpicLink(
+        ticket_id=ticket_id,
+        epic_id=epic_id,
+        resolves_on_complete=resolves,
+        kind=kind,
+        provenance=provenance,
+        linked_at=datetime.now(timezone.utc),
+    )
+    links.append(new_link)
+    found_fm["epics"] = serialize_links_to_frontmatter(links)
     found_fm["last_edited_at"] = datetime.now(timezone.utc)
 
     if found_path:
@@ -784,6 +798,8 @@ def link(
             ticket_id=ticket_id,
             epic_id=epic_id,
             resolves_on_complete=resolves,
+            kind=kind,
+            provenance=provenance,
         )
 
     return found_fm
@@ -813,9 +829,12 @@ def unlink(
     if found_fm is None:
         return None
 
-    epics: list[dict[str, Any]] = list(found_fm.get("epics") or [])
-    epics = [e for e in epics if e.get("epic_id") != epic_id]
-    found_fm["epics"] = epics
+    from .relationships import parse_frontmatter_links, serialize_links_to_frontmatter
+
+    # Parse existing links (normalises legacy entries), filter out target epic
+    links = parse_frontmatter_links(found_fm, ticket_id)
+    links = [link for link in links if link.epic_id != epic_id]
+    found_fm["epics"] = serialize_links_to_frontmatter(links)
     found_fm["last_edited_at"] = datetime.now(timezone.utc)
 
     if found_path:
@@ -971,13 +990,18 @@ def address_resolved_by_epic(
         if not tickets_dir(repo_root).is_dir():
             return updated
 
+        from .relationships import auto_address_predicate, parse_frontmatter_links
+
         for fpath, fm in iterate_ticket_files(repo_root):
             if fm.get("status") != "open":
                 continue
-            epics: list[dict[str, Any]] = fm.get("epics") or []
+            ticket_id = fm.get("id")
+            if not isinstance(ticket_id, str) or not ticket_id:
+                continue
+            links = parse_frontmatter_links(fm, ticket_id)
             matched = any(
-                e.get("epic_id") == epic_id and e.get("resolves_on_complete") is True
-                for e in epics
+                link.epic_id == epic_id and auto_address_predicate(link)
+                for link in links
             )
             if not matched:
                 continue

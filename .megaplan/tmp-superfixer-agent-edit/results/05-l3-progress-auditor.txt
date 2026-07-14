@@ -1,0 +1,29 @@
+## L3 Progress-Auditor Retroactive Probe: `agent-edit-verifiable-transaction-spine`
+
+### Gaps Found (TRACKED)
+
+**1. Discovery blind spot — missing `workspace` key in marker (root cause).**  
+The marker at `/workspace/.megaplan/cloud-sessions/agent-edit-verifiable-transaction-spine.json` lacks a top-level `workspace` or `workspace_dir` key. The discovery code (deployed auditor, lines 506–508) skips any marker without one. Confirmed: zero mentions of the target in the 53K-line `20260713T193411Z-audit.json`. The watchdog *does* see the session (`needs_human`, workspace=`/workspace/agent-edit-verifiable-transaction-spine/vibecomfy`), but the auditor never generates a finding.
+
+**2. Workspace nesting defeats activity discovery.**  
+Activity-based discovery (c) scans top-level `/workspace/*` for `.megaplan/plans/`, but actual plans live one level deeper at `vibecomfy/.megaplan/plans/`. Fallback discovery also fails silently.
+
+**3. Dead PID guard — 0 bytes.**  
+`agent-edit-verifiable-transaction-spine.repair-loop.pid.guard` is empty. No process was ever recorded.
+
+**4. No repair-data, no managed manifest.**  
+No `repair-data.json` for this session exists. No managed manifest anywhere in the workspace tree. The escalation function `validate_managed_launch` would reject any claim.
+
+### Passes (INTENT/CONTEXT)
+
+**Escalation code *would* catch it — if fed.**  
+`_l1_failure_fingerprint` detects `agent_claim_without_canonical_manifest` → axis TRACKED. `validate_managed_launch` requires `worker_start_evidence_missing` for empty `status_history`. `_process_evidence` correctly flags dead PIDs. The code is capable; the finding simply never reaches it.
+
+**`bounded_repair_context` has sufficient root-cause context.**  
+It bundles failure mechanics, repair iterations, artifact refs, and a required `superfixer-debug` methodology. Given the finding, it would surface the malformed marker as a launch-contract defect — not just re-label.
+
+**Test coverage of escalation logic is sound** (true-stall gate, manifest validation, circuit-breaker), though no test couples "dead PID + missing manifest + discovery skip" end-to-end.
+
+### Retroactive Verdict
+
+**L3 would NOT detect the claimed repair**, because the target never enters the audit pipeline. The marker's missing `workspace` key causes silent skip at discovery. If the finding *were* generated, L3's escalation machinery would correctly flag it as TRACKED (missing manifest, dead PID) and `bounded_repair_context` would surface the malformed marker as the root cause — enough to repair the launch contract rather than repeat a label. The gap is in the marker-writing layer, not the escalation layer.

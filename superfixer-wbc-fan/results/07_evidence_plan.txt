@@ -1,0 +1,45 @@
+## Audit: `s3-megaplan-boundary-coverage-20260713-1934`
+
+### Canonical Status
+
+**Session** `workflow-boundary-contracts-corrective-20260710`, marker `bb7024decf`, `started_at: 2026-07-13T15:20:06Z`. Chain JSON `chain-06e4c6966e36.json`: `current_milestone_index: 2` (s3), `last_state: finalized`, completed c1/s2 (`done`). Cloud status reports `[repairing]`, 2/4 milestones (73%), plan 91% (executing). **Marker mtime is 8h stale** (Jul 13 16:05).
+
+---
+
+### Pre-Repair Stop (c1 Gate-Loop)
+
+c1 plan `c1-contract-reality-20260711-1433` was stuck in a deterministic gate-loop: `invalid_gate` / `additional_property at /north_star_actions` — the gate schema rejected a PROCEED result because `north_star_actions` was normalized into the payload as a scratch-file artifact but the strict schema treated it as an unexpected property. This repeated **34 times** with no convergence. The watchdog's early-return bug prevented L2 trigger evaluation; L3 auditor wrote findings to a dead queue. Chain was blocked with a dead review worker (PID 1412472), orphaned active step.
+
+### Attempt-66 Intervention
+
+Dispatched **2026-07-11T15:37:09Z** — the **sole substantiated repair**. Kimi (L1) diagnosed the normalization drift in `model_seam.py`. Codex (L2) patched `arnold_pipelines/megaplan/model_seam.py`, added regression test `test_model_seam_recovery.py`, pushed **`3ff595994e`** to `origin/editible-install` (confirmed on branch). This **genuinely broke the gate-loop**. The counter of 66 is accounting inflation: `attempts` array holds only 1 entry (`attempt_id: 1`), `attempt_ids` is empty. The inflater is a custody defect, not evidence of 65 prior cycles.
+
+### Post-Repair Advancement
+
+c1 reached `done` (iteration 4). Chain advanced to S2 at L8311, S2 completed, S3 started at L8322. Current S3 plan: `s3-megaplan-boundary-coverage-20260713-1934`, 2/4 milestones, 73% progress. **Current active step**: `phase: execute`, agent `hermes`, model `deepseek:deepseek-v4-pro`, `worker_pid: 1004788`, `started_at: 2026-07-14T00:20:16Z`, `last_activity_at: 2026-07-14T00:28:20Z` (**fresh**), batch 19, CPU 37.5%/RSS 298 MB. Chain PID 1004788 (started Jul 14 00:06) correlates.
+
+### Current Active-Step Liveness
+
+**Live and executing**, but three contradictions muddy the picture:
+
+| Signal | Says | Issue |
+|---|---|---|
+| `state.json` | `current_state: finalized` | Stale gate-result label; `active_step.phase: execute` is authoritative |
+| `repair-progress.json` | `liveness: stalled` (8560s gap) | Snapshot captured at 00:03:26 when events were genuinely stale; **never refreshed** after runner resumed at 00:20 |
+| `chain-health.progress.json` | `plan_signal_liveness: progressing` | Fresh at 00:25:52, agrees with live PID |
+| `repair-loop.pid.guard` | **Empty** (0 bytes) | No repair process holds a PID lock — the `repairing` label is a stale projection |
+
+**No tmux custody**: chain runs as bare PID 1004788, not inside the `workflow-boundary-contracts-corrective-20260710` tmux session. Watchdog classifies it as `alive` from process-liveness alone.
+
+### Failure Signatures
+
+1. **T18 empty execute batch** — status `pending`, zero files changed. This is the current blockage, distinct from the original c1 gate-loop.
+2. **`repair-progress.json` staleness collision** — genuine stall window (00:03) captured, but repair dispatch snapshot never refreshed after runner resumed. Stale `repairing` label persists while no repair process runs.
+3. **Custody gap** — incident ledger seq 474 records `outcome=stopped`, `next_expected_event=watchdog.dispatch`, but watchdog reports `session already alive`. No reconciliation event emitted. `repair-progress.json` reports `custody_unavailable`.
+4. **Recent supervisor commits** on `origin/editible-install` at 00:02–00:23 UTC (`c8558ed084` through `4847a74c67`) target queue starvation, stale custody, and mutable install isolation — these may not yet be live on the running chain.
+
+---
+
+### Recovery Verdict
+
+**Productive progress, not repeated grind.** The single substantiated repair (`3ff595994e`) genuinely broke the c1 gate-loop that had spun 34 times. The chain advanced through s2 completion into actively-executing s3. The current T18 empty-batch stall is a *new* failure mode, not the original gate-loop re-surfacing. The live worker (PID 1004788, activity at 00:28:20) is making forward progress in execute/batch 19. The `repairing` label is a stale projection artifact — the empty PID guard proves no repair process runs. **Recovery**: refresh `repair-progress.json` against current plan liveness to clear the false `repairing` label; the recent supervisor fixes on `editible-install` should prevent recurrence of the custody/projection drift. The chain does not need another repair cycle — it needs the stale projection cleared so the watchdog doesn't dispatch a redundant repair for a phantom stall.

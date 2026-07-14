@@ -18,8 +18,7 @@ CONVERSATION_ID = "rconv_deliverycontract1"
 SOURCE_DISCORD_ID = "1526239110321274921"
 CONVERSATION_KEY = "discord:dm:42"
 VERIFIED_SUMMARY = "Durable completion evidence was verified. The verification outcome is success."
-REQUEST_SUMMARY = "Current request: original request"
-DELIVERED_SUMMARY = f"{REQUEST_SUMMARY}\n\n{VERIFIED_SUMMARY}"
+DELIVERED_SUMMARY = VERIFIED_SUMMARY
 
 
 def _write_terminal_manifest(
@@ -148,8 +147,6 @@ def _write_terminal_manifest(
             "content_sha256": "fixture-sha",
             "result_kind": "resident_verified_summary",
             "verification_outcome": "success",
-            "request_summary_line": REQUEST_SUMMARY,
-            "request_summary_authority": "immutable_inbound_source_record",
         }
     manifest_path = run_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest))
@@ -372,7 +369,7 @@ def test_verification_and_delivery_timestamps_use_actual_transition_times(
     )
 
 
-def test_multiline_authoritative_request_is_first_delivery_line(tmp_path: Path) -> None:
+def test_multiline_authoritative_request_does_not_rewrite_verified_delivery(tmp_path: Path) -> None:
     manifest_path = _write_terminal_manifest(
         tmp_path,
         with_verified_payload=False,
@@ -396,15 +393,14 @@ def test_multiline_authoritative_request_is_first_delivery_line(tmp_path: Path) 
     )
 
     assert result.delivered == 1
-    assert outbound.sent[0].content.splitlines()[0] == (
-        "Current request: implement this with tests and docs"
-    )
+    assert outbound.sent[0].content == VERIFIED_SUMMARY
     payload = json.loads(manifest_path.read_text())["completion_delivery"]["payload"]
     assert payload["content"] == outbound.sent[0].content
-    assert payload["request_summary_authority"] == "immutable_inbound_source_fallback"
+    assert payload["result_kind"] == "resident_verified_summary"
+    assert len(payload["content_sha256"]) == 64
 
 
-def test_missing_authoritative_request_uses_safe_delivery_fallback(tmp_path: Path) -> None:
+def test_missing_authoritative_request_does_not_rewrite_verified_delivery(tmp_path: Path) -> None:
     _write_terminal_manifest(
         tmp_path,
         with_verified_payload=False,
@@ -428,12 +424,10 @@ def test_missing_authoritative_request_uses_safe_delivery_fallback(tmp_path: Pat
     )
 
     assert result.delivered == 1
-    assert outbound.sent[0].content.splitlines()[0] == (
-        "Current request: unavailable from the authoritative inbound request"
-    )
+    assert outbound.sent[0].content == VERIFIED_SUMMARY
 
 
-def test_ambiguous_authoritative_records_use_safe_delivery_fallback(
+def test_ambiguous_authoritative_records_do_not_rewrite_frozen_delivery(
     tmp_path: Path, monkeypatch
 ) -> None:
     _write_terminal_manifest(tmp_path, with_verified_payload=False)
@@ -463,19 +457,15 @@ def test_ambiguous_authoritative_records_use_safe_delivery_fallback(
     )
 
     assert result.delivered == 1
-    assert outbound.sent[0].content.splitlines()[0] == (
-        "Current request: unavailable from the authoritative inbound request"
-    )
+    assert outbound.sent[0].content == "delegated claim"
 
 
-def test_frozen_precontract_payload_fails_closed_without_breaking_idempotency(
+def test_frozen_payload_without_summary_contract_delivers_without_rewriting(
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_terminal_manifest(tmp_path)
     manifest = json.loads(manifest_path.read_text())
     payload = manifest["completion_delivery"]["payload"]
-    payload.pop("request_summary_line")
-    payload.pop("request_summary_authority")
     payload["content"] = VERIFIED_SUMMARY
     manifest_path.write_text(json.dumps(manifest))
     outbound = _AcceptedOutbound()
@@ -489,8 +479,7 @@ def test_frozen_precontract_payload_fails_closed_without_breaking_idempotency(
     )
 
     delivery = json.loads(manifest_path.read_text())["completion_delivery"]
-    assert result.failed == 1
-    assert not outbound.sent
-    assert delivery["status"] == "failed"
-    assert delivery["last_error_category"] == "invalid_completion_payload"
+    assert result.delivered == 1
+    assert outbound.sent[0].content == VERIFIED_SUMMARY
+    assert delivery["status"] == "delivered"
     assert delivery["payload"]["content"] == VERIFIED_SUMMARY

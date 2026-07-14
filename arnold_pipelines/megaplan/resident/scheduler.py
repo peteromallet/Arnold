@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import hashlib
+import json
 from typing import Any, Protocol
 from uuid import uuid4
 
+from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
 from .timezone import TimezoneService, localize_text_timestamps
 from arnold_pipelines.megaplan.store import ProgressEventInput, ScheduledJobInput, Store, deterministic_idempotency_key
@@ -254,7 +257,12 @@ class ResidentJobHandlers:
     async def handle_vp_todo_sweep(self, job_payload: dict[str, Any]) -> None:
         job = _job_from_payload(job_payload)
         todo_path = self.config.special_requests_todo_path
-        pending = vp_todo.pending_items(todo_path)
+        retained = vp_todo.load_items(todo_path)
+        pending = [
+            item
+            for item in retained
+            if item["status"] == vp_todo.PENDING and item["task"]
+        ]
         if self.runtime is None or not self.config.special_requests_enabled:
             self._emit_sink().log_system_event(
                 level="info",
@@ -266,7 +274,7 @@ class ResidentJobHandlers:
                     "resident-vp-todo-sweep-skip", job.id, job.attempt_count
                 ),
             )
-            self._reschedule_vp_todo_sweep(job)
+            self._reschedule_vp_todo_sweep(job, audit_context=None)
             return
         if not pending:
             self._emit_sink().log_system_event(
@@ -279,8 +287,61 @@ class ResidentJobHandlers:
                     "resident-vp-todo-sweep-empty", job.id, job.attempt_count
                 ),
             )
-            self._reschedule_vp_todo_sweep(job)
+            self._reschedule_vp_todo_sweep(job, audit_context=None)
             return
+
+        audit_context = _vp_todo_audit_context(
+            store=self.store,
+            todo_path=todo_path,
+            retained=retained,
+            job=job,
+        )
+        unchanged_sweeps = audit_context["repeat_state"]["consecutive_unchanged_sweeps"]
+        if unchanged_sweeps >= vp_todo.DEFAULT_UNCHANGED_CYCLE_ESCALATION_THRESHOLD:
+            self._emit_sink().log_system_event(
+                level="warn",
+                category="system",
+                event_type="resident_vp_todo_unchanged_cycle_escalated",
+                message="VP to-do state remained unchanged across repeated scheduled sweeps",
+                details={
+                    "audit_id": audit_context["audit_id"],
+                    "job_id": job.id,
+                    "consecutive_unchanged_sweeps": unchanged_sweeps,
+                    "retained_todo_digest": audit_context["repeat_state"][
+                        "retained_todo_digest"
+                    ],
+                },
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-vp-todo-unchanged-cycle-escalated",
+                    audit_context["repeat_state"]["retained_todo_digest"],
+                    unchanged_sweeps,
+                ),
+        )
+        for item in audit_context["items"]:
+            inbound = item["authoritative_inbound"]
+            if not item["delegation_candidate"] or inbound["state"] == "verified":
+                continue
+            self._emit_sink().log_system_event(
+                level="warn",
+                category="system",
+                event_type="resident_vp_todo_inbound_evidence_missing",
+                message="VP to-do audit blocked delegation without authoritative inbound evidence",
+                details={
+                    "audit_id": audit_context["audit_id"],
+                    "job_id": job.id,
+                    "todo_item_id": item["id"],
+                    "todo_updated_at": item["updated_at"],
+                    "diagnostic_code": inbound["diagnostic_code"],
+                    "source_record_id": inbound.get("source_record_id"),
+                    "delegation_allowed": False,
+                },
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-vp-todo-inbound-diagnostic",
+                    audit_context["audit_id"],
+                    item["id"],
+                    inbound["diagnostic_code"],
+                ),
+            )
 
         subject_user_id = str(
             job.payload.get("subject_user_id")
@@ -303,8 +364,14 @@ class ResidentJobHandlers:
             ),
             conversation_key=conversation_key,
             subject=subject,
-            content=_vp_todo_sweep_prompt(todo_path, pending),
-            raw={"vp_todo_sweep": True, "job_id": job.id, "pending_count": len(pending)},
+            content=_vp_todo_sweep_prompt(audit_context),
+            raw={
+                "source_kind": "scheduled_turn",
+                "vp_todo_sweep": True,
+                "job_id": job.id,
+                "pending_count": len(pending),
+                "vp_todo_audit_context": audit_context,
+            },
         )
         await self.runtime.receive(event)
         self._emit_sink().log_system_event(
@@ -316,12 +383,22 @@ class ResidentJobHandlers:
                 "job_id": job.id,
                 "pending": len(pending),
                 "conversation_key": conversation_key,
+                "audit_id": audit_context["audit_id"],
+                "retained_todo_digest": audit_context["repeat_state"][
+                    "retained_todo_digest"
+                ],
+                "consecutive_unchanged_sweeps": audit_context["repeat_state"][
+                    "consecutive_unchanged_sweeps"
+                ],
+                "delegation_blocked_count": audit_context["summary"][
+                    "delegation_blocked_count"
+                ],
             },
             idempotency_key=deterministic_idempotency_key(
                 "resident-vp-todo-sweep-fire", job.id, job.attempt_count
             ),
         )
-        self._reschedule_vp_todo_sweep(job)
+        self._reschedule_vp_todo_sweep(job, audit_context=audit_context)
 
     def _first_user_id(self) -> str:
         ids = self.config.allowed_user_ids or self.config.admin_user_ids
@@ -332,18 +409,35 @@ class ResidentJobHandlers:
             )
         return ids[0]
 
-    def _reschedule_vp_todo_sweep(self, job: ScheduledJob) -> None:
+    def _reschedule_vp_todo_sweep(
+        self,
+        job: ScheduledJob,
+        *,
+        audit_context: Mapping[str, Any] | None,
+    ) -> None:
         pending = self.store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending", limit=1)
         if pending:
             return
         interval = int(
             job.payload.get("interval_s") or self.config.special_requests_interval_s
         )
+        payload = dict(job.payload)
+        if audit_context is None:
+            payload.pop("last_retained_todo_digest", None)
+            payload.pop("consecutive_unchanged_sweeps", None)
+        else:
+            repeat_state = audit_context["repeat_state"]
+            payload["last_retained_todo_digest"] = repeat_state[
+                "retained_todo_digest"
+            ]
+            payload["consecutive_unchanged_sweeps"] = repeat_state[
+                "consecutive_unchanged_sweeps"
+            ]
         self.store.create_scheduled_job(
             ScheduledJobInput(
                 job_type="vp_todo_sweep",
                 conversation_id=job.conversation_id,
-                payload=dict(job.payload),
+                payload=payload,
                 scheduled_for=utc_now() + timedelta(seconds=max(1, interval)),
                 max_attempts=job.max_attempts,
             ),
@@ -655,44 +749,254 @@ def _cloud_check_notification_text(
     return f"Cloud check{cadence} ran for {target}: {classification}. {summary}"
 
 
-def _vp_todo_sweep_prompt(todo_path: object, pending: list[dict[str, Any]]) -> str:
-    lines: list[str] = []
-    for item in pending:
-        line = f"- id={item['id']}: {item['task']}"
-        if item.get("when"):
-            line += f"  (when: {item['when']})"
-        lines.append(line)
-    bullets = "\n".join(lines)
+def _vp_todo_sweep_prompt(audit_context: Mapping[str, Any]) -> str:
+    rendered_context = json.dumps(audit_context, indent=2, sort_keys=True)
     return (
-        f"The VP special-requests sweep just fired. There are {len(pending)} pending "
-        f"item(s) in the to-do list at `{todo_path}`:\n{bullets}\n\n"
-        "You were given a hot-context `plan_activity_summary` as a system message this "
-        "turn (current `active_working` / `should_be_working_but_needs_attention` / "
-        "`recently_completed` chains) — treat it as your first source of truth so you "
-        "don't re-derive state you already have. Work through each pending item:\n"
-        "1. Check for overlap first: scan `active_working` and `recently_completed` in "
-        "the hot context for work that already covers this item's task. If the task is "
-        "already in-flight or was just completed, skip it for now (leave it pending) and "
-        "note the overlap in your reply.\n"
-        "2. If the item has a `when` condition, verify it is satisfied — first from the "
-        "hot context (e.g. the epic/chain it gates on), falling back to your tools (e.g. "
-        "`read_epic`, `cloud_status`) only if the hot context doesn't already show it. "
-        "If the condition is NOT yet satisfied, skip that item for now (leave it pending) "
-        "and move to the next one.\n"
-        "3. Reconcile the item id against `resident_agents` in hot context. If its managed "
-        "agent is running, leave the item pending and report the manifest/full-log/result paths. "
-        "If it recently completed or failed, use its result/manifest paths to report the durable "
-        "outcome and then call `complete_todo_item` or `fail_todo_item` as appropriate.\n"
-        "4. If no managed agent exists for the item, call `launch_subagent` with its task, "
-        "`request_id` set to the item id, and the canonical defaults `backend=codex`, "
-        "`background=true`. Leave the item pending while that agent runs.\n"
-        "5. Never use the legacy Hermes override for scheduled special-request work.\n\n"
-        "Your reply to the channel must give the canonical manifest, full-log, and result "
-        "locations for every launched or reconciled task. Include the actual result for a "
-        "completed task when available. Also list any items you skipped because of an "
-        "overlap with in-flight/recently-completed work or because their `when` condition "
-        "was not yet met."
+        "The six-hour VP special-request auditor just fired. This is a bounded audit and "
+        "reconciliation turn, not fresh product authority. Read the structured snapshot below, "
+        "then call `read_todo_list` with no arguments before making any decision; that tool is "
+        "the authoritative full retained todo set, including failed and conditional items.\n\n"
+        "Bounded mandate:\n"
+        "1. Separate each item's authorized outcome from current runtime health. A launch-intent "
+        "item is satisfied when canonical evidence proves the exact requested chain/run was "
+        "successfully launched with the requested identity and configuration. A later blocked "
+        "milestone does not make that launch intent pending again. Safely reconcile that stale "
+        "bookkeeping with `reconcile_todo_item`, recording the canonical run ID, durable "
+        "evidence location, and reconciliation reason.\n"
+        "2. A downstream item with a non-empty `when` remains genuinely conditional until the "
+        "condition itself is canonically satisfied. Do not infer completion from an upstream "
+        "launch, percent complete, a stale plan-local state, or overlapping work. Leave it pending "
+        "and state the missing condition evidence.\n"
+        "3. Use `read_context_node` on `agents/running` and `agents/recent` (or "
+        "`search_context` scope `agents`) to reconcile stable todo/request IDs with canonical "
+        "run IDs, status, lineage, manifest, full-log, result, and delivery evidence. Use the "
+        "status route for canonical chain state and repair evidence; chain truth beats stale "
+        "plan-local or prose summaries. Never claim success from a PID, acknowledgement, or "
+        "artifact path alone.\n"
+        "4. Treat `consecutive_unchanged_sweeps` as a loop signal, not automatic failure. Explain "
+        "whether the unchanged state is an expected unsatisfied condition, an active canonical "
+        "run, a stale bookkeeping mismatch, or genuinely blocked work. Diagnose the first "
+        "canonical blocker and cite exact evidence.\n"
+        "5. You may repair only safe bookkeeping inconsistencies supported by canonical evidence. "
+        "Do not rewrite task intent or conditions, answer product/architecture questions, merge, "
+        "deploy, delete, reset, or expand the original request. Escalate any material ambiguity, "
+        "destructive action, new authorization, or missing approval instead.\n"
+        "6. For genuinely blocked authorized work, first avoid duplicate ownership by checking "
+        "canonical running/recent agents. When the original todo authority covers diagnosis, "
+        "repair, or relaunch and no equivalent owner is active, dispatch one tightly scoped durable "
+        "`launch_subagent` with `request_id` equal to the todo ID, `backend=codex`, "
+        "`background=true`, and `task` equal to the exact retained authoritative todo task (the "
+        "tool rejects rewritten intent). Use the purpose-built description, debugging/recovery "
+        "task kind, difficulty, delegated context routes, explicit non-goals, and verification to "
+        "scope the recovery without expanding the task. A relaunch is allowed only when the "
+        "original request or settled policy authorizes it; otherwise dispatch diagnosis only or "
+        "escalate. Never use Hermes for scheduled work.\n"
+        "7. If `authoritative_inbound.state` is not `verified`, delegation is forbidden. The "
+        "scheduler already wrote an internal diagnostic event. Do not complete or fail the todo "
+        "merely because custody is missing, and do not manufacture a user-facing completion; "
+        "report an escalation with the diagnostic code.\n"
+        "8. A successful `launch_subagent` call transfers the todo to "
+        "`delegated_to_canonical_run` with manifest evidence, so it must not remain pending while "
+        "the durable agent runs. The audit reply is a progress/reconciliation report, not the "
+        "delegated agent's completion. For launches, report the returned run ID and "
+        "manifest/full-log/result paths exactly.\n\n"
+        "Structured audit context (redacted; UTC control-plane timestamps remain UTC):\n"
+        f"```json\n{rendered_context}\n```"
     )
+
+
+def _vp_todo_audit_context(
+    *,
+    store: Store,
+    todo_path: object,
+    retained: list[dict[str, Any]],
+    job: ScheduledJob,
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    digest_items: list[dict[str, Any]] = []
+    blocked = 0
+    for item in retained:
+        inbound = _todo_authoritative_inbound(store, item)
+        delegation_candidate = (
+            item.get("status") == vp_todo.PENDING and bool(item.get("task"))
+        )
+        blocked += int(
+            delegation_candidate and inbound["state"] != "verified"
+        )
+        task = str(redact_payload(item.get("task") or ""))
+        when = str(redact_payload(item.get("when") or ""))
+        items.append(
+            {
+                "id": str(item.get("id") or ""),
+                "task": task[:1200],
+                "task_truncated": len(task) > 1200,
+                "status": str(item.get("status") or ""),
+                "updated_at": str(item.get("updated_at") or ""),
+                "when": when[:600],
+                "when_truncated": len(when) > 600,
+                "conditional": bool(when.strip()),
+                "delegation_candidate": delegation_candidate,
+                "authoritative_inbound": inbound,
+            }
+        )
+        digest_items.append(
+            {
+                "id": str(item.get("id") or ""),
+                "task_sha256": hashlib.sha256(
+                    str(item.get("task") or "").encode("utf-8")
+                ).hexdigest(),
+                "status": str(item.get("status") or ""),
+                "updated_at": str(item.get("updated_at") or ""),
+                "when": str(item.get("when") or ""),
+                "inbound_state": inbound["state"],
+                "inbound_diagnostic_code": inbound["diagnostic_code"],
+            }
+        )
+    digest = hashlib.sha256(
+        json.dumps(digest_items, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    previous_digest = str(job.payload.get("last_retained_todo_digest") or "")
+    previous_unchanged = _nonnegative_int(
+        job.payload.get("consecutive_unchanged_sweeps")
+    )
+    unchanged = previous_unchanged + 1 if previous_digest == digest else 0
+    audit_id = deterministic_idempotency_key(
+        "resident-vp-todo-audit", job.id, job.attempt_count, digest
+    )
+    pending_count = sum(1 for item in retained if item.get("status") == vp_todo.PENDING)
+    return {
+        "schema_version": "resident-vp-special-request-audit-context-v1",
+        "audit_id": audit_id,
+        "job": {
+            "job_id": job.id,
+            "attempt_count": job.attempt_count,
+            "cadence_seconds": int(
+                job.payload.get("interval_s") or 21600
+            ),
+        },
+        "todo_source": {
+            "path": str(todo_path),
+            "authority": "read_todo_list tool over the retained VP special-request store",
+            "full_list_tool": "read_todo_list",
+            "full_list_arguments": {},
+            "snapshot_is_redacted": True,
+        },
+        "summary": {
+            "retained_count": len(retained),
+            "pending_count": pending_count,
+            "conditional_pending_count": sum(
+                1
+                for item in retained
+                if item.get("status") == vp_todo.PENDING
+                and bool(str(item.get("when") or "").strip())
+            ),
+            "delegation_blocked_count": blocked,
+        },
+        "repeat_state": {
+            "retained_todo_digest": digest,
+            "previous_retained_todo_digest": previous_digest or None,
+            "unchanged_from_previous_sweep": previous_digest == digest,
+            "consecutive_unchanged_sweeps": unchanged,
+            "semantics": (
+                "Digest covers retained todo identity/status/condition/update and inbound-evidence "
+                "state only; canonical run/status evidence must still be read before classifying a loop."
+            ),
+        },
+        "evidence_routes": {
+            "todos": {"tool": "read_todo_list", "arguments": {}},
+            "running_agents": {
+                "tool": "read_context_node",
+                "arguments": {"node_id": "agents/running"},
+            },
+            "recent_agents": {
+                "tool": "read_context_node",
+                "arguments": {"node_id": "agents/recent"},
+            },
+            "agent_search": {"tool": "search_context", "scope": "agents"},
+            "canonical_status": {
+                "tool": "read_context_node",
+                "arguments": {"node_id": "status"},
+            },
+        },
+        "items": items,
+    }
+
+
+def _todo_authoritative_inbound(
+    store: Store, item: Mapping[str, Any]
+) -> dict[str, Any]:
+    provenance = item.get("launch_provenance")
+    if not isinstance(provenance, Mapping):
+        return _missing_inbound("missing_launch_provenance")
+    if provenance.get("applicability") != "applicable":
+        return _missing_inbound("launch_provenance_not_applicable")
+    source_record_id = str(provenance.get("source_record_id") or "").strip()
+    conversation_id = str(
+        provenance.get("resident_conversation_id")
+        or provenance.get("conversation_id")
+        or ""
+    ).strip()
+    if not source_record_id or not conversation_id:
+        return _missing_inbound(
+            "incomplete_launch_provenance",
+            source_record_id=source_record_id or None,
+        )
+    source = store.load_message(source_record_id)
+    if source is None:
+        return _missing_inbound(
+            "source_record_missing", source_record_id=source_record_id
+        )
+    if source.direction != "inbound" or source.conversation_id != conversation_id:
+        return _missing_inbound(
+            "source_record_identity_mismatch", source_record_id=source_record_id
+        )
+    conversation = store.load_resident_conversation(conversation_id)
+    if conversation is None:
+        return _missing_inbound(
+            "source_conversation_missing", source_record_id=source_record_id
+        )
+    reply_target = str(
+        provenance.get("reply_to_message_id")
+        or provenance.get("discord_message_id")
+        or ""
+    ).strip()
+    if not source.discord_message_id or source.discord_message_id != reply_target:
+        return _missing_inbound(
+            "discord_reply_target_mismatch", source_record_id=source_record_id
+        )
+    if conversation.conversation_key != str(
+        provenance.get("conversation_key") or ""
+    ):
+        return _missing_inbound(
+            "source_conversation_identity_mismatch",
+            source_record_id=source_record_id,
+        )
+    return {
+        "state": "verified",
+        "diagnostic_code": "none",
+        "source_record_id": source_record_id,
+        "resident_conversation_id": conversation_id,
+        "reply_to_message_id": reply_target,
+        "delegation_allowed": True,
+    }
+
+
+def _missing_inbound(
+    diagnostic_code: str, *, source_record_id: str | None = None
+) -> dict[str, Any]:
+    return {
+        "state": "missing",
+        "diagnostic_code": diagnostic_code,
+        "source_record_id": source_record_id,
+        "delegation_allowed": False,
+    }
+
+
+def _nonnegative_int(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _optional_str(value: object) -> str | None:

@@ -608,30 +608,31 @@ class FileStore(
             return list(value)
         return str(value)
 
-    def _load_epic_idempotency(self, idempotency_key: str, request_hash: str) -> Epic | None:
-        record_path = self._idempotency_path("update_epic", idempotency_key)
+    def _load_epic_idempotency(self, operation: str, idempotency_key: str, request_hash: str) -> Epic | None:
+        record_path = self._idempotency_path(operation, idempotency_key)
         record = self._load_json(record_path)
         if record is None:
             return None
-        if record.get("operation") != "update_epic" or record.get("request_hash") != request_hash:
+        if record.get("operation") != operation or record.get("request_hash") != request_hash:
             raise ValueError(f"idempotency_key {idempotency_key!r} was reused with a different request")
         return Epic.model_validate(record["response"])
 
     def _save_epic_idempotency(
         self,
         *,
+        operation: str,
         idempotency_key: str,
         request_hash: str,
         response: Epic,
         journal_root: Path,
     ) -> None:
         record = {
-            "operation": "update_epic",
+            "operation": operation,
             "request_hash": request_hash,
             "response": response.model_dump(mode="json"),
         }
         self._commit_write(
-            self._idempotency_path("update_epic", idempotency_key),
+            self._idempotency_path(operation, idempotency_key),
             json_dump(record).encode("utf-8"),
             journal_root=journal_root,
         )
@@ -776,6 +777,8 @@ class FileStore(
             links = self._ticket_frontmatter_links(existing or {})
         if links is None:
             links = []
+        from arnold_pipelines.megaplan.tickets.relationships import serialize_links_to_frontmatter
+
         write_ticket_file(
             target,
             {
@@ -791,14 +794,7 @@ class FileStore(
                 "last_edited_at": ticket.last_edited_at,
                 "resolution_note": ticket.resolution_note,
                 "addressed_at": ticket.addressed_at,
-                "epics": [
-                    {
-                        "epic_id": link.epic_id,
-                        "resolves_on_complete": link.resolves_on_complete,
-                        "linked_at": link.linked_at,
-                    }
-                    for link in links
-                ],
+                "epics": serialize_links_to_frontmatter(links),
                 "__body__": ticket.body,
             },
         )
@@ -814,22 +810,9 @@ class FileStore(
         ticket_id = record.get("id")
         if not isinstance(ticket_id, str) or not ticket_id:
             return []
-        links: list[TicketEpicLink] = []
-        for entry in record.get("epics") or []:
-            if not isinstance(entry, Mapping):
-                continue
-            epic_id = entry.get("epic_id")
-            if not isinstance(epic_id, str) or not epic_id:
-                continue
-            links.append(
-                TicketEpicLink(
-                    ticket_id=ticket_id,
-                    epic_id=epic_id,
-                    resolves_on_complete=bool(entry.get("resolves_on_complete")),
-                    linked_at=_parse_datetime(entry.get("linked_at")) or utc_now(),
-                )
-            )
-        return links
+        from arnold_pipelines.megaplan.tickets.relationships import parse_frontmatter_links
+
+        return parse_frontmatter_links(record, ticket_id)
 
     def _ticket_epic_links(self) -> list[TicketEpicLink]:
         links: list[TicketEpicLink] = []

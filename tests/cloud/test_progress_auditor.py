@@ -527,6 +527,7 @@ def _run_dispatch_one(
             f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             f"GATHER_DIR={shlex.quote(str(gather_dir))}",
             f"REPORT_DIR={shlex.quote(str(tmp_path / 'reports'))}",
+            "TS=20260713T210000Z",
             "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
             "AUDIT_CODEX_MODEL=gpt-5.6-sol",
             "SUBAGENT_PROFILE=partnered-5",
@@ -1513,7 +1514,8 @@ class TestAuditorAutofixPromptGates:
         )
 
         assert updated["_codex_argv"] == [
-            "exec", "--sandbox", "read-only", "-c", "model=gpt-5.6-sol", "-"
+            "exec", "--sandbox", "read-only", "-c", "model=gpt-5.6-sol",
+            "-c", "model_reasoning_effort=high", "-"
         ]
         receipt_path = (
             Path(updated["dispatch_receipt_root"])
@@ -1527,6 +1529,14 @@ class TestAuditorAutofixPromptGates:
         assert receipt["mutation_facts"] == {
             "state": False, "source": False, "commit": False, "push": False
         }
+        manifest = json.loads(
+            Path(updated["managed_agent_manifest_path"]).read_text(encoding="utf-8")
+        )
+        assert manifest["run_id"] == updated["managed_agent_run_id"]
+        assert manifest["run_kind"] == "automatic_progress_audit_agent"
+        assert manifest["launch_provenance"]["origin_kind"] == "periodic_progress_auditor"
+        assert manifest["stdin"]["sealed"] is True
+        assert manifest["links"]["dispatch_id"] == updated["dispatch_id"]
 
     def test_disabled_mode_is_report_only(self, tmp_path: Path) -> None:
         brief, _resp, _err, _updated = _run_dispatch_one(
@@ -1602,11 +1612,11 @@ class TestAuditorAutofixPromptGates:
         assert "bearer-secret-token-value" not in brief
         assert "bearer-secret-token-value" not in resp
         assert "bearer-secret-token-value" not in err
-        assert "bearer-secret-token-value" not in updated["deepseek_response"]
+        assert "bearer-secret-token-value" not in updated["agent_response"]
         assert REDACTION in brief
         assert REDACTION in resp
-        assert REDACTION in err
-        assert REDACTION in updated["deepseek_response"]
+        assert not err or REDACTION in err
+        assert REDACTION in updated["agent_response"]
         assert "No-secrets rule:" in brief
 
     def test_prompt_uses_reconciler_language_and_brief_first_evidence(self, tmp_path: Path) -> None:
@@ -2280,10 +2290,7 @@ class TestAuditorWrapperBoundary:
         assert all(event["payload"].get("next_expected_event") != "meta_repair.repair_attempt" for event in events)
         queue_root = tmp_path / ".megaplan" / "repair-queue"
         requests = [json.loads(path.read_text(encoding="utf-8")) for path in (queue_root / "requests").glob("*.json")]
-        assert len(requests) == 1
-        assert requests[0]["source"] == "six_hour_auditor"
-        assert requests[0]["session"] == "demo-session"
-        assert requests[0]["target"]["incident_id"] == "inc-124"
+        assert requests == []
         repair_data_dir = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data"
         assert not (repair_data_dir / "demo-session.needs-human.json").exists()
 
@@ -4841,6 +4848,7 @@ class TestStageMetrics:
             "deepseek_dispatched", "meta_repair_dispatched", "codex_dispatched",
             "git_commit_performed", "file_edit_performed", "rationale",
             "resolved_runtime_model", "dispatch_receipt_count",
+            "managed_agent_run_count", "managed_agent_runs", "repair_agent_runs",
         }
         assert set(ds.keys()) == expected_keys
 
@@ -4882,13 +4890,13 @@ class TestStageMetrics:
         )
 
         ds = payload["dispatch_summary"]
-        assert ds["mode"] == "autofix_attempted"
+        assert ds["mode"] == "report_only"
         assert ds["autofix_enabled"] is True
-        assert ds["model_dispatched"] is True
-        assert ds["codex_dispatched"] is True
-        assert "regardless of launch outcome" in ds["rationale"]
+        assert ds["model_dispatched"] is False
+        assert ds["codex_dispatched"] is False
+        assert payload["data_quality"]["canonical_launch_disagreements"]
 
-    def test_dispatch_summary_uses_durable_receipt_as_model_authority(
+    def test_dispatch_summary_rejects_receipt_without_managed_manifest_as_model_authority(
         self, tmp_path: Path
     ) -> None:
         from arnold_pipelines.megaplan.receipts.writer import (
@@ -4926,9 +4934,10 @@ class TestStageMetrics:
             tmp_path,
         )
 
-        assert payload["dispatch_summary"]["resolved_runtime_model"] == "gpt-5.6-sol"
-        assert payload["dispatch_summary"]["mode"] == "autofix_attempted"
+        assert payload["dispatch_summary"]["resolved_runtime_model"] is None
+        assert payload["dispatch_summary"]["mode"] == "report_only"
         assert payload["dispatch_receipts"][0]["outcome"] == "failed"
+        assert payload["data_quality"]["canonical_launch_disagreements"]
 
     @pytest.mark.parametrize(
         ("master", "path", "authorized"),
@@ -4948,9 +4957,10 @@ class TestStageMetrics:
         wrapper = _wrapper("arnold-progress-auditor")
         assert 'if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" ]]' in wrapper
         assert 'AUDIT_LAUNCH_ATTEMPTED=1' in wrapper
-        assert wrapper.index("AUDIT_LAUNCH_ATTEMPTED=1") < wrapper.index(
-            'timeout "$CODEX_TIMEOUT" codex exec'
-        )
+        managed_at = wrapper.index("arnold_pipelines.megaplan.managed_agent run")
+        worker_at = wrapper.index('timeout "$CODEX_TIMEOUT" codex exec')
+        evidence_at = wrapper.index("AUDIT_LAUNCH_ATTEMPTED=1")
+        assert managed_at < worker_at < evidence_at
 
     # ── Multiple nonzero stages in markdown ───────────────────────────
 
