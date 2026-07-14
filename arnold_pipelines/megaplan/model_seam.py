@@ -78,6 +78,13 @@ from arnold.pipeline.model_seam import (
 )
 
 from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.schema_projection import (
+    closed_object_schema,
+    project_schema_owned_fields,
+    schema_mapping_at_path,
+    schema_owned_field_drops,
+    schema_property_names,
+)
 from arnold_pipelines.megaplan.orchestration.plan_structure import (
     PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
     validate_plan_structure,
@@ -89,30 +96,6 @@ from arnold_pipelines.megaplan.step_contracts import (
     build_compatibility_mode_by_step,
     contract_to_invocation,
 )
-
-_GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS = frozenset(
-    {
-        "recommendation",
-        "rationale",
-        "signals_assessment",
-        "warnings",
-        "settled_decisions",
-        "flag_resolutions",
-        "accepted_tradeoffs",
-        "north_star_actions",
-        "tiebreaker_question",
-        "tiebreaker_flag_ids",
-        "tiebreaker_fuzzy_group_id",
-    }
-)
-_gate_schema_properties = SCHEMAS["gate.json"].get("properties")
-if not isinstance(_gate_schema_properties, Mapping):
-    raise RuntimeError("gate.json schema must declare top-level properties")
-if _GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS != frozenset(_gate_schema_properties):
-    raise RuntimeError(
-        "Gate capture normalizer field allowlist drifted from gate.json schema properties"
-    )
-
 
 # --------------------------------------------------------------------------- #
 # Megaplan render helpers
@@ -239,7 +222,10 @@ def capture_step_output(
     """
 
     legacy_payload, capture_sources = _capture_payload(invocation, output)
-    legacy_payload = _normalize_native_capture_payload(invocation, legacy_payload)
+    legacy_payload = _normalize_capture_payload_with_contract(
+        invocation,
+        legacy_payload,
+    )
     legacy_payload = _compatibility_projection(invocation, legacy_payload)
     telemetry = ModelSeamTelemetry.from_invocation(
         invocation,
@@ -257,7 +243,12 @@ def capture_step_output(
         ),
     )
     try:
-        _audit_capture_payload(invocation, legacy_payload, contract)
+        _audit_capture_payload(
+            invocation,
+            legacy_payload,
+            contract,
+            already_normalized=True,
+        )
     except ModelStructuralAuditError:
         if telemetry.tier.enforced:
             raise
@@ -338,6 +329,8 @@ def _audit_capture_payload(
     invocation: StepInvocation,
     payload: Mapping[str, Any],
     contract: ContractResult,
+    *,
+    already_normalized: bool = False,
 ) -> None:
     step = _optional_str(
         invocation.metadata.get("compatibility_validation_step")
@@ -350,7 +343,16 @@ def _audit_capture_payload(
         schema = _capture_schema_for_invocation(invocation)
     normalized_payload: Mapping[str, Any] = payload
     if isinstance(schema, Mapping):
-        normalized_payload = _normalize_native_capture_payload(invocation, dict(payload))
+        if step == "gate":
+            # Match the recursively closed object contract materialized in
+            # .megaplan/schemas/gate.json. This prevents nested unknown fields
+            # from being accepted locally but rejected by the executing worker.
+            schema = closed_object_schema(schema)
+        normalized_payload = (
+            payload
+            if already_normalized
+            else _normalize_capture_payload_with_contract(invocation, payload)
+        )
         result = validate_payload_against_schema(normalized_payload, schema)
     else:
         result = validate_contract_result(contract, _capture_outcome_schema())
@@ -368,6 +370,39 @@ def _audit_capture_payload(
                 raise ModelStructuralAuditError(PLAN_STRUCTURE_REQUIRED_STEP_ISSUE)
 
 
+def _normalize_capture_payload_with_contract(
+    invocation: StepInvocation,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Normalize once and reject any undeclared schema-owned field loss."""
+
+    step = _optional_str(
+        invocation.metadata.get("compatibility_validation_step")
+        or invocation.metadata.get("validation_step")
+    )
+    schema = invocation.metadata.get("capture_schema") or invocation.metadata.get(
+        "output_schema"
+    )
+    if not isinstance(schema, Mapping):
+        schema = invocation.metadata.get("schema")
+    if not isinstance(schema, Mapping):
+        schema = _capture_schema_for_invocation(invocation)
+    normalized = _normalize_native_capture_payload(invocation, dict(payload))
+    if not isinstance(schema, Mapping):
+        return normalized
+    dropped = tuple(
+        pointer
+        for pointer in schema_owned_field_drops(payload, normalized, schema)
+        if not _schema_owned_drop_is_declared(step, pointer)
+    )
+    if dropped:
+        raise ModelStructuralAuditError(
+            "schema_owned_field_dropped during capture normalization at "
+            + ", ".join(dropped)
+        )
+    return normalized
+
+
 def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, Any] | None:
     step = _optional_str(
         invocation.metadata.get("compatibility_validation_step")
@@ -381,6 +416,23 @@ def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, A
             capture_schema.setdefault("additionalProperties", False)
             return capture_schema
     return None
+
+
+def _schema_owned_drop_is_declared(step: str | None, pointer: str) -> bool:
+    """Return whether a lossy compatibility transform is explicitly owned."""
+
+    if step != "finalize":
+        return False
+    # OpenAI-strict finalize schemas carry nullable task stance objects. The
+    # authored/stored schema treats them as optional objects, so the adapter
+    # deliberately removes null transport placeholders before local audit.
+    parts = pointer.strip("/").split("/")
+    return (
+        len(parts) == 3
+        and parts[0] == "tasks"
+        and parts[1].isdigit()
+        and parts[2] in {"stance", "stop_signal"}
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -436,20 +488,7 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
             continue
         update = {
             key: item[key]
-            for key in (
-                "task_id",
-                "status",
-                "executor_notes",
-                "files_changed",
-                "commands_run",
-                "auto_attributed_files",
-                "sections_written",
-                "stance",
-                "stop_signal",
-                "stance_violations",
-                "head_sha",
-                "code_hash",
-            )
+            for key in execute_capture_task_field_names()
             if key in item
         }
         if "task_id" not in update and isinstance(item.get("id"), str):
@@ -476,16 +515,57 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
         if not isinstance(item, Mapping):
             acknowledgments.append(item)
             continue
-        acknowledgment = {
-            key: item[key]
-            for key in ("sense_check_id", "executor_note")
-            if key in item
-        }
+        acknowledgment = project_schema_owned_fields(
+            item,
+            _execute_capture_sense_check_schema(),
+            contract="execute sense-check capture normalization",
+        )
         if "sense_check_id" not in acknowledgment and isinstance(item.get("id"), str):
             acknowledgment["sense_check_id"] = item["id"]
         acknowledgments.append(acknowledgment)
     normalized["sense_check_acknowledgments"] = acknowledgments
     return normalized
+
+
+_EXECUTE_TASK_CAPTURE_EXTENSION_FIELDS: frozenset[str] = frozenset(
+    {
+        # These fields are handler evidence attached before or immediately
+        # after structural capture. They are not model-schema fields, but they
+        # are part of the durable execute envelope and must survive the adapter.
+        "evidence_files",
+        "sections_written",
+        "stance",
+        "stop_signal",
+        "stance_violations",
+        "head_sha",
+        "code_hash",
+    }
+)
+
+
+def _execute_capture_task_schema() -> Mapping[str, Any]:
+    return schema_mapping_at_path(
+        SCHEMAS["execution_batch_relaxed.json"],
+        ("properties", "task_updates", "items"),
+        contract="execute task capture schema",
+    )
+
+
+def _execute_capture_sense_check_schema() -> Mapping[str, Any]:
+    return schema_mapping_at_path(
+        SCHEMAS["execution_batch_relaxed.json"],
+        ("properties", "sense_check_acknowledgments", "items"),
+        contract="execute sense-check capture schema",
+    )
+
+
+def execute_capture_task_field_names() -> frozenset[str]:
+    """Return schema fields plus documented execute-envelope extensions."""
+
+    return schema_property_names(
+        _execute_capture_task_schema(),
+        contract="execute task capture normalization",
+    ) | _EXECUTE_TASK_CAPTURE_EXTENSION_FIELDS
 
 
 def _normalize_prep_distill_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -518,22 +598,30 @@ def _normalize_prep_key_evidence(item: Any) -> Any:
         return {"point": item, "source": "prep-distill", "relevance": "medium"}
     if not isinstance(item, Mapping):
         return item
-    normalized = dict(item)
+    normalized = project_schema_owned_fields(
+        item,
+        schema_mapping_at_path(
+            SCHEMAS["prep.json"],
+            ("properties", "key_evidence", "items"),
+            contract="prep key-evidence capture schema",
+        ),
+        contract="prep key-evidence capture normalization",
+    )
     if "point" not in normalized:
         normalized["point"] = _optional_str(
-            normalized.get("finding")
-            or normalized.get("summary")
-            or normalized.get("text")
-            or normalized.get("claim")
+            item.get("finding")
+            or item.get("summary")
+            or item.get("text")
+            or item.get("claim")
         ) or ""
     if "source" not in normalized:
         normalized["source"] = _optional_str(
-            normalized.get("file")
-            or normalized.get("file_path")
-            or normalized.get("code_ref")
+            item.get("file")
+            or item.get("file_path")
+            or item.get("code_ref")
         ) or "prep-distill"
-    normalized["relevance"] = _normalize_prep_relevance(normalized.get("relevance"))
-    return {key: normalized[key] for key in ("point", "source", "relevance")}
+    normalized["relevance"] = _normalize_prep_relevance(item.get("relevance"))
+    return normalized
 
 
 def _normalize_prep_relevant_code(item: Any) -> Any:
@@ -541,27 +629,38 @@ def _normalize_prep_relevant_code(item: Any) -> Any:
         return {"file_path": item, "why": "Referenced by prep-distill.", "functions": []}
     if not isinstance(item, Mapping):
         return item
-    normalized = dict(item)
+    normalized = project_schema_owned_fields(
+        item,
+        schema_mapping_at_path(
+            SCHEMAS["prep.json"],
+            ("properties", "relevant_code", "items"),
+            contract="prep relevant-code capture schema",
+        ),
+        contract="prep relevant-code capture normalization",
+    )
     file_path = _optional_str(
-        normalized.get("file_path")
-        or normalized.get("path")
-        or normalized.get("file")
-        or normalized.get("code_ref")
+        item.get("file_path")
+        or item.get("path")
+        or item.get("file")
+        or item.get("code_ref")
     ) or ""
     why = _optional_str(
-        normalized.get("why")
-        or normalized.get("reason")
-        or normalized.get("summary")
-        or normalized.get("note")
+        item.get("why")
+        or item.get("reason")
+        or item.get("summary")
+        or item.get("note")
     ) or "Referenced by prep-distill."
-    functions = normalized.get("functions")
+    functions = item.get("functions")
     if functions is None:
-        functions = normalized.get("symbols")
-    return {
-        "file_path": file_path,
-        "why": why,
-        "functions": [_optional_str(item) or "" for item in _as_sequence(functions)],
-    }
+        functions = item.get("symbols")
+    normalized.update(
+        {
+            "file_path": file_path,
+            "why": why,
+            "functions": [_optional_str(item) or "" for item in _as_sequence(functions)],
+        }
+    )
+    return normalized
 
 
 def _normalize_prep_test_expectation(index: int, item: Any) -> Any:
@@ -573,22 +672,33 @@ def _normalize_prep_test_expectation(index: int, item: Any) -> Any:
         }
     if not isinstance(item, Mapping):
         return item
-    normalized = dict(item)
+    normalized = project_schema_owned_fields(
+        item,
+        schema_mapping_at_path(
+            SCHEMAS["prep.json"],
+            ("properties", "test_expectations", "items"),
+            contract="prep test-expectation capture schema",
+        ),
+        contract="prep test-expectation capture normalization",
+    )
     test_id = _optional_str(
-        normalized.get("test_id")
-        or normalized.get("id")
-        or normalized.get("name")
+        item.get("test_id")
+        or item.get("id")
+        or item.get("name")
     ) or f"prep-distill-{index}"
     what_it_checks = _optional_str(
-        normalized.get("what_it_checks")
-        or normalized.get("checks")
-        or normalized.get("expectation")
-        or normalized.get("description")
+        item.get("what_it_checks")
+        or item.get("checks")
+        or item.get("expectation")
+        or item.get("description")
     ) or ""
-    status = normalized.get("status")
+    status = item.get("status")
     if status not in {"fail_to_pass", "pass_to_pass"}:
         status = "pass_to_pass"
-    return {"test_id": test_id, "what_it_checks": what_it_checks, "status": status}
+    normalized.update(
+        {"test_id": test_id, "what_it_checks": what_it_checks, "status": status}
+    )
+    return normalized
 
 
 def _normalize_prep_open_question(item: Any) -> Any:
@@ -596,24 +706,31 @@ def _normalize_prep_open_question(item: Any) -> Any:
         return {"severity": "assume_and_proceed", "question": item}
     if not isinstance(item, Mapping):
         return item
-    normalized = dict(item)
-    classification = _optional_str(normalized.pop("classification", None))
-    if normalized.get("severity") not in {"blocking", "assume_and_proceed"}:
+    normalized = project_schema_owned_fields(
+        item,
+        schema_mapping_at_path(
+            SCHEMAS["prep.json"],
+            ("properties", "open_questions", "items"),
+            contract="prep open-question capture schema",
+        ),
+        contract="prep open-question capture normalization",
+    )
+    classification = _optional_str(item.get("classification"))
+    if item.get("severity") not in {"blocking", "assume_and_proceed"}:
         if classification == "blocking":
             normalized["severity"] = "blocking"
         else:
             normalized["severity"] = "assume_and_proceed"
+    else:
+        normalized["severity"] = item["severity"]
     normalized["question"] = _optional_str(
-        normalized.get("question")
-        or normalized.get("gap")
-        or normalized.get("issue")
-        or normalized.get("text")
+        item.get("question")
+        or item.get("gap")
+        or item.get("issue")
+        or item.get("text")
     ) or ""
-    return {
-        "severity": normalized["severity"],
-        "question": normalized["question"],
-        "assumption": _optional_str(normalized.get("assumption")) or "",
-    }
+    normalized["assumption"] = _optional_str(item.get("assumption")) or ""
+    return normalized
 
 
 def _normalize_prep_relevance(value: Any) -> str:
@@ -666,8 +783,11 @@ def _normalize_critique_capture_payload(payload: dict[str, Any]) -> dict[str, An
     # Strip hallucinated extra properties so strict JSON schemas
     # (additionalProperties=false) don't fail on keys like `check_id`
     # or `critique_iteration` that models occasionally invent.
-    allowed_top = {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
-    normalized = {k: v for k, v in payload.items() if k in allowed_top}
+    normalized = project_schema_owned_fields(
+        payload,
+        SCHEMAS["critique.json"],
+        contract="critique capture normalization",
+    )
 
     checks = normalized.get("checks")
     if isinstance(checks, list):
@@ -689,8 +809,15 @@ def _normalize_critique_capture_payload(payload: dict[str, Any]) -> dict[str, An
 
 
 def _normalize_critique_check(check: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = {"id", "question", "findings"}
-    normalized = {k: v for k, v in check.items() if k in allowed}
+    normalized = project_schema_owned_fields(
+        check,
+        schema_mapping_at_path(
+            SCHEMAS["critique.json"],
+            ("properties", "checks", "items"),
+            contract="critique check capture schema",
+        ),
+        contract="critique check capture normalization",
+    )
     findings = normalized.get("findings")
     if isinstance(findings, list):
         normalized["findings"] = [
@@ -701,18 +828,34 @@ def _normalize_critique_check(check: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_critique_finding(finding: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = {"detail", "flagged"}
-    return {k: v for k, v in finding.items() if k in allowed}
+    return project_schema_owned_fields(
+        finding,
+        schema_mapping_at_path(
+            SCHEMAS["critique.json"],
+            ("properties", "checks", "items", "properties", "findings", "items"),
+            contract="critique finding capture schema",
+        ),
+        contract="critique finding capture normalization",
+    )
 
 
 def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
     # Models sometimes emit `severity`/`status` instead of the schema's
     # `severity_hint`.  Accept `severity` as an alias and drop other extras.
-    allowed = {"id", "concern", "category", "severity_hint", "severity", "evidence"}
-    normalized = {k: v for k, v in flag.items() if k in allowed}
+    flag_schema = schema_mapping_at_path(
+        SCHEMAS["critique.json"],
+        ("properties", "flags", "items"),
+        contract="critique flag capture schema",
+    )
+    normalized = project_schema_owned_fields(
+        flag,
+        flag_schema,
+        contract="critique flag capture normalization",
+    )
+    alias_severity = flag.get("severity")
     severity_hint = normalized.get("severity_hint")
-    if severity_hint is None and "severity" in normalized:
-        severity_hint = normalized.pop("severity")
+    if severity_hint is None and alias_severity is not None:
+        severity_hint = alias_severity
         normalized["severity_hint"] = severity_hint
     if severity_hint in {"high", "significant", "major", "critical"}:
         normalized["severity_hint"] = "likely-significant"
@@ -724,73 +867,11 @@ def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_gate_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    normalized = {
-        key: value
-        for key, value in payload.items()
-        if key in _GATE_CAPTURE_SCHEMA_TOP_LEVEL_FIELDS
-    }
-
-    resolutions = [
-        item
-        for item in normalized.get("flag_resolutions", [])
-        if isinstance(item, Mapping)
-    ]
-    accept_tradeoff_resolutions = [
-        item for item in resolutions if item.get("action") == "accept_tradeoff"
-    ]
-
-    tradeoffs: list[Any] = []
-    for index, item in enumerate(_as_sequence(normalized.get("accepted_tradeoffs"))):
-        resolution = (
-            accept_tradeoff_resolutions[index]
-            if index < len(accept_tradeoff_resolutions)
-            else {}
-        )
-        if isinstance(item, str):
-            text = item.strip()
-            if not text:
-                continue
-            tradeoffs.append(
-                {
-                    "flag_id": _optional_str(resolution.get("flag_id")) or f"accepted-tradeoff-{index + 1}",
-                    "concern": text,
-                    "subsystem": "",
-                    "rationale": _optional_str(resolution.get("rationale")) or "",
-                }
-            )
-            continue
-        if not isinstance(item, Mapping):
-            tradeoffs.append(item)
-            continue
-        tradeoff = dict(item)
-        tradeoff_text = _optional_str(tradeoff.pop("tradeoff", None))
-        if "flag_id" not in tradeoff:
-            tradeoff["flag_id"] = _optional_str(resolution.get("flag_id")) or f"accepted-tradeoff-{index + 1}"
-        if "concern" not in tradeoff:
-            tradeoff["concern"] = (
-                _optional_str(tradeoff.get("concern_brief"))
-                or tradeoff_text
-                or _optional_str(resolution.get("rationale"))
-                or ""
-            )
-        if "subsystem" not in tradeoff:
-            tradeoff["subsystem"] = ""
-        if "rationale" not in tradeoff:
-            tradeoff["rationale"] = (
-                _optional_str(tradeoff.get("rationale_brief"))
-                or _optional_str(resolution.get("rationale"))
-                or tradeoff_text
-                or ""
-            )
-        tradeoffs.append(
-            {
-                key: tradeoff[key]
-                for key in ("flag_id", "concern", "subsystem", "rationale")
-                if key in tradeoff
-            }
-        )
-    normalized["accepted_tradeoffs"] = tradeoffs
-    return normalized
+    # Keep capture lossless: validation must see both missing required fields
+    # and undeclared fields. Projecting before validation would turn a schema
+    # mismatch into silent data loss. Schema-owned projection is reserved for
+    # already-validated persistence boundaries.
+    return dict(payload)
 
 
 def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -813,7 +894,11 @@ def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> di
 def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize structured provider plan output to the canonical plan schema."""
 
-    normalized: dict[str, Any] = {}
+    normalized: dict[str, Any] = project_schema_owned_fields(
+        payload,
+        SCHEMAS["plan.json"],
+        contract="plan capture normalization",
+    )
     if isinstance(payload.get("plan"), str):
         normalized["plan"] = payload["plan"]
         extracted = _extract_plan_markdown_metadata(payload["plan"])

@@ -15,6 +15,16 @@ def test_runtime_provenance_rejects_wrong_expected_root(tmp_path: Path) -> None:
     assert "import_root_mismatch" in payload["errors"]
 
 
+def test_runtime_provenance_rejects_wrong_expected_revision() -> None:
+    source = Path(__file__).parents[2].resolve()
+    payload = runtime_provenance(
+        expected_root=source,
+        expected_revision="0" * 40,
+    )
+    assert payload["ok"] is False
+    assert "source_revision_mismatch" in payload["errors"]
+
+
 def test_runtime_source_is_valid_when_git_metadata_is_a_worktree_file() -> None:
     source = Path(__file__).parents[2].resolve()
     assert (source / ".git").is_file()

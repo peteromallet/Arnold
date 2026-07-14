@@ -17,6 +17,12 @@ from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_sign
 from arnold_pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
+from arnold_pipelines.megaplan.schema_projection import (
+    project_schema_owned_fields,
+    require_schema_fields,
+    schema_property_names,
+)
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, STATE_PLANNED
 from arnold_pipelines.megaplan.workers import WorkerResult
@@ -59,12 +65,6 @@ def _gate_debt_visibility_policy() -> dict[str, Any]:
     from arnold_pipelines.megaplan.workflows.components import GATE_DEBT_VISIBILITY_POLICY
 
     return GATE_DEBT_VISIBILITY_POLICY
-
-
-def _gate_normalization_policy() -> dict[str, Any]:
-    from arnold_pipelines.megaplan.workflows.components import GATE_NORMALIZATION_POLICY
-
-    return GATE_NORMALIZATION_POLICY
 
 
 def _gate_reprompt_policy() -> dict[str, Any]:
@@ -162,6 +162,11 @@ def _gate_summary_for_transition(plan_dir: Path, state: PlanState) -> dict[str, 
     if carry_path.exists():
         carry = read_json(carry_path)
         if isinstance(carry, dict):
+            require_schema_fields(
+                carry,
+                SCHEMAS["gate.json"],
+                contract="gate transition carry consumption",
+            )
             normalized = dict(carry)
             recommendation = normalized.get("recommendation") or normalized.get("verdict")
             if recommendation is not None:
@@ -171,6 +176,11 @@ def _gate_summary_for_transition(plan_dir: Path, state: PlanState) -> dict[str, 
     if gate_path.exists():
         gate = read_json(gate_path)
         if isinstance(gate, dict):
+            require_schema_fields(
+                gate,
+                SCHEMAS["gate.json"],
+                contract="gate transition artifact consumption",
+            )
             return gate
     legacy = state.get("last_gate", {})
     return legacy if isinstance(legacy, dict) else {}
@@ -212,7 +222,17 @@ def _post_revise_gate_allowed(state: PlanState, plan_dir: Path) -> bool:
     return bool(history and isinstance(history[-1], dict) and history[-1].get("step") == "revise")
 
 def _gate_response_fields(state: PlanState, gate_summary: dict[str, Any], debt_entries_added: int) -> dict[str, Any]:
+    require_schema_fields(
+        gate_summary,
+        SCHEMAS["gate.json"],
+        contract="gate response projection",
+    )
     return {
+        **project_schema_owned_fields(
+            gate_summary,
+            SCHEMAS["gate.json"],
+            contract="gate response projection",
+        ),
         "auto_approve": bool(state["config"].get("auto_approve", False)),
         "robustness": configured_robustness(state),
         "recommendation": gate_summary["recommendation"],
@@ -296,6 +316,11 @@ def _normalize_settled_decisions(gate_summary: dict[str, Any]) -> list[dict[str,
 
 
 def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[str, Any]:
+    require_schema_fields(
+        gate_summary,
+        SCHEMAS["gate.json"],
+        contract="gate carry persistence",
+    )
     unresolved_by_id = {
         item.get("id"): item
         for item in gate_summary.get("unresolved_flags", [])
@@ -319,6 +344,11 @@ def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[s
         )
     recommendation = str(gate_summary.get("recommendation", "PROCEED"))
     return {
+        **project_schema_owned_fields(
+            gate_summary,
+            SCHEMAS["gate.json"],
+            contract="gate carry persistence",
+        ),
         "version": 1,
         "recommendation": recommendation,
         "passed": bool(gate_summary.get("passed", False)),
@@ -327,7 +357,6 @@ def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[s
         "warnings": list(gate_summary.get("warnings", [])) if isinstance(gate_summary.get("warnings"), list) else [],
         "orchestrator_guidance": str(gate_summary.get("orchestrator_guidance", "")),
         "carried_flags": carried_flags,
-        "north_star_actions": gate_summary.get("north_star_actions", []),
         "iteration": iteration,
         "produced_at": now_utc(),
     }
@@ -338,7 +367,17 @@ def _write_gate_carry(plan_dir: Path, gate_summary: dict[str, Any], *, iteration
 
 
 def _sync_legacy_last_gate_for_workflow(state: PlanState, gate_summary: dict[str, Any]) -> None:
+    require_schema_fields(
+        gate_summary,
+        SCHEMAS["gate.json"],
+        contract="legacy last_gate persistence",
+    )
     state["last_gate"] = {
+        **project_schema_owned_fields(
+            gate_summary,
+            SCHEMAS["gate.json"],
+            contract="legacy last_gate persistence",
+        ),
         "recommendation": gate_summary["recommendation"],
         "rationale": gate_summary["rationale"],
         "reprompted": bool(gate_summary.get("reprompted", False)),
@@ -816,98 +855,14 @@ def _prior_unresolved_flag_ids(plan_dir: Path, current_iteration: int) -> set[st
         return set()
 
 
-# ── T10: Gate-scoped scratch promotion known keys ──────────────────────────
-# The model produces only these keys in the scratch template; unknown
-# top-level keys injected by the model are stripped before promotion.
-_GATE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
-    {
-        "recommendation",
-        "rationale",
-        "signals_assessment",
-        "warnings",
-        "flag_resolutions",
-        "accepted_tradeoffs",
-        "settled_decisions",
-    }
-)
-# ────────────────────────────────────────────────────────────────────────────
-
-
-_GATE_RECOMMENDATIONS: frozenset[str] = frozenset({"PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER"})
-
-
 def _normalize_gate_payload(
     gate_payload: dict[str, Any],
-    signals_artifact: dict[str, Any],
+    _signals_artifact: dict[str, Any],
 ) -> dict[str, Any]:
-    """Recover from an empty or structurally invalid gate worker payload.
-
-    Some worker/model combinations (notably DeepSeek via Hermes for the gate
-    phase) occasionally emit empty recommendation/rationale fields even when
-    the surrounding signals make the correct verdict obvious. Rather than
-    failing the whole gate, infer a conservative recommendation from the
-    computed signals and log a warning so the audit trail remains honest.
-    """
+    """Normalize values without synthesizing required contract fields."""
     recommendation = str(gate_payload.get("recommendation", "")).strip().upper()
-    if recommendation not in _GATE_RECOMMENDATIONS:
-        original = gate_payload.get("recommendation")
-        fallback_recommendations = _gate_normalization_policy()["invalid_recommendation"]["fallback_recommendations"]
-        preflight = signals_artifact.get("preflight_results", {})
-        preflight_passed = isinstance(preflight, dict) and all(preflight.values())
-        unresolved = signals_artifact.get("unresolved_flags", [])
-        has_significant = bool(
-            isinstance(unresolved, list)
-            and any(
-                isinstance(f, dict)
-                and f.get("severity") in ("significant", "likely-significant")
-                for f in unresolved
-            )
-        )
-        if has_significant:
-            recommendation = fallback_recommendations["blocking_flags_present"]
-            reason = "significant unresolved flags remain"
-        elif not preflight_passed:
-            recommendation = fallback_recommendations["preflight_failed"]
-            reason = "preflight checks are still failing"
-        else:
-            recommendation = fallback_recommendations["clear_to_proceed"]
-            reason = "no significant unresolved flags and preflight passed"
-        log.warning(
-            "Gate worker emitted invalid/empty recommendation %r; falling back to %s (%s)",
-            original,
-            recommendation,
-            reason,
-        )
+    if recommendation:
         gate_payload["recommendation"] = recommendation
-        if not str(gate_payload.get("rationale", "")).strip():
-            gate_payload["rationale"] = (
-                f"Auto-inferred {recommendation} because the gate worker returned an "
-                f"invalid/empty recommendation and {reason}."
-            )
-        if not str(gate_payload.get("signals_assessment", "")).strip():
-            gate_payload["signals_assessment"] = (
-                "No significant flags were raised by critique; proceeding to execution."
-                if recommendation == "PROCEED"
-                else "Critique signals require further attention before proceeding."
-            )
-
-    # Ensure required array fields exist so later schema validation passes.
-    gate_payload.setdefault("warnings", [])
-    gate_payload.setdefault("settled_decisions", [])
-    gate_payload.setdefault("flag_resolutions", [])
-    gate_payload.setdefault("accepted_tradeoffs", [])
-    gate_payload.setdefault("north_star_actions", [])
-    # Strip placeholder/empty tradeoff objects emitted by some workers.
-    gate_payload["accepted_tradeoffs"] = [
-        item
-        for item in gate_payload["accepted_tradeoffs"]
-        if isinstance(item, dict)
-        and any(
-            str(value).strip()
-            for key, value in item.items()
-            if key in {"flag_id", "concern", "subsystem", "rationale"}
-        )
-    ]
     return gate_payload
 
 
@@ -988,7 +943,10 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         _scratch_status, _promoted = promote_scratch(
             plan_dir,
             _scratch_filename,
-            _GATE_SCRATCH_KNOWN_KEYS,
+            schema_property_names(
+                SCHEMAS["gate.json"],
+                contract="gate scratch promotion",
+            ),
             worker,
             seed_json=_seed_json,
             file_fill_instructed=_file_fill_instructed,
@@ -1100,7 +1058,10 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             _retry_scratch_status, _retry_promoted = promote_scratch(
                 plan_dir,
                 _scratch_filename,
-                _GATE_SCRATCH_KNOWN_KEYS,
+                schema_property_names(
+                    SCHEMAS["gate.json"],
+                    contract="gate scratch reprompt promotion",
+                ),
                 retry_worker,
                 seed_json=_retry_seed_json,
                 file_fill_instructed=_file_fill_instructed,

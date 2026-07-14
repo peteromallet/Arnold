@@ -23,7 +23,10 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_ACTION_TYPES,
     SEVERITY_BLOCKING,
+    read_carried_north_star_actions,
 )
+from arnold_pipelines.megaplan.schema_projection import schema_template_payload
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import PlanState
 
 _CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH = """
@@ -308,25 +311,7 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
 
     # Read carried North Star actions from gate_carry.json (normalized,
     # carried form). Fall back to gate.json when no carry file exists.
-    north_star_actions: list[dict[str, Any]] = []
-    gate_carry_path = plan_dir / "gate_carry.json"
-    if gate_carry_path.exists():
-        try:
-            carry = read_json(gate_carry_path)
-            if isinstance(carry, dict):
-                raw_actions = carry.get("north_star_actions")
-                if isinstance(raw_actions, list):
-                    north_star_actions = [
-                        a for a in raw_actions if isinstance(a, dict)
-                    ]
-        except Exception:
-            pass
-    if not north_star_actions:
-        ns_from_gate = gate.get("north_star_actions")
-        if isinstance(ns_from_gate, list):
-            north_star_actions = [
-                a for a in ns_from_gate if isinstance(a, dict)
-            ]
+    north_star_actions = read_carried_north_star_actions(plan_dir)
     north_star_block = _build_north_star_actions_block(north_star_actions)
 
     return textwrap.dedent(
@@ -598,12 +583,11 @@ def _write_critique_template(
     """
     import json
 
-    template: dict[str, object] = {
-        "checks": _build_checks_template(plan_dir, state, checks),
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
+    template = schema_template_payload(
+        SCHEMAS["critique.json"],
+        contract="critique scratch template",
+    )
+    template["checks"] = _build_checks_template(plan_dir, state, checks)
 
     output_path = plan_dir / "critique_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")
@@ -618,12 +602,11 @@ def write_single_check_template(
 ) -> Path:
     import json
 
-    template: dict[str, object] = {
-        "checks": _build_checks_template(plan_dir, state, (check,)),
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
+    template = schema_template_payload(
+        SCHEMAS["critique.json"],
+        contract="single-check critique scratch template",
+    )
+    template["checks"] = _build_checks_template(plan_dir, state, (check,))
 
     output_path = plan_dir / output_name
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")

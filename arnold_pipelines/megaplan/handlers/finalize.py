@@ -43,9 +43,10 @@ from arnold_pipelines.megaplan._core import (
     require_state,
     sha256_file,
 )
-from arnold_pipelines.megaplan.observability.evaluand import read_evaluand_events
 from arnold.pipeline.contract_validation import validate_payload_against_schema
 from arnold.pipeline.step_io_contract import StepIOOperation
+from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
+from arnold_pipelines.megaplan.observability.evaluand import read_evaluand_events
 from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
 from arnold_pipelines.megaplan.orchestration.test_selection import (
@@ -53,6 +54,12 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
     resolve_baseline_test_selection,
 )
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
+from arnold_pipelines.megaplan.schema_projection import (
+    project_schema_owned_fields,
+    require_schema_fields,
+    schema_property_names,
+)
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan._core.topology import STAGE_TO_STATE
 from arnold_pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot_recursive,
@@ -387,46 +394,7 @@ def _apply_programmatic_coverage(payload: dict[str, Any], plan_dir: Path, state:
 # nested item shape) live here; non-empty-after-strip, range checks, bool-vs-int
 # rejection, status="pending", verification-pattern detection, and U-prefixed
 # plan_steps_covered rules are enforced by _finalize_semantic_postcheck.
-_FINALIZE_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "required": ["tasks", "sense_checks", "watch_items"],
-    "properties": {
-        "tasks": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": [
-                    "id",
-                    "description",
-                    "status",
-                    "complexity",
-                    "complexity_justification",
-                ],
-                "properties": {
-                    "id": {"type": "string"},
-                    "description": {"type": "string"},
-                    "status": {"type": "string"},
-                    "complexity": {"type": "integer"},
-                    "complexity_justification": {"type": "string"},
-                },
-            },
-        },
-        "sense_checks": {"type": "array"},
-        "watch_items": {"type": "array"},
-        "user_actions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["id", "description", "phase"],
-                "properties": {
-                    "id": {"type": "string"},
-                    "description": {"type": "string"},
-                    "phase": {"type": "string"},
-                },
-            },
-        },
-    },
-}
+_FINALIZE_INPUT_SCHEMA = FINALIZE_MODEL_OUTPUT_SCHEMA
 
 
 def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerResult) -> None:
@@ -1567,7 +1535,21 @@ def _route_finalize_baseline_selection_failure_to_revise(
 ) -> StepResponse:
     projection = _finalize_revise_fallback_projection()
     message = _finalize_baseline_contract_message(error.test_selection)
+    prior_gate_contract: dict[str, Any] = {}
+    for prior_name in ("gate_carry.json", "gate.json"):
+        prior_path = plan_dir / prior_name
+        if not prior_path.exists():
+            continue
+        prior = read_json(prior_path)
+        if isinstance(prior, Mapping):
+            prior_gate_contract = project_schema_owned_fields(
+                prior,
+                SCHEMAS["gate.json"],
+                contract="finalize revise gate preservation",
+            )
+            break
     gate_feedback = {
+        **prior_gate_contract,
         "recommendation": "ITERATE",
         "passed": False,
         "rationale": message,
@@ -1604,6 +1586,9 @@ def _route_finalize_baseline_selection_failure_to_revise(
         ],
         "addressed_flags": [],
         "flag_resolutions": [],
+        "accepted_tradeoffs": prior_gate_contract.get("accepted_tradeoffs", []),
+        "settled_decisions": prior_gate_contract.get("settled_decisions", []),
+        "north_star_actions": prior_gate_contract.get("north_star_actions", []),
         "orchestrator_guidance": (
             "Run revise. The revised plan must add structured `test_blast_radius` "
             "metadata with scoped path selectors, or explicitly opt into "
@@ -1615,8 +1600,18 @@ def _route_finalize_baseline_selection_failure_to_revise(
             "test_selection": error.test_selection,
         },
     }
+    require_schema_fields(
+        gate_feedback,
+        SCHEMAS["gate.json"],
+        contract="finalize revise gate persistence",
+    )
     state["current_state"] = projection["state"]
-    state["last_gate"] = gate_feedback
+    from arnold_pipelines.megaplan.handlers.gate import (
+        _build_gate_carry,
+        _sync_legacy_last_gate_for_workflow,
+    )
+
+    _sync_legacy_last_gate_for_workflow(state, gate_feedback)
     meta = state.setdefault("meta", {})
     if isinstance(meta, dict):
         meta.setdefault("finalize_revise_feedback", []).append(
@@ -1630,13 +1625,10 @@ def _route_finalize_baseline_selection_failure_to_revise(
     atomic_write_json(
         plan_dir / "gate_carry.json",
         {
-            "version": 1,
-            "recommendation": "ITERATE",
-            "passed": False,
-            "rationale_brief": message,
-            "warnings": gate_feedback["warnings"],
-            "orchestrator_guidance": gate_feedback["orchestrator_guidance"],
-            "iteration": state["iteration"],
+            **_build_gate_carry(
+                gate_feedback,
+                iteration=state["iteration"],
+            ),
             "source": "finalize_baseline_selection",
         },
     )
@@ -1884,13 +1876,17 @@ def _ensure_execution_baseline(state: PlanState) -> None:
         file=sys.stderr,
     )
 
-# ── T8: Finalize-scoped scratch promotion known keys ────────────────────
-# The model produces only these keys in the scratch template; the handler
-# computes validation/provides/assumes/baseline afterward.
-_FINALIZE_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
-    {"tasks", "user_actions", "sense_checks", "watch_items", "meta_commentary"}
+_FINALIZE_SCRATCH_KNOWN_KEYS: frozenset[str] = schema_property_names(
+    _FINALIZE_INPUT_SCHEMA,
+    contract="finalize scratch promotion",
 )
-# ────────────────────────────────────────────────────────────────────────
+
+
+def _finalize_scratch_known_keys() -> frozenset[str]:
+    return schema_property_names(
+        _FINALIZE_INPUT_SCHEMA,
+        contract="finalize scratch promotion",
+    )
 
 
 def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -1935,7 +1931,7 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         scratch_status, promoted_payload = promote_scratch(
             plan_dir,
             scratch_filename,
-            _FINALIZE_SCRATCH_KNOWN_KEYS,
+            _finalize_scratch_known_keys(),
             worker,
             seed_json=seed_json,
             file_fill_instructed=file_fill_instructed,

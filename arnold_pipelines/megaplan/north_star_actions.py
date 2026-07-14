@@ -592,8 +592,7 @@ def read_carried_north_star_actions(plan_dir: Any) -> list[dict[str, Any]]:
     """Read the normalized North Star actions carried from the gate step.
 
     Prefers ``gate_carry.json`` (the normalized carry artifact) and falls
-    back to ``gate.json`` when the carry file is absent or holds no
-    actions. Both sources carry *normalized* actions (severity already
+    back to ``gate.json`` only when the carry file is absent. Both sources carry *normalized* actions (severity already
     derived with schema authority by the gate artifact builder).
 
     Returns an empty list when neither source is available. This mirrors
@@ -609,25 +608,39 @@ def read_carried_north_star_actions(plan_dir: Any) -> list[dict[str, Any]]:
     def _read_json(path: _Path) -> Any:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
+        except Exception as error:
+            raise NorthStarActionValidationError(
+                f"cannot read carried North Star action artifact {path}: {error}"
+            ) from error
 
     carry_path = plan_dir / "gate_carry.json"
     if carry_path.exists():
         carry = _read_json(carry_path)
         if isinstance(carry, dict):
-            raw = carry.get("north_star_actions")
-            if isinstance(raw, list):
-                actions = [a for a in raw if isinstance(a, dict)]
-                if actions:
-                    return actions
+            if "north_star_actions" not in carry:
+                raise NorthStarActionValidationError(
+                    "gate_carry.json is missing required north_star_actions"
+                )
+            if not isinstance(carry["north_star_actions"], list):
+                raise NorthStarActionValidationError(
+                    "gate_carry.json north_star_actions must be a list"
+                )
+            return normalize_north_star_actions(carry["north_star_actions"])
+        raise NorthStarActionValidationError("gate_carry.json must contain an object")
 
     gate_path = plan_dir / "gate.json"
     if gate_path.exists():
         gate = _read_json(gate_path)
         if isinstance(gate, dict):
-            raw = gate.get("north_star_actions")
-            if isinstance(raw, list):
-                return [a for a in raw if isinstance(a, dict)]
+            if "north_star_actions" not in gate:
+                raise NorthStarActionValidationError(
+                    "gate.json is missing required north_star_actions"
+                )
+            if not isinstance(gate["north_star_actions"], list):
+                raise NorthStarActionValidationError(
+                    "gate.json north_star_actions must be a list"
+                )
+            return normalize_north_star_actions(gate["north_star_actions"])
+        raise NorthStarActionValidationError("gate.json must contain an object")
 
     return []

@@ -14,6 +14,8 @@ from arnold_pipelines.megaplan._core import (
     latest_plan_path,
     read_json,
 )
+from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
+from arnold_pipelines.megaplan.schema_projection import schema_template_payload
 from arnold_pipelines.megaplan.types import PlanState
 
 from ._shared import _gate_summary_or_skipped
@@ -190,13 +192,10 @@ def _write_finalize_template(
     """
     import json
 
-    template: dict[str, object] = {
-        "tasks": [],
-        "user_actions": [],
-        "sense_checks": [],
-        "watch_items": [],
-        "meta_commentary": "",
-    }
+    template = schema_template_payload(
+        FINALIZE_MODEL_OUTPUT_SCHEMA,
+        contract="finalize scratch template",
+    )
 
     output_path = plan_dir / "finalize_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")

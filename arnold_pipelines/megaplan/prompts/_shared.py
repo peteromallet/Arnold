@@ -8,6 +8,11 @@ from typing import Any, Mapping
 
 from arnold_pipelines.megaplan._core import json_dump, read_json
 from arnold_pipelines.megaplan.prep_payload import render_suggested_approach
+from arnold_pipelines.megaplan.schema_projection import (
+    project_schema_owned_fields,
+    require_schema_fields,
+)
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 
 
 def _resolve_prompt_root(plan_dir: Path, root: Path | None) -> Path:
@@ -23,6 +28,11 @@ def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
     if carry_path.exists():
         carry = read_json(carry_path)
         if isinstance(carry, dict):
+            require_schema_fields(
+                carry,
+                SCHEMAS["gate.json"],
+                contract="gate carry prompt consumption",
+            )
             normalized = dict(carry)
             recommendation = normalized.get("recommendation") or normalized.get("verdict")
             if recommendation is not None:
@@ -33,6 +43,11 @@ def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
     gate_path = plan_dir / "gate.json"
     if gate_path.exists():
         gate = read_json(gate_path)
+        require_schema_fields(
+            gate,
+            SCHEMAS["gate.json"],
+            contract="gate prompt fallback consumption",
+        )
         settled_decisions = gate.get("settled_decisions", [])
         if isinstance(settled_decisions, list):
             settled_decisions = [
@@ -45,6 +60,11 @@ def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
         else:
             settled_decisions = []
         return {
+            **project_schema_owned_fields(
+                gate,
+                SCHEMAS["gate.json"],
+                contract="gate prompt fallback consumption",
+            ),
             "version": 1,
             "recommendation": gate.get("recommendation", "PROCEED"),
             "passed": gate.get("passed", True),
@@ -61,7 +81,6 @@ def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
                 for item in gate.get("flag_resolutions", [])
                 if isinstance(item, dict) and item.get("action") == "accept_tradeoff"
             ],
-            "north_star_actions": gate.get("north_star_actions", []),
             "iteration": gate.get("iteration"),
             "produced_at": gate.get("produced_at"),
         }
