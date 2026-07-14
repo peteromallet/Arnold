@@ -13,10 +13,12 @@ from arnold_pipelines.megaplan.resident.auth import AuthorizationDecision
 from arnold_pipelines.megaplan.resident.currently_running import (
     CurrentlyRunningReport,
     collect_currently_running,
+    discover_attention_sessions,
     discover_live_managed_agents,
     discover_running_sessions,
     render_currently_running,
 )
+from arnold_pipelines.megaplan.resident.context_tree import build_context_root
 from arnold_pipelines.megaplan.resident.discord import (
     DISCORD_APPLICATION_COMMANDS,
     DISCORD_MESSAGE_LIMIT,
@@ -60,6 +62,7 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
                     "current_plan": "m7-runtime-adoption",
                     "progress": {
                         "percent": 42.5,
+                        "epic_delta_1h": 2.5,
                         "plan_percent": 73,
                         "display_state": "executing",
                         "plan_state": "finalized",
@@ -72,12 +75,179 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
 
     rendered = render_currently_running(report)
 
-    assert "**⛓️ Epics & chains · 1 active**" in rendered
+    assert "## ⛓️ Epics & chains · 1 active" in rendered
+    assert "### 🟢 Running · 1" in rendered
     assert "**Custody control plane · m7-runtime-adoption**" in rendered
     assert "`executing`" in rendered
     assert "42.5% overall" in rendered
+    assert "+2.5 pp in the past hour" in rendered
     assert "73% in-flight plan" in rendered
     assert "finalized" not in rendered
+
+
+def test_render_shows_truthful_hourly_percentage_point_deltas_only_with_telemetry() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [
+                    {"session": "positive", "status": "running", "progress": {"percent": 50, "epic_delta_1h": 4}},
+                    {"session": "zero", "status": "running", "progress": {"percent": 50, "epic_delta_1h": 0}},
+                    {"session": "negative", "status": "running", "progress": {"percent": 50, "epic_delta_1h": -3}},
+                    {"session": "no-history", "status": "running", "progress": {"percent": 50, "epic_delta_1h": None}},
+                ]
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "**positive**\n  `running` · 50% overall · +4 pp in the past hour" in rendered
+    assert "**zero**\n  `running` · 50% overall · +0 pp in the past hour" in rendered
+    assert "**negative**\n  `running` · 50% overall · -3 pp in the past hour" in rendered
+    assert "**no-history**\n  `running` · 50% overall\n" in rendered
+
+
+def test_active_executing_attention_remains_listed_with_overlay_visible() -> None:
+    status_node = {
+        "sessions": [
+            {
+                "session": "custody-control-plane-20260714",
+                "status": "attention",
+                "process": True,
+                "active_phase": "execute",
+                "operator_next": "chain custody mismatch",
+                "progress": {
+                    "percent": 33,
+                    "display_state": "executing",
+                    "plan_state": "finalized",
+                },
+            }
+        ]
+    }
+
+    assert [row["session"] for row in discover_running_sessions(status_node)] == [
+        "custody-control-plane-20260714"
+    ]
+    rendered = render_currently_running(
+        CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
+    )
+
+    assert "## ⛓️ Epics & chains · 1 active" in rendered
+    assert "`executing`" in rendered
+    assert "⚠️ attention" in rendered
+    assert "chain custody mismatch" in rendered
+    assert "finalized" not in rendered
+
+
+def test_non_active_attention_stays_on_attention_surface_not_running_list() -> None:
+    attention_session = {
+        "session": "stopped-chain",
+        "status": "attention",
+        "process": False,
+        "should_run": True,
+        "latest_activity": "2026-07-14T17:59:59Z",
+        "operator_next": "workspace missing or unreadable",
+        "progress": {"display_state": "blocked", "plan_state": "blocked"},
+    }
+    status_node = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [attention_session],
+        "session_count": 1,
+    }
+
+    assert discover_running_sessions(status_node) == []
+    context_root = build_context_root(
+        status=status_node,
+        agents=None,
+        initiatives=None,
+        todos=None,
+        runtime=None,
+        conversation=None,
+    )
+    assert context_root["attention"]["sessions"] == [
+        {
+            "session": "stopped-chain",
+            "status": "attention",
+            "latest_activity": "2026-07-14T17:59:59Z",
+            "operator_next": "workspace missing or unreadable",
+            "progress": {"display_state": "blocked", "plan_state": "blocked"},
+        }
+    ]
+
+
+def test_needs_attention_only_shows_authoritative_activity_in_preceding_twelve_hours() -> None:
+    status_node = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {
+                "session": "just-inside",
+                "status": "attention",
+                "process": False,
+                "repairing": False,
+                "latest_activity": "2026-07-14T06:00:01Z",
+            },
+            {
+                "session": "exact-boundary",
+                "status": "blocked",
+                "process": False,
+                "latest_activity": "2026-07-14T06:00:00Z",
+            },
+            {
+                "session": "just-outside",
+                "status": "attention",
+                "process": False,
+                "latest_activity": "2026-07-14T05:59:59Z",
+            },
+            {"session": "missing-activity", "status": "attention", "process": False},
+            {
+                "session": "invalid-activity",
+                "status": "blocked",
+                "process": False,
+                "latest_activity": "not-a-timestamp",
+            },
+        ]
+    }
+
+    assert discover_running_sessions(status_node) == []
+    assert [row["session"] for row in discover_attention_sessions(status_node)] == [
+        "just-inside",
+        "exact-boundary",
+    ]
+    rendered = render_currently_running(
+        CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
+    )
+
+    assert "### ⚠️ Needs attention · 2" in rendered
+    assert "**just-inside**" in rendered
+    assert "**exact-boundary**" in rendered
+    for session in ("just-outside", "missing-activity", "invalid-activity"):
+        assert f"**{session}**" not in rendered
+
+
+def test_recently_active_installed_session_remains_visible_as_attention() -> None:
+    status_node = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {
+                "session": "custody-control-plane-20260714",
+                "display_name": "Custody control plane",
+                "run_kind": "installed",
+                "status": "attention",
+                "process": False,
+                "repairing": False,
+                "latest_activity": "2026-07-14T17:31:31Z",
+                "operator_next": "workspace missing or unreadable",
+                "progress": {"display_state": "executed", "percent": 0},
+            }
+        ],
+    }
+
+    rendered = render_currently_running(
+        CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
+    )
+
+    assert "### ⚠️ Needs attention · 1" in rendered
+    assert "**Custody control plane**" in rendered
+    assert "`executed` · 0% overall · ⚠️ attention · workspace missing or unreadable" in rendered
 
 
 def test_active_execute_phase_is_executing_when_display_state_is_absent() -> None:
@@ -103,7 +273,27 @@ def test_active_execute_phase_is_executing_when_display_state_is_absent() -> Non
     assert "`executing` · overall progress unavailable" in rendered
 
 
-def test_render_uses_distinct_restrained_section_headings() -> None:
+def test_plan_state_is_used_only_when_display_state_and_execute_are_absent() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [
+                    {
+                        "session": "blocked-plan",
+                        "status": "running",
+                        "progress": {"plan_state": "blocked"},
+                    }
+                ]
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "**blocked-plan**" in rendered
+    assert "`blocked` · overall progress unavailable · chain running" in rendered
+
+
+def test_render_uses_epics_parent_and_nonempty_h3_status_subsections() -> None:
     rendered = render_currently_running(
         CurrentlyRunningReport(
             status_node={
@@ -129,15 +319,149 @@ def test_render_uses_distinct_restrained_section_headings() -> None:
     )
 
     assert rendered == (
-        "**◈ Currently running**\n"
-        "**⛓️ Epics & chains · 1 active**\n"
+        "# Currently running\n"
+        "## ⛓️ Epics & chains · 1 active\n"
+        "### 🟢 Running · 1\n"
         "• **status-refresh**\n"
         "  `executing` · 25% overall · chain running\n"
         "\n"
-        "**🤖 Resident-managed agents · 1 live**\n"
+        "## 🤖 Managed agents · 1 live\n"
         "• **Refresh resident status**\n"
         "  `running` · agent `status-agent`"
     )
+
+
+def test_epics_status_groups_are_nonempty_subsections_without_trailing_dashes() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "generated_at": "2026-07-14T18:00:00Z",
+                "sessions": [
+                    {"session": "running-chain", "status": "running"},
+                    {
+                        "session": "blocked-chain",
+                        "status": "attention",
+                        "latest_activity": "2026-07-14T17:59:00Z",
+                    },
+                ],
+                "recently_completed": [
+                    {"session": "done-chain", "status": "completed"},
+                ],
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "## ⛓️ Epics & chains · 1 active" in rendered
+    assert "### 🟢 Running · 1" in rendered
+    assert "### ⚠️ Needs attention · 1" in rendered
+    assert "### ✅ Recently completed · 1 shown" in rendered
+    assert rendered.index("## ⛓️ Epics & chains") < rendered.index("### 🟢 Running")
+    assert rendered.index("### 🟢 Running") < rendered.index("### ⚠️ Needs attention")
+    assert rendered.index("### ⚠️ Needs attention") < rendered.index("### ✅ Recently completed")
+    assert "\n## ⚠️ Needs attention" not in rendered
+    assert "\n## Recently completed" not in rendered
+    assert not any(
+        line.endswith("—")
+        for line in rendered.splitlines()
+        if line.startswith(("##", "###"))
+    )
+
+
+def test_render_includes_recent_completed_strategy_chain_with_terminal_evidence() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [{"session": "live-work", "status": "running"}],
+                "recently_completed": [
+                    {
+                        "session": "repository-strategy-roadmap",
+                        "display_name": "Repository strategy roadmap",
+                        "status": "complete",
+                        "latest_activity": "2026-07-14T17:18:48Z",
+                        "progress": {"completed_count": 5, "milestone_count": 5},
+                    }
+                ],
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "### ✅ Recently completed · 1 shown" in rendered
+    assert "**Repository strategy roadmap**" in rendered
+    assert "`completed` · 5/5 milestones" in rendered
+    assert "2026-07-14 17:18:48 UTC (UTC+00:00)" in rendered
+    assert "## ⛓️ Epics & chains · 1 active" in rendered
+    assert "## 🤖 Managed agents · 0 live" in rendered
+
+
+def test_render_keeps_terminal_plan_without_chain_completion_in_attention() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "generated_at": "2026-07-14T18:00:00Z",
+                "sessions": [
+                    {
+                        "session": "repository-strategy-roadmap",
+                        "status": "attention",
+                        "display_state": "done",
+                        "chain_complete": False,
+                        "latest_activity": "2026-07-14T17:32:20Z",
+                        "operator_next": "terminal plan requires chain reconciliation",
+                        "progress": {
+                            "percent": 100,
+                            "plan_percent": 100,
+                            "display_state": "done",
+                            "completed_count": 4,
+                            "milestone_count": 5,
+                        },
+                    }
+                ],
+                "recently_completed": [],
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "### ⚠️ Needs attention · 1" in rendered
+    assert "**repository-strategy-roadmap**" in rendered
+    assert "`done` · 100% overall · 100% in-flight plan · ⚠️ attention" in rendered
+    assert "terminal plan requires chain reconciliation" in rendered
+    assert "Recently completed" not in rendered
+    assert "`completed`" not in rendered
+
+
+def test_recent_completed_is_bounded_and_rejects_nonterminal_rows() -> None:
+    rows = [
+        {
+            "session": f"completed-{index}",
+            "status": "complete",
+            "latest_activity": f"2026-07-14T17:{index:02}:00Z",
+        }
+        for index in range(7)
+    ] + [
+        {"session": "paused", "status": "paused"},
+        {"session": "blocked", "status": "blocked"},
+        {"session": "failed", "status": "failed"},
+        {"session": "inactive", "status": "attention"},
+    ]
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [],
+                "recently_completed": rows,
+                "recently_completed_omitted_count": 2,
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "### ✅ Recently completed · 5 shown" in rendered
+    assert "**completed-4**" in rendered
+    assert "completed-5" not in rendered
+    assert "…2 older completed chains omitted" in rendered
+    for name in ("paused", "blocked", "failed", "inactive"):
+        assert f"**{name}**" not in rendered
 
 
 def test_agents_render_lifecycle_duration_and_persisted_token_usage() -> None:
@@ -503,7 +827,7 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
     ]
     assert interaction.response.deferred == [{"thinking": True}]
     assert len(interaction.followup.messages) == 1
-    assert "**◈ Currently running**" in interaction.followup.messages[0]
+    assert interaction.followup.messages[0].startswith("# Currently running\n")
 
 
 def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
@@ -525,7 +849,7 @@ def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
 
     chunks = split_discord_message(rendered)
 
-    assert "**🤖 Resident-managed agents · 40 live**" in rendered
+    assert "## 🤖 Managed agents · 40 live" in rendered
     assert "Progress unavailable" not in rendered
     assert rendered.count(" · agent `run-") == 40
     assert "Resident task 39" in rendered

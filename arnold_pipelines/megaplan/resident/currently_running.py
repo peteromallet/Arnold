@@ -23,10 +23,13 @@ from .timezone import format_timestamp
 CURRENTLY_RUNNING_COMMAND = "currently-running"
 CURRENTLY_RUNNING_DESCRIPTION = "Show running Megaplan epics, chains, and resident subagents."
 _RUNNING_SESSION_STATUSES = frozenset({"running", "repairing"})
+_ATTENTION_SESSION_STATUS = "attention"
+_ATTENTION_WINDOW = timedelta(hours=12)
 _TERMINAL_AGENT_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
 )
 _MAX_LABEL_CHARS = 140
+_MAX_RECENT_COMPLETED = 5
 _EPICS_SECTION_ICON = "⛓️"
 _AGENTS_SECTION_ICON = "🤖"
 _OPAQUE_AGENT_LABELS = frozenset(
@@ -112,19 +115,72 @@ async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
 
 
 def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
-    """Return canonical sessions classified as running or actively repairing."""
+    """Return sessions with active execution, preserving attention overlays."""
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
         return []
     sessions = status_node.get("sessions")
     if not isinstance(sessions, list):
         return []
+    discovered: list[Mapping[str, Any]] = []
+    for row in sessions:
+        if not isinstance(row, Mapping):
+            continue
+        status = str(row.get("status") or "").casefold()
+        if status in _RUNNING_SESSION_STATUSES:
+            discovered.append(row)
+            continue
+        # ``attention`` is an operator overlay, not an execution state.  Keep
+        # an attention-classified session in the active listing when the
+        # bounded canonical projection still observes live work or repair.
+        if status == _ATTENTION_SESSION_STATUS and (
+            row.get("process") is True or row.get("repairing") is True
+        ):
+            discovered.append(row)
+    return discovered
+
+
+def discover_attention_sessions(
+    status_node: Mapping[str, Any] | None,
+) -> list[Mapping[str, Any]]:
+    """Return recently active canonical attention/blocked non-live chains.
+
+    ``latest_activity`` is the status projection's authoritative activity
+    timestamp.  The snapshot observation clock is deliberately used as the
+    reference, so replayed snapshots preserve their truthful rolling window.
+    The boundary is inclusive: activity exactly twelve hours before the
+    snapshot is shown.
+    """
+
+    if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
+        return []
+    snapshot_time = _parse_utc_timestamp(status_node.get("generated_at"))
+    if snapshot_time is None:
+        return []
+    sessions = status_node.get("sessions")
+    if not isinstance(sessions, list):
+        return []
+    running = {id(row) for row in discover_running_sessions(status_node)}
     return [
-        row
-        for row in sessions
+        row for row in sessions
         if isinstance(row, Mapping)
-        and str(row.get("status") or "").casefold() in _RUNNING_SESSION_STATUSES
+        and id(row) not in running
+        and str(row.get("status") or "").casefold()
+        in {_ATTENTION_SESSION_STATUS, "blocked"}
+        and _is_within_attention_window(row, snapshot_time)
     ]
+
+
+def _is_within_attention_window(
+    row: Mapping[str, Any], snapshot_time: datetime
+) -> bool:
+    """Return whether authoritative activity is in the preceding 12 hours."""
+
+    latest_activity = _parse_utc_timestamp(row.get("latest_activity"))
+    return bool(
+        latest_activity is not None
+        and timedelta() <= snapshot_time - latest_activity <= _ATTENTION_WINDOW
+    )
 
 
 def discover_live_managed_agents(
@@ -140,6 +196,32 @@ def discover_live_managed_agents(
     return [row for row in rows if isinstance(row, Mapping) and row.get("live") is True]
 
 
+def discover_recently_completed_sessions(
+    status_node: Mapping[str, Any] | None,
+) -> list[Mapping[str, Any]]:
+    """Return bounded terminal-success rows from the canonical status root.
+
+    The root's ``recently_completed`` list is a recency-sorted projection of
+    all canonical completed sessions.  The legacy three-row preview is only a
+    compatibility fallback, never a source of completion inference.
+    """
+
+    if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
+        return []
+    rows = status_node.get("recently_completed")
+    if not isinstance(rows, list):
+        rows = status_node.get("completed_sessions_preview")
+    if not isinstance(rows, list):
+        return []
+    return [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and str(row.get("status") or "").casefold()
+        in {"complete", "completed", "finished", "success", "succeeded"}
+    ]
+
+
 def render_currently_running(
     report: CurrentlyRunningReport, *, now: datetime | None = None
 ) -> str:
@@ -151,7 +233,7 @@ def render_currently_running(
         if isinstance(status_node, Mapping)
         else ""
     )
-    lines: list[str] = ["**◈ Currently running**"]
+    lines: list[str] = ["# Currently running"]
     if stale_banner:
         # This canonical banner is intentionally verbatim and must be first.
         lines = [stale_banner, "", *lines]
@@ -159,6 +241,10 @@ def render_currently_running(
         snapshot = _snapshot_label(status_node)
         if snapshot:
             lines.extend((snapshot, ""))
+
+    attention = discover_attention_sessions(status_node)
+    completed = discover_recently_completed_sessions(status_node)
+    displayed_completed = completed[:_MAX_RECENT_COMPLETED]
 
     if report.status_error:
         lines.extend(
@@ -176,9 +262,24 @@ def render_currently_running(
         if degraded:
             lines.append(f"⚠️ {_degraded_label(degraded)}")
         if sessions:
+            lines.append(_subsection_heading("🟢", "Running", str(len(sessions))))
             lines.extend(_render_session(row) for row in sessions)
-        else:
-            lines.append("_No active epics or chains._")
+
+    if attention:
+        lines.append(_subsection_heading("⚠️", "Needs attention", str(len(attention))))
+        lines.extend(_render_session(row) for row in attention)
+    if displayed_completed:
+        lines.append(_subsection_heading("✅", "Recently completed", f"{len(displayed_completed)} shown"))
+        lines.extend(_render_completed_session(row) for row in displayed_completed)
+        omitted = max(
+            0,
+            len(completed) - len(displayed_completed),
+            int(status_node.get("recently_completed_omitted_count") or 0)
+            if isinstance(status_node, Mapping)
+            else 0,
+        )
+        if omitted:
+            lines.append(f"_…{omitted} older completed chains omitted._")
 
     lines.append("")
     if report.managed_agents_error:
@@ -209,12 +310,18 @@ def _epics_heading(summary: str | None = None) -> str:
 def _agents_heading(summary: str | None = None) -> str:
     """Return the consistent visual heading for resident-managed work."""
 
-    return _section_heading(_AGENTS_SECTION_ICON, "Resident-managed agents", summary)
+    return _section_heading(_AGENTS_SECTION_ICON, "Managed agents", summary)
+
+
+def _subsection_heading(icon: str, title: str, summary: str) -> str:
+    """Return a Discord Markdown H3 subordinate to the Epics & chains H2."""
+
+    return f"### {icon} {title} · {summary}"
 
 
 def _section_heading(icon: str, title: str, summary: str | None = None) -> str:
     suffix = f" · {summary}" if summary else ""
-    return f"**{icon} {title}{suffix}**"
+    return f"## {icon} {title}{suffix}"
 
 
 def _render_session(row: Mapping[str, Any]) -> str:
@@ -241,15 +348,55 @@ def _render_session(row: Mapping[str, Any]) -> str:
     overall_percent = _percent(progress.get("percent"))
     if overall_percent is not None:
         details.append(f"{overall_percent}% overall")
+        delta_1h = _percentage_point_delta(progress.get("epic_delta_1h"))
+        if delta_1h is not None:
+            details.append(f"{delta_1h:+g} pp in the past hour")
     else:
         details.append("overall progress unavailable")
     plan_percent = _percent(progress.get("plan_percent"))
     if plan_percent is not None:
         details.append(f"{plan_percent}% in-flight plan")
     session_status = _optional_label(row.get("status"))
-    if session_status and session_status.casefold() != status.casefold():
+    if session_status and session_status.casefold() == _ATTENTION_SESSION_STATUS:
+        details.append("⚠️ attention")
+        operator_next = _optional_label(row.get("operator_next"))
+        if operator_next:
+            details.append(_safe_label(operator_next))
+    elif session_status and session_status.casefold() != status.casefold():
         details.append(f"chain {session_status}")
     return f"• **{_safe_label(name)}**\n  `{_safe_label(status)}` · {' · '.join(details)}"
+
+
+def _percentage_point_delta(value: object) -> int | float | None:
+    """Return a canonical progress delta without treating absent history as zero."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _render_completed_session(row: Mapping[str, Any]) -> str:
+    """Render a terminal-success chain using only canonical status evidence."""
+
+    progress = row.get("progress") if isinstance(row.get("progress"), Mapping) else {}
+    name = _first_label(row.get("display_name"), row.get("session"), "unnamed session")
+    details = ["completed"]
+    completed_count = progress.get("completed_count", row.get("completed_count"))
+    milestone_count = progress.get("milestone_count", row.get("milestone_count"))
+    if (
+        isinstance(completed_count, int)
+        and not isinstance(completed_count, bool)
+        and isinstance(milestone_count, int)
+        and not isinstance(milestone_count, bool)
+        and milestone_count >= 0
+    ):
+        details.append(f"{completed_count}/{milestone_count} milestones")
+    elif (percent := _percent(progress.get("percent"))) is not None:
+        details.append(f"{percent}% overall")
+    latest_activity = _parse_utc_timestamp(row.get("completed_at") or row.get("latest_activity"))
+    if latest_activity is not None:
+        details.append(f"completed {format_timestamp(latest_activity, 'UTC')}")
+    suffix = f" · {' · '.join(details[1:])}" if len(details) > 1 else ""
+    return f"• **{_safe_label(name)}**\n  `{details[0]}`{suffix}"
 
 
 def _render_agent(row: Mapping[str, Any], *, now: datetime | None = None) -> str:
@@ -540,6 +687,8 @@ __all__ = [
     "CurrentlyRunningReport",
     "collect_currently_running",
     "discover_live_managed_agents",
+    "discover_attention_sessions",
+    "discover_recently_completed_sessions",
     "discover_running_sessions",
     "render_currently_running",
 ]
