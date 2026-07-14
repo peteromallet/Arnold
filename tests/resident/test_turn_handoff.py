@@ -95,8 +95,8 @@ def test_successful_durable_launch_finishes_before_poll_or_duplicate_result() ->
     response = asyncio.run(runner.run(_discord_request(), tools))
 
     assert response.final_text == (
-        "Launched resident-managed run `subagent-alpha`. "
-        "Terminal results will reply automatically to this message."
+        "Launched resident-managed run `subagent-alpha` (synthesis delivery owner). "
+        "One synthesis owner will consolidate terminal results and reply automatically to this message."
     )
     assert response.metadata["turn_handoff"] == "durable_subagents"
     assert response.metadata["launched_run_ids"] == ["subagent-alpha"]
@@ -147,8 +147,9 @@ def test_sequential_launches_acknowledge_all_runs_after_explicit_final_handoff()
     response = asyncio.run(runner.run(_discord_request(), tools))
 
     assert response.final_text == (
-        "Launched resident-managed runs `subagent-alpha`, `subagent-beta`. "
-        "Terminal results will reply automatically to this message."
+        "Launched resident-managed runs `subagent-alpha` (synthesis delivery owner); "
+        "`subagent-beta` (synthesis delivery owner). Each independently deliverable run "
+        "will reply automatically to this message."
     )
     assert response.metadata["launched_run_ids"] == ["subagent-alpha", "subagent-beta"]
     assert polled == []
@@ -235,7 +236,10 @@ def test_runtime_ack_and_terminal_custody_keep_exact_inbound_reply_owner(
         profile=MegaplanResidentProfile(store=store, authorizer=authorizer, config=config),
         runner=FakeAgentRunner(
             [
-                FakeAgentStep.call("launch_subagent", {"task": "do it"}),
+                FakeAgentStep.call(
+                    "launch_subagent",
+                    {"task": "do it", "description": "Do the requested work"},
+                ),
                 FakeAgentStep.final("duplicate terminal result"),
             ]
         ),
@@ -269,8 +273,9 @@ def test_runtime_ack_and_terminal_custody_keep_exact_inbound_reply_owner(
     assert acknowledgement.metadata["discord_reply_to_message_id"] == source_discord_message_id
     assert acknowledgement.metadata["discord_processing_continues"] is True
     assert acknowledgement.content == (
-        "Launched resident-managed run `subagent-exact-owner`. "
-        "Terminal results will reply automatically to this message."
+        "Launched resident-managed run `subagent-exact-owner` (synthesis delivery owner) — "
+        "Do the requested work. One synthesis owner will consolidate terminal results and reply "
+        "automatically to this message."
     )
 
 
