@@ -2571,6 +2571,37 @@ class TestCheckMetaRepairRecursion:
         assert result.recursing is False
         assert result.existing_meta_repair_ids == ()
 
+    def test_completion_verdict_is_not_counted_as_a_second_attempt(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "mr-custody-1.json").write_text(
+            json.dumps({
+                "meta_repair_id": "mr-custody-1",
+                "session": "recursion-test",
+                "outcome": "commit_custody_failed",
+            }),
+            encoding="utf-8",
+        )
+        (meta_dir / "meta_repair_verdict.json").write_text(
+            json.dumps({
+                "contract_id": "repair.meta_complete.1",
+                "boundary_id": "meta_repair_completion",
+                "session": "recursion-test",
+                "outcome": "commit_custody_failed",
+            }),
+            encoding="utf-8",
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test", repair_data_dir=repair_dir
+        )
+
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
+
     def test_repeated_commit_custody_failure_escalates(self, tmp_path: Path) -> None:
         repair_dir = tmp_path / "repair-data"
         meta_dir = repair_dir / "meta"

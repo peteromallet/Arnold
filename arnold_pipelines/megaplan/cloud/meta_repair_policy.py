@@ -66,6 +66,20 @@ def _is_unrecordable_launch_failure(data: dict) -> bool:
     return any(needle in joined for needle in _CODEX_LAUNCH_FAILURE_NEEDLES)
 
 
+def _is_completion_companion(data: dict) -> bool:
+    """Return True for the verdict artifact emitted by one meta-repair run.
+
+    ``meta_repair_verdict.json`` is evidence about the canonical attempt, not a
+    second attempt.  Counting both files can incorrectly exhaust a bounded
+    commit-custody retry and poison the recursion guard.
+    """
+
+    return (
+        str(data.get("contract_id") or "") == "repair.meta_complete.1"
+        and str(data.get("boundary_id") or "") == "meta_repair_completion"
+    )
+
+
 @dataclass(frozen=True)
 class RecursionCheckResult:
     """Result of a meta-repair recursion safety check.
@@ -126,6 +140,8 @@ def check_meta_repair_recursion(
         try:
             data = load_json(record_file, default={})
             if isinstance(data, dict) and data.get("session") == session:
+                if _is_completion_companion(data):
+                    continue
                 if _is_unrecordable_launch_failure(data):
                     continue
                 record_id = record_file.stem

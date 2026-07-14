@@ -591,6 +591,7 @@ def project_repair_custody(
                 continue
             if blocker_id and record_blocker_id != blocker_id:
                 continue
+            state, outcome, recorded_at, raw = _queue_dispatch_attempt_observation(record)
             attempts.append(
                 _build_attempt_record(
                     attempt_id=_as_text(record.get("attempt_id")),
@@ -600,10 +601,10 @@ def project_repair_custody(
                     blocker_id=record_blocker_id,
                     fingerprint=fingerprint,
                     request_id=request_id,
-                    state=ATTEMPT_STATE_RUNNING,
-                    outcome=REPAIRING,
-                    recorded_at=_as_text(record.get("created_at")),
-                    raw=record,
+                    state=state,
+                    outcome=outcome,
+                    recorded_at=recorded_at,
+                    raw=raw,
                 )
             )
     active_claim_request_ids: list[str] = []
@@ -3464,6 +3465,74 @@ def _build_attempt_record(
         "recorded_at": recorded_at,
         "raw": dict(raw),
     }
+
+
+def _queue_dispatch_attempt_observation(
+    record: Mapping[str, Any],
+) -> tuple[RepairAttemptState, str, str, Mapping[str, Any]]:
+    """Reconcile an immutable launch receipt with its managed-run manifest."""
+
+    default = (
+        ATTEMPT_STATE_RUNNING,
+        REPAIRING,
+        _as_text(record.get("created_at")),
+        record,
+    )
+    run_id = _as_text(record.get("managed_run_id"))
+    manifest_text = _as_text(record.get("managed_manifest_path"))
+    if not run_id or not manifest_text:
+        return default
+
+    from arnold_pipelines.megaplan.managed_agent import is_managed_manifest, observed_status
+
+    manifest_path = Path(manifest_text)
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest_payload = {}
+    manifest = _as_mapping(manifest_payload)
+    if not isinstance(manifest, Mapping) or not is_managed_manifest(manifest):
+        return default
+    if _as_text(manifest.get("run_id")) != run_id:
+        return default
+    links = _as_mapping(manifest.get("links"))
+    for record_key, link_key in (
+        ("request_id", "repair_request_id"),
+        ("blocker_id", "blocker_id"),
+    ):
+        expected = _as_text(record.get(record_key))
+        observed = _as_text(links.get(link_key))
+        if expected and observed != expected:
+            return default
+
+    status, live = observed_status(manifest, manifest_path)
+    if status in {"reserved", "launching"}:
+        state = ATTEMPT_STATE_CLAIMED
+    elif status in {"running", "adopting"}:
+        state = ATTEMPT_STATE_RUNNING
+    elif status == "completed":
+        state = ATTEMPT_STATE_SUCCEEDED
+    elif status in {"cancelled", "superseded"}:
+        state = ATTEMPT_STATE_CANCELLED
+    else:
+        state = ATTEMPT_STATE_FAILED
+    outcome = _as_text(manifest.get("terminal_outcome"))
+    if state in {ATTEMPT_STATE_CLAIMED, ATTEMPT_STATE_RUNNING}:
+        outcome = REPAIRING
+    elif not outcome:
+        outcome = status
+    raw = {
+        "dispatch_attempt": dict(record),
+        "managed_agent_manifest": dict(manifest),
+        "observed_status": status,
+        "observed_live": live,
+    }
+    recorded_at = (
+        _as_text(manifest.get("updated_at"))
+        or _as_text(manifest.get("finished_at"))
+        or _as_text(record.get("created_at"))
+    )
+    return state, outcome, recorded_at, raw
 
 
 def _problem_signature_matches_fingerprint(

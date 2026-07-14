@@ -232,6 +232,53 @@ def test_runtime_revision_is_evidence_but_not_canonical_source_drift(tmp_path: P
     assert load_chain_state(spec_path).metadata["execution_binding"]
 
 
+def test_bound_import_root_outweighs_unrelated_global_editable_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    state = _bound_state(spec_path)
+    expected = state.metadata["execution_binding"]["launched_identity"]
+    expected["runtime"]["editable_root"] = expected["runtime"]["import_root"]
+    active = json.loads(json.dumps(expected))
+    active["runtime"]["editable_root"] = str(tmp_path / "unrelated-resident-runtime")
+    active["runtime"]["editable_revision"] = "f" * 40
+    active["ready"] = False
+    active["errors"] = ["editable_runtime_import_root_mismatch"]
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _spec_path: active,
+    )
+
+    report = execution_binding_report(spec_path, state)
+
+    assert report["status"] == "match"
+    assert report["drift_fields"] == []
+    assert report["bound_import_root_match"] is True
+
+
+def test_bound_import_root_does_not_cover_actual_import_drift(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    state = _bound_state(spec_path)
+    expected = state.metadata["execution_binding"]["launched_identity"]
+    expected["runtime"]["editable_root"] = expected["runtime"]["import_root"]
+    active = json.loads(json.dumps(expected))
+    active["runtime"]["import_root"] = str(tmp_path / "wrong-import-root")
+    active["runtime"]["editable_root"] = str(tmp_path / "unrelated-resident-runtime")
+    active["ready"] = False
+    active["errors"] = ["editable_runtime_import_root_mismatch"]
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _spec_path: active,
+    )
+
+    report = execution_binding_report(spec_path, state)
+
+    assert report["status"] == "drift"
+    assert report["bound_import_root_match"] is False
+
+
 def test_state_save_never_rewrites_immutable_launch_identity(tmp_path: Path) -> None:
     spec_path = _pinned_chain(tmp_path)
     state = _bound_state(spec_path)
