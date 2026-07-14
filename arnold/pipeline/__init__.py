@@ -218,6 +218,12 @@ from arnold.pipeline.types import (
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
 from arnold.execution.driver import AdvanceOutcome, CheckpointOutcome
+from arnold.execution.step_invocation import (
+    StepInvocation,
+    StepInvocationAdapter,
+    StepInvocationAdapterRegistry,
+    StepInvocationResult,
+)
 from arnold.pipeline.driver import StepwiseDriver
 
 __all__ = [
@@ -289,6 +295,10 @@ __all__ = [
     "StepIOOperation",
     "StepIOPolicy",
     "StepContext",
+    "StepInvocation",
+    "StepInvocationAdapter",
+    "StepInvocationAdapterRegistry",
+    "StepInvocationResult",
     "StepResult",
     "StepwiseDriver",
     "Suspension",

@@ -5,9 +5,61 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from dataclasses import dataclass
+
 from .._core.user_config import config_dir
 from ..fallback_chains import normalize_fallback_spec_list
 from ..types import CliError, is_premium_placeholder_agent, parse_agent_spec
+
+
+@dataclass(frozen=True)
+class ProfileLoadError(ValueError):
+    """Structured profile-loading failure."""
+
+    code: str
+    message: str
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.message}"
+
+
+@dataclass(frozen=True)
+class AgentSpecShape:
+    """Parsed neutral agent-spec shape."""
+
+    agent: str
+    model: str | None = None
+    effort: str | None = None
+
+
+# Re-export neutral profile helpers from the legacy profiles.py module.
+# The package shadows profiles.py, so we load it via importlib and
+# re-export the names tests expect.
+def __getattr__(name: str):
+    import importlib.util
+    import sys
+
+    _mod_name = "_arnold_legacy_profiles"
+    if _mod_name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            _mod_name,
+            str(Path(__file__).parent.parent / "profiles.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load legacy profiles module for {name!r}")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[_mod_name] = mod
+        spec.loader.exec_module(mod)
+    legacy = sys.modules[_mod_name]
+
+    if name in ("ProfileLoadError", "AgentSpecShape"):
+        # These are defined above; don't fall through.
+        raise AttributeError(name)
+    if hasattr(legacy, name):
+        return getattr(legacy, name)
+    raise AttributeError(
+        f"module 'arnold_pipelines.megaplan.profiles' has no attribute {name!r}"
+    )
 from .policy import (
     CANONICAL_PREP_MODELS,
     DEFAULT_AGENT_ROUTING,
