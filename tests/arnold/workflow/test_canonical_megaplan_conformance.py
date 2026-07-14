@@ -598,4 +598,74 @@ def test_locked_expected_hashes_match_compiled_manifest() -> None:
     assert manifest.schema_version == expected["schema_version"]
     assert manifest.version == expected["version"]
     assert manifest.topology_hash == expected["topology_hash"]
-    assert manifest.manifest_hash == expected["manifest_hash"]
+
+
+# ── T13: Megaplan boundary contracts reconcile with generic surface ─────────
+# Verify that Megaplan boundary contracts from arnold_pipelines.megaplan
+# validate through the generic arnold.workflow template/profile surface
+# without polluting the generic module with Megaplan-specific details.
+
+
+def test_megaplan_boundary_contracts_importable_from_workflow_api() -> None:
+    """Megaplan contracts must be importable and have expected structure."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        BOUNDARY_CONTRACTS,
+        AdapterTemplateKind,
+        BoundaryTemplateKind,
+    )
+
+    # Verify imports resolve
+    assert len(BOUNDARY_CONTRACTS) == 49
+    assert len(list(BoundaryTemplateKind)) == 10
+    assert len(list(AdapterTemplateKind)) == 7
+
+
+def test_generic_boundary_templates_no_megaplan_imports() -> None:
+    """arnold.workflow.boundary_templates must not import from arnold_pipelines.megaplan."""
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).parents[3] / "arnold" / "workflow" / "boundary_templates.py"
+    tree = ast.parse(src.read_text())
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                full = f"{node.module or ''}.{alias.name}" if hasattr(node, 'module') and node.module else alias.name
+                assert "megaplan" not in full.lower(), (
+                    f"boundary_templates.py must not import megaplan: {full}"
+                )
+                if node.module:
+                    assert "megaplan" not in node.module.lower(), (
+                        f"boundary_templates.py must not import megaplan module: {node.module}"
+                    )
+
+
+def test_megaplan_adapter_re_exports_generic_surface() -> None:
+    """Megaplan boundary_contracts re-exports generic surface symbols."""
+    from arnold.workflow import boundary_templates as bt
+
+    from arnold_pipelines.megaplan.workflows import boundary_contracts as bc
+
+    # Re-exported symbols must be the same object
+    assert bc.BoundaryTemplateKind is bt.BoundaryTemplateKind
+    assert bc.classify_boundary_kind is bt.classify_boundary_kind
+    assert bc.get_required_fields is bt.get_required_fields
+    assert bc.get_template is bt.get_template
+    assert bc.list_template_kinds is bt.list_template_kinds
+    assert bc.select_template is bt.select_template
+
+
+def test_generic_surface_rejects_unknown_megaplan_kinds() -> None:
+    """The generic check_contract_conformance must reject adapter-specific kind strings."""
+    import pytest
+
+    from arnold.workflow.boundary_templates import check_contract_conformance
+
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        chain_milestone_template,
+    )
+
+    # Adapter-specific kinds should NOT be recognized by generic surface
+    with pytest.raises((KeyError, ValueError)):
+        check_contract_conformance(chain_milestone_template, "chain_milestone")

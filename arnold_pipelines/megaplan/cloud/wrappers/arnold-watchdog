@@ -4495,6 +4495,29 @@ for item in recent_attempts:
             failure_kinds.append(candidate.strip())
             break
 
+# ── semantic/custody fingerprint recurrence evidence ─────────────────
+semantic_fingerprints: list[str] = []
+# Current fingerprint from initial_facts (most recent)
+initial_facts = payload.get("initial_facts")
+if isinstance(initial_facts, dict):
+    sem_health = initial_facts.get("semantic_health")
+    if isinstance(sem_health, dict):
+        fp = str(sem_health.get("fingerprint") or "").strip()
+        if fp:
+            semantic_fingerprints.append(fp)
+# Fingerprints from recent attempts (oldest first in attempts list,
+# then the current one above — caller expects most-recent-first)
+for item in recent_attempts:
+    fc = item.get("failure_context")
+    if isinstance(fc, dict):
+        sem_health = fc.get("semantic_health")
+        if isinstance(sem_health, dict):
+            fp = str(sem_health.get("fingerprint") or "").strip()
+            if fp:
+                semantic_fingerprints.append(fp)
+# Most-recent-first ordering for evaluate_meta_repair_triggers
+semantic_fingerprints.reverse()
+
 attempt_outcomes = [
     str(item.get("outcome") or repair_outcome or "").strip()
     for item in recent_attempts
@@ -4639,6 +4662,7 @@ classification, _ = evaluate_meta_repair_triggers(
     repair_outcome=repair_outcome,
     attempt_outcomes=attempt_outcomes,
     failure_kinds=failure_kinds,
+    semantic_fingerprints=semantic_fingerprints,
     has_state_inspection_error=has_state_inspection_error,
     has_model_tool_launch_error=has_model_tool_launch_error,
     discord_delivery_failed=discord_delivery_failed,

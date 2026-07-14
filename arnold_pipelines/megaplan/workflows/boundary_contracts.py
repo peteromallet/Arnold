@@ -19,7 +19,28 @@ semantic-health work.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from arnold.workflow.boundary_evidence import BoundaryContract, BoundaryPhase
+from arnold.workflow.boundary_templates import (
+    BoundaryTemplateKind,
+    REQUIRED_FIELDS_APPROVAL_BOUNDARY,
+    REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY,
+    REQUIRED_FIELDS_ARTIFACT_PROMOTION,
+    REQUIRED_FIELDS_EXECUTION_CUSTODY,
+    REQUIRED_FIELDS_EXTERNAL_EFFECT,
+    REQUIRED_FIELDS_EXTERNAL_WITNESS,
+    REQUIRED_FIELDS_GRAPH_JOIN_FANOUT,
+    REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER,
+    REQUIRED_FIELDS_REVISION_BOUNDARY,
+    REQUIRED_FIELDS_VALIDATION_BOUNDARY,
+    check_contract_conformance as _generic_check_contract_conformance,
+    classify_boundary_kind,
+    get_required_fields,
+    get_template,
+    list_template_kinds,
+    select_template,
+)
 from arnold.workflow.semantic_evidence import (
     S2_CRITIQUE_ROW_ID,
     S2_GATE_ROW_ID,
@@ -34,6 +55,14 @@ from arnold.workflow.semantic_evidence import (
     S3_TIEBREAKER_SYNTHESIS_ROW_ID,
     S4_EXECUTE_ROW_ID,
 )
+
+# ── Re-export generic template/profile surface symbols ──────────────────────
+# These are imported from arnold.workflow.boundary_templates and re-exported
+# so that Megaplan consumers can use the same stable identifiers without
+# importing from arnold.workflow directly.  The registry below extends them
+# with Megaplan-adapter-specific kinds and templates.
+
+__all__: list[str] = []
 
 # ── S5 review/finalize stable row ID namespace ─────────────────────────────
 # These rows remain local to the registry until the downstream checker adds
@@ -89,27 +118,60 @@ CUSTODY_UNMANAGED_WARNING_ROW_ID = "custody.unmanaged_warning.1"
 CUSTODY_BLOCKED_RELAUNCH_ROW_ID = "custody.blocked_relaunch.1"
 CUSTODY_ESCALATED_UNCHANGED_ROW_ID = "custody.escalated_unchanged.1"
 
+# ── Adapter-specific template kind identifiers ─────────────────────────────
+# BoundaryTemplateKind (imported from arnold.workflow.boundary_templates)
+# provides 10 generic kinds.  The Megaplan adapter adds 7 more for
+# domain-specific boundary shapes that are not part of the generic surface.
+# Physical/external evidence and partial acceptance remain adapter details
+# — they are NOT promoted into the generic BoundaryTemplateKind enum.
+
+
+class AdapterTemplateKind(StrEnum):
+    """Megaplan-adapter-specific template kind identifiers.
+
+    These extend the generic :class:`BoundaryTemplateKind` with shapes that
+    are specific to the Megaplan workflow model: lifecycle transitions,
+    reducer fan-in, chain milestones, PR/CI transitions, repair verdicts,
+    auditor completions, and cloud custody classifications.
+
+    Physical/external evidence keys (e.g. ``physical_evidence_ref``,
+    ``external_artifact_ref``) and partial-acceptance metadata stay in
+    adapter ``details`` mappings — they are never promoted into generic
+    template profile fields.
+    """
+
+    LIFECYCLE_TRANSITION = "lifecycle_transition"
+    """Lifecycle transition boundary: phase→phase durable transition."""
+
+    REDUCER = "reducer"
+    """Reducer boundary: fan-in aggregation into canonical payload."""
+
+    CHAIN_MILESTONE = "chain_milestone"
+    """Chain milestone boundary: milestone start→completion transition."""
+
+    PR_TRANSITION = "pr_transition"
+    """PR/CI transition boundary: PR ready→merged durable evidence."""
+
+    REPAIR_VERDICT = "repair_verdict"
+    """Repair verdict boundary: cleared/no-fix/escalation verdict."""
+
+    AUDITOR_COMPLETION = "auditor_completion"
+    """Auditor completion boundary: auditor verdict set produced."""
+
+    CLOUD_CUSTODY = "cloud_custody"
+    """Cloud custody classification boundary: custody classification."""
+
+
 # ── Required-field profiles ────────────────────────────────────────────────
+# The 10 generic profiles are imported from arnold.workflow.boundary_templates
+# and re-exported above (REQUIRED_FIELDS_REVISION_BOUNDARY, etc.).
+#
+# The 7 adapter-specific profiles below cover Megaplan-only boundary shapes.
 # Each frozenset enumerates the BoundaryContract top-level fields *and*
 # detail keys that must be populated for a contract of that shape.
 # Field names prefixed with ``details.`` refer to keys nested inside the
 # ``details`` mapping.  Profiles are declarative: they do not route or
 # dispatch.
-
-REQUIRED_FIELDS_ARTIFACT_PROMOTION: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "expected_state_delta",
-        "phase_result_required",
-        "receipt_required",
-        "details.effect_id",
-        "details.artifact_policy_ref",
-        "details.promotion_kind",
-    }
-)
 
 REQUIRED_FIELDS_LIFECYCLE_TRANSITION: frozenset[str] = frozenset(
     {
@@ -135,115 +197,6 @@ REQUIRED_FIELDS_REDUCER: frozenset[str] = frozenset(
         "details.reducer_promotion",
         "details.reducer_ref",
         "details.fan_in_ref",
-    }
-)
-
-REQUIRED_FIELDS_EXTERNAL_EFFECT: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "details.effect_kind",
-        "details.effect_id",
-    }
-)
-
-REQUIRED_FIELDS_EXECUTION_CUSTODY: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "phase",
-        "required_artifacts",
-        "authority_required",
-        "details.custody_scope",
-        "details.fresh_session",
-    }
-)
-
-REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "authority_required",
-        "details.approval_scope",
-        "details.suspension_route_id",
-        "details.resume_policy_ref",
-    }
-)
-
-REQUIRED_FIELDS_GRAPH_JOIN_FANOUT: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "details.fan_out_refs",
-        "details.fan_in_ref",
-        "details.join_requirements",
-    }
-)
-
-REQUIRED_FIELDS_EXTERNAL_WITNESS: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "details.witness_ref",
-        "details.witness_kind",
-    }
-)
-
-REQUIRED_FIELDS_REVISION_BOUNDARY: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "phase",
-        "required_artifacts",
-        "expected_state_delta",
-        "details.revision_kind",
-        "details.revision_log_ref",
-    }
-)
-
-REQUIRED_FIELDS_VALIDATION_BOUNDARY: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "phase",
-        "required_artifacts",
-        "expected_state_delta",
-        "phase_result_required",
-        "receipt_required",
-        "details.validation_kind",
-    }
-)
-
-REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "details.handoff_from",
-        "details.handoff_to",
-        "details.artifact_policy_ref",
-    }
-)
-
-REQUIRED_FIELDS_APPROVAL_BOUNDARY: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "authority_required",
-        "details.approval_scope",
     }
 )
 
@@ -643,24 +596,42 @@ TYPED_BOUNDARY_TEMPLATES_BY_ID: dict[str, BoundaryContract] = {
     t.boundary_id: t for t in TYPED_BOUNDARY_TEMPLATES
 }
 
-REQUIRED_FIELD_PROFILES: tuple[tuple[str, frozenset[str]], ...] = (
-    ("artifact_promotion", REQUIRED_FIELDS_ARTIFACT_PROMOTION),
+# ── Combined required-field profiles registry ─────────────────────────────
+# The 10 generic profiles from arnold.workflow.boundary_templates PLUS the
+# 7 adapter-specific profiles below.  All 17 are presented through the same
+# (kind_label, frozenset) tuple shape as before for backward compatibility.
+#
+# ADAPTER_REQUIRED_FIELD_PROFILES and ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND
+# expose only the 7 adapter-specific kinds keyed by AdapterTemplateKind values.
+
+ADAPTER_REQUIRED_FIELD_PROFILES: tuple[tuple[str, frozenset[str]], ...] = (
     ("lifecycle_transition", REQUIRED_FIELDS_LIFECYCLE_TRANSITION),
     ("reducer", REQUIRED_FIELDS_REDUCER),
-    ("external_effect", REQUIRED_FIELDS_EXTERNAL_EFFECT),
-    ("execution_custody", REQUIRED_FIELDS_EXECUTION_CUSTODY),
-    ("human_approval_waiver", REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER),
-    ("graph_join_fanout", REQUIRED_FIELDS_GRAPH_JOIN_FANOUT),
-    ("external_witness", REQUIRED_FIELDS_EXTERNAL_WITNESS),
-    ("revision_boundary", REQUIRED_FIELDS_REVISION_BOUNDARY),
-    ("validation_boundary", REQUIRED_FIELDS_VALIDATION_BOUNDARY),
-    ("artifact_handoff_boundary", REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY),
-    ("approval_boundary", REQUIRED_FIELDS_APPROVAL_BOUNDARY),
     ("chain_milestone", REQUIRED_FIELDS_CHAIN_MILESTONE),
     ("pr_transition", REQUIRED_FIELDS_PR_TRANSITION),
     ("repair_verdict", REQUIRED_FIELDS_REPAIR_VERDICT),
     ("auditor_completion", REQUIRED_FIELDS_AUDITOR_COMPLETION),
     ("cloud_custody", REQUIRED_FIELDS_CLOUD_CUSTODY),
+)
+
+ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND: dict[str, frozenset[str]] = {
+    kind: fields for kind, fields in ADAPTER_REQUIRED_FIELD_PROFILES
+}
+
+REQUIRED_FIELD_PROFILES: tuple[tuple[str, frozenset[str]], ...] = (
+    # ── Generic profiles (from boundary_templates) ─────────────────────
+    ("artifact_promotion", REQUIRED_FIELDS_ARTIFACT_PROMOTION),
+    ("execution_custody", REQUIRED_FIELDS_EXECUTION_CUSTODY),
+    ("external_effect", REQUIRED_FIELDS_EXTERNAL_EFFECT),
+    ("external_witness", REQUIRED_FIELDS_EXTERNAL_WITNESS),
+    ("graph_join_fanout", REQUIRED_FIELDS_GRAPH_JOIN_FANOUT),
+    ("human_approval_waiver", REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER),
+    ("revision_boundary", REQUIRED_FIELDS_REVISION_BOUNDARY),
+    ("validation_boundary", REQUIRED_FIELDS_VALIDATION_BOUNDARY),
+    ("artifact_handoff_boundary", REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY),
+    ("approval_boundary", REQUIRED_FIELDS_APPROVAL_BOUNDARY),
+    # ── Adapter-specific profiles ──────────────────────────────────────
+    *ADAPTER_REQUIRED_FIELD_PROFILES,
 )
 
 REQUIRED_FIELD_PROFILES_BY_KIND: dict[str, frozenset[str]] = {
@@ -1996,10 +1967,15 @@ def get_template_by_id(template_id: str) -> BoundaryContract | None:
 def get_profile_by_kind(kind: str) -> frozenset[str] | None:
     """Look up a required-field profile by its kind label.
 
-    Profiles are stored in :data:`REQUIRED_FIELD_PROFILES_BY_KIND`.
-    Returns ``None`` when *kind* is not a registered profile.
+    Checks both generic (from :mod:`arnold.workflow.boundary_templates`)
+    and adapter-specific profiles.  Returns ``None`` when *kind* is not
+    a registered profile.
     """
-    return REQUIRED_FIELD_PROFILES_BY_KIND.get(kind)
+    # Try combined registry first, then adapter-only
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND.get(kind)
+    if profile is not None:
+        return profile
+    return ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND.get(kind)
 
 
 def list_template_ids() -> tuple[str, ...]:
@@ -2008,8 +1984,52 @@ def list_template_ids() -> tuple[str, ...]:
 
 
 def list_profile_kinds() -> tuple[str, ...]:
-    """Return all registered profile kind labels."""
+    """Return all registered profile kind labels (generic + adapter)."""
     return tuple(REQUIRED_FIELD_PROFILES_BY_KIND.keys())
+
+
+# ── Boundary conformance bridge ────────────────────────────────────────────
+# Delegates to the generic check_contract_conformance from boundary_templates
+# for generic kinds, and falls back to adapter-specific profile checking for
+# Megaplan-only kinds.  Physical/external evidence and partial acceptance
+# remain in adapter details — they are not validated through the generic path.
+
+
+def check_contract_conformance(
+    contract: BoundaryContract,
+    kind: BoundaryTemplateKind | AdapterTemplateKind | str,
+) -> tuple[str, ...]:
+    """Check which required fields are missing from *contract* for *kind*.
+
+    For generic :class:`BoundaryTemplateKind` values this delegates to
+    :func:`arnold.workflow.boundary_templates.check_contract_conformance`.
+    For adapter-specific :class:`AdapterTemplateKind` values it uses the
+    adapter profile registry.
+
+    Args:
+        contract: The concrete :class:`BoundaryContract` to check.
+        kind: A :class:`BoundaryTemplateKind`, :class:`AdapterTemplateKind`,
+              or string kind label.
+
+    Returns:
+        Tuple of missing field paths (empty if fully conformant).
+    """
+    kind_str = kind.value if hasattr(kind, "value") else kind
+
+    # Try generic path first
+    try:
+        return _generic_check_contract_conformance(contract, kind_str)
+    except (KeyError, ValueError):
+        pass
+
+    # Fall back to adapter-specific
+    profile = ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND.get(kind_str)
+    if profile is None:
+        raise KeyError(f"Unknown template kind: {kind_str!r}")
+
+    # Use local contract_satisfies_profile for adapter-specific kinds
+    _, missing = contract_satisfies_profile(contract, profile)
+    return missing
 
 
 # ── Structural diff helpers ────────────────────────────────────────────────
@@ -2147,10 +2167,14 @@ def _is_empty_value(value: object) -> bool:
 
 
 __all__ = [
+    "AdapterTemplateKind",
+    "ADAPTER_REQUIRED_FIELD_PROFILES",
+    "ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND",
     "ApprovalBoundary",
     "ArtifactHandoffBoundary",
     "BOUNDARY_CONTRACTS",
     "BOUNDARY_CONTRACTS_BY_ID",
+    "BoundaryTemplateKind",
     "EXEMPTION_REGISTRY",
     "OVERRIDE_AUTHORITY_CONTRACTS",
     "PHASE_FAMILY_COVERAGE_MATRIX",
@@ -2185,6 +2209,8 @@ __all__ = [
     "chain_milestone_start",
     "chain_milestone_template",
     "challenger_to_synthesis",
+    "check_contract_conformance",
+    "classify_boundary_kind",
     "cloud_custody_blocked_relaunch_failure",
     "cloud_custody_complete",
     "cloud_custody_escalated_repeated_unchanged",
@@ -2214,12 +2240,15 @@ __all__ = [
     "gate_to_revise",
     "get_contract_by_id",
     "get_profile_by_kind",
+    "get_required_fields",
+    "get_template",
     "get_template_by_id",
     "graph_join_fanout_template",
     "human_approval_waiver_template",
     "lifecycle_transition_template",
     "list_profile_kinds",
     "list_template_ids",
+    "list_template_kinds",
     "meta_repair_completion",
     "ordinary_repair_completion",
     "parent_rejoin_promotion",
@@ -2247,5 +2276,6 @@ __all__ = [
     "review_rework_effects",
     "researcher_to_challenger",
     "revise_to_critique",
+    "select_template",
     "synthesis_to_decision",
 ]

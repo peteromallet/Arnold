@@ -359,6 +359,7 @@ def test_audit_incident_emits_layer_findings_without_mutating_state() -> None:
         "stale_claim",
         "missing_evidence",
         "recurrence",
+        "semantic_custody",
     }
     finding_codes = {finding["code"] for finding in result["findings"] if finding["status"] != "ok"}
     assert "project_progress_stalled" in finding_codes
@@ -769,6 +770,358 @@ def test_auditor_recursion_guard() -> None:
     assert finding["cycle_detected"] is True
     assert result["audit_complete"]["outcome"] == "auditor_human_escalation"
     assert result["next_expected_event"] == "auditor_escalate_to_human"
+
+
+# ---------------------------------------------------------------------------
+# T6: Semantic/custody auditor reason codes — five deterministic checks
+#     consuming snapshot facts only (never recomputing findings independently)
+# ---------------------------------------------------------------------------
+
+
+class TestUnresolvedSemanticFindings:
+    """Auditor detects unresolved semantic findings from snapshot data."""
+
+    def test_detects_when_total_count_positive(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                semantic_health={
+                    "schema": "arnold.workflow.cloud_counts_summary.v1",
+                    "session_id": "session-audit-1",
+                    "fingerprint": "abc123def456",
+                    "total_count": 3,
+                    "counts_by_kind": {"missing_artifact": 2, "stale_observation": 1},
+                    "counts_by_boundary": {"gate": 2, "execute": 1},
+                    "counts_by_phase": {"gate": 2, "execute": 1},
+                    "counts_by_repair_domain": {},
+                },
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="unresolved_semantic_findings")
+        assert finding["layer"] == "semantic_custody"
+        assert finding["status"] == "error"
+        assert finding["severity"] == "error"
+        assert finding["total_count"] == 3
+        assert finding["fingerprint"] == "abc123def456"
+        assert finding["recommendation"] == "immediate_repair.repair_attempt"
+
+    def test_no_finding_when_total_count_zero(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                semantic_health={
+                    "schema": "arnold.workflow.cloud_counts_summary.v1",
+                    "session_id": "session-audit-1",
+                    "fingerprint": "",
+                    "total_count": 0,
+                    "counts_by_kind": {},
+                    "counts_by_boundary": {},
+                    "counts_by_phase": {},
+                    "counts_by_repair_domain": {},
+                },
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["layer"] == "semantic_custody"
+        assert finding["status"] == "ok"
+
+    def test_no_finding_when_semantic_health_missing(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["layer"] == "semantic_custody"
+        assert finding["status"] == "ok"
+
+
+class TestStaleActiveStepWorker:
+    """Auditor detects stale active-step workers from snapshot."""
+
+    def test_detects_stale_worker(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                activity_phase="execute",
+                last_activity="2026-07-03T12:00:00Z",
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="stale_active_step_worker")
+        assert finding["layer"] == "semantic_custody"
+        assert finding["status"] == "warn"
+        assert finding["severity"] == "warn"
+        assert finding["activity_phase"] == "execute"
+        assert finding["recommendation"] == "watchdog.dispatch"
+
+    def test_no_finding_when_worker_is_fresh(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                activity_phase="execute",
+                last_activity="2026-07-03T19:50:00Z",
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["status"] == "ok"
+
+    def test_no_finding_when_activity_phase_missing(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(last_activity="2026-07-03T12:00:00Z"),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["status"] == "ok"
+
+
+class TestUnmanagedLiveProcess:
+    """Auditor detects unmanaged live processes from custody state."""
+
+    @pytest.mark.parametrize("custody_state", [
+        "unmanaged-running-with-warning",
+        "blocked-relaunch-failure",
+    ])
+    def test_detects_unmanaged_custody(self, custody_state: str) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(custody_state=custody_state),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="unmanaged_live_process")
+        assert finding["layer"] == "semantic_custody"
+        assert finding["status"] == "warn"
+        assert finding["severity"] == "warn"
+        assert finding["custody_state"] == custody_state
+        assert finding["recommendation"] == "watchdog.dispatch"
+
+    @pytest.mark.parametrize("custody_state", [
+        "managed-running",
+        "complete",
+    ])
+    def test_no_finding_for_managed_custody(self, custody_state: str) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(custody_state=custody_state),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["status"] == "ok"
+
+    def test_no_finding_when_custody_missing(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["status"] == "ok"
+
+
+class TestRepairSuccessWithoutCustody:
+    """Auditor detects repair success without managed custody."""
+
+    @pytest.mark.parametrize("repair_state", ["recovered", "completed", "fixed", "verified_recovered"])
+    def test_detects_repair_success_without_custody(self, repair_state: str) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                repair_state=repair_state,
+                custody_state="unmanaged-running-with-warning",
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="repair_success_without_custody")
+        assert finding["layer"] == "semantic_custody"
+        assert finding["status"] == "warn"
+        assert finding["severity"] == "warn"
+        assert finding["repair_state"] == repair_state
+        assert finding["recommendation"] == "watchdog.dispatch"
+
+    def test_no_finding_when_repair_success_with_managed_custody(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                repair_state="recovered",
+                custody_state="managed-running",
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["status"] == "ok"
+
+    def test_no_finding_when_repair_state_not_success(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                repair_state="active",
+                custody_state="managed-running",
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        # repair_success_without_custody should NOT fire when repair_state is not a success state
+        repair_codes = {
+            f["code"]
+            for f in result["findings"]
+            if f["layer"] == "semantic_custody" and f["status"] != "ok"
+        }
+        assert "repair_success_without_custody" not in repair_codes
+
+
+class TestCustodyDisagreement:
+    """Auditor detects watchdog/status custody disagreement."""
+
+    def test_detects_custody_disagreement(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                custody_state="managed-running",
+                watchdog={
+                    "last_reported_at": "2026-07-03T19:50:00Z",
+                    "custody_state": "unmanaged-running-with-warning",
+                },
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="custody_disagreement")
+        assert finding["layer"] == "semantic_custody"
+        assert finding["status"] == "error"
+        assert finding["severity"] == "error"
+        assert finding["watchdog_custody"] == "unmanaged-running-with-warning"
+        assert finding["status_custody"] == "managed-running"
+        assert finding["recommendation"] == "auditor_escalate_to_human"
+
+    def test_no_finding_when_custody_agrees(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                custody_state="managed-running",
+                watchdog={
+                    "last_reported_at": "2026-07-03T19:50:00Z",
+                    "custody_state": "managed-running",
+                },
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["status"] == "ok"
+
+    def test_no_finding_when_watchdog_custody_missing(self) -> None:
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                custody_state="managed-running",
+                watchdog={"last_reported_at": "2026-07-03T19:50:00Z"},
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        finding = _finding(result, code="semantic_custody_clear")
+        assert finding["status"] == "ok"
+
+
+class TestSemanticCustodyDeterminism:
+    """Verifies deterministic behavior across identical snapshot inputs."""
+
+    def test_same_input_produces_same_findings(self) -> None:
+        snapshot = _snapshot(
+            semantic_health={
+                "schema": "arnold.workflow.cloud_counts_summary.v1",
+                "session_id": "session-audit-1",
+                "fingerprint": "fp1",
+                "total_count": 2,
+                "counts_by_kind": {"missing_artifact": 2},
+                "counts_by_boundary": {"execute": 2},
+                "counts_by_phase": {"execute": 2},
+                "counts_by_repair_domain": {},
+            },
+            custody_state="unmanaged-running-with-warning",
+            repair_state="recovered",
+            activity_phase="execute",
+            last_activity="2026-07-03T12:00:00Z",
+            watchdog={
+                "last_reported_at": "2026-07-03T19:50:00Z",
+                "custody_state": "managed-running",
+            },
+        )
+
+        result1 = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=deepcopy(snapshot),
+            now="2026-07-03T20:00:00Z",
+        )
+        result2 = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=deepcopy(snapshot),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        codes1 = {f["code"] for f in result1["findings"] if f["layer"] == "semantic_custody"}
+        codes2 = {f["code"] for f in result2["findings"] if f["layer"] == "semantic_custody"}
+        assert codes1 == codes2
+        assert "unresolved_semantic_findings" in codes1
+        assert "stale_active_step_worker" in codes1
+        assert "unmanaged_live_process" in codes1
+        assert "repair_success_without_custody" in codes1
+        assert "custody_disagreement" in codes1
+
+    def test_multiple_findings_can_coexist(self) -> None:
+        """All five reason codes can fire simultaneously on a problematic snapshot."""
+        result = audit_projection_input(
+            _projection_input(),
+            live_process_snapshot=_snapshot(
+                semantic_health={
+                    "schema": "arnold.workflow.cloud_counts_summary.v1",
+                    "session_id": "session-audit-1",
+                    "fingerprint": "fp1",
+                    "total_count": 5,
+                    "counts_by_kind": {"missing_artifact": 5},
+                    "counts_by_boundary": {},
+                    "counts_by_phase": {},
+                    "counts_by_repair_domain": {},
+                },
+                custody_state="blocked-relaunch-failure",
+                repair_state="completed",
+                activity_phase="execute",
+                last_activity="2026-07-03T11:00:00Z",
+                watchdog={
+                    "last_reported_at": "2026-07-03T19:50:00Z",
+                    "custody_state": "complete",
+                },
+            ),
+            now="2026-07-03T20:00:00Z",
+        )
+
+        semantic_codes = {
+            f["code"]
+            for f in result["findings"]
+            if f["layer"] == "semantic_custody" and f["status"] != "ok"
+        }
+        assert semantic_codes == {
+            "unresolved_semantic_findings",
+            "stale_active_step_worker",
+            "unmanaged_live_process",
+            "repair_success_without_custody",
+            "custody_disagreement",
+        }
 
 
 # ---------------------------------------------------------------------------

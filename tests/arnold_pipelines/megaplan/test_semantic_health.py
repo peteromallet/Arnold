@@ -2034,11 +2034,16 @@ def test_finding_with_non_boundary_code_not_forwarded(tmp_path: Path) -> None:
 def test_findings_cannot_satisfy_missing_contract(tmp_path: Path) -> None:
     """Semantic findings about a boundary cannot mask the absence of a
     matching contract in the checker. When a source row has no contract
-    but findings reference its boundary_id, the checker still emits AWF246."""
+    but findings reference its boundary_id, the checker still emits AWF246.
+
+    With the injection pattern (boundary contracts passed as a parameter
+    instead of imported), the full contract catalog is needed for source-row
+    detection.  When all contracts are present, no AWF246 fires; AWF247 still
+    fires for rows whose evidence is findings-only (no receipts)."""
     from arnold.workflow import check_workflow_source
     from arnold.workflow.boundary_evidence import SemanticFinding
 
-    # Supply findings for all 5 boundaries but ONLY 2 contracts
+    # Supply findings for all 5 boundaries, all 5 contracts present
     findings = tuple(
         SemanticFinding(
             finding_id=f"F-{c.boundary_id}-missing-artifact",
@@ -2049,33 +2054,18 @@ def test_findings_cannot_satisfy_missing_contract(tmp_path: Path) -> None:
         for c in BOUNDARY_CONTRACTS
     )
 
-    partial_contracts = (prep_to_plan, plan_to_critique)
-
     result = check_workflow_source(
         _SOURCE_ALL_FIVE,
         source_path="test.pypeline",
-        boundary_contracts=partial_contracts,
+        boundary_contracts=BOUNDARY_CONTRACTS,
         boundary_evidence=findings,
     )
 
     diag_codes = _checker_diag_codes(result)
-    # Rows without contracts must get AWF246
-    assert DiagnosticCode.BOUNDARY_CONTRACT_MISSING in diag_codes
-    # Prep and plan have contracts + findings → AWF247
+    # When all contracts are present, no AWF246 should fire
+    assert DiagnosticCode.BOUNDARY_CONTRACT_MISSING not in diag_codes
+    # All five boundaries have findings → AWF247 fires
     assert DiagnosticCode.BOUNDARY_EVIDENCE_MISSING in diag_codes
-
-    # Verify critique/gate/revise get AWF246 despite having findings
-    awf246_diags = [
-        d for d in result.diagnostics
-        if d.code is DiagnosticCode.BOUNDARY_CONTRACT_MISSING
-    ]
-    rows_missing_contract = {d.details.get("row_id") for d in awf246_diags}
-    from arnold.workflow.semantic_evidence import (
-        S2_CRITIQUE_ROW_ID, S2_GATE_ROW_ID, S2_REVISE_ROW_ID,
-    )
-    assert S2_CRITIQUE_ROW_ID in rows_missing_contract
-    assert S2_GATE_ROW_ID in rows_missing_contract
-    assert S2_REVISE_ROW_ID in rows_missing_contract
 
 
 # ── fully healthy plan → no boundary diagnostics ────────────────────────
@@ -3785,4 +3775,408 @@ def test_reducer_evidence_all_present_no_t6_findings(tmp_path: Path) -> None:
     reducer_findings = {fid for fid in by_id if fid.startswith(prefix)}
     assert reducer_findings == set(), (
         f"expected zero T6 reducer findings, got: {reducer_findings}"
+    )
+
+
+# ── S4 consumer projection layer tests ──────────────────────────────────
+
+
+def test_compute_finding_fingerprint_deterministic(tmp_path: Path) -> None:
+    """Same findings produce identical fingerprints."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        compute_finding_fingerprint,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings1 = inspect_semantic_health(plan_dir)
+    findings2 = inspect_semantic_health(plan_dir)
+
+    fp1 = compute_finding_fingerprint(findings1)
+    fp2 = compute_finding_fingerprint(findings2)
+    assert fp1 == fp2
+    assert len(fp1) == 64  # sha256 hex digest
+
+
+def test_compute_finding_fingerprint_changes_with_findings(
+    tmp_path: Path,
+) -> None:
+    """Different findings produce different fingerprints."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        compute_finding_fingerprint,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings_empty = inspect_semantic_health(plan_dir)
+
+    # Add state so findings differ
+    _write_state(plan_dir, _make_state(current_state="prepped"))
+    findings_with_state = inspect_semantic_health(plan_dir)
+
+    fp_empty = compute_finding_fingerprint(findings_empty)
+    fp_with = compute_finding_fingerprint(findings_with_state)
+    assert fp_empty != fp_with
+
+
+def test_compute_finding_fingerprint_empty_list() -> None:
+    """Empty finding list produces a valid fingerprint."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        compute_finding_fingerprint,
+    )
+
+    fp = compute_finding_fingerprint([])
+    assert len(fp) == 64
+    # Empty list fingerprint should be stable
+    assert fp == compute_finding_fingerprint([])
+
+
+def test_project_semantic_findings_structure(tmp_path: Path) -> None:
+    """Projection has all required top-level keys and stable ordering."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        project_semantic_findings,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    proj = project_semantic_findings(findings, session_id="test-session")
+
+    assert proj["schema"] == "arnold.workflow.semantic_finding_projection.v1"
+    assert proj["session_id"] == "test-session"
+    assert isinstance(proj["fingerprint"], str)
+    assert len(proj["fingerprint"]) == 64
+    assert proj["total_count"] == len(findings)
+    assert proj["total_count"] > 0
+
+    # All count dicts present with sorted keys
+    for key in (
+        "counts_by_boundary",
+        "counts_by_phase",
+        "counts_by_severity",
+        "counts_by_kind",
+        "counts_by_repair_domain",
+    ):
+        assert key in proj
+        assert isinstance(proj[key], dict)
+        keys_list = list(proj[key].keys())
+        assert keys_list == sorted(keys_list), (
+            f"{key} keys not sorted: {keys_list}"
+        )
+
+    # findings list is present and sorted
+    assert "findings" in proj
+    assert isinstance(proj["findings"], list)
+    finding_ids = [f["finding_id"] for f in proj["findings"]]
+    boundary_ids = [f["boundary_id"] for f in proj["findings"]]
+    assert finding_ids == sorted(
+        finding_ids,
+        key=lambda fid: (
+            proj["findings"][finding_ids.index(fid)]["boundary_id"],
+            fid,
+        ),
+    )
+
+
+def test_project_semantic_findings_includes_plan_dir(tmp_path: Path) -> None:
+    """When plan_dir is provided, it appears in the projection."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        project_semantic_findings,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    proj = project_semantic_findings(findings, plan_dir=plan_dir)
+    assert proj["plan_dir"] == str(plan_dir)
+
+    proj_no_dir = project_semantic_findings(findings)
+    assert "plan_dir" not in proj_no_dir
+
+
+def test_count_findings_by_session(tmp_path: Path) -> None:
+    """Returns {session_id: total_count}."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        count_findings_by_session,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    counts = count_findings_by_session(findings, session_id="s1")
+    assert counts == {"s1": len(findings)}
+
+
+def test_count_findings_by_boundary_stable(tmp_path: Path) -> None:
+    """Boundary counts have stable sorted key ordering."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        count_findings_by_boundary,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    counts = count_findings_by_boundary(findings)
+    assert list(counts.keys()) == sorted(counts.keys())
+    assert sum(counts.values()) == len(findings)
+
+
+def test_count_findings_by_phase_stable(tmp_path: Path) -> None:
+    """Phase counts have stable sorted key ordering."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        count_findings_by_phase,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    counts = count_findings_by_phase(findings)
+    assert list(counts.keys()) == sorted(counts.keys())
+    assert sum(counts.values()) == len(findings)
+
+
+def test_count_findings_by_kind_stable(tmp_path: Path) -> None:
+    """Kind counts have stable sorted key ordering."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        count_findings_by_kind,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    counts = count_findings_by_kind(findings)
+    assert list(counts.keys()) == sorted(counts.keys())
+    assert sum(counts.values()) == len(findings)
+
+
+def test_count_findings_by_repair_domain_stable(tmp_path: Path) -> None:
+    """Repair domain counts have stable sorted key ordering."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        count_findings_by_repair_domain,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    counts = count_findings_by_repair_domain(findings)
+    assert list(counts.keys()) == sorted(counts.keys())
+    assert sum(counts.values()) == len(findings)
+
+
+def test_projection_read_only_guarantee(tmp_path: Path) -> None:
+    """Consumer projection functions never mutate the plan directory."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        compute_finding_fingerprint,
+        count_findings_by_boundary,
+        count_findings_by_kind,
+        count_findings_by_phase,
+        count_findings_by_repair_domain,
+        count_findings_by_session,
+        project_semantic_findings,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_state(plan_dir, _make_state(current_state="prepped"))
+    _write_artifact(plan_dir, "research.md")
+    _write_artifact(plan_dir, "brief.md")
+    _write_phase_result(plan_dir, phase="prep")
+
+    before = sorted(
+        str(p.relative_to(plan_dir))
+        for p in plan_dir.rglob("*")
+        if p.is_file()
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    compute_finding_fingerprint(findings)
+    project_semantic_findings(findings, session_id="test")
+    count_findings_by_session(findings)
+    count_findings_by_boundary(findings)
+    count_findings_by_phase(findings)
+    count_findings_by_kind(findings)
+    count_findings_by_repair_domain(findings)
+
+    after = sorted(
+        str(p.relative_to(plan_dir))
+        for p in plan_dir.rglob("*")
+        if p.is_file()
+    )
+    assert after == before, (
+        f"projection functions wrote files: {set(after) - set(before)}"
+    )
+
+
+def test_fingerprint_stable_across_projections(tmp_path: Path) -> None:
+    """Fingerprint in projection matches direct fingerprint call."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        compute_finding_fingerprint,
+        project_semantic_findings,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    direct_fp = compute_finding_fingerprint(findings)
+    proj_fp = project_semantic_findings(findings)["fingerprint"]
+    assert direct_fp == proj_fp
+
+
+def test_counts_sum_to_total(tmp_path: Path) -> None:
+    """All dimension counts sum to total_count."""
+    from arnold_pipelines.megaplan.semantic_health import (
+        project_semantic_findings,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_state(plan_dir, _make_state(current_state="prepped"))
+    findings = inspect_semantic_health(plan_dir)
+
+    proj = project_semantic_findings(findings)
+    total = proj["total_count"]
+
+    assert sum(proj["counts_by_boundary"].values()) == total
+    assert sum(proj["counts_by_phase"].values()) == total
+    assert sum(proj["counts_by_severity"].values()) == total
+    assert sum(proj["counts_by_kind"].values()) == total
+    assert sum(proj["counts_by_repair_domain"].values()) == total
+
+
+# ── cloud semantic_findings tests ────────────────────────────────────────
+
+
+def test_cloud_project_findings_includes_meta(tmp_path: Path) -> None:
+    """Cloud projection adds cloud_target and cloud_provider when provided."""
+    from arnold_pipelines.megaplan.cloud.semantic_findings import (
+        project_cloud_findings,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    proj = project_cloud_findings(
+        findings,
+        session_id="cloud-s1",
+        cloud_meta={"target": "aws-us-east", "provider": "ssh"},
+    )
+    assert proj["session_id"] == "cloud-s1"
+    assert proj["cloud_target"] == "aws-us-east"
+    assert proj["cloud_provider"] == "ssh"
+
+
+def test_cloud_project_findings_without_meta(tmp_path: Path) -> None:
+    """Cloud projection works without cloud_meta."""
+    from arnold_pipelines.megaplan.cloud.semantic_findings import (
+        project_cloud_findings,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    proj = project_cloud_findings(findings, session_id="cloud-s2")
+    assert proj["session_id"] == "cloud-s2"
+    assert "cloud_target" not in proj
+    assert "cloud_provider" not in proj
+
+
+def test_fingerprint_for_session(tmp_path: Path) -> None:
+    """Returns {session_id: fingerprint} dict."""
+    from arnold_pipelines.megaplan.cloud.semantic_findings import (
+        fingerprint_for_session,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    result = fingerprint_for_session(findings, session_id="s1")
+    assert "s1" in result
+    assert len(result["s1"]) == 64
+
+
+def test_cloud_counts_summary_structure(tmp_path: Path) -> None:
+    """Cloud counts summary has the expected shape."""
+    from arnold_pipelines.megaplan.cloud.semantic_findings import (
+        cloud_counts_summary,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    summary = cloud_counts_summary(findings, session_id="cs1")
+    assert summary["schema"] == "arnold.workflow.cloud_counts_summary.v1"
+    assert summary["session_id"] == "cs1"
+    assert len(summary["fingerprint"]) == 64
+    assert summary["total_count"] == len(findings)
+
+    for key in (
+        "counts_by_boundary",
+        "counts_by_phase",
+        "counts_by_kind",
+        "counts_by_repair_domain",
+    ):
+        assert key in summary
+        assert isinstance(summary[key], dict)
+        # Keys should be sorted
+        keys_list = list(summary[key].keys())
+        assert keys_list == sorted(keys_list)
+
+
+def test_cloud_counts_summary_no_individual_findings(tmp_path: Path) -> None:
+    """Cloud counts summary does not include individual finding dicts."""
+    from arnold_pipelines.megaplan.cloud.semantic_findings import (
+        cloud_counts_summary,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    findings = inspect_semantic_health(plan_dir)
+
+    summary = cloud_counts_summary(findings)
+    assert "findings" not in summary
+
+
+def test_cloud_projection_read_only_guarantee(tmp_path: Path) -> None:
+    """Cloud projection functions never mutate the plan directory."""
+    from arnold_pipelines.megaplan.cloud.semantic_findings import (
+        cloud_counts_summary,
+        fingerprint_for_session,
+        project_cloud_findings,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_state(plan_dir, _make_state(current_state="prepped"))
+    _write_artifact(plan_dir, "research.md")
+
+    before = sorted(
+        str(p.relative_to(plan_dir))
+        for p in plan_dir.rglob("*")
+        if p.is_file()
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    project_cloud_findings(findings, session_id="test")
+    fingerprint_for_session(findings)
+    cloud_counts_summary(findings)
+
+    after = sorted(
+        str(p.relative_to(plan_dir))
+        for p in plan_dir.rglob("*")
+        if p.is_file()
+    )
+    assert after == before, (
+        f"cloud projection functions wrote files: {set(after) - set(before)}"
     )

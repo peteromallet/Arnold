@@ -37,6 +37,7 @@ _LAYER_ORDER = (
     "reconciler",
     "resolver_confidence",
     "resolver_semantics",
+    "semantic_custody",
     "auditor_recursion",
     "ci_health",
     "engine_tree",
@@ -228,6 +229,11 @@ def audit_projection_input(
         _stale_claim_finding(brief),
         _missing_evidence_finding(brief, incident, snapshot),
         _recurrence_finding(incident, problem),
+        *_semantic_custody_findings(
+            snapshot,
+            now=effective_now,
+            config=cfg,
+        ),
     ]
     recursion_finding = _auditor_recursion_finding(
         brief=brief,
@@ -1172,6 +1178,212 @@ def _recurrence_finding(
     )
 
 
+
+# ── S4 semantic/custody auditor reason codes ───────────────────────────
+# These consume pre-computed semantic-health and custody facts from the
+# status snapshot; they never recompute findings or custody independently.
+
+_SEMANTIC_CUSTODY_LAYER = "semantic_custody"
+_AUDITOR_CUSTODY_DISAGREEMENT_CODE = "custody_disagreement"
+_AUDITOR_UNRESOLVED_SEMANTIC_CODE = "unresolved_semantic_findings"
+_AUDITOR_STALE_ACTIVE_STEP_CODE = "stale_active_step_worker"
+_AUDITOR_UNMANAGED_PROCESS_CODE = "unmanaged_live_process"
+_AUDITOR_REPAIR_SUCCESS_NO_CUSTODY_CODE = "repair_success_without_custody"
+
+_CUSTODY_MANAGED_STATES: frozenset[str] = frozenset({"managed-running", "complete"})
+_CUSTODY_UNMANAGED_STATES: frozenset[str] = frozenset(
+    {"unmanaged-running-with-warning", "blocked-relaunch-failure"}
+)
+_REPAIR_SUCCESS_STATES: frozenset[str] = frozenset({"recovered", "completed", "fixed", "verified_recovered"})
+
+
+def _semantic_custody_findings(
+    snapshot: dict[str, Any],
+    *,
+    now: str | None,
+    config: AuditorConfig,
+) -> list[dict[str, Any]]:
+    """Gather all semantic/custody findings, consuming snapshot facts only."""
+    findings: list[dict[str, Any]] = []
+
+    unresolved = _unresolved_semantic_finding(snapshot)
+    if unresolved is not None:
+        findings.append(unresolved)
+
+    stale_worker = _stale_active_step_worker_finding(snapshot, now=now, config=config)
+    if stale_worker is not None:
+        findings.append(stale_worker)
+
+    unmanaged = _unmanaged_live_process_finding(snapshot)
+    if unmanaged is not None:
+        findings.append(unmanaged)
+
+    repair_no_custody = _repair_success_without_custody_finding(snapshot)
+    if repair_no_custody is not None:
+        findings.append(repair_no_custody)
+
+    disagreement = _custody_disagreement_finding(snapshot)
+    if disagreement is not None:
+        findings.append(disagreement)
+
+    # Emit a healthy ok when all sub-checks pass.
+    if not findings:
+        findings.append(
+            _finding(
+                "semantic_custody_clear",
+                layer=_SEMANTIC_CUSTODY_LAYER,
+                status="ok",
+                severity="ok",
+                message="Semantic-health and custody facts are consistent and clear.",
+                recommendation=None,
+            )
+        )
+
+    return findings
+
+
+def _unresolved_semantic_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect unresolved semantic findings from the status snapshot.
+
+    Consumes the pre-computed ``semantic_health`` summary (produced by
+    :func:`cloud_counts_summary`) -- never recomputes findings independently.
+    """
+    semantic_health = snapshot.get("semantic_health")
+    if not isinstance(semantic_health, dict):
+        return None
+    total_count = semantic_health.get("total_count", 0)
+    if not isinstance(total_count, int) or total_count <= 0:
+        return None
+    return _finding(
+        _AUDITOR_UNRESOLVED_SEMANTIC_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="error",
+        severity="error",
+        message=f"Status snapshot reports {total_count} unresolved semantic finding(s).",
+        recommendation="immediate_repair.repair_attempt",
+        total_count=total_count,
+        fingerprint=semantic_health.get("fingerprint"),
+        counts_by_kind=semantic_health.get("counts_by_kind"),
+        counts_by_boundary=semantic_health.get("counts_by_boundary"),
+    )
+
+
+def _stale_active_step_worker_finding(
+    snapshot: dict[str, Any],
+    *,
+    now: str | None,
+    config: AuditorConfig,
+) -> dict[str, Any] | None:
+    """Detect a stale active-step worker from the status snapshot.
+
+    Uses the same staleness threshold as the watchdog
+    (:attr:`AuditorConfig.watchdog_stale_after`).
+    """
+    activity_phase = snapshot.get("activity_phase")
+    if not isinstance(activity_phase, str) or not activity_phase:
+        return None
+    last_activity = snapshot.get("last_activity")
+    if not _is_stale(last_activity, now, config.watchdog_stale_after):
+        return None
+    return _finding(
+        _AUDITOR_STALE_ACTIVE_STEP_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=(
+            f"Active-step worker is in phase '{activity_phase}' but its last "
+            "activity is older than the audit cadence."
+        ),
+        recommendation="watchdog.dispatch",
+        activity_phase=activity_phase,
+        last_activity=last_activity,
+    )
+
+
+def _unmanaged_live_process_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect an unmanaged live process from custody state in the snapshot."""
+    custody_state = snapshot.get("custody_state")
+    if not isinstance(custody_state, str) or not custody_state:
+        return None
+    if custody_state not in _CUSTODY_UNMANAGED_STATES:
+        return None
+    return _finding(
+        _AUDITOR_UNMANAGED_PROCESS_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=f"Session custody is '{custody_state}' -- the process is live but not under managed supervision.",
+        recommendation="watchdog.dispatch",
+        custody_state=custody_state,
+    )
+
+
+def _repair_success_without_custody_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect repair-success claims without corroborating managed custody."""
+    repair_state = snapshot.get("repair_state")
+    custody_state = snapshot.get("custody_state")
+    if not isinstance(repair_state, str) or not repair_state:
+        return None
+    if repair_state not in _REPAIR_SUCCESS_STATES:
+        return None
+    if isinstance(custody_state, str) and custody_state in _CUSTODY_MANAGED_STATES:
+        return None
+    return _finding(
+        _AUDITOR_REPAIR_SUCCESS_NO_CUSTODY_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=(
+            f"Repair state '{repair_state}' indicates success but custody "
+            f"is '{custody_state or 'unknown'}' -- not under managed supervision."
+        ),
+        recommendation="watchdog.dispatch",
+        repair_state=repair_state,
+        custody_state=custody_state or "",
+    )
+
+
+def _custody_disagreement_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect watchdog/status custody disagreement from snapshot facts.
+
+    Compares the watchdog's recorded custody kind against the status
+    snapshot's custody_state.  Both must be present and disagree for
+    a finding to be emitted.
+    """
+    status_custody = snapshot.get("custody_state")
+    watchdog = snapshot.get("watchdog")
+    if not isinstance(watchdog, dict):
+        return None
+    watchdog_custody = watchdog.get("custody_state")
+    if not isinstance(status_custody, str) or not status_custody:
+        return None
+    if not isinstance(watchdog_custody, str) or not watchdog_custody:
+        return None
+    if status_custody == watchdog_custody:
+        return None
+    return _finding(
+        _AUDITOR_CUSTODY_DISAGREEMENT_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="error",
+        severity="error",
+        message=(
+            f"Watchdog custody '{watchdog_custody}' disagrees with "
+            f"status snapshot custody '{status_custody}'."
+        ),
+        recommendation="auditor_escalate_to_human",
+        watchdog_custody=watchdog_custody,
+        status_custody=status_custody,
+    )
+
+
 def _auditor_recursion_finding(
     *,
     brief: dict[str, Any],
@@ -1283,16 +1495,17 @@ def _primary_finding(findings: list[dict[str, Any]]) -> dict[str, Any] | None:
         "reconciler": 1,
         "resolver_confidence": 2,
         "resolver_semantics": 3,
-        "watchdog": 4,
-        "stale_claim": 5,
-        "missing_evidence": 6,
-        "meta_repair": 7,
-        "immediate_repair": 8,
-        "install_sync": 9,
-        "github_sync": 10,
-        "recurrence": 11,
-        "project_progress": 12,
-        "live_process": 13,
+        "semantic_custody": 4,
+        "watchdog": 5,
+        "stale_claim": 6,
+        "missing_evidence": 7,
+        "meta_repair": 8,
+        "immediate_repair": 9,
+        "install_sync": 10,
+        "github_sync": 11,
+        "recurrence": 12,
+        "project_progress": 13,
+        "live_process": 14,
     }
     return sorted(
         findings,

@@ -22,6 +22,7 @@ import pytest
 import arnold_pipelines.megaplan.cloud.meta_repair as meta_repair_module
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     META_REPAIR_BUDGET_SECS,
+    _MIN_UNCHANGED_FINGERPRINT_ATTEMPTS,
     META_REPAIR_VERDICT_ESCALATED,
     META_REPAIR_VERDICT_FIXED,
     META_REPAIR_VERDICT_KINDS,
@@ -33,6 +34,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     MetaRepairTrigger,
     MetaRepairVerdict,
     RetriggerExecutionResult,
+    _has_unchanged_semantic_fingerprint_recurrence,
     build_meta_repair_prompt,
     build_meta_repair_verdict,
     classify_repair_system_failure,
@@ -361,6 +363,191 @@ class TestClassifyPersistentRecurringRetry:
         assert result.trigger is None
         assert result.should_dispatch is False
         assert "repair outcome is discord_escalated" in result.rationale[0]
+
+
+# ---------------------------------------------------------------------------
+# Semantic fingerprint recurrence (S4 / T7)
+# ---------------------------------------------------------------------------
+
+
+class TestHasUnchangedSemanticFingerprintRecurrence:
+    """Unit tests for :func:`_has_unchanged_semantic_fingerprint_recurrence`."""
+
+    def test_triggers_when_same_fingerprint_repeats_three_times(self) -> None:
+        fp = "abc123def456"
+        fingerprints = [fp, fp, fp]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is True
+
+    def test_triggers_with_more_than_three(self) -> None:
+        fp = "abc123def456"
+        fingerprints = [fp, fp, fp, fp, fp]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is True
+
+    def test_does_not_trigger_with_less_than_three(self) -> None:
+        fp = "abc123def456"
+        fingerprints = [fp, fp]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is False
+
+    def test_does_not_trigger_when_fingerprints_change(self) -> None:
+        fingerprints = ["aaa", "bbb", "ccc"]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is False
+
+    def test_does_not_trigger_when_fingerprints_vary_then_same(self) -> None:
+        fingerprints = ["aaa", "bbb", "ccc", "ccc"]
+        # Only 2 of "ccc" - not enough
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is False
+
+    def test_triggers_when_common_fingerprint_dominates(self) -> None:
+        fp = "abc123"
+        fingerprints = [fp, "other1", fp, fp, "other2"]
+        # 3 of "abc123" - enough
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is True
+
+    def test_empty_fingerprints_ignored(self) -> None:
+        fp = "abc123"
+        fingerprints = ["", fp, "", fp, "", fp]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is True
+
+    def test_all_empty_fingerprints_returns_false(self) -> None:
+        fingerprints = ["", "", ""]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is False
+
+    def test_empty_sequence_returns_false(self) -> None:
+        assert _has_unchanged_semantic_fingerprint_recurrence([]) is False
+
+    def test_configurable_threshold_respected(self) -> None:
+        fp = "abc123"
+        fingerprints = [fp, fp]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints, min_attempts=2) is True
+
+    def test_configurable_threshold_not_met(self) -> None:
+        fp = "abc123"
+        fingerprints = [fp, fp]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints, min_attempts=3) is False
+
+    def test_whitespace_only_fingerprints_ignored(self) -> None:
+        fp = "abc123"
+        fingerprints = ["   ", fp, "\t", fp, "  ", fp]
+        assert _has_unchanged_semantic_fingerprint_recurrence(fingerprints) is True
+
+    def test_default_threshold_is_three(self) -> None:
+        assert _MIN_UNCHANGED_FINGERPRINT_ATTEMPTS == 3
+
+
+class TestPersistentRecurringRetryWithSemanticFingerprints:
+    """Tests for fingerprint recurrence through _is_persistent_recurring_retry."""
+
+    def test_triggers_via_fingerprint_even_without_failure_kinds(self) -> None:
+        """Same fingerprint x 3 triggers PERSISTENT_RECURRING_RETRY without failure_kinds."""
+        fp = "abc123def456"
+        result = classify_repair_system_failure(
+            session="fp-1",
+            semantic_fingerprints=[fp, fp, fp],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger == MetaRepairTrigger.PERSISTENT_RECURRING_RETRY
+        assert result.should_dispatch is True
+        assert "fingerprint_repeats" in result.rationale[0]
+
+    def test_does_not_trigger_when_fingerprints_change(self) -> None:
+        """Different fingerprints across attempts - no trigger."""
+        result = classify_repair_system_failure(
+            session="fp-2",
+            semantic_fingerprints=["aaa", "bbb", "ccc"],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+
+    def test_does_not_trigger_when_all_empty_fingerprints(self) -> None:
+        """Empty fingerprints (resolved findings) - no trigger."""
+        result = classify_repair_system_failure(
+            session="fp-3",
+            semantic_fingerprints=["", "", ""],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+
+    def test_success_outcome_suppresses_fingerprint_trigger(self) -> None:
+        """Recent success outcome suppresses fingerprint-based triggers."""
+        fp = "abc123def456"
+        result = classify_repair_system_failure(
+            session="fp-4",
+            semantic_fingerprints=[fp, fp, fp],
+            attempt_outcomes=[REPAIRING, COMPLETE, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+
+    def test_fingerprints_ignored_when_below_threshold(self) -> None:
+        """Only 2 same fingerprints - below default threshold - no trigger."""
+        fp = "abc123def456"
+        result = classify_repair_system_failure(
+            session="fp-5",
+            semantic_fingerprints=[fp, fp],
+            attempt_outcomes=[REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+
+    def test_fingerprint_trigger_respects_stale_evidence_guard(self) -> None:
+        """Stale evidence check runs first and suppresses fingerprint trigger."""
+        fp = "abc123def456"
+        result = classify_repair_system_failure(
+            session="fp-6",
+            evidence={
+                "repair_data": {
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "blocked",
+                    }
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "chain_state",
+                "current_refs": {
+                    "current_plan_name": "demo-plan",
+                    "plan_current_state": "finalized",
+                    "chain_last_state": "finalized",
+                },
+                "plan_state": {"present": True},
+                "chain_state": {"present": True},
+                "active_step_heartbeat": {"active": False},
+            },
+            semantic_fingerprints=[fp, fp, fp],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "supersedes stale" in result.rationale[0]
+
+    def test_evaluate_meta_repair_triggers_passes_fingerprints_through(self, tmp_path: Path) -> None:
+        """evaluate_meta_repair_triggers passes semantic_fingerprints to classify."""
+        repair_root = _make_session_dir(tmp_path, "fp-eval")
+        fp = "abc123def456"
+        classification, prompt = evaluate_meta_repair_triggers(
+            session="fp-eval",
+            repair_data_dir=repair_root,
+            semantic_fingerprints=[fp, fp, fp],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert classification.trigger == MetaRepairTrigger.PERSISTENT_RECURRING_RETRY
+        assert classification.should_dispatch is True
+        assert prompt is not None
+        assert "persistent recurring retry" in prompt.lower()
+
+    def test_repair_timeout_still_wins_over_fingerprint_trigger(self) -> None:
+        """Priority: repair_timeout (trigger 2) beats fingerprint recurrence."""
+        fp = "abc123def456"
+        result = classify_repair_system_failure(
+            session="fp-7",
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+            semantic_fingerprints=[fp, fp, fp],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger == MetaRepairTrigger.REPAIR_TIMEOUT
 
 
 class TestClassifyStateInspectionFailure:

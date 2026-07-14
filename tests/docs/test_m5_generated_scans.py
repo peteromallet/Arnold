@@ -17,6 +17,7 @@ ACTIVE_DOC_PATHS = (
     Path("docs/arnold/workflow-manifest.md"),
     Path("docs/arnold/workflow-manifest-amendments.md"),
     Path("docs/arnold/workflow-authoring.md"),
+    Path("docs/arnold/workflow-boundary-contracts.md"),
     Path("docs/arnold/package-contract.md"),
     Path("docs/arnold/package-authoring-contract.md"),
     Path("docs/arnold/pattern-stability-matrix.md"),

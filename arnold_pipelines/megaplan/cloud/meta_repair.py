@@ -229,6 +229,11 @@ def load_redacted_evidence(
 # it a persistent recurring retry pattern.
 _MIN_RECURRING_ATTEMPTS = 3
 
+# Minimum number of attempts with the same unchanged semantic/custody
+# finding fingerprint before escalation.  Defaults to 3; operators may
+# override via the configurable *semantic_fingerprints* threshold parameter.
+_MIN_UNCHANGED_FINGERPRINT_ATTEMPTS = 3
+
 # Minimum number of partial-liveness ticks before we trigger.
 _MIN_PARTIAL_LIVENESS_TICKS = 2
 
@@ -423,6 +428,7 @@ def classify_repair_system_failure(
     repair_outcome: str = "",
     attempt_outcomes: Sequence[str] = (),
     failure_kinds: Sequence[str] = (),
+    semantic_fingerprints: Sequence[str] = (),
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
     partial_liveness_ticks: int = 0,
@@ -549,11 +555,21 @@ def classify_repair_system_failure(
         )
 
     # --- 3. Persistent recurring retry --------------------------------------
-    if _is_persistent_recurring_retry(failure_kinds, attempt_outcomes):
+    if _is_persistent_recurring_retry(
+        failure_kinds,
+        attempt_outcomes,
+        semantic_fingerprints=semantic_fingerprints,
+    ):
+        fp_detail = (
+            f", fingerprint_repeats={len(semantic_fingerprints)}"
+            if semantic_fingerprints
+            else ""
+        )
         rationale.append(
             f"persistent recurring retry pattern detected "
             f"(failure_kinds={list(failure_kinds)[:5]}, "
-            f"attempt_outcomes={list(attempt_outcomes)[:5]})"
+            f"attempt_outcomes={list(attempt_outcomes)[:5]}"
+            f"{fp_detail})"
         )
         return MetaRepairClassification(
             session=session,
@@ -625,38 +641,90 @@ def _is_persistent_recurring_retry(
     failure_kinds: Sequence[str],
     attempt_outcomes: Sequence[str],
     min_attempts: int = _MIN_RECURRING_ATTEMPTS,
+    semantic_fingerprints: Sequence[str] = (),
 ) -> bool:
-    """Return True when the same failure kind repeats without success."""
-    if len(failure_kinds) < min_attempts:
-        return False
+    """Return True when the same failure kind or unchanged semantic fingerprint
+    repeats without success across attempts.
 
-    # Look for the same non-empty failure kind repeating in the most
-    # recent attempts.
-    recent = list(failure_kinds)[: min(len(failure_kinds), 10)]
+    The check gates on two independent signals:
+
+    * **failure-kind recurrence** — the same non-empty failure kind appears
+      in at least *min_attempts* recent attempts without a success outcome.
+    * **semantic-fingerprint recurrence** — the same non-empty
+      semantic/custody finding fingerprint appears in at least
+      *min_attempts* (or ``_MIN_UNCHANGED_FINGERPRINT_ATTEMPTS``, whichever
+      is larger) recent attempts without a success outcome.
+
+    Empty fingerprints (resolved / no findings) are never counted.
+    """
+    # Pre-compute the success guard once for both checks
     recent_outcomes = list(attempt_outcomes)[: min(len(attempt_outcomes), 10)]
-
-    # Count occurrences of the most common recent failure kind
-    kind_counts: dict[str, int] = {}
-    for kind in recent:
-        if kind and kind.strip():
-            kind_counts[kind] = kind_counts.get(kind, 0) + 1
-
-    if not kind_counts:
-        return False
-
-    most_common_kind, count = max(kind_counts.items(), key=lambda item: item[1])
-    if count < min_attempts:
-        return False
-
-    # Also check that none of the recent outcomes are success
     recent_non_empty = [o for o in recent_outcomes if o and o.strip()]
     has_recent_success = any(
         is_success_outcome(o) for o in recent_non_empty
     )
-    if has_recent_success:
+
+    # ── failure-kind recurrence ──────────────────────────────────────
+    if len(failure_kinds) >= min_attempts and not has_recent_success:
+        recent = list(failure_kinds)[: min(len(failure_kinds), 10)]
+        kind_counts: dict[str, int] = {}
+        for kind in recent:
+            if kind and kind.strip():
+                kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        if kind_counts:
+            most_common_kind, count = max(kind_counts.items(), key=lambda item: item[1])
+            if count >= min_attempts:
+                return True
+
+    # ── semantic-fingerprint recurrence ──────────────────────────────
+    if _has_unchanged_semantic_fingerprint_recurrence(
+        semantic_fingerprints,
+        min_attempts=max(min_attempts, _MIN_UNCHANGED_FINGERPRINT_ATTEMPTS),
+    ):
+        if not has_recent_success:
+            return True
+
+    return False
+
+
+def _has_unchanged_semantic_fingerprint_recurrence(
+    fingerprints: Sequence[str],
+    min_attempts: int = _MIN_UNCHANGED_FINGERPRINT_ATTEMPTS,
+) -> bool:
+    """Return True when the same non-empty semantic fingerprint repeats.
+
+    The fingerprint is produced by
+    :func:`arnold_pipelines.megaplan.semantic_health.compute_finding_fingerprint`
+    from the set of semantic/custody findings.  An empty fingerprint
+    (no findings — resolved) is never counted.  Only repeated unchanged
+    non-empty fingerprints trigger.
+
+    Args:
+        fingerprints: Fingerprint strings from recent attempts (most
+            recent first).
+        min_attempts: Minimum occurrences required for escalation
+            (default ``_MIN_UNCHANGED_FINGERPRINT_ATTEMPTS``).
+
+    Returns:
+        ``True`` when the most common non-empty fingerprint appears at
+        least *min_attempts* times in the most recent window.
+    """
+    if not fingerprints or len(fingerprints) < min_attempts:
         return False
 
-    return True
+    # Examine up to the 10 most recent fingerprints
+    recent = list(fingerprints)[: min(len(fingerprints), 10)]
+
+    fp_counts: dict[str, int] = {}
+    for fp in recent:
+        if fp and fp.strip():
+            fp_counts[fp] = fp_counts.get(fp, 0) + 1
+
+    if not fp_counts:
+        return False
+
+    _, count = max(fp_counts.items(), key=lambda item: item[1])
+    return count >= min_attempts
 
 
 def _repair_evidence_superseded_by_current_target(
@@ -2012,6 +2080,7 @@ def evaluate_meta_repair_triggers(
     repair_outcome: str = "",
     attempt_outcomes: Sequence[str] = (),
     failure_kinds: Sequence[str] = (),
+    semantic_fingerprints: Sequence[str] = (),
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
     partial_liveness_ticks: int = 0,
@@ -2055,6 +2124,7 @@ def evaluate_meta_repair_triggers(
         repair_outcome=repair_outcome,
         attempt_outcomes=attempt_outcomes,
         failure_kinds=failure_kinds,
+        semantic_fingerprints=semantic_fingerprints,
         has_state_inspection_error=has_state_inspection_error,
         has_model_tool_launch_error=has_model_tool_launch_error,
         partial_liveness_ticks=partial_liveness_ticks,
@@ -2077,6 +2147,7 @@ def evaluate_meta_repair_triggers(
 
 __all__ = [
     "META_REPAIR_BUDGET_SECS",
+    "_MIN_UNCHANGED_FINGERPRINT_ATTEMPTS",
     "META_REPAIR_VERDICT_FIXED",
     "META_REPAIR_VERDICT_ESCALATED",
     "META_REPAIR_VERDICT_NO_FIX",
@@ -2095,6 +2166,7 @@ __all__ = [
     "compute_meta_deadline",
     "derive_meta_repair_effective_outcome",
     "evaluate_meta_repair_triggers",
+    "_has_unchanged_semantic_fingerprint_recurrence",
     "is_meta_budget_exhausted",
     "is_model_tool_launch_failure_status",
     "load_meta_repair_record",
