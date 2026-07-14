@@ -1,6 +1,22 @@
 # Repository Strategy
 
-The repository strategy lives in `.megaplan/STRATEGY.md`. It is the single Markdown-authoritative document that declares the repository's stable direction and its living roadmap. All other artifacts — JSON projections, tool output, IDE plugins — are disposable derivatives. Never edit them directly.
+The repository strategy lives at `.megaplan/initiatives/<slug>/STRATEGY.md` as a canonical root file under the `megaplan-initiatives-v1` policy. It is the single Markdown-authoritative document that declares the repository's stable direction and its living roadmap. It never belongs in `.megaplan/briefs`. All other artifacts — JSON projections, tool output, IDE plugins — are disposable derivatives. Never edit them directly.
+
+Create it with either interface:
+
+```bash
+# Reuse the single matching repository-strategy initiative, or create
+# .megaplan/initiatives/repository-strategy/STRATEGY.md.
+megaplan strategy init
+
+# Select an initiative explicitly.
+megaplan strategy init --initiative my-repository-strategy
+
+# Include it while scaffolding a new initiative.
+megaplan initiative new my-repository-strategy --strategy
+```
+
+Initialization creates missing canonical initiative subdirectories and a minimal `README.md`, but never overwrites an existing strategy unless `--force` is explicitly supplied. Existing repositories with `.megaplan/STRATEGY.md` remain readable and writable for backward compatibility; all newly initialized documents use the initiative layout.
 
 ## Authority model
 
@@ -162,7 +178,7 @@ Promotion is idempotent for the same ticket + initiative pair. Promoting a ticke
 ### Strategy file is missing
 
 ```bash
-# Scaffold a fresh strategy from the v1 template:
+# Scaffold a fresh initiative-root strategy from the v1 template:
 megaplan strategy init
 
 # Overwrite an existing file:
@@ -208,7 +224,7 @@ megaplan strategy remove --type ticket --ref <ULID>
 megaplan strategy add --type ticket --ref <ULID> --title "New Title" --horizon Next
 
 # Option B: Direct Markdown edit
-# Edit the display title in .megaplan/STRATEGY.md directly.
+# Edit the display title in .megaplan/initiatives/<slug>/STRATEGY.md directly.
 # The parser preserves the human-authored text as-is.
 ```
 

@@ -190,7 +190,7 @@ Follow the core-first principle: the local-file path lives in `_core` / `megapla
 
 ## Strategy roadmap integration
 
-Tickets are **backlog artifacts**, not automatically strategy-visible items. A ticket only appears in the repository's strategy roadmap (`.megaplan/STRATEGY.md`) when explicitly added. This preserves the distinction between the full ticket backlog and the deliberately selected subset that represents strategic direction.
+Tickets are **backlog artifacts**, not automatically strategy-visible items. A ticket only appears in the repository's initiative-root strategy roadmap (`.megaplan/initiatives/<slug>/STRATEGY.md`) when explicitly added. This preserves the distinction between the full ticket backlog and the deliberately selected subset that represents strategic direction.
 
 ### Opt-in visibility at creation time
 

@@ -26,6 +26,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from arnold_pipelines.megaplan.layout import strategy_file_path
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -114,7 +116,7 @@ def _read_projection(repo: Path) -> dict:
 
 def _read_strategy_md(repo: Path) -> str:
     """Read the authoritative STRATEGY.md content."""
-    return (repo / ".megaplan" / "STRATEGY.md").read_text(encoding="utf-8")
+    return strategy_file_path(repo).read_text(encoding="utf-8")
 
 
 def _find_ticket_file(repo: Path, ticket_id: str) -> Path | None:
@@ -157,7 +159,7 @@ class TestStrategyCliE2E:
         # ---- 1. Initialize strategy -----------------------------------------
         result = _megaplan_cmd("strategy", "init", cwd=repo)
         assert result.returncode == 0, f"strategy init failed: {result.stderr}"
-        assert (repo / ".megaplan" / "STRATEGY.md").exists(), (
+        assert strategy_file_path(repo).exists(), (
             "STRATEGY.md should exist after init"
         )
 
@@ -616,7 +618,7 @@ class TestStrategyCliE2E:
             "## Now\n\n",
             f"## Now\n\n{line_to_move}\n",
         )
-        (repo / ".megaplan" / "STRATEGY.md").write_text(edited, encoding="utf-8")
+        strategy_file_path(repo).write_text(edited, encoding="utf-8")
 
         # ---- 4. Verify CLI tools reflect the Markdown edit -------------
 
@@ -805,7 +807,7 @@ class TestStrategyCliE2E:
             "## Now\n\n",
             f"## Now\n\n{line_to_move}\n",
         )
-        (repo / ".megaplan" / "STRATEGY.md").write_text(edited, encoding="utf-8")
+        strategy_file_path(repo).write_text(edited, encoding="utf-8")
 
         # Sanity: ticket is now under Now
         strategy_content = _read_strategy_md(repo)
@@ -1196,7 +1198,7 @@ class TestStrategyCliE2E:
             "## Now\n\n",
             f"## Now\n\n{malformed_line}\n",
         )
-        (repo / ".megaplan" / "STRATEGY.md").write_text(edited, encoding="utf-8")
+        strategy_file_path(repo).write_text(edited, encoding="utf-8")
 
         # Validate — should produce errors (non-zero exit)
         result = _megaplan_cmd("strategy", "validate", "--json", cwd=repo)
@@ -1317,7 +1319,7 @@ class TestStrategyCliE2E:
             "## Now\n\n",
             f"## Now\n\n{malformed_line}\n",
         )
-        (repo / ".megaplan" / "STRATEGY.md").write_text(edited, encoding="utf-8")
+        strategy_file_path(repo).write_text(edited, encoding="utf-8")
 
         result = _megaplan_cmd("strategy", "validate", "--json", cwd=repo)
         val_data = json.loads(result.stdout)
