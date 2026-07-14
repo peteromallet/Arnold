@@ -58,24 +58,24 @@ milestones:
   depth: high
   with_prep: true
   prep_clarify: false
-  prep_direction: Start only from M5's actually accepted, manually reviewed and
-    merged evidence at one exact landed/runtime identity. Implement a single atomic,
-    fail-closed milestone-completion transaction that cannot persist executed,
-    complete, merge-ready, or successor-ready state until the full acceptance suite,
-    accepted content-addressed receipts, zero-divergence verification, valid retirement
-    ordering, and exact-tested-commit attestation all agree. Every false or unknown
-    predicate must emit a typed repair target; after any repair, invalidate the candidate
-    snapshot and rerun the complete end-to-end boundary. Reproduce the six-review
-    M5 failure pattern and gate every normal, resume, repair, watchdog, cloud, resident,
-    and reconciliation path so M6 cannot start before M5A is accepted. Preserve all
-    review, CI, merge, authorization, execution-binding, promotion, and safety gates.
+  prep_direction: Start only from M5's actually accepted, manually reviewed and merged
+    evidence at one exact landed/runtime identity. Implement a single atomic, fail-closed
+    milestone-completion transaction that cannot persist executed, complete, merge-ready,
+    or successor-ready state until the full acceptance suite, accepted content-addressed
+    receipts, zero-divergence verification, valid retirement ordering, and exact-tested-commit
+    attestation all agree. Every false or unknown predicate must emit a typed repair
+    target; after any repair, invalidate the candidate snapshot and rerun the complete
+    end-to-end boundary. Reproduce the six-review M5 failure pattern and gate every
+    normal, resume, repair, watchdog, cloud, resident, and reconciliation path so
+    M6 cannot start before M5A is accepted. Preserve all review, CI, merge, authorization,
+    execution-binding, promotion, and safety gates.
   depends_on:
   - m5-run-authority-receipt-reconciliation-and-retirement
-  notes: Difficulty 5/5; partnered-5/thorough/high @codex +prep. This is the
-    authoritative completion-transition boundary. Planning insertion is not acceptance;
-    M5A requires full implementation, independent review, CI, authorized merge, exact
-    landed/runtime revalidation, and one accepted atomic completion transaction before
-    any former successor may initialize.
+  notes: Difficulty 5/5; partnered-5/thorough/high @codex +prep. This is the authoritative
+    completion-transition boundary. Planning insertion is not acceptance; M5A requires
+    full implementation, independent review, CI, authorized merge, exact landed/runtime
+    revalidation, and one accepted atomic completion transaction before any former
+    successor may initialize.
 - label: m6-authority-contract-and-residual-inventory
   idea: .megaplan/initiatives/custody-control-plane/briefs/m6-authority-contract-and-residual-inventory.md
   branch: megaplan/custody-control-plane/m6-authority-contract-and-residual-inventory
