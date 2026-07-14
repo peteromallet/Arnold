@@ -28,7 +28,9 @@ from arnold_pipelines.megaplan.strategy.apply_migration import (
 from arnold_pipelines.megaplan.strategy.versions import CURRENT_SCHEMA_VERSION
 
 TICKETS_DIR = Path(".megaplan") / "tickets"
-STRATEGY_PATH = Path(".megaplan") / "STRATEGY.md"
+STRATEGY_PATH = (
+    Path(".megaplan") / "initiatives" / "repository-strategy" / "STRATEGY.md"
+)
 BACKUP_BASE = Path(".megaplan") / "backups" / "strategy-migration"
 
 
@@ -446,7 +448,8 @@ class TestCliApplyFlag:
         result = handle_strategy_migrate(tmp_path, argparse.Namespace(apply=False))
 
         assert result["backup_paths"] == [
-            ".megaplan/backups/strategy-migration/<timestamp>/.megaplan/STRATEGY.md"
+            ".megaplan/backups/strategy-migration/<timestamp>/"
+            ".megaplan/initiatives/repository-strategy/STRATEGY.md"
         ]
         assert result["manifest_path"] == (
             ".megaplan/backups/strategy-migration/<timestamp>/manifest.json"

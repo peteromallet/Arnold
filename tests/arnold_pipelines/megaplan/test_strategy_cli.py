@@ -396,13 +396,22 @@ class TestStrategyCLIInit:
     """Tests for strategy init command handler."""
 
     def test_init_creates_file(self, tmp_path: Path) -> None:
-        """strategy init creates .megaplan/STRATEGY.md from the template."""
+        """strategy init creates an initiative-root strategy from the template."""
         repo_root = _setup_empty_repo(tmp_path)
         result = handle_strategy_init(repo_root, _ns(force=False))
 
         assert result["success"] is True
         assert result["action"] == "init"
-        strategy_file = repo_root / ".megaplan" / "STRATEGY.md"
+        strategy_file = (
+            repo_root
+            / ".megaplan"
+            / "initiatives"
+            / "repository-strategy"
+            / "STRATEGY.md"
+        )
+        assert result["path"] == str(strategy_file)
+        assert result["initiative"] == "repository-strategy"
+        assert result["layout_policy_version"] == "megaplan-initiatives-v1"
         assert strategy_file.is_file()
         content = strategy_file.read_text()
         assert "schema_version: megaplan-strategy-v1" in content
@@ -439,8 +448,46 @@ class TestStrategyCLIInit:
         # No .megaplan directory
         result = handle_strategy_init(repo_root, _ns(force=False))
         assert result["success"] is True
-        strategy_file = repo_root / ".megaplan" / "STRATEGY.md"
+        strategy_file = (
+            repo_root
+            / ".megaplan"
+            / "initiatives"
+            / "repository-strategy"
+            / "STRATEGY.md"
+        )
         assert strategy_file.is_file()
+
+    def test_init_reuses_matching_existing_initiative(self, tmp_path: Path) -> None:
+        repo_root = _setup_empty_repo(tmp_path)
+        initiative = (
+            repo_root / ".megaplan" / "initiatives" / "repository-strategy-roadmap"
+        )
+        initiative.mkdir(parents=True)
+        (initiative / "README.md").write_text("# Existing owner\n", encoding="utf-8")
+
+        result = handle_strategy_init(repo_root, _ns(force=False))
+
+        assert result["path"] == str(initiative / "STRATEGY.md")
+        assert (initiative / "README.md").read_text(encoding="utf-8") == "# Existing owner\n"
+        assert not (
+            repo_root / ".megaplan" / "initiatives" / "repository-strategy"
+        ).exists()
+
+    def test_init_explicit_initiative_does_not_overwrite(self, tmp_path: Path) -> None:
+        repo_root = _setup_empty_repo(tmp_path)
+        initiative = repo_root / ".megaplan" / "initiatives" / "custom-strategy"
+        initiative.mkdir(parents=True)
+        strategy_file = initiative / "STRATEGY.md"
+        strategy_file.write_text("user content\n", encoding="utf-8")
+
+        with pytest.raises(CliError) as exc_info:
+            handle_strategy_init(
+                repo_root,
+                _ns(force=False, initiative="custom-strategy"),
+            )
+
+        assert exc_info.value.code == "strategy_exists"
+        assert strategy_file.read_text(encoding="utf-8") == "user content\n"
 
 
 # ---------------------------------------------------------------------------

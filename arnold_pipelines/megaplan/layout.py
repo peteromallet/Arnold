@@ -17,12 +17,17 @@ INITIATIVES_DIR = Path(".megaplan") / "initiatives"
 LEGACY_BRIEFS_DIR = Path(".megaplan") / "briefs"
 RUNTIME_PLANS_DIR = Path(".megaplan") / "plans"
 RUNTIME_EPICS_DIR = Path(".megaplan") / "epics"
-STRATEGY_PATH = Path(".megaplan") / "STRATEGY.md"
+LEGACY_STRATEGY_PATH = Path(".megaplan") / "STRATEGY.md"
+STRATEGY_PATH = LEGACY_STRATEGY_PATH  # Backward-compatible public alias.
+STRATEGY_FILENAME = "STRATEGY.md"
+DEFAULT_STRATEGY_INITIATIVE_SLUG = "repository-strategy"
 STRATEGY_PROJECTION_PATH = Path(".megaplan") / "strategy.projection.json"
 ALLOWED_INITIATIVE_SUBDIRS = frozenset(
     {"briefs", "research", "decisions", "notes", "assets", "handoff"}
 )
-ROOT_INITIATIVE_FILES = frozenset({"README.md", "NORTHSTAR.md", "chain.yaml"})
+ROOT_INITIATIVE_FILES = frozenset(
+    {"README.md", "NORTHSTAR.md", "STRATEGY.md", "chain.yaml"}
+)
 INITIATIVE_RETIREMENT_MARKER = ".retired"
 
 InitiativeDocKind = Literal[
@@ -43,13 +48,70 @@ def slugify_initiative(value: str) -> str:
     return slug
 
 
-def strategy_file_path(repo_root: str | Path) -> Path:
-    """Return the absolute path to ``.megaplan/STRATEGY.md``.
+def _matching_strategy_initiative(repo_root: Path) -> Path | None:
+    """Return the existing initiative that most clearly owns repo strategy."""
+    base = repo_root / INITIATIVES_DIR
+    if not base.is_dir():
+        return None
 
-    This is a pure path computation — it does not create directories or
-    verify that the file exists.
+    exact = base / DEFAULT_STRATEGY_INITIATIVE_SLUG
+    if exact.is_dir():
+        return exact
+
+    matches = [
+        path
+        for path in sorted(base.iterdir())
+        if path.is_dir()
+        and {"repository", "strategy"}.issubset(set(path.name.split("-")))
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def strategy_file_path(
+    repo_root: str | Path,
+    initiative_slug: str | None = None,
+) -> Path:
+    """Resolve the authoritative repository strategy Markdown path.
+
+    New strategy documents live at the root of a canonical
+    ``megaplan-initiatives-v1`` initiative.  Resolution first honors an
+    explicit *initiative_slug*, then an already-adopted initiative strategy,
+    then the legacy ``.megaplan/STRATEGY.md`` path for backward compatibility.
+    With no existing document, a matching repository-strategy initiative is
+    reused; otherwise the canonical ``repository-strategy`` slug is selected.
+
+    This function does not create directories or files.
     """
-    return Path(repo_root) / STRATEGY_PATH
+    root = Path(repo_root)
+    base = root / INITIATIVES_DIR
+    if initiative_slug is not None:
+        return base / slugify_initiative(initiative_slug) / STRATEGY_FILENAME
+
+    if base.is_dir():
+        adopted = sorted(
+            path / STRATEGY_FILENAME
+            for path in base.iterdir()
+            if path.is_dir() and (path / STRATEGY_FILENAME).is_file()
+        )
+        if len(adopted) == 1:
+            return adopted[0]
+        if len(adopted) > 1:
+            exact = base / DEFAULT_STRATEGY_INITIATIVE_SLUG / STRATEGY_FILENAME
+            if exact in adopted:
+                return exact
+            raise ValueError(
+                "multiple initiative strategy documents found; keep one "
+                "canonical repository strategy or specify an initiative"
+            )
+
+    legacy = root / LEGACY_STRATEGY_PATH
+    if legacy.is_file():
+        return legacy
+
+    matching = _matching_strategy_initiative(root)
+    if matching is not None:
+        return matching / STRATEGY_FILENAME
+    return base / DEFAULT_STRATEGY_INITIATIVE_SLUG / STRATEGY_FILENAME
 
 
 def strategy_projection_file_path(repo_root: str | Path) -> Path:

@@ -269,6 +269,27 @@ Shows current milestone index, current plan name, last state, completed mileston
 
 **5. If a milestone fails or escalates**, the chain halts (with default `stop_chain`). Investigate the failing plan via `megaplan status --plan <name>` and `megaplan audit --plan <name>`. Once you've fixed the brief or escalated the rubric (via `megaplan override set-profile` etc.), re-run `megaplan chain start --spec` and the chain resumes.
 
+## Promotion from a ticket
+
+When a filed ticket grows in scope and warrants its own epic and initiative, promote it:
+
+```bash
+megaplan ticket promote <ticket_id> \
+  --initiative-slug my-feature \
+  --title "My Feature Epic" \
+  --goal "One-line goal statement"
+```
+
+Promotion rules:
+
+- **Search first, create second.** The promoter looks for an existing initiative with a matching slug. If one exists (e.g., a previously scaffolded initiative folder), it is reused. Only create when no match is found.
+- **Distinct identities are preserved.** The ticket ULID is NEVER reused as the epic ID. The epic ID is the initiative slug. The ticket retains its own ULID and identity history — it is linked to the epic with `kind: promoted_to_epic` and a `provenance: promotion:<ticket_id>` traceability string.
+- **Roadmap entry is replaced, not duplicated.** If the ticket was in the strategy roadmap (`.megaplan/STRATEGY.md`), its `- [ticket:<ULID>]` entry is replaced by a `- [epic:<slug>]` entry in the same horizon. Non-roadmap tickets are not forced into the strategy.
+- **Strategy entries are pointers.** The roadmap bullet references the epic slug; it never copies the epic body, lifecycle status, plan details, or completion evidence.
+- **Projection JSON is disposable.** After promotion, the strategy projection (`.megaplan/strategy.projection.json`) may be stale. Delete it and rebuild: `rm -f .megaplan/strategy.projection.json && megaplan strategy project --write`. Never edit the projection directly.
+
+Use `--skip-strategy` if you want to promote without touching the roadmap.
+
 ## Common pitfalls
 
 - **Don't decompose so finely that each milestone is <2 days of work.** A chain of 10 micro-milestones is harder to follow than 4 right-sized ones, and the harness overhead dominates the actual work.
@@ -277,3 +298,4 @@ Shows current milestone index, current plan name, last state, completed mileston
 - **Don't bake-off inside a chain unless you genuinely need it.** Bakeoffs are independent runs; nesting them inside a chain spec multiplies the cost without typically producing useful signal.
 - **Don't edit the spec mid-flight expecting completed milestones to re-run.** State is sticky for completed entries by design — that's how resume works.
 - **Don't leave `NORTHSTAR.md` undeclared.** A file beside `chain.yaml` is not auto-discovered. Declare `anchors.north_star: NORTHSTAR.md`, or explicitly opt out with `driver.require_anchor: false` plus `driver.missing_anchor_ack`.
+- **Don't treat the strategy projection as authoritative.** `.megaplan/strategy.projection.json` is a deterministic, disposable projection generated from `.megaplan/STRATEGY.md`. Delete and rebuild it; never edit it directly.

@@ -271,7 +271,7 @@ class TestMigrationReportShape:
 
 
 class TestAbsentStrategy:
-    """Absent .megaplan/STRATEGY.md is a valid unadopted state."""
+    """An absent canonical strategy is a valid unadopted state."""
 
     def test_absent_strategy_status_ok(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
@@ -301,7 +301,9 @@ class TestAbsentStrategy:
     def test_absent_strategy_file_path_is_set(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         report = inspect_strategy_migration(repo)
-        assert report.strategy_file_path.endswith(".megaplan/STRATEGY.md")
+        assert report.strategy_file_path.endswith(
+            ".megaplan/initiatives/repository-strategy/STRATEGY.md"
+        )
 
     def test_absent_strategy_no_tickets_dir_finding(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
