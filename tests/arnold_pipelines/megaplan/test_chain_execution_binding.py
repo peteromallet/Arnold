@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
     active_execution_identity,
     bind_execution_identity,
     execution_binding_report,
+    rebind_execution_identity,
 )
 from arnold_pipelines.megaplan.chain.spec import (
     ChainState,
@@ -83,6 +84,27 @@ def _bound_state(spec_path: Path) -> ChainState:
     assert report["status"] == "match"
     save_chain_state(spec_path, state)
     return state
+
+
+def _replace_and_repin(spec_path: Path, labels: tuple[str, ...]) -> None:
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["milestones"] = []
+    for label in labels:
+        brief = spec_path.parent / "briefs" / f"{label}.md"
+        if not brief.exists():
+            brief.write_text(f"# {label}\n", encoding="utf-8")
+        raw["milestones"].append(
+            {
+                "label": label,
+                "idea": f".megaplan/initiatives/demo/briefs/{label}.md",
+            }
+        )
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    root = spec_path.parents[3]
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "replace initiative revision")
+    raw["driver"]["intended_initiative_revision"] = _git(root, "rev-parse", "HEAD")
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
 
 def test_binding_records_spec_sequence_anchor_briefs_revision_and_runtime(tmp_path: Path) -> None:
@@ -221,3 +243,111 @@ def test_state_save_never_rewrites_immutable_launch_identity(tmp_path: Path) -> 
 
     reloaded = load_chain_state(spec_path)
     assert reloaded.metadata["execution_binding"]["launched_identity"] == expected
+
+
+def test_guarded_rebind_adopts_inserted_successor_without_moving_cursor(tmp_path: Path) -> None:
+    spec_path = _pinned_chain(tmp_path, ("m5", "m6"))
+    state = _bound_state(spec_path)
+    state.current_milestone_index = 0
+    state.current_plan_name = "m5-plan"
+    state.last_state = "reviewed"
+    save_chain_state(spec_path, state)
+    before = state.to_dict()
+    previous_bundle = state.metadata["execution_binding"]["launched_identity"][
+        "bundle_sha256"
+    ]
+
+    _replace_and_repin(spec_path, ("m5", "m5a", "m6"))
+    active_bundle = active_execution_identity(spec_path)["bundle_sha256"]
+    result = rebind_execution_identity(
+        spec_path,
+        state,
+        expected_previous_bundle_sha256=previous_bundle,
+        expected_active_bundle_sha256=active_bundle,
+        expected_current_milestone="m5",
+        expected_current_plan="m5-plan",
+        expected_next_milestone="m5a",
+        reason="insert atomic fail-closed completion boundary",
+    )
+
+    after = state.to_dict()
+    assert result["execution_binding"]["status"] == "match"
+    assert result["event"]["next_milestone"] == "m5a"
+    assert len(result["event"]["content_sha256"]) == 64
+    for field in before:
+        if field != "metadata":
+            assert after[field] == before[field]
+    labels = [
+        item["label"]
+        for item in state.metadata["execution_binding"]["launched_identity"][
+            "milestone_sequence"
+        ]
+    ]
+    assert labels == ["m5", "m5a", "m6"]
+
+
+@pytest.mark.parametrize(
+    ("guard", "message"),
+    [
+        ("previous", "previous bundle SHA-256 does not match"),
+        ("active", "active bundle SHA-256 does not match"),
+        ("next", "active next milestone does not match"),
+    ],
+)
+def test_guarded_rebind_fails_closed_on_wrong_content_or_successor(
+    tmp_path: Path,
+    guard: str,
+    message: str,
+) -> None:
+    spec_path = _pinned_chain(tmp_path, ("m5", "m6"))
+    state = _bound_state(spec_path)
+    state.current_milestone_index = 0
+    state.current_plan_name = "m5-plan"
+    previous_bundle = state.metadata["execution_binding"]["launched_identity"][
+        "bundle_sha256"
+    ]
+    _replace_and_repin(spec_path, ("m5", "m5a", "m6"))
+    active_bundle = active_execution_identity(spec_path)["bundle_sha256"]
+    before = json.loads(json.dumps(state.to_dict()))
+
+    with pytest.raises(CliError, match=message):
+        rebind_execution_identity(
+            spec_path,
+            state,
+            expected_previous_bundle_sha256=(
+                "0" * 64 if guard == "previous" else previous_bundle
+            ),
+            expected_active_bundle_sha256=(
+                "f" * 64 if guard == "active" else active_bundle
+            ),
+            expected_current_milestone="m5",
+            expected_current_plan="m5-plan",
+            expected_next_milestone="m6" if guard == "next" else "m5a",
+            reason="guard regression",
+        )
+    assert state.to_dict() == before
+
+
+def test_guarded_rebind_rejects_changed_completed_or_current_prefix(tmp_path: Path) -> None:
+    spec_path = _pinned_chain(tmp_path, ("m4", "m5", "m6"))
+    state = _bound_state(spec_path)
+    state.current_milestone_index = 1
+    state.current_plan_name = "m5-plan"
+    state.completed = [{"label": "m4", "plan": "m4-plan", "status": "done"}]
+    previous_bundle = state.metadata["execution_binding"]["launched_identity"][
+        "bundle_sha256"
+    ]
+    _replace_and_repin(spec_path, ("m4-renamed", "m5", "m5a", "m6"))
+    active_bundle = active_execution_identity(spec_path)["bundle_sha256"]
+
+    with pytest.raises(CliError, match="completed milestone prefix changed"):
+        rebind_execution_identity(
+            spec_path,
+            state,
+            expected_previous_bundle_sha256=previous_bundle,
+            expected_active_bundle_sha256=active_bundle,
+            expected_current_milestone="m5",
+            expected_current_plan="m5-plan",
+            expected_next_milestone="m5a",
+            reason="must not rewrite history",
+        )

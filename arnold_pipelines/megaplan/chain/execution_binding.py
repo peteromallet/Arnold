@@ -24,8 +24,10 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 BINDING_SCHEMA = "arnold.megaplan.chain_execution_binding.v1"
+REBIND_SCHEMA = "arnold.megaplan.chain_execution_rebind.v1"
 DRIFT_ERROR = "chain_execution_binding_drift"
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+_FULL_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -559,3 +561,221 @@ def bind_execution_identity(spec_path: Path, state: Any) -> dict[str, Any]:
     }
     state.metadata = metadata
     return execution_binding_report(spec_path, state)
+
+
+def _identity_labels(identity: Mapping[str, Any]) -> list[str]:
+    sequence = identity.get("milestone_sequence")
+    if not isinstance(sequence, list):
+        return []
+    labels: list[str] = []
+    for expected_index, item in enumerate(sequence):
+        if not isinstance(item, Mapping):
+            return []
+        try:
+            index = int(item.get("index"))
+        except (TypeError, ValueError):
+            return []
+        label = str(item.get("label") or "").strip()
+        if index != expected_index or not label:
+            return []
+        labels.append(label)
+    return labels if len(set(labels)) == len(labels) else []
+
+
+def _completed_labels(state: Any) -> list[str]:
+    completed = getattr(state, "completed", None)
+    if not isinstance(completed, list):
+        return []
+    labels: list[str] = []
+    for item in completed:
+        if not isinstance(item, Mapping):
+            raise CliError(
+                DRIFT_ERROR,
+                "chain rebind refused: malformed completed milestone record",
+            )
+        label = str(item.get("label") or item.get("milestone") or "").strip()
+        if not label:
+            raise CliError(
+                DRIFT_ERROR,
+                "chain rebind refused: completed milestone label is missing",
+            )
+        labels.append(label)
+    if len(set(labels)) != len(labels):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: completed milestone labels are ambiguous",
+        )
+    return labels
+
+
+def rebind_execution_identity(
+    spec_path: Path,
+    state: Any,
+    *,
+    expected_previous_bundle_sha256: str,
+    expected_active_bundle_sha256: str,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    expected_next_milestone: str,
+    reason: str,
+    actor: str = "operator",
+) -> dict[str, Any]:
+    """Adopt an explicitly content-addressed successor chain without moving its cursor.
+
+    Rebinding is intentionally narrower than ordinary reconciliation.  The
+    operator must name both immutable bundle identities and the exact
+    current/next cursor.  Completed and current milestones must be an
+    unchanged prefix of both identities; only the future suffix may differ.
+    """
+
+    arguments = {
+        "expected_previous_bundle_sha256": expected_previous_bundle_sha256,
+        "expected_active_bundle_sha256": expected_active_bundle_sha256,
+        "expected_current_milestone": expected_current_milestone,
+        "expected_current_plan": expected_current_plan,
+        "expected_next_milestone": expected_next_milestone,
+        "reason": reason,
+        "actor": actor,
+    }
+    if any(not str(value or "").strip() for value in arguments.values()):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: every rebind guard is required")
+    if not _FULL_SHA256.fullmatch(expected_previous_bundle_sha256):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: previous bundle SHA-256 is invalid")
+    if not _FULL_SHA256.fullmatch(expected_active_bundle_sha256):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: active bundle SHA-256 is invalid")
+
+    report = execution_binding_report(spec_path, state)
+    if not report.get("required"):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: execution binding is not required")
+    if report.get("status") not in {"drift", "reconcile_required"}:
+        raise CliError(
+            DRIFT_ERROR,
+            f"chain rebind refused: binding status is {report.get('status')!r}, not drift",
+        )
+    previous = report.get("expected")
+    active = report.get("active")
+    if not isinstance(previous, Mapping) or not isinstance(active, Mapping):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: expected or active identity is missing")
+    if previous.get("bundle_sha256") != expected_previous_bundle_sha256:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: previous bundle SHA-256 does not match persisted binding",
+        )
+    if active.get("bundle_sha256") != expected_active_bundle_sha256:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: active bundle SHA-256 does not match validated source",
+        )
+    if not active.get("ready"):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: active execution identity is not ready: "
+            + ", ".join(str(item) for item in active.get("errors") or []),
+        )
+
+    previous_labels = _identity_labels(previous)
+    active_labels = _identity_labels(active)
+    if not previous_labels or not active_labels:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: milestone sequence is missing, duplicated, or malformed",
+        )
+    try:
+        current_index = int(getattr(state, "current_milestone_index"))
+    except (TypeError, ValueError):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: current milestone index is ambiguous",
+        ) from None
+    if (
+        current_index < 0
+        or current_index >= len(previous_labels)
+        or current_index >= len(active_labels)
+    ):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: current milestone index is outside a bound sequence",
+        )
+
+    completed_labels = _completed_labels(state)
+    if len(completed_labels) != current_index:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: completed prefix does not equal the current cursor",
+        )
+    if (
+        previous_labels[:current_index] != completed_labels
+        or active_labels[:current_index] != completed_labels
+    ):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: completed milestone prefix changed")
+    if previous_labels[current_index] != expected_current_milestone:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: persisted current milestone does not match the guard",
+        )
+    if active_labels[current_index] != expected_current_milestone:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: active source changed the current milestone",
+        )
+    if str(getattr(state, "current_plan_name", "") or "") != expected_current_plan:
+        raise CliError(DRIFT_ERROR, "chain rebind refused: current plan does not match the guard")
+    next_index = current_index + 1
+    if next_index >= len(active_labels):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: active source has no guarded successor")
+    if active_labels[next_index] != expected_next_milestone:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: active next milestone does not match the guard",
+        )
+    if (
+        expected_next_milestone in completed_labels
+        or expected_next_milestone == expected_current_milestone
+    ):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: guarded successor is already completed or current",
+        )
+
+    rebound_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    event_core = {
+        "schema": REBIND_SCHEMA,
+        "rebound_at": rebound_at,
+        "actor": actor,
+        "reason": reason,
+        "from_bundle_sha256": expected_previous_bundle_sha256,
+        "to_bundle_sha256": expected_active_bundle_sha256,
+        "current_milestone_index": current_index,
+        "current_milestone": expected_current_milestone,
+        "current_plan": expected_current_plan,
+        "next_milestone": expected_next_milestone,
+        "completed_prefix": completed_labels,
+    }
+    event = {
+        **event_core,
+        "content_sha256": _sha256_bytes(
+            json.dumps(event_core, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ),
+    }
+    metadata = dict(getattr(state, "metadata", {}) or {})
+    binding = dict(metadata.get("execution_binding") or {})
+    events = binding.get("rebind_events")
+    events = list(events) if isinstance(events, list) else []
+    events.append(event)
+    binding.update(
+        {
+            "schema": BINDING_SCHEMA,
+            "launched_identity": dict(active),
+            "last_rebound_at": rebound_at,
+            "rebind_events": events,
+        }
+    )
+    metadata["execution_binding"] = binding
+    state.metadata = metadata
+    rebound_report = execution_binding_report(spec_path, state)
+    if rebound_report.get("status") != "match":
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: rebound identity did not verify as an exact match",
+        )
+    return {"event": event, "execution_binding": rebound_report}
