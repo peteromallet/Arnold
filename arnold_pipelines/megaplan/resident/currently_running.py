@@ -24,6 +24,7 @@ CURRENTLY_RUNNING_COMMAND = "currently-running"
 CURRENTLY_RUNNING_DESCRIPTION = "Show running Megaplan epics, chains, and resident subagents."
 _RUNNING_SESSION_STATUSES = frozenset({"running", "repairing"})
 _ATTENTION_SESSION_STATUS = "attention"
+_ATTENTION_WINDOW = timedelta(hours=12)
 _TERMINAL_AGENT_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
 )
@@ -142,9 +143,19 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
 def discover_attention_sessions(
     status_node: Mapping[str, Any] | None,
 ) -> list[Mapping[str, Any]]:
-    """Return canonical attention/blocked chains that are not live execution."""
+    """Return recently active canonical attention/blocked non-live chains.
+
+    ``latest_activity`` is the status projection's authoritative activity
+    timestamp.  The snapshot observation clock is deliberately used as the
+    reference, so replayed snapshots preserve their truthful rolling window.
+    The boundary is inclusive: activity exactly twelve hours before the
+    snapshot is shown.
+    """
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
+        return []
+    snapshot_time = _parse_utc_timestamp(status_node.get("generated_at"))
+    if snapshot_time is None:
         return []
     sessions = status_node.get("sessions")
     if not isinstance(sessions, list):
@@ -156,7 +167,20 @@ def discover_attention_sessions(
         and id(row) not in running
         and str(row.get("status") or "").casefold()
         in {_ATTENTION_SESSION_STATUS, "blocked"}
+        and _is_within_attention_window(row, snapshot_time)
     ]
+
+
+def _is_within_attention_window(
+    row: Mapping[str, Any], snapshot_time: datetime
+) -> bool:
+    """Return whether authoritative activity is in the preceding 12 hours."""
+
+    latest_activity = _parse_utc_timestamp(row.get("latest_activity"))
+    return bool(
+        latest_activity is not None
+        and timedelta() <= snapshot_time - latest_activity <= _ATTENTION_WINDOW
+    )
 
 
 def discover_live_managed_agents(
