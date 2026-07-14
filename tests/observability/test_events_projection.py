@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from arnold_pipelines.megaplan.observability.events import EventKind, read_events
@@ -145,3 +146,32 @@ def test_event_writer_rebuilds_projection_when_cursor_is_stale(tmp_path: Path) -
         store, plan_id
     )
     assert [event["seq"] for event in read_events(plan_dir)] == [0, 1]
+
+
+def test_atomic_projection_rebuild_never_exposes_truncated_destination(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arnold_pipelines.megaplan.observability import events_projection
+
+    projection = tmp_path / "events.ndjson"
+    previous = '{"seq":0,"kind":"phase_start"}\n'
+    replacement = (
+        '{"seq":0,"kind":"phase_start"}\n'
+        '{"seq":1,"kind":"llm_token_heartbeat"}\n'
+    )
+    projection.write_text(previous, encoding="utf-8")
+    real_replace = os.replace
+    observed: dict[str, str] = {}
+
+    def inspect_before_replace(source: str, destination: str | Path) -> None:
+        if Path(destination) == projection:
+            observed["destination"] = projection.read_text(encoding="utf-8")
+            observed["temporary"] = Path(source).read_text(encoding="utf-8")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(events_projection.os, "replace", inspect_before_replace)
+
+    events_projection._atomic_write_text(projection, replacement)
+
+    assert observed == {"destination": previous, "temporary": replacement}
+    assert projection.read_text(encoding="utf-8") == replacement
