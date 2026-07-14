@@ -68,9 +68,12 @@ from arnold_pipelines.megaplan.strategy.projection import (
     serialize_strategy_projection,
     write_strategy_projection,
 )
-from arnold_pipelines.megaplan.strategy.resolver import (
-    resolve_strategy,
-)
+# NOTE: ``strategy.resolver`` is imported lazily inside ``load_strategy`` and
+# ``load_strategy_for_write`` to break an import cycle
+# (strategy.__init__ -> resolver -> tickets.__init__ -> tickets.core ->
+# strategy.io -> resolver).  ``resolve_strategy`` is only needed at runtime,
+# never at import time, so deferring the import keeps both entry points working
+# from a fresh process without changing behavior.
 from arnold_pipelines.megaplan.strategy.validation import (
     validate_strategy,
 )
@@ -171,6 +174,8 @@ def load_strategy(
 
     document = parse_strategy(source, repo_rel)
     document = validate_strategy(document)
+    from arnold_pipelines.megaplan.strategy.resolver import resolve_strategy
+
     document = resolve_strategy(document, repo_root, store=store)
 
     return document
@@ -224,6 +229,8 @@ def load_strategy_for_write(
 
     document = parse_strategy(source, repo_rel)
     document = validate_strategy(document)
+    from arnold_pipelines.megaplan.strategy.resolver import resolve_strategy
+
     document = resolve_strategy(document, repo_root, store=store)
 
     return document, file_state

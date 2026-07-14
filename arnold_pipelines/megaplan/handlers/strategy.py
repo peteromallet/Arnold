@@ -462,6 +462,32 @@ def handle_strategy_project(
             "No strategy file found. Run 'strategy init' first.",
         )
 
+    # Fail closed: a document that parsed only with error diagnostics (for
+    # example an unsupported schema version) is not a valid authority
+    # document. Strict authoritative commands must refuse rather than emit
+    # partial projection JSON that merely embeds the diagnostics.
+    _raw_diags = (
+        getattr(document, "error_diagnostics", None)
+        or getattr(document, "diagnostics", None)
+        or []
+    )
+    _error_diags = []
+    for _d in _raw_diags:
+        _sev = _d.get("severity", "") if isinstance(_d, dict) else getattr(_d, "severity", "")
+        if str(_sev).lower() == "error":
+            _error_diags.append(_d)
+    if _error_diags:
+        _first = _error_diags[0]
+        _msg = (
+            _first.get("message", "invalid strategy")
+            if isinstance(_first, dict)
+            else getattr(_first, "message", "invalid strategy")
+        )
+        raise CliError(
+            "strategy_invalid",
+            "Strategy file is not a valid authority document: " + str(_msg),
+        )
+
     projection_json = project_to_json(document)
 
     if output_path:
@@ -1044,7 +1070,7 @@ def _migration_report_to_dict(
             "total_with_id": inv.total_with_id,
             "total_valid_ulid": inv.total_valid_ulid,
             "total_roadmap_eligible": inv.total_roadmap_eligible,
-            "total_parse_errors": inv.total_parse_errors,
+            "total_parse_errors": inv.total_with_parse_errors,
             "total_duplicate_ids": len(inv.duplicate_ids),
         }
 

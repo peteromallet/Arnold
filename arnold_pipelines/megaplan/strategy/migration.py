@@ -93,6 +93,8 @@ FINDING_VERSION_MISSING: str = "version-missing"
 FINDING_VERSION_MALFORMED: str = "version-malformed"
 FINDING_STRATEGY_ABSENT: str = "strategy-absent"
 FINDING_DUPLICATE_IDS: str = "duplicate-ids"
+FINDING_LEGACY_TICKET_EPICS: str = "legacy-ticket-epics"
+ACTION_NORMALIZE_TICKET_EPICS: str = "normalize-ticket-epics"
 FINDING_INVALID_ULID: str = "invalid-ulid"
 FINDING_MISSING_ID: str = "missing-id"
 FINDING_LEGACY_FILENAME: str = "legacy-filename"
@@ -315,6 +317,16 @@ def inspect_strategy_migration(
         )
 
     # ------------------------------------------------------------------
+    # 3b. Legacy bare-string / incomplete ticket 'epics' frontmatter links
+    # ------------------------------------------------------------------
+    _classify_legacy_ticket_epics(
+        repo_root,
+        ticket_inventory,
+        findings,
+        actions,
+    )
+
+    # ------------------------------------------------------------------
     # 4. Epic reference diagnostics (strategy roadmap → initiative dirs)
     # ------------------------------------------------------------------
     if version_status not in ("absent", "malformed"):
@@ -459,20 +471,29 @@ def _classify_version_status(
         return
 
     if version_status == "unsupported-old":
+        # Unknown/legacy schema versions predating the supported ``legacy``
+        # band are *not* eligible for automated upgrade: there is no
+        # documented reversible transformation. Refuse instead of silently
+        # rewriting unknown old data.
         msg = (
             f"Strategy schema version '{schema_version}' is older than "
             f"the current version '{CURRENT_SCHEMA_VERSION}' and is not "
-            f"in the recognized legacy set. Upgrade is available."
+            f"in the recognized legacy set. Automated upgrade is not "
+            f"available; manual review is required."
         )
         findings.append(
             MigrationFinding(
                 kind=FINDING_VERSION_UNSUPPORTED_OLD,
-                severity="warning",
+                severity="error",
                 message=msg,
                 source=path_str,
             )
         )
-        _add_upgrade_action(actions, path_str, schema_version)
+        blockers.append(
+            f"Strategy version '{schema_version}' is an unknown old version "
+            f"with no documented reversible upgrade path — manual review "
+            f"is required before migration."
+        )
         return
 
     if version_status == "unsupported-new":
