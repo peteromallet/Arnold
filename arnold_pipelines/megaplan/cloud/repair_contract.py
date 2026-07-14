@@ -473,7 +473,14 @@ def project_repair_custody(
     )
     decision_history = _decision_history_by_request(queue_decisions)
 
-    fingerprint = blocker_fingerprint_from_evidence(plan_state=plan_payload, current_target=target_payload)
+    fingerprint_plan_payload = _with_legacy_review_blocked_task_id(
+        plan_state=plan_payload,
+        current_target=target_payload,
+    )
+    fingerprint = blocker_fingerprint_from_evidence(
+        plan_state=fingerprint_plan_payload,
+        current_target=target_payload,
+    )
     blocker_id = blocker_id_for_fingerprint(fingerprint)
     target_session = _first_non_empty(
         _as_text(target_payload.get("target_session")),
@@ -524,8 +531,12 @@ def project_repair_custody(
                 "phase": signature_phase,
                 "metadata": {"blocked_task_id": signature_blocked_task_id},
             }
-        request_fingerprint = blocker_fingerprint_from_evidence(
+        request_fingerprint_plan_state = _with_legacy_review_blocked_task_id(
             plan_state=request_plan_state,
+            current_target=request_target,
+        )
+        request_fingerprint = blocker_fingerprint_from_evidence(
+            plan_state=request_fingerprint_plan_state,
             current_target=request_target,
             problem_signature=problem_signature,
         )
@@ -3658,6 +3669,38 @@ def _is_deterministic_quality_budget_kind(
     if failure_kind != _LEGACY_REVIEW_QUALITY_UNKNOWN_KIND:
         return False
     return bool(_legacy_review_quality_block_evidence(current_target))
+
+
+def _with_legacy_review_blocked_task_id(
+    *,
+    plan_state: Mapping[str, Any],
+    current_target: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Fill the legacy request's missing fingerprint field from bound review evidence."""
+
+    latest_failure = _as_mapping(plan_state.get("latest_failure"))
+    if _as_text(latest_failure.get("kind")) != _LEGACY_REVIEW_QUALITY_UNKNOWN_KIND:
+        return plan_state
+    latest_failure_meta = _as_mapping(latest_failure.get("metadata"))
+    if _blocked_task_id_from_failure(latest_failure, latest_failure_meta):
+        return plan_state
+    task_ids = sorted(
+        {
+            _as_text(item.get("task_id"))
+            for item in _legacy_review_quality_block_evidence(current_target)
+            if _as_text(item.get("task_id"))
+        }
+    )
+    if not task_ids:
+        return plan_state
+    upgraded = deepcopy(dict(plan_state))
+    upgraded_failure = deepcopy(dict(latest_failure))
+    upgraded_metadata = deepcopy(dict(latest_failure_meta))
+    upgraded_metadata["blocked_task_id"] = task_ids[0]
+    upgraded_metadata["blocked_task_ids"] = task_ids
+    upgraded_failure["metadata"] = upgraded_metadata
+    upgraded["latest_failure"] = upgraded_failure
+    return upgraded
 
 
 def _legacy_review_quality_block_evidence(current_target: Mapping[str, Any]) -> list[dict[str, Any]]:

@@ -129,7 +129,7 @@ def _legacy_quality_request(queue_root: Path) -> dict[str, object]:
             "phase_or_step": "review",
             "milestone_or_plan": "agentic-replay-viewer",
             "gate_recommendation": "",
-            "blocked_task_id": "T1",
+            "blocked_task_id": "",
         },
         root_cause_hint="legacy deterministic quality block",
     )
@@ -431,6 +431,9 @@ def test_legacy_review_quality_unknown_dispatches_only_with_authoritative_review
 
     assert custody["failure_kind"] == "review_quality_blocked_unknown"
     assert custody["blocker_fingerprint"]["failure_kind"] == "review_quality_blocked_unknown"
+    assert custody["blocker_fingerprint"]["blocked_task_id"] == "T1"
+    assert custody["blocker_id"]
+    assert custody["requests"][0]["blocker_id"] == custody["blocker_id"]
     assert custody["active_request_ids"] == [queued["request"]["request_id"]]
     assert custody["retry_budget"]["max_attempts"] == 1
     assert custody["retry_budget"]["remaining_attempts"] == 1
