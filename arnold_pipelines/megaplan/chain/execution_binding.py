@@ -458,6 +458,39 @@ def _reconciled_requirements_cover_revision_errors(
     return bool(errors) and set(errors).issubset(covered)
 
 
+def _bound_import_root_covers_editable_metadata_mismatch(
+    expected: Mapping[str, Any],
+    active: Mapping[str, Any],
+) -> bool:
+    """Accept unrelated global editable metadata only for the bound import root.
+
+    A shared supervisor interpreter can expose ``direct_url.json`` for another
+    editable Arnold checkout even though this process was launched with the
+    immutable chain runtime first on ``PYTHONPATH``.  Once a chain is bound, the
+    imported source root is the execution fact that must remain invariant.  Do
+    not make a later, process-global package metadata observation stronger than
+    that bound fact; equally, do not accept a different import root or any
+    additional launch-readiness error.
+    """
+
+    if set(active.get("errors") or []) != {"editable_runtime_import_root_mismatch"}:
+        return False
+    expected_runtime = expected.get("runtime")
+    active_runtime = active.get("runtime")
+    if not isinstance(expected_runtime, Mapping) or not isinstance(active_runtime, Mapping):
+        return False
+    expected_import = str(expected_runtime.get("import_root") or "").strip()
+    expected_editable = str(expected_runtime.get("editable_root") or "").strip()
+    active_import = str(active_runtime.get("import_root") or "").strip()
+    if not expected_import or not expected_editable or not active_import:
+        return False
+    return (
+        Path(expected_import).resolve(strict=False)
+        == Path(expected_editable).resolve(strict=False)
+        == Path(active_import).resolve(strict=False)
+    )
+
+
 def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
     policy = binding_policy(spec_path)
     binding = getattr(state, "metadata", {}).get("execution_binding")
@@ -491,9 +524,14 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
             active=active,
             drift_fields=drift_fields,
         )
-        active_ready = bool(active.get("ready")) or _reconciled_requirements_cover_revision_errors(
-            state,
+        bound_import_root_match = _bound_import_root_covers_editable_metadata_mismatch(
+            expected,
             active,
+        )
+        active_ready = (
+            bool(active.get("ready"))
+            or _reconciled_requirements_cover_revision_errors(state, active)
+            or bound_import_root_match
         )
         if safe_future:
             status = "reconcile_required"
@@ -504,6 +542,7 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
         "required": policy["required"],
         "status": status,
         "drift_fields": drift_fields,
+        "bound_import_root_match": bound_import_root_match if expected is not None else False,
         "changed_asset_kinds": changed_asset_kinds if expected is not None else [],
         "expected": dict(expected) if expected is not None else None,
         "active": active,

@@ -467,6 +467,79 @@ def test_custody_projection_reads_immutable_queue_dispatch_attempt(
     assert projection["attempts"][0]["terminal"] is False
 
 
+def test_queue_dispatch_attempt_uses_terminal_managed_manifest(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="dispatch me",
+    )
+    request_id = queued["request"]["request_id"]
+    blocker_id = blocker_id_for_fingerprint(_fingerprint())
+    assert blocker_id is not None
+    managed_dir = tmp_path / "managed-1"
+    managed_dir.mkdir()
+    manifest_path = managed_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps({
+            "schema_version": "arnold-managed-agent-run-v2",
+            "custodian": "arnold.megaplan.managed_agent",
+            "run_id": "managed-1",
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "updated_at": "2026-07-04T01:06:00Z",
+            "links": {
+                "repair_request_id": request_id,
+                "blocker_id": blocker_id,
+            },
+        }),
+        encoding="utf-8",
+    )
+    repair_requests.write_decision(
+        queue_root,
+        request_id=request_id,
+        decision="dispatched",
+        reason="managed repair child launched",
+    )
+    repair_requests.write_dispatch_attempt(
+        queue_root,
+        request_id=request_id,
+        blocker_id=blocker_id,
+        actor="watchdog",
+        repair_layer="l1",
+        command="managed repair",
+        child_pid=4242,
+        managed_run_id="managed-1",
+        managed_manifest_path=str(manifest_path),
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert projection["attempts"][0]["state"] == "failed"
+    assert projection["attempts"][0]["outcome"] == "failed"
+    assert projection["attempts"][0]["terminal"] is True
+    assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
+
+
 def test_custody_projection_uses_managed_execution_as_formal_attempt(
     tmp_path: Path,
 ) -> None:
