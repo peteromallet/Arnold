@@ -162,7 +162,7 @@ def render_currently_running(
         if isinstance(status_node, Mapping)
         else ""
     )
-    lines: list[str] = ["**◈ Currently running**"]
+    lines: list[str] = ["# Currently running"]
     if stale_banner:
         # This canonical banner is intentionally verbatim and must be first.
         lines = [stale_banner, "", *lines]
@@ -220,12 +220,12 @@ def _epics_heading(summary: str | None = None) -> str:
 def _agents_heading(summary: str | None = None) -> str:
     """Return the consistent visual heading for resident-managed work."""
 
-    return _section_heading(_AGENTS_SECTION_ICON, "Resident-managed agents", summary)
+    return _section_heading(_AGENTS_SECTION_ICON, "Managed agents", summary)
 
 
 def _section_heading(icon: str, title: str, summary: str | None = None) -> str:
-    suffix = f" · {summary}" if summary else ""
-    return f"**{icon} {title}{suffix}**"
+    suffix = f" · {summary} —" if summary else ""
+    return f"## {icon} {title}{suffix}"
 
 
 def _render_session(row: Mapping[str, Any]) -> str:

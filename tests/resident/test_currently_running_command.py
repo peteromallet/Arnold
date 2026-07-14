@@ -73,7 +73,7 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
 
     rendered = render_currently_running(report)
 
-    assert "**⛓️ Epics & chains · 1 active**" in rendered
+    assert "## ⛓️ Epics & chains · 1 active —" in rendered
     assert "**Custody control plane · m7-runtime-adoption**" in rendered
     assert "`executing`" in rendered
     assert "42.5% overall" in rendered
@@ -106,7 +106,7 @@ def test_active_executing_attention_remains_listed_with_overlay_visible() -> Non
         CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
     )
 
-    assert "**⛓️ Epics & chains · 1 active**" in rendered
+    assert "## ⛓️ Epics & chains · 1 active —" in rendered
     assert "`executing`" in rendered
     assert "⚠️ attention" in rendered
     assert "chain custody mismatch" in rendered
@@ -186,7 +186,7 @@ def test_plan_state_is_used_only_when_display_state_and_execute_are_absent() -> 
     assert "`blocked` · overall progress unavailable · chain running" in rendered
 
 
-def test_render_uses_distinct_restrained_section_headings() -> None:
+def test_render_uses_h1_title_and_h2_section_heading_hierarchy() -> None:
     rendered = render_currently_running(
         CurrentlyRunningReport(
             status_node={
@@ -212,12 +212,12 @@ def test_render_uses_distinct_restrained_section_headings() -> None:
     )
 
     assert rendered == (
-        "**◈ Currently running**\n"
-        "**⛓️ Epics & chains · 1 active**\n"
+        "# Currently running\n"
+        "## ⛓️ Epics & chains · 1 active —\n"
         "• **status-refresh**\n"
         "  `executing` · 25% overall · chain running\n"
         "\n"
-        "**🤖 Resident-managed agents · 1 live**\n"
+        "## 🤖 Managed agents · 1 live —\n"
         "• **Refresh resident status**\n"
         "  `running` · agent `status-agent`"
     )
@@ -586,7 +586,7 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
     ]
     assert interaction.response.deferred == [{"thinking": True}]
     assert len(interaction.followup.messages) == 1
-    assert "**◈ Currently running**" in interaction.followup.messages[0]
+    assert interaction.followup.messages[0].startswith("# Currently running\n")
 
 
 def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
@@ -608,7 +608,7 @@ def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
 
     chunks = split_discord_message(rendered)
 
-    assert "**🤖 Resident-managed agents · 40 live**" in rendered
+    assert "## 🤖 Managed agents · 40 live —" in rendered
     assert "Progress unavailable" not in rendered
     assert rendered.count(" · agent `run-") == 40
     assert "Resident task 39" in rendered
