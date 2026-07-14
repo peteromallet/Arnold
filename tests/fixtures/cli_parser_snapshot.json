@@ -5047,39 +5047,6 @@
                 },
                 {
                   "action": "_StoreAction",
-                  "choices": [
-                    "ticket",
-                    "epic"
-                  ],
-                  "const": null,
-                  "default": null,
-                  "dest": "type",
-                  "help": null,
-                  "metavar": null,
-                  "nargs": null,
-                  "option_strings": [
-                    "--type"
-                  ],
-                  "required": true,
-                  "type": null
-                },
-                {
-                  "action": "_StoreAction",
-                  "choices": null,
-                  "const": null,
-                  "default": null,
-                  "dest": "ref",
-                  "help": null,
-                  "metavar": null,
-                  "nargs": null,
-                  "option_strings": [
-                    "--ref"
-                  ],
-                  "required": true,
-                  "type": null
-                },
-                {
-                  "action": "_StoreAction",
                   "choices": null,
                   "const": null,
                   "default": null,
@@ -5113,7 +5080,37 @@
                   "type": null
                 }
               ],
-              "positionals": [],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": [
+                    "ticket",
+                    "epic"
+                  ],
+                  "const": null,
+                  "default": null,
+                  "dest": "type",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "ref",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
               "subcommands": {}
             },
             "init": {
@@ -5191,6 +5188,39 @@
                   ],
                   "required": false,
                   "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": [
+                    "ticket",
+                    "epic"
+                  ],
+                  "const": null,
+                  "default": null,
+                  "dest": "entry_type",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--type"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "json",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--json"
+                  ],
+                  "required": false,
+                  "type": null
                 }
               ],
               "positionals": [],
@@ -5218,6 +5248,27 @@
                 {
                   "action": "_StoreAction",
                   "choices": [
+                    "Now",
+                    "Next",
+                    "Later"
+                  ],
+                  "const": null,
+                  "default": null,
+                  "dest": "horizon",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--to"
+                  ],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": [
                     "ticket",
                     "epic"
                   ],
@@ -5227,9 +5278,7 @@
                   "help": null,
                   "metavar": null,
                   "nargs": null,
-                  "option_strings": [
-                    "--type"
-                  ],
+                  "option_strings": [],
                   "required": true,
                   "type": null
                 },
@@ -5242,33 +5291,11 @@
                   "help": null,
                   "metavar": null,
                   "nargs": null,
-                  "option_strings": [
-                    "--ref"
-                  ],
-                  "required": true,
-                  "type": null
-                },
-                {
-                  "action": "_StoreAction",
-                  "choices": [
-                    "Now",
-                    "Next",
-                    "Later"
-                  ],
-                  "const": null,
-                  "default": null,
-                  "dest": "horizon",
-                  "help": null,
-                  "metavar": null,
-                  "nargs": null,
-                  "option_strings": [
-                    "--horizon"
-                  ],
+                  "option_strings": [],
                   "required": true,
                   "type": null
                 }
               ],
-              "positionals": [],
               "subcommands": {}
             },
             "project": {
@@ -5319,6 +5346,21 @@
                   ],
                   "required": false,
                   "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "json",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--json"
+                  ],
+                  "required": false,
+                  "type": null
                 }
               ],
               "positionals": [],
@@ -5342,7 +5384,9 @@
                   ],
                   "required": false,
                   "type": null
-                },
+                }
+              ],
+              "positionals": [
                 {
                   "action": "_StoreAction",
                   "choices": [
@@ -5355,9 +5399,7 @@
                   "help": null,
                   "metavar": null,
                   "nargs": null,
-                  "option_strings": [
-                    "--type"
-                  ],
+                  "option_strings": [],
                   "required": true,
                   "type": null
                 },
@@ -5370,14 +5412,11 @@
                   "help": null,
                   "metavar": null,
                   "nargs": null,
-                  "option_strings": [
-                    "--ref"
-                  ],
+                  "option_strings": [],
                   "required": true,
                   "type": null
                 }
               ],
-              "positionals": [],
               "subcommands": {}
             },
             "show": {

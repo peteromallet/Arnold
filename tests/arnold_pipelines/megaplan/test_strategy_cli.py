@@ -300,12 +300,12 @@ class TestStrategyCLIParserRegistration:
         assert args2.output == "foo.json"
 
     def test_strategy_add_has_required_flags(self) -> None:
-        """strategy add requires --type, --ref, --title, --horizon."""
+        """strategy add takes positional TYPE REF and --title, --horizon."""
         parser = build_parser()
         args = parser.parse_args([
             "strategy", "add",
-            "--type", "ticket",
-            "--ref", "01KT50AZRMK5X890TQ565DDB5V",
+            "ticket",
+            "01KT50AZRMK5X890TQ565DDB5V",
             "--title", "Test entry",
             "--horizon", "Now",
         ])
@@ -315,24 +315,24 @@ class TestStrategyCLIParserRegistration:
         assert args.horizon == "Now"
 
     def test_strategy_remove_has_required_flags(self) -> None:
-        """strategy remove requires --type and --ref."""
+        """strategy remove takes positional TYPE REF."""
         parser = build_parser()
         args = parser.parse_args([
             "strategy", "remove",
-            "--type", "epic",
-            "--ref", "my-initiative",
+            "epic",
+            "my-initiative",
         ])
         assert args.type == "epic"
         assert args.ref == "my-initiative"
 
     def test_strategy_move_has_required_flags(self) -> None:
-        """strategy move requires --type, --ref, --horizon."""
+        """strategy move takes positional TYPE REF and --to."""
         parser = build_parser()
         args = parser.parse_args([
             "strategy", "move",
-            "--type", "ticket",
-            "--ref", "01KT50AZRMK5X890TQ565DDB5V",
-            "--horizon", "Later",
+            "ticket",
+            "01KT50AZRMK5X890TQ565DDB5V",
+            "--to", "Later",
         ])
         assert args.type == "ticket"
         assert args.ref == "01KT50AZRMK5X890TQ565DDB5V"

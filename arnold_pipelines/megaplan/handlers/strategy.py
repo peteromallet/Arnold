@@ -294,8 +294,14 @@ def handle_strategy_list(
     repo_root:
         Repository root directory.
     args:
-        Parsed CLI arguments.  ``--horizon`` (optional) filters entries to
-        a specific horizon (``Now``, ``Next``, or ``Later``).
+        Parsed CLI arguments:
+
+        * ``--horizon`` (optional) filters entries to a specific horizon
+          (``Now``, ``Next``, or ``Later``).
+        * ``--type`` (optional) filters entries by artifact type
+          (``ticket`` or ``epic``).
+        * ``--json`` (optional) prints the full entries list as compact
+          JSON to stdout instead of a summary response.
 
     Returns
     -------
@@ -309,12 +315,20 @@ def handle_strategy_list(
         valid horizon label.
     """
     horizon_filter: str | None = getattr(args, "horizon", None)
+    type_filter: str | None = getattr(args, "entry_type", None)
+    json_flag: bool = bool(getattr(args, "json", False))
 
     if horizon_filter is not None and horizon_filter not in REQUIRED_ROADMAP_SECTIONS:
         valid = ", ".join(REQUIRED_ROADMAP_SECTIONS)
         raise CliError(
             "invalid_args",
             f"Invalid horizon '{horizon_filter}'. Must be one of: {valid}",
+        )
+
+    if type_filter is not None and type_filter not in ("ticket", "epic"):
+        raise CliError(
+            "invalid_args",
+            f"Invalid type filter '{type_filter}'. Must be 'ticket' or 'epic'.",
         )
 
     document = load_strategy(repo_root)
@@ -324,6 +338,8 @@ def handle_strategy_list(
         if horizon_filter is not None and horizon != horizon_filter:
             continue
         for entry in document.roadmap.get(horizon, []):
+            if type_filter is not None and entry.identity.type != type_filter:
+                continue
             entries.append({
                 "type": entry.identity.type,
                 "ref": entry.identity.ref,
@@ -338,19 +354,37 @@ def handle_strategy_list(
 
     diagnostics = format_diagnostics(document)
     error_count = sum(1 for d in diagnostics if d["severity"] == "error")
+    warning_count = sum(1 for d in diagnostics if d["severity"] == "warning")
+
+    if json_flag:
+        # Print compact JSON to stdout and return a minimal response.
+        output = {
+            "horizon_filter": horizon_filter,
+            "type_filter": type_filter,
+            "total_entries": len(entries),
+            "entries": entries,
+            "error_count": error_count,
+            "warning_count": warning_count,
+        }
+        print(json.dumps(output, separators=(",", ":"), ensure_ascii=False))
+        return {
+            "success": True,
+            "step": "strategy",
+            "action": "list",
+            "output": "stdout",
+        }
 
     return {
         "success": True,
         "step": "strategy",
         "action": "list",
         "horizon_filter": horizon_filter,
+        "type_filter": type_filter,
         "total_entries": len(entries),
         "entries": entries,
         "error_count": error_count,
         # Include a diagnostics summary for stale-title awareness.
-        "warning_count": sum(
-            1 for d in diagnostics if d["severity"] == "warning"
-        ),
+        "warning_count": warning_count,
     }
 
 

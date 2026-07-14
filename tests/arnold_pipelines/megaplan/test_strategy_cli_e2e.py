@@ -155,8 +155,7 @@ class TestStrategyCliE2E:
         # ---- 3. Add ticket to Next horizon ----------------------------------
         result = _megaplan_cmd(
             "strategy", "add",
-            "--type", "ticket",
-            "--ref", ticket_id,
+            "ticket", ticket_id,
             "--title", "E2E Integration Ticket",
             "--horizon", "Next",
             cwd=repo,
@@ -174,9 +173,8 @@ class TestStrategyCliE2E:
         # ---- 4. Move ticket from Next to Now ---------------------------------
         result = _megaplan_cmd(
             "strategy", "move",
-            "--type", "ticket",
-            "--ref", ticket_id,
-            "--horizon", "Now",
+            "ticket", ticket_id,
+            "--to", "Now",
             cwd=repo,
         )
         assert result.returncode == 0, f"strategy move failed: {result.stderr}\n{result.stdout}"
@@ -366,14 +364,14 @@ class TestStrategyCliE2E:
 
         _megaplan_cmd(
             "strategy", "add",
-            "--type", "ticket", "--ref", ticket_id,
+            "ticket", ticket_id,
             "--title", "Show Test Ticket", "--horizon", "Next",
             cwd=repo,
         )
         _megaplan_cmd(
             "strategy", "move",
-            "--type", "ticket", "--ref", ticket_id,
-            "--horizon", "Now",
+            "ticket", ticket_id,
+            "--to", "Now",
             cwd=repo,
         )
         promote_result = _megaplan_cmd(
@@ -411,14 +409,14 @@ class TestStrategyCliE2E:
 
         _megaplan_cmd(
             "strategy", "add",
-            "--type", "ticket", "--ref", ticket_id,
+            "ticket", ticket_id,
             "--title", "List Test Ticket", "--horizon", "Next",
             cwd=repo,
         )
         _megaplan_cmd(
             "strategy", "move",
-            "--type", "ticket", "--ref", ticket_id,
-            "--horizon", "Now",
+            "ticket", ticket_id,
+            "--to", "Now",
             cwd=repo,
         )
         promote_result = _megaplan_cmd(
