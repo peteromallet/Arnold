@@ -87,7 +87,7 @@ reimplement the Run Authority product.
 
 ## Out of scope
 
-New Run Authority semantics, migration/adoption work assigned to M6-M11, WBC
+New Run Authority semantics, migration/adoption work assigned to M6-M11/M6A, WBC
 implementation, hand-authored acceptance receipts or manifests, weakening the
 completion contract, deleting canonical evidence, launching another Run
 Authority chain, creating the canonical `.retired` marker before all proof gates

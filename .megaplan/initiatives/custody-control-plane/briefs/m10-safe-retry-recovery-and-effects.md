@@ -12,12 +12,16 @@ created_at: '2026-07-13T00:00:00+00:00'
 
 Make retry, fallback, repair, restart/replay, publication, delivery, and provider
 effects safe under crashes, partial persistence, and ambiguous outcomes: one
-current fenced claim/effect, reconciliation before retry, authoritative reread
-after mutation, exact live failure-signature validation, event-driven recovery
+current double-fenced claim/effect, reconciliation before retry, authoritative
+source reread after mutation, exact repair-occurrence validation, cross-host
+lease transfer/reclaim safety, event-driven recovery
 with p95 accepted repair or typed escalation under five minutes, and independent
 evidence before terminal recovery. The six-hour pass remains a missed-event
 reconciliation backstop. The
 milestone is bounded to two weeks.
+
+This milestone also supplies the exhaustive failure-injection and replay proof
+for M6A's transactional WBC store and M8's universal producer adoption.
 
 ## In scope
 
@@ -25,12 +29,17 @@ milestone is bounded to two weeks.
   queue/locks/leases/requests, source/install/retrigger, chain/PR/publication,
   resident completion/ordinary/scheduled delivery, provider effects, restart/
   replay, delayed verification, recurrence, and cloud/resident divergence.
-- Use WBC effect intents/outcomes and Run Authority decisions/fences; add only
-  residual reconciliation and custody adapters from M6.
+- Use WBC effect intents/outcomes and Run Authority decisions/coordinator fences;
+  use the M7 custody occurrence/lease/epoch contract for exclusivity. Add no
+  second effect, authority, or custody ledger.
 - Consume durable block/process-exit events through one deduplicated trigger.
   Validate environment/session, chain, plan revision, phase/task, attempt,
   normalized failure kind, blocker/phase-result hash, managed-worker identity,
-  and fence immediately before claim and effect.
+  Run Authority grant/fence, lease owner/host/process-birth identity, and custody
+  epoch immediately before claim and effect.
+- Exercise cross-host acquisition, renewal, orderly transfer, expired-owner
+  reclaim, network delay, host death, and restarted process/PID reuse. The old
+  epoch must be durably fenced before the new host can perform an effect.
 - Terminalize request, claim, lease, attempt, decision, worker link, and custody
   index on success, failure, cancellation, supersession, timeout, or escalation;
   disallow simultaneous accepted repair and executor grants for one attempt.
@@ -38,6 +47,16 @@ milestone is bounded to two weeks.
   for missed-event reconciliation, delayed verification, and audit.
 - Fault injection between intent, dispatch/effect, durable outcome, projection,
   authoritative reread, verification, and closure.
+- Inject faults before/after WBC reservation, start append, each phase emission,
+  effect prepare/commit, outbox handoff, terminal append, payload/reference
+  write, migration checkpoint, query, and reconciliation. Cover process kill,
+  torn/corrupt record, duplicate/out-of-order event, storage full/permission,
+  lost acknowledgement, and mixed-version restart.
+- Replay success, validation failure before dispatch, provider/process failure,
+  partial fanout, reducer failure, tiebreaker, review/rework, finalize fallback,
+  cancellation, suspension/resume, retry, repair, publication and delivery from
+  captured WBC traces. Every accepted attempt must remain joinable and reach
+  exactly one terminal or explicit indeterminate state.
 
 ## Out of scope
 
@@ -49,7 +68,7 @@ allowing the daily auditor to become a mutator.
 
 Effect intent is durable before execution. Unknown outcomes reconcile against
 the target/provider before retry. Post-mutation retry requires current authority
-and fence. Swallowed fallback is a visible terminal failure. Repair actors
+grant/fence and current custody lease/epoch. Swallowed fallback is a visible terminal failure. Repair actors
 cannot self-verify; closure requires a later independent negative control and
 resumed authoritative progress.
 
@@ -75,15 +94,24 @@ evidence, reconciliation, and verification.
 
 - Crash/fault injection at every in-scope edge causes neither duplicate effect
   nor false success/closure; ambiguity remains visible and bounded.
+- The generated WBC inventory's failure/replay cases all pass against the exact
+  installed runtime. No required writer swallows persistence error, no dispatch
+  lacks a durable start, no terminal is lost/duplicated, and reconciliation
+  deterministically converges or stays typed indeterminate.
+- Migration replay across every supported stored version preserves attempt and
+  causal identity, explicit unknowns, retention/legal-hold/encryption metadata
+  and effect idempotency; interruption resumes without fabricated success.
 - Duplicate dispatch and stale/reclaimed fences are rejected; dead worker leases
   expire without erasing attempts or granting the replacement implicit success.
+- Cross-host handoff and reclaim accept exactly one custody epoch; the previous
+  host/process cannot renew, complete, cancel, publish, or deliver after transfer.
 - Fallback failures, post-mutation retries, partial persistence, restart/replay,
   and cloud/resident divergence reconcile deterministically.
 - Parent-owned delivery and scheduled/ordinary outboxes prove at-most-once
   target effects under crash/reclaim while retaining unknown-outcome evidence.
 - Only an independent verifier can close recovery after negative control and
   resumed authoritative progress; recurrence reopens with lineage.
-- Captured T7/T12 fixtures cannot cross-bind; duplicate, late, lost, and out-of-
+- Captured T7/T12 and same-basename fixtures cannot cross-bind; duplicate, late, lost, and out-of-
   order triggers launch at most one current managed repair or remain visibly
   pending for reconciliation.
 - Shadow and repair/worker canary measurements prove p95 from durable eligible
@@ -117,7 +145,8 @@ sidecar authority.
 
 ## Handoff and dependencies
 
-Dependency: M9 rebuildable views and pure-observer evidence. Handoff to M11:
+Dependency: M9 rebuildable views/pure-observer evidence, M6A transactional and
+migration substrate, and M8 producer trace inventory. Handoff to M11:
 effect/reconciliation registry, exhaustive crash matrix, replay/restart receipts,
 event-driven SLO and missed-event proof, exact-signature and terminal-custody
 evidence, independent verification and recurrence evidence, repair/worker

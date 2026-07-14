@@ -8,8 +8,8 @@ schema: custody-control-plane-migration-matrix-v1
 
 Status vocabulary: `substrate` means the right primitive exists but coverage is
 not proven; `legacy` means authority can still be inferred or written outside
-the target; `prerequisite-WBC` is externally owned and must be consumed by exact
-completion/support evidence rather than reimplemented; `gate` requires human or
+the target; `prerequisite-WBC` is externally owned and must be consumed and
+operationalized without changing ownership; `gate` requires human or
 manifest evidence; `target` is the planned end state.
 
 ## Residual-scope rule
@@ -17,11 +17,16 @@ manifest evidence; `target` is the planned end state.
 This matrix is a zero-exemption audit surface, not an instruction to duplicate
 another initiative. M5 first establishes accepted current Run Authority
 completion and retirement proof. At M6, that proof and WBC completion/support
-manifests must be joined to every row. A row proven complete and owned by WBC is
-marked prerequisite-satisfied and removed from implementation scope while its
-evidence remains a dependency. Rows not proven by those manifests stay residual
-and require an explicit owner, adapter/cutover milestone, and retirement gate.
-Ownership ambiguity blocks the row; it never defaults to Custody.
+manifests must be joined to every row. A WBC row is prerequisite-satisfied only
+when exact implementation, static call-site, captured runtime trace, negative
+bypass and relevant fault/migration evidence prove it—not because a support
+manifest or schema suite declares it supported. Missing substrate goes to M6A;
+missing producers go to M8; missing consumers go to M9. Ownership remains WBC
+and never defaults to Custody.
+
+The row-level WBC completion equation and named producer/consumer families are
+maintained in `wbc-boundary-adoption-matrix.md`. M6 generates the machine-
+readable inventory that joins both matrices.
 
 The table's **Proof** column is the required shadow/conformance proof for that
 surface. The following execution columns apply normatively to every row, rather
@@ -29,7 +34,7 @@ than being optional defaults:
 
 | Required column | Per-row contract |
 |---|---|
-| Fail-closed behavior | If the row's exact contract/version, fence, coherent evidence, owner, or listed proof is absent or contradictory, the reducer returns `UNKNOWN`/`INCOHERENT`, emits drift, and performs zero authority-increasing transition, dispatch, retry, repair, delivery, publication, or deletion. |
+| Fail-closed behavior | If the row's exact contract/version, Run Authority grant/coordinator fence, Custody lease/custody epoch, coherent WBC evidence, owner, or listed proof is absent or contradictory, the reader returns `UNKNOWN`/`INCOHERENT`, emits drift, and performs zero authority-increasing transition, dispatch, retry, repair, completion, cancellation, delivery, publication, or deletion. A projection cannot fill a missing source record. |
 | Rollback / mixed-version policy | Shadow before enforcement; old readers may consume only an explicit, expiring compatibility projection; old writers are rejected after cutover. Rollback disables promotion/effects and keeps append, reconciliation, and evidence intact—never restoring raw legacy authority or rewriting history. Row-specific stricter rules in milestone briefs and the decision record win. |
 | Completion evidence | The listed proof artifact, exact source/runtime/contract hashes, migration owner sign-off, authoritative-history/replay evidence, zero legacy authority-reader/writer scan for the row, rollback result, and M11 proof-map entry. A generated completion manifest must hash the proof; status text or nominal milestone completion is insufficient. |
 
@@ -41,21 +46,22 @@ omitting one of these inherited columns.
 The July 14 authority/efficiency extension adds F01-F17 traceability in
 `unified-authority-efficiency-prevention-20260714.md`. The rows below remain the
 surface inventory; that document is the canonical root-cause/control/SLO/rollout
-map and M8A is the only added executable milestone.
+map; M6A is added for the WBC transactional substrate and M8A for adjacent
+planner/executor controls.
 
 | Consumer / surface | Current authority | Target authority | Milestone | Shadow / conformance proof | Deletion gate | Owner / initiative | Status |
 |---|---|---|---|---|---|---|---|
 | Run Authority M1-M3 completion receipts | all three `accepted: false`; stale/missing phase evidence, diff mismatches, structural failures | three fresh content-addressed accepted receipts | M5 | canonical receipt regeneration plus `chain verify` divergence count 0 | no downstream milestone before manual acceptance | runauthority-epic / custody M5 evidence repair | blocked evidence |
 | Canonical `runauthority-epic` retirement | no initiative `.retired` marker; a duplicate-session tombstone exists but is not initiative retirement authority | metadata-only `.megaplan/initiatives/runauthority-epic/.retired` marker plus content-addressed retirement attestation | M5 | three accepted receipts, canonical divergence count 0, regenerated proof/manifest, exact chain-state identity, constrained duplicate-session lookup/tombstone, and canonical asset hashes | marker creation fails closed until every proof gate passes; never delete canonical audit evidence | runauthority-epic / custody M5; Resident supplies supporting session evidence | blocked evidence |
 | Kernel `WorkflowManifest` identity | compiled manifest plus package identity | exact hash/version recorded on every attempt | M6/M8 | stale-version and missing-manifest tests | no implicit-latest lookup | Native Platform | substrate |
-| Kernel NDJSON journal | append-only generic runtime events | WBC execution-attempt ledger plus Run Authority-linked causal envelope | M6/M7 | prerequisite manifest plus append/CAS/replay conformance | old journal adapter read-only | WBC / Run Authority; Custody adapter only | prerequisite-WBC |
+| Kernel NDJSON journal | append-only generic runtime events | WBC transactional execution-attempt store/API plus Run Authority-linked causal envelope | M6A/M8 | append/transaction/crash/replay/runtime-trace conformance | old journal adapter read-only; direct writer rejected | WBC / Run Authority; Custody adapter only | substrate gap |
 | Native persistence checkpoint/cursor | checkpoint JSON including native `pc` | versioned evidence projection bound to accepted attempt | M8 | corrupt/stale/deleted cursor tests | bare `pc` banned outside schema | Native Platform; PC gate | legacy |
 | Native trace hooks (`state/events/stages/artifacts/checkpoint`) | parallel trace files | projections/evidence refs from one history | M8/M11 | delete/rebuild and hash proof | zero authority readers | Native Platform | legacy |
 | `.pypeline` and named subworkflows | intended topology authority | unchanged topology plus exact boundary evidence | M8 | native traceability/conformance | component/handler routes deleted | Native Parity | substrate, manifest absent |
 | Component/handler route tables | callable compatibility topology | non-authoritative adapter or deletion | M8/M11 | negative execution-authority tests | zero runtime route reads | Native Parity | legacy |
 | Graph/native-program projections | generated route/topology views | rebuildable source projection | M8/M11 | source-to-projection parity | no dynamic authority fallback | Native Parity | legacy |
 | `RunAuthorityKernel` grants | grant/fence contracts | same records in joined causal history | M7 | grant/fence/quarantine tests | raw dispatch forbidden | runauthority-epic | substrate; landing gate |
-| Accepted attempt/decision reducer | deterministic Run Authority view | canonical acceptance facet | M7/M8 | stale/off-scope result quarantine | artifact labels never accepted | runauthority-epic | substrate |
+| Accepted attempt/decision reducer | deterministic Run Authority view | pure source-backed acceptance projection; never a bearer grant or custody lease | M7/M8 | stale/off-scope result quarantine plus source reread | artifact labels or serialized view never accepted as action token | runauthority-epic | substrate |
 | Runner/publication/human/recovery views | separate domain views | versioned projections from history/evidence | M9 | multidimensional fixture suite | aggregate optimistic status removed | runauthority-epic | substrate |
 | Canonical run-state resolver | ordered raw evidence classifier | read-coherent reducer/evidence binding | M6/M9 | torn-read and parity tests | noncanonical dispatch rejected | custody-control-plane M1-M4 | substrate |
 | Run-state classifiers | local precedence rules | pure policy over coherent versioned envelope | M9 | all July incident fixtures | duplicate classifiers deleted | custody-control-plane | substrate |
@@ -75,7 +81,7 @@ map and M8A is the only added executable milestone.
 | human suspend/resume/approval | markers, cursor, CLI state | signed decision/effect history | M8 | stale approval/replay tests | no marker-only resume | WBC / Run Authority | partial |
 | chain state writer/driver | `.chains/*.json`, logs, plan state | chain projection from accepted milestone events | M7/M8 | restart/advance replay | no raw terminal shortcut | custody / chain | legacy |
 | chain advancement/guards | mixed plan/chain/PR status | authoritative reducer + post-reread | M9 | stale terminal/merged PR tests | raw guard branches removed | Run Authority / custody | partial |
-| chain completion manifests | generated content-addressed proof | authoritative portfolio prerequisite evidence | M11 | manifest validator/hash mutation | no nominal done dependency | Megaplan chain | substrate |
+| chain completion manifests | generated content-addressed proof | portfolio admission evidence only; never runtime action authority | M11 | manifest validator/hash mutation | no nominal done dependency or manifest-only action | Megaplan chain | substrate |
 | PR merge/publication supervisor | PR/CI API plus state cursor | effect intent/outcome + publication view | M8/M10 | duplicate merge/reconcile tests | no PR label/status authority | Run Authority / Native Platform | partial |
 | Git/provider effects | subprocess/API result | reconciled non-compensable effect record | M10 | ambiguous timeout/retry tests | blind replay forbidden | Native Platform | partial |
 | CLI status/projection | raw state + compatibility formatter | rebuildable multidimensional view | M9 | parity/rebuild snapshots | no raw status fallback for actions | custody-control-plane | partial |
@@ -91,7 +97,7 @@ map and M8A is the only added executable milestone.
 | daily efficiency auditor | read-only analytic projections | immutable history analytics | M9 | mutation-negative tests | no repair/ticket authority | megaplan-maintenance | planned |
 | human-blocker markers/classifier | marker lifecycle plus raw facts | history decision projection | M9 | stale marker tests | marker cannot outrank reducer | custody-control-plane | partial |
 | repair request queue | queue files/systemd trigger | history request/claim projection | M7/M10 | duplicate/idempotency tests | trigger only nudges canonical dispatcher | custody-control-plane | partial |
-| repair locks/leases | file locks and records | renewable fenced custody event | M7/M10 | expiry/reclaim/stale-worker tests | no effect without current fence | custody-control-plane | partial |
+| repair locks/leases | blocker file locks, active claims, and repair projections | `CustodyTargetKey`/`RepairOccurrenceKey` plus renewable `CustodyLease` event stream and monotonic custody epoch joined to current Run Authority grant/fence | M7/M10 | expiry/renew/transfer/cross-host reclaim/stale-worker/PID-reuse tests | no effect without both current grant/fence and current lease/epoch; queue lock/projection never authority | custody-control-plane | partial |
 | repair-data/repair contract | JSON custody buckets/attempts | compatibility projection from history | M7/M10/M11 | replay/sidecar drift | zero authority readers then delete | custody-control-plane | legacy |
 | L1 repair loop | wrapper/queue/raw status decisions | fenced occurrence repair policy | M10 | fault matrix | only canonical claims act | custody-control-plane | partial |
 | L2 meta-repair | meta records/retrigger verification | history attempt + independent verifier | M10 | nonzero/dead retrigger tests | cannot self-record FIXED | custody-control-plane | partial |
@@ -111,7 +117,11 @@ map and M8A is the only added executable milestone.
 | cloud repair wrappers | generated shell with selectors/retries | thin calls to history APIs | M10/M11 | static/runtime bypass scan | delete embedded classifiers/writers | custody-control-plane | legacy |
 | cloud/source initiative repair | source/branch/install state | fenced effects with SHA reread | M10 | stale install/post-mutation retry | no success before reread | custody-control-plane | partial |
 | notification safety/delivery | separate safety and outbox projections | history effect + target receipt + supersession | M10 | ambiguous send/retry tests | no prose-only delivered claim | Discord corrective | partial |
-| WBC declarations/attempt ledger | C1-C6-owned contracts | exact-version boundary facet joined to Run Authority | M6/M8/M11 | WBC completion manifest/support matrix | do not rename/duplicate; deletion waits | workflow-boundary-contracts | prerequisite-WBC |
+| WBC declarations/attempt ledger | C1-C6-owned schemas; exact final merge commit pending; audited candidate ledger is schema-only | exact-version transactional boundary/evidence store/API joined to Run Authority and Custody IDs but granting neither capability nor lease | M6/M6A/M8/M11 | exact landed/runtime proof plus store, call-site set equality, runtime traces, fault/replay and bypass-negative suite | do not rename/duplicate; support manifest or receipts/projections alone never pass or act | workflow-boundary-contracts | blocked substrate/adoption |
+| WBC payload/privacy/retention/encryption | schema validators and policy metadata; no audited stored-byte enforcement | tenant/access-enforced encrypted durable references, retention/legal hold/tombstone/deletion evidence and key/version audit | M6A/M9/M11 | cross-tenant, missing-key, retention/hold/tombstone/deletion tests against stored bytes | no protected payload defaulting to unencrypted; no unaudited delete | workflow-boundary-contracts | blocked substrate |
+| WBC schema/data migration | no audited transactional WBC storage migration/backfill | checksummed, crash-resumable, idempotent, mixed-version migration with explicit unknown legacy records | M6A/M9/M10/M11 | every supported version, interruption/resume, corrupt/partial, duplicate backfill and rollback/forward-fix tests | never fabricate success or rewrite history | workflow-boundary-contracts | blocked substrate |
+| WBC universal producer adoption | audited 35-contract matrix: 5 auto, 8 manual emission, 13 declared-only, 9 unknown | every declared and discovered boundary writes durable start, all required phase/effect evidence, and exactly one terminal/indeterminate through WBC API | M6/M8/M10/M11 | generated contract/call-site/runtime-trace set equality plus positive, negative and failure/replay cases | no evidence-only/best-effort/swallowed/`|| true` required write; zero legacy writers | workflow-boundary-contracts with named runtime owners | blocked adoption |
+| WBC universal consumer adoption | no audited canonical query use in status/cloud/resident/repair/chain operational consumers | exact-version WBC query API across status, watchdog/repair/auditor, chain/publication, resident/cloud, retention/migration and trace | M9/M11 | generated consumer inventory and raw-state/prose/token/implicit-latest negative tests | no optimistic or fail-open fallback; historical adapters read-only with expiry | named consumer owners; WBC owns query semantics | blocked adoption |
 | WBC semantic findings | WBC-owned durable findings mapped to repair | evidence/decision refs; no self-clear | M6/M8/M10 | WBC manifest plus finding-to-verification tests | no second repair/status authority | workflow-boundary-contracts | prerequisite-WBC |
 | Native Parity Corrective | source/evidence alignment chain | topology owner, consumed by WBC/custody | M6/M8 | completion/traceability proof | no assumed completion | native parity | gate |
 | Evidence-First Pipeline Semantics | historical contracts/partial work | lineage only, no parallel authority | M6/M11 | ownership map | no relaunch as control plane | portfolio | legacy |
@@ -136,7 +146,8 @@ map and M8A is the only added executable milestone.
 
 ## Adversarial acceptance catalog
 
-M5 repairs prerequisite evidence; M6 freezes fixtures; M7-M10 implement them;
+M5 repairs prerequisite evidence; M6 freezes fixtures/inventory; M6A builds the
+WBC substrate; M7-M10 implement and adopt the composed contracts;
 M11 runs the integrated matrix.
 
 | Scenario | Required result |

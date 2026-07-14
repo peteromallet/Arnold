@@ -10,8 +10,9 @@ created_at: '2026-07-13T00:00:00+00:00'
 
 ## Outcome
 
-Verify M5's reconciled Run Authority evidence and WBC artifacts by content address, freeze
-their exact ownership/version contract, and produce a machine-readable residual
+Verify M5's reconciled Run Authority evidence and the operator-supplied exact
+WBC merge revision by content address, freeze their exact ownership/version
+contract, and produce a machine-readable residual
 inventory of every pipeline writer, reader, projection, liveness, recovery,
 effect, and compatibility path not already proven by those prerequisites.
 Freeze the July 14 Transaction Spine/Strategy Roadmap finding map, captured
@@ -24,11 +25,36 @@ This is an observe-only milestone sized to no more than two weeks.
 - Validate prerequisite chain state, chain/North Star/brief hashes, merged
   publication evidence, completion manifests, proof maps, support manifests,
   installed/editable/runtime revisions, and ownership declarations.
+- Record the exact WBC merge commit supplied after the user's merge completes.
+  Prove the WBC manifest, support map, installed/editable runtime, and generated
+  schemas bind that commit. Topic-branch tips, working-tree bytes, `latest`, and
+  inferred ancestry are not substitutes; absent or mismatched evidence blocks.
 - Reconcile the existing lineage audit and migration matrix against current
   code and prerequisite proof, marking each row prerequisite-satisfied,
   residual, blocked, retired, or out of supported scope with evidence.
-- Freeze exact workflow/contract/code/config, run/attempt, actor, decision,
-  fence, idempotency, evidence-snapshot, causal-parent, and projection identities.
+- Generate `evidence/wbc-boundary-inventory.json` from the exact landed WBC
+  declaration/producer inventories plus AST/semantic production call-site
+  discovery, consumer discovery, wrappers, and captured runtime traces. Maintain
+  the required fields and completion equation in
+  `research/wbc-boundary-adoption-matrix.md`; never copy a support label into a
+  completed adoption status.
+- Deliver the versioned inventory generator and discovery rules, not only its
+  output. Use independent declared-contract, static Python/native/wrapper, and
+  captured-runtime channels; report each unmatched set separately and default
+  deny exclusions. Dynamic/generated/shell/provider surfaces must remain visible
+  when an AST scanner cannot resolve them.
+- Generate an exact historical-adapter allowlist containing path/symbol,
+  permitted read operations and versions, proof of zero authority-increasing
+  callers, named owner/approver, expiry, and deletion gate. “Approved adapter”
+  without that machine-readable row is unexplained.
+- Reconcile every candidate contract family—auto phases, execute/batch,
+  tiebreaker, replan, parent/reducer, review/rework, finalize/publication, and
+  overrides—plus admission, provider/process, resident/cloud, repair/auditor,
+  cancellation/resume, retention/privacy/encryption and migration surfaces.
+- Freeze exact workflow/contract/code/config, run/subject-attempt,
+  WBC-ledger-attempt, custody-target, repair-occurrence, actor, decision, coordinator-fence,
+  custody-epoch, idempotency, evidence-snapshot, causal-parent, and projection
+  identities without collapsing similarly named attempts.
 - Generate controlled-writer and authority-increasing-reader registries,
   legacy/current fixtures, static/runtime inventories, and adversarial baselines.
 - Materialize redacted, immutable replay fixtures for the Transaction Spine and
@@ -51,20 +77,26 @@ mutation outside this milestone's normal reviewed execution lifecycle.
 
 ## Locked decisions
 
-- Run Authority owns grants, accepted attempts/decisions, fences, quarantine,
-  and authority-increasing views.
+- Run Authority owns grants, subject attempts, accepted claims/decisions,
+  coordinator fences, CAS/idempotency, and quarantine. Reducer projections are
+  not bearer grants.
 - WBC owns boundary declarations, the execution-attempt/effect ledger,
-  payload/reference policy, findings, and its supported-runtime conformance.
-- Custody owns residual adoption, coherent evidence policy, recovery custody,
+  provenance, payload/reference policy, receipts/findings, and its
+  supported-runtime conformance. None authorizes action.
+- Custody owns exact action-target/repair-occurrence identity, renewable lease/custody epoch,
+  transfer/reclaim/release/expiry, recovery, reconciliation, residual adoption,
   and projection convergence; it creates no competing ledger or lifecycle.
 - Exact referenced versions are enforced; uncertainty is `UNKNOWN` or
   `INCOHERENT`; a missing owner is a blocker, never an implicit Custody task.
 
 ## Open questions
 
-- Do both prerequisite manifests match landed and running source revisions?
-- Which matrix rows are genuinely proven by WBC's support manifest, and which
-  remain compatibility-only, shadow-only, or outside its declared supported set?
+- Does the operator-supplied WBC merge commit match its manifest, support map,
+  generated schemas, and landed/running source revisions?
+- Which matrix rows are genuinely proven by implementation plus captured
+  runtime traces, and which remain schema-only, declared-only, manual-emission,
+  best-effort, compatibility-only, shadow-only, or unknown despite the WBC
+  support manifest?
 - Are any PC, native topology, Maintenance, resident, or provider surfaces owned
   by another active initiative and therefore dependencies rather than scope?
 - Which legacy readers must remain read-only for historical runs, and until when?
@@ -81,12 +113,26 @@ or notification mutation. Preserve immutable resident delegation provenance.
 ## Done criteria
 
 - M5's three accepted receipts, zero-divergence verification, regenerated Run
-  Authority manifest, and retirement attestation validate unchanged; WBC's
-  current manifest/support proof and landed/runtime revisions also validate, or M6
-  fails with an exact evidence gap and no downstream handoff.
+  Authority manifest, and retirement attestation validate unchanged. The exact
+  operator-supplied WBC merge commit, current manifest/support proof,
+  landed/runtime revisions, and generated schema set also validate, or M6 fails
+  with an exact evidence gap and no downstream handoff.
 - Every matrix row has a unique owner, exact current/target contract, status,
   milestone/dependency, fail-closed behavior, proof, rollback/mixed-version
   policy, and retirement gate; generated scans have no unexplained bucket.
+- The generated WBC inventory has exact set equality across declared contracts,
+  discovered producer/writer call sites, discovered consumers, wrappers, and
+  runtime traces. Each row names start/terminal writers, consumer, payload/
+  retention/encryption and migration policy, implementation commit, static and
+  runtime proof, negative bypass test, and acceptance owner.
+- The committed generator, versioned discovery rules and CI acceptance prove
+  repeatability from a clean pinned checkout. Declared/static/runtime unmatched
+  sets are empty, and every dynamic/generated/shell exception is an explicit
+  default-deny row rather than scanner omission.
+- The audited candidate's schema-only ledger and its 5 auto-matched, 8 manual-
+  emission, 13 declared-only, and 9 unknown producer rows are re-evaluated at
+  the final landed revision. A schema suite, support manifest, fixture emitter,
+  or manual assertion cannot satisfy any missing runtime field.
 - Controlled-writer and authority-reader registries cover Python, shell/wrapper,
   resident, cloud, provider, and compatibility paths with source evidence.
 - Legacy/current fixtures cover stale versions, torn evidence, dead/unrelated
@@ -97,7 +143,7 @@ or notification mutation. Preserve immutable resident delegation provenance.
 - Baselines never coerce missing time/tokens/cost to zero or classify Strategy
   M4's productive implementation/review as avoidable orchestration.
 - The approval record is accepted with all policy/owner questions resolved, or
-  M7 remains blocked.
+  M6A and later implementation remain blocked.
 
 ## Touchpoints
 
@@ -117,17 +163,22 @@ unproven prerequisite claim into implementation scope merely to keep moving.
 Stop without handoff on any stale/invalid prerequisite hash, missing owner,
 unexplained inventory row, non-replayable captured input, or inspection that
 mutates lifecycle/runtime state. Rollback removes only M6-generated analytical
-projections; immutable captured evidence and explicit unknowns remain. M7 stays
+projections; immutable captured evidence and explicit unknowns remain. M6A stays
 blocked and no runtime behavior changes.
 
 ## Handoff and dependencies
 
 Dependencies: M5's accepted Run Authority reconciliation/retirement handoff,
-current content-addressed WBC completion/support evidence, and the top-level
-North Star. Handoff to M7: exact contract/version bundle,
-proof index, residual zero-exemption matrix, controlled-writer/reader registries,
+the operator-supplied WBC merge commit plus current content-addressed WBC
+completion/support evidence, and the top-level North Star. Handoff to M6A:
+exact contract/version bundle,
+  proof index, residual zero-exemption matrix, generated WBC boundary inventory,
+  controlled-writer/reader registries,
 captured replay corpus, work-ledger/SLO schema, rollout/deletion register,
 fixtures, accepted approval record, and an empty unresolved-blocker list.
+
+M6 hands substrate gaps to M6A and all producer adoption rows to M8; it does not
+misclassify those gaps as Custody ownership.
 
 ## Profile rationale
 
