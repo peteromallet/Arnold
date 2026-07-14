@@ -116,6 +116,15 @@ disabled during shadow comparison and fault testing.
   until current source grant/fence and lease/epoch records are reread and joined.
 - Resident, cloud, CLI, watchdog, and auditor views agree for identical inputs;
   disagreement emits structured drift and blocks action.
+- The resident Discord `Currently running` epics/chains projection treats
+  `attention` as an operator overlay, not an execution state: a session with
+  live execution or active repair remains listed, uses
+  `progress.display_state` as its label (falling back to
+  `progress.plan_state` only when absent, with an active execute step rendered
+  as `executing`), and exposes the attention reason without replacing or hiding
+  execution truth. Blocking tests cover active executing-plus-attention,
+  non-active attention retained on the attention surface, and unchanged normal
+  running entries.
 - The captured Strategy review-rework state is `executing attempt 2` at every
   supported surface with 100% reducer cursor/hash agreement; a same-basename
   unrelated session never joins its evidence.
