@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import Callable
+
+import pytest
 
 from arnold_pipelines.megaplan.store import (
     ArnoldStoreAdapter,
@@ -1220,3 +1223,31 @@ def run_ticket_relationship_contract(store_factory: Callable[[], Store]) -> None
     )
     remaining = store.list_ticket_epic_links(ticket_id=ticket_resolve.id)
     assert remaining == []
+
+
+@pytest.fixture
+def file_store_factory(tmp_path: Path):
+    """Return a fresh FileStore factory so direct path selection collects tests."""
+
+    def _factory() -> FileStore:
+        return FileStore(tmp_path / "store")
+
+    return _factory
+
+
+def test_store_contract_explicit_ids_and_idempotency(file_store_factory) -> None:
+    """Direct selector coverage for the core store contract helper."""
+
+    run_store_contract(file_store_factory)
+
+
+def test_arnold_adapter_contract_epic_ids(file_store_factory) -> None:
+    """Direct selector coverage for adapter explicit/generated epic IDs."""
+
+    run_arnold_adapter_contract(file_store_factory)
+
+
+def test_ticket_relationship_contract(file_store_factory) -> None:
+    """Direct selector coverage for relationship semantics and auto-address gating."""
+
+    run_ticket_relationship_contract(file_store_factory)
