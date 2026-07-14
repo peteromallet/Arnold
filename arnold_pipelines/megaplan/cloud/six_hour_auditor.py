@@ -6,10 +6,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
+
+# ── auditor completion evidence constants ─────────────────────────────
+
+_AUDITOR_6H_COMPLETION_ROW_ID = "auditor.6h_complete.1"
+_AUDITOR_6H_COMPLETION_BOUNDARY_ID = "auditor_6h_completion"
 
 AUDIT_CODEX_MODEL = "gpt-5.6-sol"
 AUDIT_MODEL_INPUTS = (
@@ -1467,9 +1472,362 @@ def _finding(
     return finding
 
 
+# ── Auditor completion evidence ───────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SixHourAuditorCompletionEvidence:
+    """Structured 6h auditor completion evidence.
+
+    Captures the audited window, findings, next expected event,
+    repair dispatch refs, escalation verdicts, and structured
+    findings for missing repair verdicts or stale repair-data
+    in auditor inputs.
+
+    Downstream custody/status consumers use this evidence to decide
+    whether the 6h audit cycle produced a trustworthy completion.
+    """
+
+    contract_id: str = _AUDITOR_6H_COMPLETION_ROW_ID
+    boundary_id: str = _AUDITOR_6H_COMPLETION_BOUNDARY_ID
+    audited_window_hours: float = 6.0
+    audit_timestamp: str = ""
+    finding_count: int = 0
+    highest_severity: str = "ok"
+    next_expected_event: str = ""
+    outcome: str = ""
+    repair_dispatch_count: int = 0
+    repair_dispatch_refs: tuple[str, ...] = ()
+    escalation_verdict_count: int = 0
+    escalation_verdict_refs: tuple[str, ...] = ()
+    missing_repair_verdict_findings: tuple[dict[str, Any], ...] = ()
+    stale_repair_data_findings: tuple[dict[str, Any], ...] = ()
+    evidence_timestamp: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_id": self.contract_id,
+            "boundary_id": self.boundary_id,
+            "audited_window_hours": self.audited_window_hours,
+            "audit_timestamp": self.audit_timestamp,
+            "finding_count": self.finding_count,
+            "highest_severity": self.highest_severity,
+            "next_expected_event": self.next_expected_event,
+            "outcome": self.outcome,
+            "repair_dispatch_count": self.repair_dispatch_count,
+            "repair_dispatch_refs": list(self.repair_dispatch_refs),
+            "escalation_verdict_count": self.escalation_verdict_count,
+            "escalation_verdict_refs": list(self.escalation_verdict_refs),
+            "missing_repair_verdict_findings": [
+                dict(finding) for finding in self.missing_repair_verdict_findings
+            ],
+            "stale_repair_data_findings": [
+                dict(finding) for finding in self.stale_repair_data_findings
+            ],
+            "evidence_timestamp": self.evidence_timestamp,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> "SixHourAuditorCompletionEvidence":
+        return cls(
+            contract_id=_auditor_evidence_text(
+                payload.get("contract_id")
+            )
+            or _AUDITOR_6H_COMPLETION_ROW_ID,
+            boundary_id=_auditor_evidence_text(
+                payload.get("boundary_id")
+            )
+            or _AUDITOR_6H_COMPLETION_BOUNDARY_ID,
+            audited_window_hours=float(payload.get("audited_window_hours", 6.0)),
+            audit_timestamp=_auditor_evidence_text(payload.get("audit_timestamp")),
+            finding_count=int(payload.get("finding_count", 0)),
+            highest_severity=_auditor_evidence_text(payload.get("highest_severity"))
+            or "ok",
+            next_expected_event=_auditor_evidence_text(
+                payload.get("next_expected_event")
+            ),
+            outcome=_auditor_evidence_text(payload.get("outcome")),
+            repair_dispatch_count=int(payload.get("repair_dispatch_count", 0)),
+            repair_dispatch_refs=tuple(
+                _auditor_evidence_text(item)
+                for item in _auditor_evidence_list(payload.get("repair_dispatch_refs"))
+                if _auditor_evidence_text(item)
+            ),
+            escalation_verdict_count=int(
+                payload.get("escalation_verdict_count", 0)
+            ),
+            escalation_verdict_refs=tuple(
+                _auditor_evidence_text(item)
+                for item in _auditor_evidence_list(
+                    payload.get("escalation_verdict_refs")
+                )
+                if _auditor_evidence_text(item)
+            ),
+            missing_repair_verdict_findings=tuple(
+                dict(item)
+                for item in _auditor_evidence_list(
+                    payload.get("missing_repair_verdict_findings")
+                )
+                if isinstance(item, dict)
+            ),
+            stale_repair_data_findings=tuple(
+                dict(item)
+                for item in _auditor_evidence_list(
+                    payload.get("stale_repair_data_findings")
+                )
+                if isinstance(item, dict)
+            ),
+            evidence_timestamp=_auditor_evidence_text(
+                payload.get("evidence_timestamp")
+            ),
+        )
+
+
+def _auditor_evidence_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _auditor_evidence_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _auditor_evidence_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _auditor_utc_now_iso() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _primary_severity(findings: list[dict[str, Any]]) -> str:
+    rank = {"error": 0, "warn": 1, "ok": 2}
+    best = "ok"
+    best_rank = 99
+    for finding in findings:
+        severity = _auditor_evidence_text(finding.get("severity")) or "ok"
+        r = rank.get(severity, 99)
+        if r < best_rank:
+            best_rank = r
+            best = severity
+    return best
+
+
+def _extract_missing_repair_verdict_findings(
+    audit_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract structured findings for missing repair verdicts in auditor inputs.
+
+    A missing repair verdict means the auditor's input layer (immediate_repair
+    or meta_repair) produced a non-ok finding whose code indicates missing
+    evidence — the repair system did not produce a verdict the auditor can trust.
+    """
+    extracted: list[dict[str, Any]] = []
+    for finding in audit_findings:
+        if not isinstance(finding, dict):
+            continue
+        layer = _auditor_evidence_text(finding.get("layer"))
+        status = _auditor_evidence_text(finding.get("status"))
+        code = _auditor_evidence_text(finding.get("code"))
+        if status == "ok":
+            continue
+        if layer not in ("immediate_repair", "meta_repair"):
+            continue
+        if "missing" not in code and layer not in (
+            "immediate_repair",
+            "meta_repair",
+        ):
+            continue
+        # Only treat as missing-verdict when the finding explicitly
+        # indicates missing evidence or missing activity.
+        if "missing" in code or "absent" in code:
+            extracted.append(
+                {
+                    "layer": layer,
+                    "code": code,
+                    "status": status,
+                    "severity": _auditor_evidence_text(finding.get("severity")),
+                    "message": _auditor_evidence_text(finding.get("message")),
+                    "recommendation": _auditor_evidence_text(
+                        finding.get("recommendation")
+                    ),
+                    "finding_kind": "missing_repair_verdict",
+                }
+            )
+    return extracted
+
+
+def _extract_stale_repair_data_findings(
+    audit_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract structured findings for stale repair-data in auditor inputs.
+
+    Stale repair-data means the repair layer produced a finding indicating
+    the repair process itself has been running too long or its data is
+    older than the configured threshold.
+    """
+    extracted: list[dict[str, Any]] = []
+    for finding in audit_findings:
+        if not isinstance(finding, dict):
+            continue
+        layer = _auditor_evidence_text(finding.get("layer"))
+        status = _auditor_evidence_text(finding.get("status"))
+        code = _auditor_evidence_text(finding.get("code"))
+        if status == "ok":
+            continue
+        if layer not in ("immediate_repair", "meta_repair"):
+            continue
+        if "stale" in code or "running_stale" in code:
+            extracted.append(
+                {
+                    "layer": layer,
+                    "code": code,
+                    "status": status,
+                    "severity": _auditor_evidence_text(finding.get("severity")),
+                    "message": _auditor_evidence_text(finding.get("message")),
+                    "recommendation": _auditor_evidence_text(
+                        finding.get("recommendation")
+                    ),
+                    "finding_kind": "stale_repair_data",
+                    "observed_at": _auditor_evidence_text(finding.get("observed_at")),
+                }
+            )
+    return extracted
+
+
+def build_auditor_completion_evidence(
+    *,
+    audit_findings: list[dict[str, Any]] | None = None,
+    audit_outcome: str = "",
+    next_expected_event: str = "",
+    audited_window_hours: float = 6.0,
+    repair_dispatch_refs: tuple[str, ...] = (),
+    timestamp: str | None = None,
+) -> SixHourAuditorCompletionEvidence:
+    """Build structured 6h auditor completion evidence from audit output.
+
+    Parameters
+    ----------
+    audit_findings:
+        The per-incident/per-plan audit findings produced by
+        :func:`audit_projection_input` or equivalent.
+    audit_outcome:
+        The canonical audit outcome (``audit_cycle_complete``,
+        ``escalated``, ``auditor_human_escalation``).
+    next_expected_event:
+        The next expected event after audit completion.
+    audited_window_hours:
+        Size of the audit window in hours.
+    repair_dispatch_refs:
+        Paths/refs to repair requests dispatched by the auditor.
+    timestamp:
+        ISO-8601 evidence timestamp (defaults to now).
+    """
+    findings = list(audit_findings) if audit_findings is not None else []
+    evidence_ts = timestamp or _auditor_utc_now_iso()
+
+    missing_repair_verdict = _extract_missing_repair_verdict_findings(findings)
+    stale_repair_data = _extract_stale_repair_data_findings(findings)
+
+    return SixHourAuditorCompletionEvidence(
+        audited_window_hours=audited_window_hours,
+        audit_timestamp=evidence_ts,
+        finding_count=len(findings),
+        highest_severity=_primary_severity(findings),
+        next_expected_event=next_expected_event or "",
+        outcome=audit_outcome or "",
+        repair_dispatch_count=len(repair_dispatch_refs),
+        repair_dispatch_refs=repair_dispatch_refs,
+        escalation_verdict_count=sum(
+            1
+            for finding in findings
+            if _auditor_evidence_text(finding.get("recommendation"))
+            == "auditor_escalate_to_human"
+        ),
+        escalation_verdict_refs=tuple(
+            f"{_auditor_evidence_text(finding.get('layer',''))}:"
+            f"{_auditor_evidence_text(finding.get('code',''))}"
+            for finding in findings
+            if _auditor_evidence_text(finding.get("recommendation"))
+            == "auditor_escalate_to_human"
+        ),
+        missing_repair_verdict_findings=tuple(missing_repair_verdict),
+        stale_repair_data_findings=tuple(stale_repair_data),
+        evidence_timestamp=evidence_ts,
+    )
+
+
+def save_auditor_completion_evidence(
+    path: str | Path,
+    evidence: SixHourAuditorCompletionEvidence,
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Validate, redact, and persist auditor completion evidence to *path*.
+
+    The evidence is written as a JSON artifact so downstream custody/status
+    consumers can read it without recomputing the audit mapping.
+    """
+    prepared = evidence.to_dict()
+    if redactor is not None:
+        prepared = _redact_auditor_evidence_payload(prepared, redactor)
+    _auditor_atomic_write_json(path, prepared)
+    return prepared
+
+
+def _redact_auditor_evidence_payload(
+    payload: dict[str, Any],
+    redactor: Callable[[str], str],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, str):
+            result[key] = redactor(value)
+        elif isinstance(value, list):
+            result[key] = [
+                redactor(item) if isinstance(item, str) else item for item in value
+            ]
+        elif isinstance(value, dict):
+            result[key] = _redact_auditor_evidence_payload(value, redactor)
+        else:
+            result[key] = value
+    return result
+
+
+def _auditor_atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
+    """Write *payload* to *path* atomically (write-then-rename)."""
+    import tempfile
+
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        suffix=".json", prefix="auditor-evidence-", dir=str(dest.parent)
+    )
+    try:
+        with open(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        Path(tmp).rename(dest)
+    except Exception:
+        try:
+            Path(tmp).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 __all__ = [
     "AuditorConfig",
+    "SixHourAuditorCompletionEvidence",
     "audit_incident",
     "audit_projection_input",
     "build_audit_input",
+    "build_auditor_completion_evidence",
+    "save_auditor_completion_evidence",
 ]

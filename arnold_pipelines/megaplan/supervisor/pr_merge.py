@@ -53,7 +53,7 @@ class PRMergeCursor:
 
 @dataclass(frozen=True)
 class PRMergeResolution:
-    """Outcome of the supervisor PR-merge actor."""
+    # Outcome of the supervisor PR-merge actor.
 
     handled: bool
     advanced: bool = False
@@ -61,6 +61,9 @@ class PRMergeResolution:
     pr_number: int | None = None
     pr_state: str | None = None
     reason: str | None = None
+    # PR transition evidence captured at ready/merge points.
+    pr_ready_evidence: Any | None = None
+    pr_merged_evidence: Any | None = None
 
 
 def maybe_resolve_pr_merge_wait(
@@ -115,12 +118,17 @@ def maybe_resolve_pr_merge_wait(
         )
 
     if pr_state == "merged":
+        # Capture merged PR evidence: merge commit and tip containment check.
+        merged_evidence = git_ops._capture_pr_merged_evidence(
+            root, pr_number, writer=writer
+        )
         return PRMergeResolution(
             handled=True,
             advanced=True,
             pr_number=pr_number,
             pr_state="merged",
             reason=f"PR #{pr_number} is already merged",
+            pr_merged_evidence=merged_evidence,
         )
 
     try:
@@ -150,6 +158,15 @@ def maybe_resolve_pr_merge_wait(
             reason=f"PR #{pr_number} is not merge-ready ({readiness})",
         )
 
+    # Capture PR-ready evidence before marking ready.
+    pr_ready_evidence = git_ops._capture_pr_ready_evidence(
+        root, pr_number, writer=writer, ci_readiness_state=readiness,
+    )
+    # Capture PR head before merge so merged evidence can reference it.
+    pr_head_sha, _last_pushed = git_ops._capture_pr_head_evidence(
+        root, pr_number, writer=writer,
+    )
+
     try:
         git_ops._mark_pr_ready(root, pr_number, writer=writer)
         merged_state = git_ops._enable_auto_merge(root, pr_number, writer=writer)
@@ -166,12 +183,19 @@ def maybe_resolve_pr_merge_wait(
             reason=f"PR #{pr_number} merge handling failed: {exc.message}",
         )
 
+    # Capture merged evidence with tip containment after merge succeeds.
+    merged_evidence = git_ops._capture_pr_merged_evidence(
+        root, pr_number, writer=writer, pr_head_sha=pr_head_sha,
+    )
+
     return PRMergeResolution(
         handled=True,
         advanced=True,
         pr_number=pr_number,
         pr_state=merged_state,
         reason=f"PR #{pr_number} is merge-ready ({merged_state})",
+        pr_ready_evidence=pr_ready_evidence,
+        pr_merged_evidence=merged_evidence,
     )
 
 

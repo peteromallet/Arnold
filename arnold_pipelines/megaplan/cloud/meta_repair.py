@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 import subprocess
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
 from arnold_pipelines.megaplan.cloud import feature_flags
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
@@ -1350,12 +1350,18 @@ def persist_meta_repair_record(
     *,
     repair_data_dir: str | Path,
     secret_names: Sequence[str] = (),
+    verdict: MetaRepairVerdict | None = None,
 ) -> Path:
     """Persist a meta-repair record to ``repair-data/meta/<meta_repair_id>.json``.
 
     The retrigger command in the persisted payload is redacted via
     :func:`redact_text` before writing.  The parent ``meta/`` directory
     is created if it does not exist.
+
+    When *verdict* is provided, a separate ``meta_repair_verdict.json``
+    artifact is written alongside the record following the same verdict
+    discipline as ordinary repair, including original finding linkage,
+    retrigger command evidence, durable refs, and failure reasons.
 
     Returns:
         The path to the written JSON file.
@@ -1375,6 +1381,12 @@ def persist_meta_repair_record(
 
     file_path = meta_dir / f"{record.meta_repair_id}.json"
     atomic_write_json(file_path, payload)
+
+    # Persist the meta-repair verdict alongside the record
+    if verdict is not None:
+        verdict_path = meta_dir / _META_REPAIR_COMPLETION_REQUIRED_ARTIFACT
+        save_meta_repair_verdict(verdict_path, verdict, redactor=None)
+
     update_session_index(
         repair_root / "index.json",
         record.session,
@@ -1384,6 +1396,9 @@ def persist_meta_repair_record(
             "latest_meta_outcome": record.outcome,
             "latest_meta_record_path": str(file_path),
             "latest_meta_recorded_at": record.created_at,
+            "latest_meta_verdict_kind": (
+                verdict.verdict_kind if verdict is not None else ""
+            ),
         },
     )
     return file_path
@@ -1409,6 +1424,340 @@ def load_meta_repair_record(
         return MetaRepairRecord.from_dict(data)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Meta-repair completion verdict evidence
+# ---------------------------------------------------------------------------
+
+_META_REPAIR_COMPLETION_BOUNDARY_ID = "meta_repair_completion"
+_META_REPAIR_COMPLETION_ROW_ID = "repair.meta_complete.1"
+_META_REPAIR_COMPLETION_REQUIRED_ARTIFACT = "meta_repair_verdict.json"
+
+MetaRepairVerdictKind = Literal["fixed", "escalated", "no_fix", "stale", "no_verdict"]
+META_REPAIR_VERDICT_FIXED: MetaRepairVerdictKind = "fixed"
+META_REPAIR_VERDICT_ESCALATED: MetaRepairVerdictKind = "escalated"
+META_REPAIR_VERDICT_NO_FIX: MetaRepairVerdictKind = "no_fix"
+META_REPAIR_VERDICT_STALE: MetaRepairVerdictKind = "stale"
+META_REPAIR_VERDICT_NO_VERDICT: MetaRepairVerdictKind = "no_verdict"
+META_REPAIR_VERDICT_KINDS: frozenset[MetaRepairVerdictKind] = frozenset(
+    {
+        META_REPAIR_VERDICT_FIXED,
+        META_REPAIR_VERDICT_ESCALATED,
+        META_REPAIR_VERDICT_NO_FIX,
+        META_REPAIR_VERDICT_STALE,
+        META_REPAIR_VERDICT_NO_VERDICT,
+    }
+)
+
+# Map wrapper verdict strings to meta-repair verdict kinds.
+_VERDICT_TO_META_VERDICT_KIND: dict[str, MetaRepairVerdictKind] = {
+    "FIXED": META_REPAIR_VERDICT_FIXED,
+    "ESCALATE": META_REPAIR_VERDICT_ESCALATED,
+    "NO_FIX": META_REPAIR_VERDICT_NO_FIX,
+}
+
+
+@dataclass(frozen=True)
+class MetaRepairVerdict:
+    """Structured meta-repair completion verdict evidence.
+
+    Carries the original finding/blocker linkage, retrigger command evidence,
+    attempted actions, before/after evidence refs, durable refs, and failure
+    reasons so that downstream consumers (auditor, custody, status) can
+    decide whether a meta-repair outcome is trustworthy.
+
+    Follows the same verdict discipline as ordinary repair
+    (:class:`arnold_pipelines.megaplan.cloud.repair_contract.RepairVerdict`)
+    but adds meta-repair-specific evidence dimensions.
+    """
+
+    verdict_kind: MetaRepairVerdictKind
+    blocker_id: str
+    attempted_actions: tuple[str, ...] = ()
+    before_evidence_refs: tuple[str, ...] = ()
+    after_evidence_refs: tuple[str, ...] = ()
+    durable_refs: tuple[str, ...] = ()
+    evidence_timestamp: str = ""
+    contract_id: str = _META_REPAIR_COMPLETION_ROW_ID
+    boundary_id: str = _META_REPAIR_COMPLETION_BOUNDARY_ID
+    session: str = ""
+    request_id: str = ""
+    outcome: str = ""
+    stale_detected: bool = False
+    no_verdict_detected: bool = False
+    stale_reason: str = ""
+    no_verdict_reason: str = ""
+    # Meta-repair-specific evidence dimensions
+    retrigger_command_evidence: str = ""
+    failure_reasons: tuple[str, ...] = ()
+    original_finding_linkage: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "verdict_kind": self.verdict_kind,
+            "blocker_id": self.blocker_id,
+            "attempted_actions": list(self.attempted_actions),
+            "before_evidence_refs": list(self.before_evidence_refs),
+            "after_evidence_refs": list(self.after_evidence_refs),
+            "durable_refs": list(self.durable_refs),
+            "evidence_timestamp": self.evidence_timestamp,
+            "contract_id": self.contract_id,
+            "boundary_id": self.boundary_id,
+            "session": self.session,
+            "request_id": self.request_id,
+            "outcome": self.outcome,
+            "stale_detected": self.stale_detected,
+            "no_verdict_detected": self.no_verdict_detected,
+            "stale_reason": self.stale_reason,
+            "no_verdict_reason": self.no_verdict_reason,
+            "retrigger_command_evidence": self.retrigger_command_evidence,
+            "failure_reasons": list(self.failure_reasons),
+            "original_finding_linkage": self.original_finding_linkage,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "MetaRepairVerdict":
+        verdict_kind = str(payload.get("verdict_kind", "")).strip()
+        if verdict_kind not in META_REPAIR_VERDICT_KINDS:
+            verdict_kind = META_REPAIR_VERDICT_NO_VERDICT
+        return cls(
+            verdict_kind=cast(MetaRepairVerdictKind, verdict_kind),
+            blocker_id=str(payload.get("blocker_id", "")).strip(),
+            attempted_actions=tuple(
+                str(item).strip()
+                for item in (payload.get("attempted_actions") or [])
+                if str(item).strip()
+            ),
+            before_evidence_refs=tuple(
+                str(item).strip()
+                for item in (payload.get("before_evidence_refs") or [])
+                if str(item).strip()
+            ),
+            after_evidence_refs=tuple(
+                str(item).strip()
+                for item in (payload.get("after_evidence_refs") or [])
+                if str(item).strip()
+            ),
+            durable_refs=tuple(
+                str(item).strip()
+                for item in (payload.get("durable_refs") or [])
+                if str(item).strip()
+            ),
+            evidence_timestamp=str(payload.get("evidence_timestamp", "")).strip(),
+            contract_id=str(payload.get("contract_id", "")).strip()
+            or _META_REPAIR_COMPLETION_ROW_ID,
+            boundary_id=str(payload.get("boundary_id", "")).strip()
+            or _META_REPAIR_COMPLETION_BOUNDARY_ID,
+            session=str(payload.get("session", "")).strip(),
+            request_id=str(payload.get("request_id", "")).strip(),
+            outcome=str(payload.get("outcome", "")).strip(),
+            stale_detected=bool(payload.get("stale_detected")),
+            no_verdict_detected=bool(payload.get("no_verdict_detected")),
+            stale_reason=str(payload.get("stale_reason", "")).strip(),
+            no_verdict_reason=str(payload.get("no_verdict_reason", "")).strip(),
+            retrigger_command_evidence=str(
+                payload.get("retrigger_command_evidence", "")
+            ).strip(),
+            failure_reasons=tuple(
+                str(item).strip()
+                for item in (payload.get("failure_reasons") or [])
+                if str(item).strip()
+            ),
+            original_finding_linkage=str(
+                payload.get("original_finding_linkage", "")
+            ).strip(),
+        )
+
+
+def build_meta_repair_verdict(
+    *,
+    record: MetaRepairRecord | None = None,
+    verdict: str = "",
+    session: str = "",
+    request_id: str = "",
+    blocker_id: str = "",
+    attempted_actions: tuple[str, ...] | None = None,
+    before_evidence_refs: tuple[str, ...] | None = None,
+    after_evidence_refs: tuple[str, ...] | None = None,
+    durable_refs: tuple[str, ...] | None = None,
+    retrigger_command_evidence: str = "",
+    failure_reasons: tuple[str, ...] | None = None,
+    original_finding_linkage: str = "",
+    timestamp: str | None = None,
+) -> MetaRepairVerdict:
+    """Build a structured meta-repair completion verdict from available evidence.
+
+    When *record* is provided, the verdict kind is derived from the record's
+    outcome via the canonical verdict-to-kind table.  When it is absent or the
+    outcome is unrecognized, the verdict defaults to ``no_verdict``.
+
+    Staleness and no-verdict detection are run against the record and appended
+    as structured flags.
+    """
+    normalized_verdict = str(verdict or "").strip()
+    effective_session = session
+    effective_outcome = ""
+    effective_trigger: MetaRepairTrigger | None = None
+    effective_created_at = ""
+    effective_diagnosis = ""
+    effective_retrigger_evidence = retrigger_command_evidence
+    effective_failure_reasons = tuple(failure_reasons or ())
+    effective_finding_linkage = original_finding_linkage
+
+    if record is not None:
+        effective_session = effective_session or record.session
+        effective_outcome = record.outcome
+        effective_trigger = record.trigger
+        effective_created_at = record.created_at
+        effective_diagnosis = record.diagnosis
+        if not effective_retrigger_evidence and record.retrigger_command:
+            effective_retrigger_evidence = record.retrigger_command
+        if not effective_failure_reasons and record.diagnosis:
+            effective_failure_reasons = (record.diagnosis[:4000],)
+        if not effective_finding_linkage and effective_trigger is not None:
+            effective_finding_linkage = (
+                f"meta-repair:{effective_trigger.value}:{effective_session}"
+            )
+
+    # Derive verdict kind from wrapper verdict string
+    verdict_kind: MetaRepairVerdictKind = META_REPAIR_VERDICT_NO_VERDICT
+    for prefix, kind in _VERDICT_TO_META_VERDICT_KIND.items():
+        if normalized_verdict.startswith(prefix):
+            verdict_kind = kind
+            break
+
+    # If verdict kind is still no_verdict but we have an outcome, try mapping
+    if verdict_kind == META_REPAIR_VERDICT_NO_VERDICT and effective_outcome:
+        outcome_lower = effective_outcome.lower()
+        if outcome_lower in ("fixed", "complete", "completed", "recovered"):
+            verdict_kind = META_REPAIR_VERDICT_FIXED
+        elif outcome_lower in ("escalated", "needs_human", "escalate"):
+            verdict_kind = META_REPAIR_VERDICT_ESCALATED
+        elif outcome_lower in (
+            "no_fix", "no_change", "verifier_rejected",
+            "install_sync_failed",
+        ):
+            verdict_kind = META_REPAIR_VERDICT_NO_FIX
+
+    # Stale detection
+    stale_detected = False
+    stale_reason = ""
+    if record is not None and effective_created_at:
+        try:
+            created_dt = datetime.fromisoformat(
+                effective_created_at.replace("Z", "+00:00")
+            )
+            age_secs = (datetime.now(timezone.utc) - created_dt).total_seconds()
+            if age_secs > META_REPAIR_BUDGET_SECS * 2:
+                stale_detected = True
+                stale_reason = (
+                    f"meta-repair record age {age_secs:.0f}s exceeds "
+                    f"stale threshold {META_REPAIR_BUDGET_SECS * 2}s"
+                )
+        except (ValueError, TypeError):
+            stale_detected = True
+            stale_reason = "unparseable meta-repair record timestamp"
+
+    # No-verdict detection
+    no_verdict_detected = False
+    no_verdict_reason = ""
+    if verdict_kind == META_REPAIR_VERDICT_NO_VERDICT:
+        no_verdict_detected = True
+        if not normalized_verdict:
+            no_verdict_reason = "no verdict string provided for meta-repair"
+        elif not record:
+            no_verdict_reason = (
+                f"unrecognized verdict {normalized_verdict!r} "
+                "with no meta-repair record"
+            )
+        else:
+            no_verdict_reason = (
+                f"unrecognized verdict {normalized_verdict!r} "
+                f"outcome={effective_outcome!r}"
+            )
+
+    evidence_ts = timestamp or effective_created_at
+    if not evidence_ts:
+        evidence_ts = datetime.now(timezone.utc).isoformat()
+
+    return MetaRepairVerdict(
+        verdict_kind=verdict_kind,
+        blocker_id=blocker_id or effective_finding_linkage,
+        attempted_actions=attempted_actions or (),
+        before_evidence_refs=before_evidence_refs or (),
+        after_evidence_refs=after_evidence_refs or (),
+        durable_refs=durable_refs or (),
+        evidence_timestamp=evidence_ts,
+        contract_id=_META_REPAIR_COMPLETION_ROW_ID,
+        boundary_id=_META_REPAIR_COMPLETION_BOUNDARY_ID,
+        session=effective_session,
+        request_id=request_id,
+        outcome=effective_outcome or normalized_verdict,
+        stale_detected=stale_detected,
+        no_verdict_detected=no_verdict_detected,
+        stale_reason=stale_reason,
+        no_verdict_reason=no_verdict_reason,
+        retrigger_command_evidence=effective_retrigger_evidence,
+        failure_reasons=effective_failure_reasons,
+        original_finding_linkage=effective_finding_linkage,
+    )
+
+
+def save_meta_repair_verdict(
+    path: str | Path,
+    verdict: MetaRepairVerdict,
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Validate and atomically persist a meta-repair verdict JSON artifact.
+
+    The verdict is persisted alongside the meta-repair record so that
+    downstream custody/auditor/status consumers can read it without
+    recomputing the mapping.
+    """
+    prepared = verdict.to_dict()
+    if redactor is not None:
+        _redact_meta_verdict_payload(prepared, redactor)
+    atomic_write_json(path, prepared)
+    return prepared
+
+
+def validate_meta_repair_verdict_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate and normalize a meta-repair verdict payload.
+
+    Raises ``ValueError`` on bad input.
+    """
+    if not isinstance(payload, Mapping):
+        raise ValueError("meta-repair verdict must be a JSON object")
+    verdict_kind = str(payload.get("verdict_kind", "")).strip()
+    if not verdict_kind:
+        raise ValueError(
+            "meta-repair verdict missing required field 'verdict_kind'"
+        )
+    if verdict_kind not in META_REPAIR_VERDICT_KINDS:
+        raise ValueError(
+            f"unknown meta-repair verdict kind {verdict_kind!r}; "
+            f"expected one of {sorted(META_REPAIR_VERDICT_KINDS)}"
+        )
+    return dict(payload)
+
+
+def _redact_meta_verdict_payload(
+    payload: dict[str, Any],
+    redactor: Callable[[str], str],
+) -> None:
+    """Redact string values in *payload* in-place."""
+    for key, value in payload.items():
+        if isinstance(value, str) and value:
+            payload[key] = redactor(value)
+        elif isinstance(value, list):
+            payload[key] = [
+                redactor(item) if isinstance(item, str) else item
+                for item in value
+            ]
 
 
 # ---------------------------------------------------------------------------
@@ -1727,15 +2076,24 @@ def evaluate_meta_repair_triggers(
 
 
 __all__ = [
-    "derive_meta_repair_effective_outcome",
     "META_REPAIR_BUDGET_SECS",
+    "META_REPAIR_VERDICT_FIXED",
+    "META_REPAIR_VERDICT_ESCALATED",
+    "META_REPAIR_VERDICT_NO_FIX",
+    "META_REPAIR_VERDICT_STALE",
+    "META_REPAIR_VERDICT_NO_VERDICT",
+    "META_REPAIR_VERDICT_KINDS",
     "MetaRepairClassification",
     "MetaRepairRecord",
     "MetaRepairTrigger",
+    "MetaRepairVerdict",
+    "MetaRepairVerdictKind",
     "RetriggerExecutionResult",
     "build_meta_repair_prompt",
+    "build_meta_repair_verdict",
     "classify_repair_system_failure",
     "compute_meta_deadline",
+    "derive_meta_repair_effective_outcome",
     "evaluate_meta_repair_triggers",
     "is_meta_budget_exhausted",
     "is_model_tool_launch_failure_status",
@@ -1744,7 +2102,9 @@ __all__ = [
     "persist_meta_repair_record",
     "remaining_meta_budget_secs",
     "retrigger_ordinary_repair",
+    "save_meta_repair_verdict",
     "stale_repair_evidence_reason",
     "trigger_priority",
+    "validate_meta_repair_verdict_payload",
     "verify_retrigger_success",
 ]

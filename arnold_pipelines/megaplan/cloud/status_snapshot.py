@@ -42,7 +42,11 @@ from arnold_pipelines.megaplan.authority.views import (
 )
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
-from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    CloudCustodyClassification,
+    classify_cloud_custody,
+    is_success_outcome,
+)
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
@@ -924,6 +928,20 @@ def _build_session_entry(
         now=now,
     )
 
+    custody_classification = _classify_session_custody(
+        session_id=session,
+        supervisor_identity=str(marker.get("supervisor_identity") or ""),
+        tmux_live=bool(liveness.get("tmux")),
+        process_live=bool(liveness.get("process")),
+        active_step_worker_pid_liveness=_active_step_pid_liveness(plan_state_doc),
+        watchdog_status=_watchdog_status(watchdog_item, chain_complete),
+        chain_complete=chain_complete,
+        relaunch_command=str(marker.get("relaunch_command") or ""),
+        needs_human=bool(needs_human),
+        repair_active=(status == "repairing"),
+        now=now,
+    )
+
     entry = {
         "session": session,
         "display_name": session,
@@ -952,6 +970,7 @@ def _build_session_entry(
         "pr_state": chain_health.get("pr_state") if chain_health else None,
         "latest_activity": latest_activity,
         "operator_next": operator_next,
+        "cloud_custody": custody_classification.to_dict(),
         "evidence": {
             "marker": str(marker_path),
             "chain_health": str(marker_dir / f"{session}.chain-health.progress.json"),
@@ -1673,6 +1692,56 @@ def _watchdog_status(watchdog_item: Mapping[str, Any], chain_complete: bool) -> 
         return "complete"
     status = str(watchdog_item.get("status") or "").strip().lower()
     return status or "unknown"
+
+
+def _active_step_pid_liveness(plan_state: Mapping[str, Any] | None) -> bool:
+    """Check whether the active-step worker PID recorded in plan state is live."""
+    if not isinstance(plan_state, Mapping):
+        return False
+    active_step = plan_state.get("active_step")
+    if not isinstance(active_step, Mapping):
+        return False
+    pid = _as_int(active_step.get("worker_pid"))
+    if pid is not None and _pid_is_live(pid):
+        return True
+    return False
+
+
+def _classify_session_custody(
+    *,
+    session_id: str,
+    supervisor_identity: str,
+    tmux_live: bool,
+    process_live: bool,
+    active_step_worker_pid_liveness: bool,
+    watchdog_status: str,
+    chain_complete: bool,
+    relaunch_command: str,
+    needs_human: bool,
+    repair_active: bool,
+    now: datetime,
+) -> CloudCustodyClassification:
+    """Classify cloud custody for a single session from local observation evidence.
+
+    Wraps :func:`classify_cloud_custody` with defaults appropriate for the
+    status-snapshot producer and an evidence timestamp.
+    """
+    return classify_cloud_custody(
+        session_id=session_id,
+        supervisor_identity=supervisor_identity,
+        tmux_live=tmux_live,
+        process_live=process_live,
+        active_step_worker_pid_liveness=active_step_worker_pid_liveness,
+        watchdog_status=watchdog_status,
+        chain_complete=chain_complete,
+        relaunch_command=relaunch_command,
+        relaunch_command_available=bool(relaunch_command),
+        needs_human=needs_human,
+        repair_active=repair_active,
+        failure_reasons=None,
+        previous_classification=None,
+        finding_unchanged_count=0,
+    )
 
 
 def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[str, Any] | None:

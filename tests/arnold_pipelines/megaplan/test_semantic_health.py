@@ -21,15 +21,29 @@ from arnold_pipelines.megaplan.semantic_health import inspect_semantic_health
 from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     BOUNDARY_CONTRACTS_BY_ID,
+    auditor_6h_completion,
+    chain_complete,
+    chain_milestone_completion,
+    chain_milestone_start,
+    cloud_custody_blocked_relaunch_failure,
+    cloud_custody_complete,
+    cloud_custody_escalated_repeated_unchanged,
+    cloud_custody_managed_running,
+    cloud_custody_unmanaged_running_warning,
+    cloud_repair_dispatch,
     critique_to_gate,
     execute_aggregate_promotion,
     final_projection,
     finalize_artifacts,
     finalize_fallback,
     gate_to_revise,
+    meta_repair_completion,
+    ordinary_repair_completion,
     override_abort_authority,
     override_resume_clarify_authority,
     plan_to_critique,
+    pr_merged,
+    pr_ready,
     prep_to_plan,
     review_child_outputs,
     review_human_verification,
@@ -2958,3 +2972,817 @@ def test_authority_finding_has_correct_severity_and_diagnostic(
     assert finding.diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
     assert finding.contract_ref == "gate_to_revise"
     assert finding.boundary_id == "gate_to_revise"
+
+
+# ── T4: broken-contract coverage tests per phase family ─────────────────
+# Each test proves that when a phase family's expected contract evidence
+# is absent (broken contract), inspect_semantic_health emits a structured
+# finding with the correct severity, diagnostic code, and contract ref.
+
+
+# ── plan ────────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_plan_missing_receipt(tmp_path: Path) -> None:
+    """Broken plan contract: missing receipt → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="planned"))
+    _write_artifact(plan_dir, "plan.md")
+    _write_phase_result(plan_dir, phase="plan")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-plan_to_critique-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "plan_to_critique"
+
+
+# ── revise ──────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_revise_missing_artifact(tmp_path: Path) -> None:
+    """Broken revise contract: missing revised_plan.md → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="planned"))
+    _write_boundary_receipt(
+        plan_dir, revise_to_critique.boundary_id, row_id=revise_to_critique.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-revise_to_critique-missing-artifact-revised_plan.md"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "revise_to_critique"
+
+
+# ── critique ────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_critique_missing_scores(tmp_path: Path) -> None:
+    """Broken critique contract: missing scores.json → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    _write_artifact(plan_dir, "critique.md")
+    _write_boundary_receipt(
+        plan_dir, critique_to_gate.boundary_id, row_id=critique_to_gate.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-critique_to_gate-missing-artifact-scores.json"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "critique_to_gate"
+
+
+# ── critique evaluator ──────────────────────────────────────────────────
+
+
+def test_broken_contract_critique_evaluator_missing_receipt(
+    tmp_path: Path,
+) -> None:
+    """Broken critique-evaluator contract: missing receipt → ERROR finding.
+
+    The critique_to_gate contract serves as the critique evaluator boundary:
+    it gates the critique output before proceeding to gate.
+    """
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    _write_artifact(plan_dir, "critique.md")
+    _write_artifact(plan_dir, "scores.json")
+    _write_phase_result(plan_dir, phase="critique")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-critique_to_gate-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "critique_to_gate"
+
+
+# ── gate ────────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_gate_missing_authority(tmp_path: Path) -> None:
+    """Broken gate contract: receipt without authority → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="gated")
+    state["current_phase"] = "gate"
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "gate_decision.json")
+    _write_phase_result(plan_dir, phase="gate")
+    receipt_dir = plan_dir / "boundary_receipts"
+    receipt_dir.mkdir(parents=True)
+    (receipt_dir / "gate_to_revise.json").write_text(
+        json.dumps({
+            "boundary_id": "gate_to_revise",
+            "workflow_id": "megaplan-review",
+            "row_id": gate_to_revise.row_id,
+        }),
+        encoding="utf-8",
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-gate_to_revise-authority-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "gate_to_revise"
+
+
+# ── execute ─────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_execute_missing_receipt(tmp_path: Path) -> None:
+    """Broken execute contract: missing execute_aggregate_promotion receipt → ERROR."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="executed")
+    state["current_phase"] = "execute"
+    state["aggregation_stage"] = "promoted"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json")
+    _write_artifact(plan_dir, "execution_batch_1.json")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-execute_aggregate_promotion-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "execute_aggregate_promotion"
+
+
+# ── finalize ────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_finalize_missing_receipt(tmp_path: Path) -> None:
+    """Broken finalize contract: missing finalize_artifacts receipt → ERROR."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="gated")
+    state["current_phase"] = "finalize"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "contract.json")
+    _write_artifact(plan_dir, "final.md")
+    _write_artifact(plan_dir, "finalize.json", "{}")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-finalize_artifacts-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "finalize_artifacts"
+
+
+# ── review ──────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_review_missing_child_receipts(
+    tmp_path: Path,
+) -> None:
+    """Broken review contract: child_outputs receipt without child refs → ERROR."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="executed")
+    state["current_phase"] = "review"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "review.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        review_child_outputs.boundary_id,
+        row_id=review_child_outputs.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-review_child_outputs-missing-child-receipts"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "review_child_outputs"
+
+
+# ── tiebreaker ──────────────────────────────────────────────────────────
+
+
+def test_broken_contract_tiebreaker_missing_child_receipt(
+    tmp_path: Path,
+) -> None:
+    """Broken tiebreaker contract: missing researcher_to_challenger receipt → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-tiebreaker_researcher_to_challenger-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "tiebreaker_researcher_to_challenger"
+
+
+# ── feedback-if-present ─────────────────────────────────────────────────
+
+
+def test_broken_contract_feedback_missing_fallback_receipt(
+    tmp_path: Path,
+) -> None:
+    """Broken feedback-if-present contract: revise feedback without fallback receipt → ERROR.
+
+    When final_projection signals revise with feedback evidence present,
+    the finalize_fallback receipt must exist.
+    """
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="critiqued")
+    state["current_phase"] = "finalize"
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "finalize.json", "{}")
+    _write_artifact(plan_dir, "finalize_revise_feedback.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        final_projection.boundary_id,
+        row_id=final_projection.row_id,
+        state_observation={"current_state": "critiqued", "next_step": "revise"},
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-finalize_fallback-missing-fallback-receipt"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "finalize_fallback"
+
+
+# ── child/reducer ───────────────────────────────────────────────────────
+
+
+def test_broken_contract_child_reducer_missing_promotion_receipt(
+    tmp_path: Path,
+) -> None:
+    """Broken child/reducer contract: child outputs present but no reducer receipt → ERROR."""
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="executed")
+    state["current_phase"] = "review"
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "review.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        review_child_outputs.boundary_id,
+        row_id=review_child_outputs.row_id,
+        artifact_refs=("review/panel-a.json",),
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-review_reducer_promotion-missing-reducer-receipt"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "review_reducer_promotion"
+
+
+# ── parent promotion ────────────────────────────────────────────────────
+
+
+def test_broken_contract_parent_promotion_missing_receipt(
+    tmp_path: Path,
+) -> None:
+    """Broken parent-promotion contract: missing parent_rejoin_promotion receipt → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-parent_rejoin_promotion-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "parent_rejoin_promotion"
+
+
+# ── chain ───────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_chain_milestone_start_missing_artifact(
+    tmp_path: Path,
+) -> None:
+    """Broken chain contract: missing milestone_start.json → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_boundary_receipt(
+        plan_dir,
+        chain_milestone_start.boundary_id,
+        row_id=chain_milestone_start.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-chain_milestone_start-missing-artifact-milestone_start.json"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "chain_milestone_start"
+
+
+def test_broken_contract_chain_complete_missing_receipt(
+    tmp_path: Path,
+) -> None:
+    """Broken chain contract: missing chain_complete receipt → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_artifact(plan_dir, "chain_complete.json")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-chain_complete-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "chain_complete"
+
+
+# ── PR ──────────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_pr_ready_missing_artifact(tmp_path: Path) -> None:
+    """Broken PR contract: missing pr_ready.json → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_boundary_receipt(
+        plan_dir, pr_ready.boundary_id, row_id=pr_ready.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-pr_ready-missing-artifact-pr_ready.json"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "pr_ready"
+
+
+def test_broken_contract_pr_merged_missing_receipt(tmp_path: Path) -> None:
+    """Broken PR contract: missing pr_merged receipt → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_artifact(plan_dir, "pr_merged.json")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-pr_merged-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "pr_merged"
+
+
+# ── repair ──────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_repair_cloud_dispatch_missing_artifact(
+    tmp_path: Path,
+) -> None:
+    """Broken repair contract: missing repair_dispatch.json → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_boundary_receipt(
+        plan_dir,
+        cloud_repair_dispatch.boundary_id,
+        row_id=cloud_repair_dispatch.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-cloud_repair_dispatch-missing-artifact-repair_dispatch.json"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "cloud_repair_dispatch"
+
+
+def test_broken_contract_repair_ordinary_missing_receipt(
+    tmp_path: Path,
+) -> None:
+    """Broken repair contract: missing ordinary_repair_completion receipt → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_artifact(plan_dir, "repair_verdict.json")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-ordinary_repair_completion-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "ordinary_repair_completion"
+
+
+def test_broken_contract_repair_meta_missing_phase_result(
+    tmp_path: Path,
+) -> None:
+    """Broken repair contract: missing phase_result for meta_repair → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_artifact(plan_dir, "meta_repair_verdict.json")
+    _write_boundary_receipt(
+        plan_dir,
+        meta_repair_completion.boundary_id,
+        row_id=meta_repair_completion.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-meta_repair_completion-phase-result-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "meta_repair_completion"
+
+
+# ── auditor ─────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_auditor_missing_artifact(tmp_path: Path) -> None:
+    """Broken auditor contract: missing auditor_verdict.json → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_boundary_receipt(
+        plan_dir,
+        auditor_6h_completion.boundary_id,
+        row_id=auditor_6h_completion.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-auditor_6h_completion-missing-artifact-auditor_verdict.json"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "auditor_6h_completion"
+
+
+def test_broken_contract_auditor_missing_receipt(tmp_path: Path) -> None:
+    """Broken auditor contract: missing auditor_6h_completion receipt → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+    _write_artifact(plan_dir, "auditor_verdict.json")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-auditor_6h_completion-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "auditor_6h_completion"
+
+
+# ── custody ─────────────────────────────────────────────────────────────
+
+
+def test_broken_contract_custody_managed_missing_artifact(
+    tmp_path: Path,
+) -> None:
+    """Broken custody contract: missing custody_snapshot.json → ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="executed"))
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-cloud_custody_managed_running-missing-artifact-custody_snapshot.json"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "cloud_custody_managed_running"
+
+
+def test_broken_contract_custody_complete_missing_artifact(
+    tmp_path: Path,
+) -> None:
+    """Broken custody contract: missing custody_snapshot.json for complete → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="done"))
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-cloud_custody_complete-missing-artifact-custody_snapshot.json"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "cloud_custody_complete"
+
+
+def test_broken_contract_custody_blocked_missing_artifact(
+    tmp_path: Path,
+) -> None:
+    """Broken custody contract: missing artifact for blocked_relaunch → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="blocked"))
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = (
+        "SH-cloud_custody_blocked_relaunch_failure-"
+        "missing-artifact-custody_snapshot.json"
+    )
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == "cloud_custody_blocked_relaunch_failure"
+
+
+def test_broken_contract_custody_escalated_missing_artifact(
+    tmp_path: Path,
+) -> None:
+    """Broken custody contract: missing artifact for escalated_unchanged → ERROR."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="escalated"))
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = (
+        "SH-cloud_custody_escalated_repeated_unchanged-"
+        "missing-artifact-custody_snapshot.json"
+    )
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert by_id[fid].contract_ref == (
+        "cloud_custody_escalated_repeated_unchanged"
+    )
+
+
+# ── T7: reducer evidence semantic-health tests ────────────────────────────
+# These tests prove that T5 reducer evidence keys in state.json trigger the
+# correct T6 semantic-health findings from _check_reducer_evidence_in_state.
+
+
+def _write_execute_state_with_reducer_keys(
+    plan_dir: Path,
+    *,
+    child_outputs: dict | None = None,
+    parent_promotion: list | None = None,
+    side_effect_refs: list | None = None,
+    blocked_retry: list | None = None,
+    repair_domain: dict | None = None,
+    resume_anchors: list | None = None,
+    aggregate_canonical: dict | None = None,
+) -> None:
+    """Write state.json with execute-phase setup and T5 reducer evidence keys."""
+    state = _make_state(
+        current_state="executing",
+        history=[{"step": "execute", "result": "success"}],
+        current_phase="execute",
+    )
+    # Set T5 reducer evidence keys (only when provided, to avoid false signals)
+    if child_outputs is not None:
+        state["_reducer_child_outputs"] = child_outputs
+    if parent_promotion is not None:
+        state["_reducer_parent_promotion_points"] = parent_promotion
+    if side_effect_refs is not None:
+        state["_reducer_side_effect_refs"] = side_effect_refs
+    if blocked_retry is not None:
+        state["_reducer_blocked_retry_records"] = blocked_retry
+    if repair_domain is not None:
+        state["_reducer_repair_domain_separation"] = repair_domain
+    if resume_anchors is not None:
+        state["_reducer_resume_anchors"] = resume_anchors
+    if aggregate_canonical is not None:
+        state["_reducer_aggregate_canonical_outputs"] = aggregate_canonical
+    _write_state(plan_dir, state)
+
+
+def test_reducer_child_evidence_no_promotion_finding(tmp_path: Path) -> None:
+    """(T7) When _reducer_child_outputs has done tasks but
+    _reducer_parent_promotion_points is absent, the semantic-health check
+    emits reducer-child-evidence-no-promotion at ERROR severity."""
+    plan_dir = tmp_path / "plan"
+    _write_execute_state_with_reducer_keys(
+        plan_dir,
+        child_outputs={
+            "T1": {
+                "status": "done",
+                "files_changed": ["src/a.py"],
+                "commands_run": ["pytest"],
+                "executor_notes": "completed",
+            },
+        },
+        # Deliberately omit parent_promotion — child evidence alone cannot
+        # prove parent advancement.
+        parent_promotion=None,
+    )
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json")
+    _write_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        row_id=execute_aggregate_promotion.row_id,
+        authority_records=[
+            {"actor": "tester", "role": "reviewer", "conditions": []}
+        ],
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-execute_aggregate_promotion-reducer-child-evidence-no-promotion"
+    assert fid in by_id, f"expected finding {fid}"
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert "child turn evidence must not satisfy parent state advancement" in (
+        by_id[fid].description
+    )
+
+
+def test_reducer_promotion_no_child_evidence_finding(tmp_path: Path) -> None:
+    """(T7) When _reducer_parent_promotion_points exist but
+    _reducer_child_outputs is absent, the semantic-health check emits
+    reducer-promotion-no-child-evidence at WARNING severity."""
+    plan_dir = tmp_path / "plan"
+    _write_execute_state_with_reducer_keys(
+        plan_dir,
+        child_outputs=None,  # absent — no child evidence
+        parent_promotion=[
+            {"kind": "completed_task_ids", "task_ids": ["T1"]},
+            {"kind": "blocking_reasons", "reasons": [], "blocked": False},
+            {"kind": "phase_outcome", "outcome": "success"},
+            {"kind": "state_transition", "target_current_state": "executed"},
+        ],
+    )
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json")
+    _write_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        row_id=execute_aggregate_promotion.row_id,
+        authority_records=[
+            {"actor": "tester", "role": "reviewer", "conditions": []}
+        ],
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-execute_aggregate_promotion-reducer-promotion-no-child-evidence"
+    assert fid in by_id, f"expected finding {fid}"
+    assert by_id[fid].severity == FindingSeverity.WARNING
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    assert "reducer promotion requires corresponding child task evidence" in (
+        by_id[fid].description
+    )
+
+
+def test_reducer_missing_side_effect_refs_finding(tmp_path: Path) -> None:
+    """(T7) When _reducer_child_outputs reports files_changed but
+    _reducer_side_effect_refs is empty, the semantic-health check emits
+    reducer-missing-side-effect-refs at WARNING severity."""
+    plan_dir = tmp_path / "plan"
+    _write_execute_state_with_reducer_keys(
+        plan_dir,
+        child_outputs={
+            "T1": {
+                "status": "done",
+                "files_changed": ["src/a.py", "src/b.py"],
+                "commands_run": [],
+                "executor_notes": "",
+            },
+        },
+        side_effect_refs=[],  # empty — side-effect traceability gap
+    )
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json")
+    _write_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        row_id=execute_aggregate_promotion.row_id,
+        authority_records=[
+            {"actor": "tester", "role": "reviewer", "conditions": []}
+        ],
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-execute_aggregate_promotion-reducer-missing-side-effect-refs"
+    assert fid in by_id, f"expected finding {fid}"
+    assert by_id[fid].severity == FindingSeverity.WARNING
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert "side-effect traceability gap" in by_id[fid].description
+
+
+def test_reducer_missing_resume_anchors_finding(tmp_path: Path) -> None:
+    """(T7) When _reducer_blocked_retry_records exist but
+    _reducer_resume_anchors is empty, the semantic-health check emits
+    reducer-missing-resume-anchors at WARNING severity."""
+    plan_dir = tmp_path / "plan"
+    _write_execute_state_with_reducer_keys(
+        plan_dir,
+        blocked_retry=[
+            {
+                "task_id": "T1",
+                "status": "blocked",
+                "blocked": True,
+                "harness_generated": False,
+                "retry_eligible": True,
+                "reason": "uncorroborated",
+            },
+        ],
+        resume_anchors=[],  # empty — no stable resume point
+    )
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json")
+    _write_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        row_id=execute_aggregate_promotion.row_id,
+        authority_records=[
+            {"actor": "tester", "role": "reviewer", "conditions": []}
+        ],
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-execute_aggregate_promotion-reducer-missing-resume-anchors"
+    assert fid in by_id, f"expected finding {fid}"
+    assert by_id[fid].severity == FindingSeverity.WARNING
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    assert "no stable resume point" in by_id[fid].description
+
+
+def test_reducer_repair_domain_mixing_finding(tmp_path: Path) -> None:
+    """(T7) When _reducer_repair_domain_separation declares
+    is_repair_execution=True but child tasks have no repair markers,
+    the semantic-health check emits reducer-repair-domain-mixing
+    at WARNING severity."""
+    plan_dir = tmp_path / "plan"
+    _write_execute_state_with_reducer_keys(
+        plan_dir,
+        child_outputs={
+            "T1": {
+                "status": "done",
+                "files_changed": [],
+                "commands_run": [],
+                "executor_notes": "ordinary execution, no harness notes",
+            },
+        },
+        repair_domain={
+            "is_repair_execution": True,
+            "deviation_task_ids": ["T1"],
+            "deviation_count": 1,
+            "repair_domain": "repair",
+        },
+    )
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json")
+    _write_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        row_id=execute_aggregate_promotion.row_id,
+        authority_records=[
+            {"actor": "tester", "role": "reviewer", "conditions": []}
+        ],
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    fid = "SH-execute_aggregate_promotion-reducer-repair-domain-mixing"
+    assert fid in by_id, f"expected finding {fid}"
+    assert by_id[fid].severity == FindingSeverity.WARNING
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    assert "repair-domain evidence appears mixed" in by_id[fid].description
+
+
+def test_reducer_evidence_all_present_no_t6_findings(tmp_path: Path) -> None:
+    """(T7) When all T5 reducer evidence dimensions are consistent,
+    no T6 reducer findings are emitted."""
+    plan_dir = tmp_path / "plan"
+    _write_execute_state_with_reducer_keys(
+        plan_dir,
+        child_outputs={
+            "T1": {
+                "status": "done",
+                "files_changed": ["src/a.py"],
+                "commands_run": ["pytest"],
+                "executor_notes": "completed",
+            },
+        },
+        parent_promotion=[
+            {"kind": "completed_task_ids", "task_ids": ["T1"]},
+            {"kind": "blocking_reasons", "reasons": [], "blocked": False},
+            {"kind": "phase_outcome", "outcome": "success"},
+            {"kind": "state_transition", "target_current_state": "executed"},
+        ],
+        side_effect_refs=["src/a.py"],
+        blocked_retry=[],
+        repair_domain={
+            "is_repair_execution": False,
+            "deviation_task_ids": [],
+            "deviation_count": 0,
+            "repair_domain": "ordinary",
+        },
+        resume_anchors=[
+            {
+                "anchor_kind": "complete",
+                "completed_task_ids": ["T1"],
+                "blocked_task_ids": [],
+                "uncorroborated_task_ids": [],
+                "pending_task_ids": [],
+                "state_cursor": {"merged_task_count": 1},
+            }
+        ],
+    )
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json")
+    _write_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        row_id=execute_aggregate_promotion.row_id,
+        authority_records=[
+            {"actor": "tester", "role": "reviewer", "conditions": []}
+        ],
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    # None of the T6 reducer findings should be present
+    prefix = "SH-execute_aggregate_promotion-reducer-"
+    reducer_findings = {fid for fid in by_id if fid.startswith(prefix)}
+    assert reducer_findings == set(), (
+        f"expected zero T6 reducer findings, got: {reducer_findings}"
+    )

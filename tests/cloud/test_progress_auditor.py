@@ -4487,3 +4487,396 @@ class TestStageMetrics:
 
         # Evidence refs should appear in brackets
         assert "watchdog_stall:stall:plan-x" in md
+
+
+# ---------------------------------------------------------------------------
+# T18: Progress auditor — audited window, repair dispatch refs,
+#      missing repair verdict findings, stale repair-data findings,
+#      and escalation verdict evidence shape
+# ---------------------------------------------------------------------------
+
+
+class TestProgressAuditorAuditedWindow:
+    """The report JSON payload carries the audited window in hours."""
+
+    def test_window_hours_in_payload(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert "window_hours" in payload
+        assert payload["window_hours"] == 6
+
+    def test_window_hours_custom_value(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 12,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert payload["window_hours"] == 12
+
+
+class TestProgressAuditorRepairDispatchRefs:
+    """The dispatch_summary reports whether repair was dispatched."""
+
+    def test_dispatch_summary_repair_dispatched_field(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert "dispatch_summary" in payload
+        assert "repair_dispatched" in payload["dispatch_summary"]
+        assert isinstance(payload["dispatch_summary"]["repair_dispatched"], bool)
+
+    def test_dispatch_summary_meta_repair_dispatched_field(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        ds = payload["dispatch_summary"]
+        assert "meta_repair_dispatched" in ds
+        assert isinstance(ds["meta_repair_dispatched"], bool)
+
+    def test_dispatch_receipt_count_zero_by_default(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert payload["dispatch_summary"]["dispatch_receipt_count"] == 0
+
+
+class TestProgressAuditorMissingRepairVerdictFindings:
+    """Findings carry repair-verdict-related evidence that the auditor can consume."""
+
+    def test_findings_structure_has_failure_kind(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "one finding",
+            "findings": [{
+                "plan": "test-plan",
+                "workspace": "/w/test",
+                "session": "sess-test",
+                "reasons": ["repair loop did not produce verdict"],
+                "current_state": "repairing",
+                "iteration": 1,
+                "last_gate_recommendation": None,
+                "last_gate_score": None,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 0,
+                "recent_gate_total": 0,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [],
+                "active_step_attempt": None,
+                "latest_failure_kind": "missing_verdict",
+                "latest_failure_message": "no verdict produced",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": None,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "sess-test", "workspace": "/w/test", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {"outcome": "repairing", "verdict_present": False},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {},
+                "user_action_context": {},
+                "active_step_phase": "repair",
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": None,
+                "deepseek_model": None,
+                "deepseek_response": None,
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert len(payload["findings"]) == 1
+        finding = payload["findings"][0]
+        assert finding["latest_failure_kind"] == "missing_verdict"
+        assert finding["current_state"] == "repairing"
+        assert "repair_data_summary" in finding
+        assert finding["repair_data_summary"]["verdict_present"] is False
+
+    def test_repair_data_summary_preserved_in_payload(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [{
+                "plan": "p",
+                "workspace": "/w/p",
+                "session": "s",
+                "reasons": [],
+                "current_state": "running",
+                "iteration": 1,
+                "last_gate_recommendation": None,
+                "last_gate_score": None,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 0,
+                "recent_gate_total": 0,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [],
+                "active_step_attempt": None,
+                "latest_failure_kind": None,
+                "latest_failure_message": "",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": None,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "s", "workspace": "/w/p", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {"outcome": "complete", "verdict_present": True,
+                                        "verdict_kind": "cleared"},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {},
+                "user_action_context": {},
+                "active_step_phase": None,
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": None,
+                "deepseek_model": None,
+                "deepseek_response": None,
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        rd = payload["findings"][0]["repair_data_summary"]
+        assert rd["verdict_present"] is True
+        assert rd["verdict_kind"] == "cleared"
+        assert rd["outcome"] == "complete"
+
+
+class TestProgressAuditorStaleRepairDataFindings:
+    """Findings carry stale repair-data signals for auditor consumption."""
+
+    def test_findings_stale_repair_data_indicator(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [{
+                "plan": "stale-plan",
+                "workspace": "/w/stale",
+                "session": "sess-stale",
+                "reasons": ["repair running too long"],
+                "current_state": "repairing",
+                "iteration": 100,
+                "last_gate_recommendation": None,
+                "last_gate_score": None,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 0,
+                "recent_gate_total": 0,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [],
+                "active_step_attempt": None,
+                "latest_failure_kind": "repair_timeout",
+                "latest_failure_message": "repair exceeded budget",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": None,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "sess-stale", "workspace": "/w/stale", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {"outcome": "repairing", "age_hours": 8.5,
+                                        "stale_repair_data": True},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {"classification": "STALE_STATE",
+                                         "recommended_action": "mechanical re-drive only"},
+                "user_action_context": {},
+                "active_step_phase": "repair",
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": None,
+                "deepseek_model": None,
+                "deepseek_response": None,
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        finding = payload["findings"][0]
+        assert finding["latest_failure_kind"] == "repair_timeout"
+        assert finding["current_state"] == "repairing"
+        rd = finding["repair_data_summary"]
+        assert rd["stale_repair_data"] is True
+        assert rd["age_hours"] == 8.5
+        sse = finding["stale_state_evidence"]
+        assert sse["classification"] == "STALE_STATE"
+
+    def test_green_checks_preserved_for_auditor_verdict(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [
+                {
+                    "plan": "healthy-plan",
+                    "session": "sess-healthy",
+                    "workspace": "/w/healthy",
+                    "summary": "No findings - plan is progressing normally",
+                },
+            ],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert len(payload["green_checks"]) == 1
+        assert payload["green_checks"][0]["plan"] == "healthy-plan"
+
+
+class TestProgressAuditorEscalationVerdictShape:
+    """The report output carries escalation verdict evidence for the six-hour auditor."""
+
+    def test_escalated_finding_preserved(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "one escalated finding",
+            "findings": [{
+                "plan": "esc-plan",
+                "workspace": "/w/esc",
+                "session": "esc-sess",
+                "reasons": ["repeated stall without recovery"],
+                "current_state": "executing",
+                "iteration": 10,
+                "last_gate_recommendation": "blocked",
+                "last_gate_score": 1.0,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 5,
+                "recent_gate_total": 5,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [1, 1, 1],
+                "active_step_attempt": None,
+                "latest_failure_kind": "execution_blocked",
+                "latest_failure_message": "blocked at gate repeatedly",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": True,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "esc-sess", "workspace": "/w/esc", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {},
+                "user_action_context": {},
+                "active_step_phase": "execute",
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": "ESCALATE\nPlan is cycling between milestones without progress.",
+                "deepseek_model": "deepseek:deepseek-v4-pro",
+                "deepseek_response": "ESCALATE\nPlan is cycling between milestones without progress.",
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        finding = payload["findings"][0]
+        assert finding["between_milestone_cycling"] is True
+        assert "ESCALATE" in str(finding.get("hypothesis", ""))
+        assert finding["iteration"] == 10
+
+    def test_stall_summary_conveys_escalation_context(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "progress_stall:critical-plan",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert "stall_summary" in payload
+        assert payload["stall_summary"] == "progress_stall:critical-plan"
+
+
+class TestProgressAuditorCompletionRecordShape:
+    """The complete report payload provides a completion record the six-hour auditor can consume."""
+
+    def test_payload_top_level_keys_for_auditor_evidence(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert "window_hours" in payload
+        assert "findings" in payload
+        assert "dispatch_summary" in payload
+        assert "autonomous_fix_attempts" in payload
+        assert "risky_or_deferred_fixes" in payload
+        assert "green_checks" in payload
+        assert "stall_summary" in payload
+
+    def test_findings_list_carries_plan_and_session(self, tmp_path: Path) -> None:
+        findings_data = {
+            "window_hours": 6,
+            "stall_summary": "none",
+            "findings": [{
+                "plan": "audit-plan",
+                "workspace": "/w/audit",
+                "session": "audit-sess",
+                "reasons": [],
+                "current_state": "running",
+                "iteration": 1,
+                "last_gate_recommendation": None,
+                "last_gate_score": None,
+                "plan_v_count": 1,
+                "recent_gate_iterate": 0,
+                "recent_gate_total": 0,
+                "plan_v_sizes": {},
+                "events_size": 0,
+                "score_trajectory": [],
+                "active_step_attempt": None,
+                "latest_failure_kind": None,
+                "latest_failure_message": "",
+                "latest_failure_is_stale": None,
+                "last_success_after_failure": None,
+                "stale_block_replay": None,
+                "between_milestone_cycling": None,
+                "sources": [],
+                "session_header": {"kind": "chain", "session": "audit-sess", "workspace": "/w/audit", "sources": []},
+                "chain_log": {},
+                "chain_state_summary": {"current": {}},
+                "repair_data_summary": {},
+                "plan_latest_failure": {},
+                "stale_state_evidence": {},
+                "user_action_context": {},
+                "active_step_phase": None,
+                "events_mtime_age_min": None,
+                "plan_deltas": [],
+                "significant_counts": [],
+                "latest_failure_metadata": {},
+                "hypothesis": None,
+                "deepseek_model": None,
+                "deepseek_response": None,
+            }],
+            "green_checks": [],
+        }
+        payload, _md = _run_report_assembler(findings_data, tmp_path)
+        assert payload["findings"][0]["plan"] == "audit-plan"
+        assert payload["findings"][0]["session"] == "audit-sess"

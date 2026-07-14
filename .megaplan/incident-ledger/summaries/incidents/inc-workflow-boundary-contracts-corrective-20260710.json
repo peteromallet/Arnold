@@ -1,9 +1,113 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 107,
+  "evidence_ref_count": 198,
   "evidence_refs": [
     {
-      "kind": "verification_record"
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 215,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/215#issuecomment-4962012949"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 214,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/214"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 215,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/215"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 216,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/216"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 223,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/223"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 233,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/233"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 234,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/234"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 235,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/235"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -121,110 +225,15 @@
     },
     {
       "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "stale_active_step"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "stale_active_step"
     }
   ],
-  "generated_at": "2026-07-13T16:00:37.034259+00:00",
+  "generated_at": "2026-07-13T23:02:15.301990+00:00",
   "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
   "kind": "incident_summary",
-  "latest_actor": "immediate_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "omitted_evidence_ref_count": 43,
-  "outcome": "attempted",
+  "latest_actor": "watchdog",
+  "next_expected_event": "immediate_repair.repair_attempt",
+  "omitted_evidence_ref_count": 134,
+  "outcome": "dispatched",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "unknown",
@@ -234,16 +243,22 @@
     "problem-3bc7a5eaa27e",
     "problem-3c52277cbfc5",
     "problem-461ac04158b3",
+    "problem-51b6859a7c76",
     "problem-67a765759422",
+    "problem-72932d0eb948",
     "problem-8628c3b9c119",
+    "problem-8f475cf8e677",
+    "problem-90fb37f640af",
+    "problem-bca9d501eede",
+    "problem-bd43205325d0",
     "problem-e20c45ae0eb0"
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
-    "last_seq": 454,
+    "digest": "sha256:fb5de21f68a75a1d2c93e9b0bc73a0cf8903a4d40ffb42e83f13acec7eba2b7f",
+    "last_seq": 485,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "inc-workflow-boundary-contracts-corrective-20260710: repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+  "state": "dispatch",
+  "summary_text": "inc-workflow-boundary-contracts-corrective-20260710: repair loop background-dispatched"
 }
