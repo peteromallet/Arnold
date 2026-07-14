@@ -1,0 +1,3 @@
+Read-only forensic probe. Do not edit files, launch/kill processes, or send messages.
+
+Classify this incident against blind fixer, false success, token drift/unreachable repair, evidence-contract gap, guard-weakening, and spinning. Target is agent-edit-verifiable-transaction-spine. Use durable plan state/log, repair request/claim, process table, watchdog error, alert/escalation, and deployed/current source. Rank the actual failure shapes. Specifically determine whether missing authority-receipt evidence is the real blocker or only the executor's unfinished implementation description. Flag any guard weakening risk in proposed fixes. Return a firm ranked diagnosis under 400 words.

@@ -1,0 +1,3 @@
+Read-only source/test probe. Do not edit files, launch/kill processes, or send messages.
+
+Given the observed managed_agent argparse error for agent-edit-verifiable-transaction-spine, inspect /workspace/arnold current dirty diffs, deployed wrappers, clean supervisor source, tests/cloud/test_watchdog_wrappers.py, tests/cloud/test_repair_custody.py, tests/cloud/test_progress_auditor*.py, and managed_agent tests. Identify the smallest source patch plus missed-backstop patch and focused regressions that preserve guards. Include all sibling automatic managed-agent launch sites that need provenance fields and sealed stdin/launch confirmation. Note which dirty changes appear concurrent and must not be overwritten. Return a concrete patch/test checklist under 500 words.

@@ -1,0 +1,5 @@
+Read-only forensic task. Do not edit, restart, claim, or dispatch anything.
+
+Project source: /workspace/arnold. Target session: workflow-boundary-contracts-corrective-20260710. Runtime artifacts are under /workspace/.megaplan and /workspace/workflow-boundary-contracts-corrective-20260710/Arnold. Follow the SuperFixer TRACKED/FIXED/INTENT/CONTEXT rubric for watchdog/detect only. Canonical status at 2026-07-13T22:39:25Z says stopped runner, stale active step dead PID, S3 plan, repair request/claim/attempt 1/0/0. Watchdog report froze at 20:44:47Z; /workspace/watchdog.log later shows PyYAML import failures.
+
+Determine the exact source-code/runtime/dependency failure, why service health did not fail loud, whether watchdog could track the real dead process, and the smallest durable source+test fix that preserves guards. Hunt sibling wrapper imports/dependency assumptions. Return a decisive verdict under 700 words with exact paths/lines/artifacts and TRACKED/FIXED/INTENT/CONTEXT answers. Clearly separate observed evidence from inference.

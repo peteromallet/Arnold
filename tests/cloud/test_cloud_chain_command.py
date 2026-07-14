@@ -178,6 +178,25 @@ def test_atomic_marker_writer_can_be_followed_by_shell_operator(tmp_path: Path) 
     }
 
 
+def test_tmux_chain_launch_command_is_valid_shell() -> None:
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        session_name="demo-chain",
+        identity_digest="abc123",
+    )
+
+    result = subprocess.run(
+        ["bash", "-n"],
+        input=command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_megaplan_refresh_recognizes_linked_worktree_gitfile() -> None:
     command = _megaplan_refresh_command(_cloud_spec())
 
