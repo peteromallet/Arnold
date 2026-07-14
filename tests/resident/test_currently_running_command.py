@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan.resident.currently_running import (
     discover_running_sessions,
     render_currently_running,
 )
+from arnold_pipelines.megaplan.resident.context_tree import build_context_root
 from arnold_pipelines.megaplan.resident.discord import (
     DISCORD_APPLICATION_COMMANDS,
     DISCORD_MESSAGE_LIMIT,
@@ -80,6 +81,68 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
     assert "finalized" not in rendered
 
 
+def test_active_executing_attention_remains_listed_with_overlay_visible() -> None:
+    status_node = {
+        "sessions": [
+            {
+                "session": "custody-control-plane-20260714",
+                "status": "attention",
+                "process": True,
+                "active_phase": "execute",
+                "operator_next": "chain custody mismatch",
+                "progress": {
+                    "percent": 33,
+                    "display_state": "executing",
+                    "plan_state": "finalized",
+                },
+            }
+        ]
+    }
+
+    assert [row["session"] for row in discover_running_sessions(status_node)] == [
+        "custody-control-plane-20260714"
+    ]
+    rendered = render_currently_running(
+        CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
+    )
+
+    assert "**⛓️ Epics & chains · 1 active**" in rendered
+    assert "`executing`" in rendered
+    assert "⚠️ attention" in rendered
+    assert "chain custody mismatch" in rendered
+    assert "finalized" not in rendered
+
+
+def test_non_active_attention_stays_on_attention_surface_not_running_list() -> None:
+    attention_session = {
+        "session": "stopped-chain",
+        "status": "attention",
+        "process": False,
+        "should_run": True,
+        "operator_next": "workspace missing or unreadable",
+        "progress": {"display_state": "blocked", "plan_state": "blocked"},
+    }
+    status_node = {"sessions": [attention_session], "session_count": 1}
+
+    assert discover_running_sessions(status_node) == []
+    context_root = build_context_root(
+        status=status_node,
+        agents=None,
+        initiatives=None,
+        todos=None,
+        runtime=None,
+        conversation=None,
+    )
+    assert context_root["attention"]["sessions"] == [
+        {
+            "session": "stopped-chain",
+            "status": "attention",
+            "operator_next": "workspace missing or unreadable",
+            "progress": {"display_state": "blocked", "plan_state": "blocked"},
+        }
+    ]
+
+
 def test_active_execute_phase_is_executing_when_display_state_is_absent() -> None:
     report = CurrentlyRunningReport(
         status_node={
@@ -101,6 +164,26 @@ def test_active_execute_phase_is_executing_when_display_state_is_absent() -> Non
 
     assert "**epic**" in rendered
     assert "`executing` · overall progress unavailable" in rendered
+
+
+def test_plan_state_is_used_only_when_display_state_and_execute_are_absent() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [
+                    {
+                        "session": "blocked-plan",
+                        "status": "running",
+                        "progress": {"plan_state": "blocked"},
+                    }
+                ]
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "**blocked-plan**" in rendered
+    assert "`blocked` · overall progress unavailable · chain running" in rendered
 
 
 def test_render_uses_distinct_restrained_section_headings() -> None:

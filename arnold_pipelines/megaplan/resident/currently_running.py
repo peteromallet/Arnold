@@ -23,6 +23,7 @@ from .timezone import format_timestamp
 CURRENTLY_RUNNING_COMMAND = "currently-running"
 CURRENTLY_RUNNING_DESCRIPTION = "Show running Megaplan epics, chains, and resident subagents."
 _RUNNING_SESSION_STATUSES = frozenset({"running", "repairing"})
+_ATTENTION_SESSION_STATUS = "attention"
 _TERMINAL_AGENT_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
 )
@@ -112,19 +113,29 @@ async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
 
 
 def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
-    """Return canonical sessions classified as running or actively repairing."""
+    """Return sessions with active execution, preserving attention overlays."""
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
         return []
     sessions = status_node.get("sessions")
     if not isinstance(sessions, list):
         return []
-    return [
-        row
-        for row in sessions
-        if isinstance(row, Mapping)
-        and str(row.get("status") or "").casefold() in _RUNNING_SESSION_STATUSES
-    ]
+    discovered: list[Mapping[str, Any]] = []
+    for row in sessions:
+        if not isinstance(row, Mapping):
+            continue
+        status = str(row.get("status") or "").casefold()
+        if status in _RUNNING_SESSION_STATUSES:
+            discovered.append(row)
+            continue
+        # ``attention`` is an operator overlay, not an execution state.  Keep
+        # an attention-classified session in the active listing when the
+        # bounded canonical projection still observes live work or repair.
+        if status == _ATTENTION_SESSION_STATUS and (
+            row.get("process") is True or row.get("repairing") is True
+        ):
+            discovered.append(row)
+    return discovered
 
 
 def discover_live_managed_agents(
@@ -247,7 +258,12 @@ def _render_session(row: Mapping[str, Any]) -> str:
     if plan_percent is not None:
         details.append(f"{plan_percent}% in-flight plan")
     session_status = _optional_label(row.get("status"))
-    if session_status and session_status.casefold() != status.casefold():
+    if session_status and session_status.casefold() == _ATTENTION_SESSION_STATUS:
+        details.append("⚠️ attention")
+        operator_next = _optional_label(row.get("operator_next"))
+        if operator_next:
+            details.append(_safe_label(operator_next))
+    elif session_status and session_status.casefold() != status.casefold():
         details.append(f"chain {session_status}")
     return f"• **{_safe_label(name)}**\n  `{_safe_label(status)}` · {' · '.join(details)}"
 
