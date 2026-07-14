@@ -4611,6 +4611,46 @@ def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     assert "pr merge 42 --auto --squash --delete-branch" in gh_calls
 
 
+def test_watchdog_finalized_plan_never_authorizes_pr_merge(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
+    (chain_dir / "demo-chain.json").write_text(
+        json.dumps(
+            {
+                "last_state": "finalized",
+                "current_plan_name": "demo-plan",
+                "pr_number": 42,
+            }
+        ),
+        encoding="utf-8",
+    )
+    gh_log = tmp_path / "gh.log"
+    gh_path = tmp_path / "gh"
+    gh_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$*\" >> {str(gh_log)!r}\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("chain_wait_status"),
+            f"chain_wait_status {str(workspace)!r} {str(spec_path)!r}",
+        ]
+    )
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "none"
+    assert not gh_log.exists()
+
+
 def test_watchdog_auto_policy_merged_pr_fetches_origin_before_relaunch(
     tmp_path: Path,
 ) -> None:
