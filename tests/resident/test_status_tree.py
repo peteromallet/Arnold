@@ -196,3 +196,38 @@ def test_status_tree_paginates_plan_history_without_full_plan_state() -> None:
     assert len(result["node"]["items"]) == 4
     assert result["node"]["next_cursor"] == 9
     assert result["node"]["total_count"] == 21
+
+
+def test_root_does_not_infer_chain_completion_from_terminal_plan_progress() -> None:
+    """Plan-level done/100% must not override the canonical session status."""
+
+    snapshot = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {
+                "session": "repository-strategy-roadmap",
+                "status": "attention",
+                "display_state": "done",
+                "chain_complete": False,
+                "completed_count": 4,
+                "milestone_count": 5,
+                "latest_activity": "2026-07-14T17:32:20Z",
+                "operator_next": "terminal plan requires chain reconciliation",
+                "progress": {
+                    "percent": 100,
+                    "plan_percent": 100,
+                    "display_state": "done",
+                    "completed_count": 4,
+                    "milestone_count": 5,
+                },
+            }
+        ],
+    }
+
+    root = compact_cloud_status_snapshot(snapshot)
+
+    assert root["recently_completed"] == []
+    assert root["completed_sessions_preview"] == []
+    assert root["completed_session_count"] == 0
+    assert root["sessions"][0]["status"] == "attention"
+    assert root["sessions"][0]["display_state"] == "done"
