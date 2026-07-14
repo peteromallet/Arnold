@@ -19,16 +19,81 @@ CONTEXT_TREE_SCHEMA = "megaplan-resident-context-tree-v1"
 MAX_CONTEXT_TEXT_CHARS = 500
 
 
+DELEGATION_POLICY: dict[str, Any] = {
+    "schema_version": "megaplan-resident-delegation-policy-v1",
+    "preference": (
+        "Default to `launch_subagent` for any user-requested execution work when delegation "
+        "adds useful execution. Decompose the query into independent actionable "
+        "sub-problems and prefer one resident-managed subagent per sub-problem when delegation "
+        "adds useful execution."
+    ),
+    "ownership": (
+        "Assign one clear owner per sub-problem and never create overlapping ownership for the "
+        "same sub-problem."
+    ),
+    "task_prompt_contract": (
+        "Give each owner an action-oriented task prompt with concrete boundaries, expected outcome, "
+        "and verification, plus a purpose-built concise one-line launch description."
+    ),
+    "aggregation": (
+        "For multiple reviewer/implementation launches serving one logical query, launch internal "
+        "contributors first and one synthesis/delivery owner last. Only that owner may produce the "
+        "user-facing completion; it consolidates contributor result paths into one reply."
+    ),
+    "launch_evidence": (
+        "Durably launch requested execution and make that tool call before replying. Never claim "
+        "a launch without its returned durable run ID."
+    ),
+    "exceptions": {
+        "non_execution": (
+            "Do not launch when the user appears to request explanation, review, status, or other "
+            "non-execution work."
+        ),
+        "trivial_or_non_independent": (
+            "Do not launch agents for trivial or non-independent fragments where delegation adds "
+            "no useful execution."
+        ),
+        "authorization": (
+            "Respect authorization boundaries; delegation never expands the actions the user "
+            "authorized."
+        ),
+    },
+}
+
+
+def delegation_policy_hot_context() -> dict[str, Any]:
+    """Return an isolated structured copy for each generated hot context."""
+
+    return {
+        **DELEGATION_POLICY,
+        "exceptions": dict(DELEGATION_POLICY["exceptions"]),
+    }
+
+
+def _delegation_policy_instruction() -> str:
+    exceptions = DELEGATION_POLICY["exceptions"]
+    return " ".join(
+        (
+            str(DELEGATION_POLICY["preference"]),
+            str(DELEGATION_POLICY["ownership"]),
+            str(DELEGATION_POLICY["task_prompt_contract"]),
+            str(DELEGATION_POLICY["aggregation"]),
+            str(exceptions["non_execution"]),
+            str(exceptions["trivial_or_non_independent"]),
+            str(exceptions["authorization"]),
+            str(DELEGATION_POLICY["launch_evidence"]),
+            "Classify task_kind and D1-D10: Luna/low only for D1-D3 mechanical work, "
+            "Terra/medium by default, Sol/high for D7-D10 or ambiguous/high-risk work.",
+        )
+    )
+
+
 POLICY_PACKS: dict[str, str] = {
     "status": (
         "Use context_root.attention/status first and cite generated_at. If stale_banner is present, "
         "emit it first and do not quote frozen numbers. Read only the relevant status child node."
     ),
-    "delegation": (
-        "For requested execution, durably launch before acknowledging. Classify task_kind and D1-D10: "
-        "Luna/low only for D1-D3 mechanical work, Terra/medium by default, Sol/high for D7-D10 or "
-        "ambiguous/high-risk work. Never claim a launch without a returned durable run ID."
-    ),
+    "delegation": _delegation_policy_instruction(),
     "restart": (
         "Use only the canonical resident restart command from runtime/restart. Never use pkill, "
         "killall, cgroup-wide stops, or tmux server cleanup; warn that the current turn is interrupted."
