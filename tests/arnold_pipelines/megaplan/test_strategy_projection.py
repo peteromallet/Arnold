@@ -835,3 +835,194 @@ class TestProjectionStructureInvariants:
             assert diag["level"] in ("error", "warning"), (
                 f"Unexpected diagnostic level: {diag['level']}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Projection with lifecycle diagnostics
+# ---------------------------------------------------------------------------
+
+
+class TestProjectionLifecycleDiagnostics:
+    """Lifecycle diagnostics are projected faithfully while roadmap entries
+    remain free of mutable artifact status fields."""
+
+    _VALID_ULID = "01KT50AZRMK5X890TQ565DDB5V"
+
+    def test_lifecycle_warnings_appear_in_projection_diagnostics(self) -> None:
+        """Lifecycle warnings (dismissed, addressed, superseded, completed)
+        are projected as regular diagnostic entries."""
+        doc = _make_doc(diagnostics=[
+            StrategyDiagnostic(
+                level="warning",
+                message="Dismissed ticket in roadmap: ticket 'ABC' ('Fix auth') has been dismissed.",
+                source_location=SourceLocation(path="strategy.md", line=42, column=1),
+            ),
+            StrategyDiagnostic(
+                level="warning",
+                message="Superseded ticket in roadmap: ticket 'DEF' ('Old feature') has been promoted to epic(s) 'my-epic'.",
+                source_location=SourceLocation(path="strategy.md", line=44, column=1),
+            ),
+            StrategyDiagnostic(
+                level="warning",
+                message="Completed epic in roadmap: epic 'done-epic' ('Done') is in state 'archived'.",
+                source_location=SourceLocation(path="strategy.md", line=46, column=1),
+            ),
+            StrategyDiagnostic(
+                level="warning",
+                message="Duplicate intent: ticket 'ABC' and its promoted epic 'my-epic' both appear in the roadmap.",
+                source_location=None,
+            ),
+        ])
+        projection = project_strategy(doc)
+        assert len(projection["diagnostics"]) == 4
+        assert projection["validation_summary"]["warning_count"] == 4
+        assert projection["validation_summary"]["error_count"] == 0
+        assert projection["validation_summary"]["total_diagnostics"] == 4
+        assert projection["validation_summary"]["clean"] is False
+
+        # Each diagnostic has the expected structure
+        for diag in projection["diagnostics"]:
+            assert "level" in diag
+            assert "message" in diag
+            assert "source" in diag
+            assert diag["level"] == "warning"
+
+    def test_lifecycle_diagnostics_dont_add_fields_to_roadmap_entries(
+        self,
+    ) -> None:
+        """Even when lifecycle diagnostics exist, roadmap entries in the
+        projection must only contain type/ref/title/horizon/source."""
+        doc = _make_doc(
+            roadmap={
+                "Now": [
+                    _make_entry("ticket", self._VALID_ULID, "Fix auth", "Now"),
+                    _make_entry("epic", "my-epic", "My Epic", "Now"),
+                ],
+                "Next": [],
+                "Later": [],
+            },
+            diagnostics=[
+                StrategyDiagnostic(
+                    level="warning",
+                    message="Dismissed ticket in roadmap: ticket '...' has been dismissed.",
+                    source_location=SourceLocation(path="s.md", line=1, column=1),
+                ),
+                StrategyDiagnostic(
+                    level="warning",
+                    message="Completed epic in roadmap: epic 'my-epic' is in state 'archived'.",
+                    source_location=SourceLocation(path="s.md", line=2, column=1),
+                ),
+            ],
+        )
+        projection = project_strategy(doc)
+        required_keys = {"type", "ref", "title", "horizon", "source"}
+        for horizon, entries in projection["roadmap"].items():
+            for entry in entries:
+                assert set(entry.keys()) == required_keys, (
+                    f"Roadmap entry keys {sorted(entry.keys())} != "
+                    f"{sorted(required_keys)} in horizon '{horizon}' "
+                    f"(diagnostics exist but must not leak into entries)"
+                )
+
+    def test_projection_with_lifecycle_diagnostics_is_deterministic(
+        self,
+    ) -> None:
+        """The same lifecycle diagnostics produce byte-for-byte identical
+        projections across multiple calls."""
+        doc = _make_doc(diagnostics=[
+            StrategyDiagnostic(
+                level="warning",
+                message="Superseded ticket in roadmap: ticket 'X' has been promoted to epic(s) 'Y'.",
+                source_location=SourceLocation(path="s.md", line=5, column=1),
+            ),
+            StrategyDiagnostic(
+                level="error",
+                message="Duplicate intent: ticket 'X' and its promoted epic 'Y' both appear in the roadmap.",
+                source_location=None,
+            ),
+        ])
+        outputs = {serialize_strategy_projection(doc) for _ in range(5)}
+        assert len(outputs) == 1, (
+            f"Non-deterministic projection with lifecycle diagnostics: "
+            f"got {len(outputs)} distinct outputs"
+        )
+
+    def test_serialized_json_with_lifecycle_diagnostics_excludes_forbidden_keys(
+        self,
+    ) -> None:
+        """Even with lifecycle diagnostic content, the serialized projection
+        must not contain mutable artifact status keys."""
+        doc = _make_doc(diagnostics=[
+            StrategyDiagnostic(
+                level="warning",
+                message="Dismissed ticket in roadmap: ticket 'DISMISSED-ONE' has been dismissed.",
+                source_location=SourceLocation(path="s.md", line=1, column=1),
+            ),
+            StrategyDiagnostic(
+                level="warning",
+                message="Completed epic in roadmap: epic 'done' is in state 'archived'.",
+                source_location=SourceLocation(path="s.md", line=2, column=1),
+            ),
+        ])
+        serialized = serialize_strategy_projection(doc)
+        parsed = json.loads(serialized)
+
+        # Recursively check all keys using the existing helper
+        TestProjectionNoBodyOrLifecycle._assert_no_forbidden_keys(
+            parsed, path="$", in_stable_section=False
+        )
+
+    def test_lifecycle_diagnostic_messages_are_verbatim_in_projection(
+        self,
+    ) -> None:
+        """Lifecycle diagnostic messages appear verbatim in the projection."""
+        msg = (
+            "Dismissed ticket in roadmap: ticket '01KT50AZRMK5X890TQ565DDB5V' "
+            "('Fix auth timeout') has been dismissed.  "
+            "Consider removing it from the roadmap."
+        )
+        doc = _make_doc(diagnostics=[
+            StrategyDiagnostic(
+                level="warning",
+                message=msg,
+                source_location=SourceLocation(path="s.md", line=42, column=1),
+            ),
+        ])
+        projection = project_strategy(doc)
+        assert projection["diagnostics"][0]["message"] == msg
+
+    def test_roadmap_entries_exclude_status_even_with_lifecycle_diagnostics(
+        self,
+    ) -> None:
+        """Regression: ensure that roadmap entry content never includes
+        'status', 'state', 'completed', etc. even when diagnostics contain
+        those words."""
+        doc = _make_doc(
+            roadmap={
+                "Now": [
+                    _make_entry("ticket", self._VALID_ULID, "Fix auth", "Now"),
+                    _make_entry("epic", "my-epic", "My Epic", "Now"),
+                ],
+                "Next": [],
+                "Later": [],
+            },
+            diagnostics=[
+                StrategyDiagnostic(
+                    level="warning",
+                    message=(
+                        "Dismissed ticket in roadmap: status=dismissed, "
+                        "state=closed, completed=true — these words must not "
+                        "leak into roadmap entries."
+                    ),
+                    source_location=SourceLocation(path="s.md", line=1, column=1),
+                ),
+            ],
+        )
+        projection = project_strategy(doc)
+        for horizon, entries in projection["roadmap"].items():
+            for entry in entries:
+                for forbidden in _FORBIDDEN_FIELD_SUBSTRINGS:
+                    assert forbidden not in {k.lower() for k in entry.keys()}, (
+                        f"Forbidden substring '{forbidden}' in roadmap entry "
+                        f"keys {sorted(entry.keys())} after lifecycle diagnostics"
+                    )

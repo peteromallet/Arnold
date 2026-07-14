@@ -355,6 +355,13 @@ def promote_ticket(
     # ---- 2. Determine the initiative slug -----------------------------------
     slug = initiative_slug or slugify_initiative(ticket_title)
 
+    # ---- 2b. Check promotion conflicts BEFORE creating any resources --------
+    # Gathering existing links and checking conflicts early prevents orphan
+    # initiatives/epics when the ticket is already promoted to a different epic.
+    store = _ensure_store(store, repo_root)
+    existing_links = _gather_existing_links(found_fm, ticket_id, store)
+    _check_conflicts(existing_links, ticket_id, slug)
+
     # ---- 3. Resolve initiative (reuse or create) ----------------------------
     initiative_created = False
     init_root = initiative_root(repo_root, slug)
@@ -387,7 +394,6 @@ def promote_ticket(
         initiative_created = True
 
     # ---- 4. Create/reuse store epic (ID = initiative slug) ------------------
-    store = _ensure_store(store, repo_root)
     epic_created = False
     epic = store.load_epic(slug)
     if epic is None:
@@ -407,8 +413,7 @@ def promote_ticket(
         epic_created = True
 
     # ---- 5. Record promoted_to_epic provenance ------------------------------
-    existing_links = _gather_existing_links(found_fm, ticket_id, store)
-    _check_conflicts(existing_links, ticket_id, slug)
+    # Conflict check already performed in step 2b; reuse existing_links.
 
     # Idempotency: skip re-link if a matching promoted_to_epic link exists.
     link_record = _find_matching_link(existing_links, slug, resolves_on_complete)

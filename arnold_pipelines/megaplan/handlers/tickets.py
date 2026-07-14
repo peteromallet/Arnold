@@ -12,12 +12,15 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.tickets import (
+    PromotionConflictError,
+    TicketNotFoundError,
     addressed as _core_addressed,
     dismiss as _core_dismiss,
     edit as _core_edit,
     link as _core_link,
     list_tickets as _core_list,
     new as _core_new,
+    promote_ticket as _core_promote,
     reopen as _core_reopen,
     search as _core_search,
     show as _core_show,
@@ -146,6 +149,64 @@ def handle_ticket_reopen(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_ticket_promote(args: argparse.Namespace) -> int:
+    """Promote a ticket to an epic backed by an initiative."""
+    import json as _json
+
+    try:
+        result = _core_promote(
+            args.ticket_id,
+            initiative_slug=args.initiative_slug,
+            epic_title=args.title,
+            epic_goal=args.goal,
+            epic_body=args.body,
+            resolves_on_complete=not args.no_resolve,
+            skip_strategy=args.skip_strategy,
+        )
+    except TicketNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except PromotionConflictError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        if exc.details:
+            print(f"Details: {_json.dumps(exc.details, default=str)}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(
+            _json.dumps(
+                {
+                    "ticket_id": result.ticket_id,
+                    "initiative_slug": result.initiative_slug,
+                    "epic_id": result.epic.id,
+                    "epic_title": result.epic.title,
+                    "initiative_created": result.initiative_created,
+                    "epic_created": result.epic_created,
+                    "strategy_updated": result.strategy_updated,
+                    "strategy_diagnostics": [
+                        {"code": d.code, "message": d.message}
+                        for d in result.strategy_diagnostics
+                    ],
+                },
+                indent=2,
+                default=str,
+            )
+        )
+    else:
+        print(f"Promoted ticket {result.ticket_id} → epic {result.epic.id}")
+        print(f"  Initiative: {result.initiative_slug}")
+        print(f"  Epic title: {result.epic.title}")
+        if result.initiative_created:
+            print("  Created new initiative folder")
+        if result.epic_created:
+            print("  Created new store epic")
+        if result.strategy_updated:
+            print("  Updated strategy roadmap")
+        for diag in result.strategy_diagnostics:
+            print(f"  [diag:{diag.code}] {diag.message}")
+    return 0
+
+
 def handle_ticket_search(args: argparse.Namespace) -> int:
     """Search tickets across local + cloud, multi-project, multi-keyword."""
     import json as _json
@@ -199,4 +260,5 @@ TICKET_DISPATCH: dict[str, Any] = {
     "dismiss": handle_ticket_dismiss,
     "reopen": handle_ticket_reopen,
     "search": handle_ticket_search,
+    "promote": handle_ticket_promote,
 }

@@ -294,8 +294,15 @@ def list_tickets(
                 file_tags = set(fm.get("tags") or [])
                 if not file_tags.intersection(tags):
                     continue
+            from .relationships import parse_frontmatter_links, serialize_links_to_frontmatter
+
+            ticket_id = fm.get("id")
+            epics_normalized: list[dict[str, Any]] = []
+            if isinstance(ticket_id, str) and ticket_id:
+                links = parse_frontmatter_links(fm, ticket_id)
+                epics_normalized = serialize_links_to_frontmatter(links)
             d: dict[str, Any] = {
-                "id": fm.get("id"),
+                "id": ticket_id,
                 "title": fm.get("title"),
                 "status": fm.get("status"),
                 "source": fm.get("source"),
@@ -305,7 +312,7 @@ def list_tickets(
                 "last_edited_at": _iso(fm.get("last_edited_at")),
                 "resolution_note": fm.get("resolution_note"),
                 "body": fm.get("__body__", ""),
-                "epics": fm.get("epics", []),
+                "epics": epics_normalized,
             }
             results.append(d)
 
@@ -606,13 +613,13 @@ def show(
             "resolution_note": t.resolution_note,
             "addressed_at": t.addressed_at.isoformat() if t.addressed_at else None,
         }
-        # Enrich body from file
+        # Enrich body from file and normalise epics
         if cwd:
             fpath = ticket_file_path(cwd, t.id, t.slug)
             fm = read_ticket_file(fpath)
             if fm:
                 result["body"] = fm.get("__body__", "")
-                result["epics"] = fm.get("epics", [])
+                result["epics"] = _normalize_epics_output(fm, t.id)
         if json_output:
             import json
 
@@ -637,7 +644,7 @@ def show(
                     "resolution_note": fm.get("resolution_note"),
                     "addressed_at": _iso(fm.get("addressed_at")),
                     "body": fm.get("__body__", ""),
-                    "epics": fm.get("epics", []),
+                    "epics": _normalize_epics_output(fm, ticket_id),
                 }
                 if json_output:
                     import json
@@ -1020,6 +1027,21 @@ def address_resolved_by_epic(
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+
+def _normalize_epics_output(
+    fm: dict[str, Any],
+    ticket_id: str,
+) -> list[dict[str, Any]]:
+    """Normalize epics frontmatter through relationship adapter for output.
+
+    Ensures ``kind`` and ``provenance`` are always present in JSON output,
+    without copying artifact status into strategy.
+    """
+    from .relationships import parse_frontmatter_links, serialize_links_to_frontmatter
+
+    links = parse_frontmatter_links(fm, ticket_id)
+    return serialize_links_to_frontmatter(links)
 
 
 def _iso(val: object) -> str | None:
