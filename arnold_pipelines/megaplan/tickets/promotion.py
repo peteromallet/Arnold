@@ -294,9 +294,11 @@ def promote_ticket(
         When *True* (default), completing the epic auto-addresses the
         ticket.  Set to *False* for a non-resolving promotion.
     horizon:
-        Explicit roadmap horizon for the strategy entry.  When *None*
-        (default), the ticket's current horizon is inherited, or ``"Next"``
-        if the ticket is not on the roadmap.
+        Explicit roadmap horizon for the strategy entry, applied *only*
+        when the ticket is strategically visible.  When *None* (default),
+        the ticket's current horizon is inherited.  If the ticket is not
+        on the roadmap, the epic is not added to the strategy (no forced
+        visibility), so *horizon* is ignored.
     home_backend:
         The ``home_backend`` for the created epic (default ``"file"``).
     store:
@@ -463,6 +465,7 @@ def promote_ticket(
 
             content = strat_path.read_text(encoding="utf-8")
             document = parse_strategy(content, str(STRATEGY_PATH))
+            original_serialized = serialize_strategy(document)
             epic_display = epic_title or epic.title or ticket_title
             updated_doc = promote_ticket_to_epic(
                 document,
@@ -471,10 +474,17 @@ def promote_ticket(
                 epic_display_title=epic_display,
                 horizon=horizon,
             )
-            serialized = serialize_strategy(updated_doc)
-            strat_path.write_text(serialized, encoding="utf-8")
-            strategy_updated = True
+            # Diagnostics are always surfaced (they are transient analysis, not
+            # part of the canonical Markdown), so the caller sees warnings even
+            # when the roadmap is unchanged.
             strategy_diagnostics = list(updated_doc.diagnostics)
+            new_serialized = serialize_strategy(updated_doc)
+            # Only treat the strategy as updated (and persist a write) when the
+            # canonical roadmap actually changed.  Non-roadmap tickets leave the
+            # roadmap untouched, so no epic is forced into STRATEGY.md.
+            if new_serialized != original_serialized:
+                strat_path.write_text(new_serialized, encoding="utf-8")
+                strategy_updated = True
 
     # ---- 7. Return result ---------------------------------------------------
     return PromotionResult(

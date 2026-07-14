@@ -463,36 +463,46 @@ class TestPromotionStrategyOutside:
         ticket_id = ctx.create_ticket("Not In Roadmap", "01JNX0000032")
         result = promote_ticket(ticket_id, store=store, cwd=ctx.root)
 
-        assert result.strategy_updated is True
         content = ctx.read_strategy_content()
         # Ticket ref should NOT appear in the strategy (no forced visibility)
         assert ticket_id not in content, (
             "Ticket ULID must not be forced into strategy"
         )
-        # Epic should be present
-        assert "not-in-roadmap" in content
+        # The promoted epic must NOT be forced into strategy either —
+        # non-roadmap tickets remain outside strategy (no forced visibility).
+        assert "not-in-roadmap" not in content, (
+            "Promoted epic must not be forced into strategy for non-roadmap ticket"
+        )
+        # A diagnostic surfaces explaining the no-op.
+        non_roadmap_diags = [
+            d
+            for d in result.strategy_diagnostics
+            if "not present in any roadmap" in d.message
+        ]
+        assert len(non_roadmap_diags) == 1
 
-    def test_non_roadmap_ticket_epic_defaults_to_next(self, promo_repo) -> None:
+    def test_non_roadmap_ticket_does_not_add_epic_to_any_horizon(
+        self, promo_repo
+    ) -> None:
+        """A non-roadmap ticket does not add the epic to any horizon."""
         store = promo_repo.store
         ctx = promo_repo
 
         ctx.write_strategy()  # empty roadmap, ticket not present
 
         ticket_id = ctx.create_ticket("Default Next", "01JNX0000033")
-        result = promote_ticket(ticket_id, store=store, cwd=ctx.root)
+        promote_ticket(ticket_id, store=store, cwd=ctx.root)
 
-        assert result.strategy_updated is True
         content = ctx.read_strategy_content()
-        # The epic should appear in the "Next" horizon (default for non-roadmap)
-        # Verify by parsing
+        # Verify by parsing that the epic does not appear in any horizon
         from arnold_pipelines.megaplan.strategy import parse_strategy
 
         doc = parse_strategy(content, "STRATEGY.md")
-        next_entries = [
-            e for e in doc.roadmap.get("Next", []) if e.identity.ref == "default-next"
-        ]
-        assert len(next_entries) == 1
-        assert next_entries[0].identity.type == "epic"
+        for horizon in ("Now", "Next", "Later"):
+            assert not any(
+                e.identity.ref == "default-next"
+                for e in doc.roadmap.get(horizon, [])
+            ), f"Epic must not be forced into '{horizon}' for non-roadmap ticket"
 
 
 # ===========================================================================

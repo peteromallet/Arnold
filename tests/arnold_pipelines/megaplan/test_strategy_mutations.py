@@ -379,7 +379,7 @@ class TestPromoteTicketToEpic:
         assert result.roadmap["Later"][0].identity.ref == "rate-limit"
 
     def test_non_roadmap_ticket_no_forced_visibility(self) -> None:
-        """Ticket not in roadmap — no entry forced; epic added if not present."""
+        """Ticket not in roadmap — neither ticket nor epic forced into strategy."""
         doc = _empty_document()
 
         result = promote_ticket_to_epic(
@@ -390,14 +390,43 @@ class TestPromoteTicketToEpic:
         )
 
         # Ticket was never in roadmap, so nothing removed
-        # Epic is added to default "Next" (since ticket not found and no explicit horizon)
-        assert len(result.roadmap["Next"]) == 1
-        assert result.roadmap["Next"][0].identity.type == "epic"
-        assert result.roadmap["Next"][0].identity.ref == "new-initiative"
+        # Epic is NOT added to any horizon (no forced visibility for non-roadmap
+        # tickets).  Roadmap membership is strategic visibility, not existence.
+        for h in ("Now", "Next", "Later"):
+            assert len(result.roadmap[h]) == 0
         # No ticket-forcing: the ticket ref does not appear anywhere
         for h in ("Now", "Next", "Later"):
             assert not any(
                 e.identity.ref == "non-roadmap-ticket" for e in result.roadmap[h]
+            )
+        # No epic-forcing: the promoted epic ref does not appear anywhere either
+        for h in ("Now", "Next", "Later"):
+            assert not any(
+                e.identity.ref == "new-initiative" for e in result.roadmap[h]
+            )
+        # A warning diagnostic explains the no-op.
+        non_roadmap_diags = [
+            d
+            for d in result.diagnostics
+            if d.level == "warning" and "not present in any roadmap" in d.message
+        ]
+        assert len(non_roadmap_diags) == 1
+
+    def test_non_roadmap_ticket_explicit_horizon_still_no_forced_visibility(self) -> None:
+        """An explicit horizon must not force a non-roadmap epic into strategy."""
+        doc = _empty_document()
+
+        result = promote_ticket_to_epic(
+            doc,
+            ticket_ref="non-roadmap-ticket-2",
+            epic_ref="forced-epic",
+            epic_display_title="Forced Epic",
+            horizon="Now",
+        )
+
+        for h in ("Now", "Next", "Later"):
+            assert not any(
+                e.identity.ref == "forced-epic" for e in result.roadmap[h]
             )
 
     def test_epic_already_present_idempotent(self) -> None:

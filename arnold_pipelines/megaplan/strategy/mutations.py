@@ -258,8 +258,9 @@ def promote_ticket_to_epic(
     diagnostic is emitted.
 
     **No forced visibility**: if the ticket is not in the roadmap
-    (non-roadmap ticket), no ticket entry is forced into the strategy.
-    The epic is still added if not already present.
+    (non-roadmap ticket), promotion adds *neither* the ticket *nor* the
+    epic to the strategy.  Roadmap membership is strategic visibility, not
+    existence.  A pre-existing epic entry remains idempotent (unchanged).
 
     Parameters
     ----------
@@ -272,9 +273,11 @@ def promote_ticket_to_epic(
     epic_display_title:
         The display title for the new epic roadmap entry.
     horizon:
-        The horizon to place the epic in.  When *None* (default), the
+        The horizon to place the epic in, applied *only* when the promoted
+        ticket is strategically visible.  When *None* (default), the
         ticket's current horizon is used.  If the ticket is not in the
-        roadmap and *horizon* is *None*, the epic is placed in ``"Next"``.
+        roadmap, the epic is never added (no forced visibility), so
+        *horizon* is ignored.
 
     Returns
     -------
@@ -290,18 +293,43 @@ def promote_ticket_to_epic(
     ticket_horizon, _ = _find_entry(document.roadmap, ticket_identity)
     epic_horizon, _ = _find_entry(document.roadmap, epic_identity)
 
-    # Determine the target horizon for the epic entry.
-    target_horizon: RoadmapHorizon
-    if horizon is not None:
-        target_horizon = horizon
-    elif ticket_horizon is not None:
-        target_horizon = ticket_horizon
-    else:
-        target_horizon = "Next"
+    # ---- Non-roadmap ticket: no forced visibility ---------------------------
+    # If the promoted ticket is absent from every roadmap horizon, promotion
+    # must NOT add either the ticket or the epic to the strategy.  Roadmap
+    # membership is strategic visibility, not existence (SD2).  A pre-existing
+    # epic entry remains idempotent (it is neither duplicated nor moved).
+    if ticket_horizon is None:
+        if epic_horizon is None:
+            diagnostics.append(
+                StrategyDiagnostic(
+                    level="warning",
+                    message=(
+                        f"Ticket '{ticket_ref}' is not present in any roadmap "
+                        f"horizon; promotion did not add epic '{epic_ref}' to "
+                        f"the strategy (no forced visibility for non-roadmap "
+                        f"tickets)."
+                    ),
+                    source_location=_mutation_source_location(),
+                )
+            )
+        # Return a fresh, unchanged document (roadmap untouched).  No ticket is
+        # forced in; no epic is added or moved.
+        return StrategyDocument(
+            schema_version=document.schema_version,
+            stable_direction=list(document.stable_direction),
+            roadmap=_copy_roadmap(document.roadmap),
+            diagnostics=diagnostics,
+        )
+
+    # ---- Ticket is strategically visible: replace-in-same-horizon ----------
+    # The epic inherits the ticket's horizon unless an explicit *horizon* is
+    # provided.
+    target_horizon: RoadmapHorizon = horizon if horizon is not None else ticket_horizon
 
     # ---- Duplicate-intent detection -----------------------------------------
-    # Both ticket and epic are present — two entries for the same logical work.
-    if ticket_horizon is not None and epic_horizon is not None:
+    # Reaching here guarantees the ticket is present; if the epic is also
+    # present, both represent the same logical work.
+    if epic_horizon is not None:
         diagnostics.append(
             StrategyDiagnostic(
                 level="warning",

@@ -184,7 +184,13 @@ def handle_ticket_promote(args: argparse.Namespace) -> int:
                     "epic_created": result.epic_created,
                     "strategy_updated": result.strategy_updated,
                     "strategy_diagnostics": [
-                        {"code": d.code, "message": d.message}
+                        {
+                            "level": d.level,
+                            "message": d.message,
+                            "source": (
+                                d.source_location.path if d.source_location else None
+                            ),
+                        }
                         for d in result.strategy_diagnostics
                     ],
                 },
@@ -203,7 +209,7 @@ def handle_ticket_promote(args: argparse.Namespace) -> int:
         if result.strategy_updated:
             print("  Updated strategy roadmap")
         for diag in result.strategy_diagnostics:
-            print(f"  [diag:{diag.code}] {diag.message}")
+            print(f"  [diag:{diag.level}] {diag.message}")
     return 0
 
 
