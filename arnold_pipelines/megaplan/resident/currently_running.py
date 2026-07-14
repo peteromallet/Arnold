@@ -242,6 +242,10 @@ def render_currently_running(
         if snapshot:
             lines.extend((snapshot, ""))
 
+    attention = discover_attention_sessions(status_node)
+    completed = discover_recently_completed_sessions(status_node)
+    displayed_completed = completed[:_MAX_RECENT_COMPLETED]
+
     if report.status_error:
         lines.extend(
             (_epics_heading(), f"⚠️ {_safe_label(report.status_error)}.")
@@ -258,23 +262,14 @@ def render_currently_running(
         if degraded:
             lines.append(f"⚠️ {_degraded_label(degraded)}")
         if sessions:
+            lines.append(_subsection_heading("🟢", "Running", str(len(sessions))))
             lines.extend(_render_session(row) for row in sessions)
-        else:
-            lines.append("_No active epics or chains._")
 
-    lines.append("")
-    attention = discover_attention_sessions(status_node)
-    lines.append(_attention_heading(len(attention)))
     if attention:
+        lines.append(_subsection_heading("⚠️", "Needs attention", str(len(attention))))
         lines.extend(_render_session(row) for row in attention)
-    else:
-        lines.append("_No epics or chains need attention._")
-
-    lines.append("")
-    completed = discover_recently_completed_sessions(status_node)
-    displayed_completed = completed[:_MAX_RECENT_COMPLETED]
-    lines.append(_recently_completed_heading(len(displayed_completed)))
     if displayed_completed:
+        lines.append(_subsection_heading("✅", "Recently completed", f"{len(displayed_completed)} shown"))
         lines.extend(_render_completed_session(row) for row in displayed_completed)
         omitted = max(
             0,
@@ -285,8 +280,6 @@ def render_currently_running(
         )
         if omitted:
             lines.append(f"_…{omitted} older completed chains omitted._")
-    else:
-        lines.append("_No recently completed chains._")
 
     lines.append("")
     if report.managed_agents_error:
@@ -320,16 +313,14 @@ def _agents_heading(summary: str | None = None) -> str:
     return _section_heading(_AGENTS_SECTION_ICON, "Managed agents", summary)
 
 
-def _recently_completed_heading(count: int) -> str:
-    return f"## Recently completed · {count} shown —"
+def _subsection_heading(icon: str, title: str, summary: str) -> str:
+    """Return a Discord Markdown H3 subordinate to the Epics & chains H2."""
 
-
-def _attention_heading(count: int) -> str:
-    return _section_heading("⚠️", "Needs attention", str(count))
+    return f"### {icon} {title} · {summary}"
 
 
 def _section_heading(icon: str, title: str, summary: str | None = None) -> str:
-    suffix = f" · {summary} —" if summary else ""
+    suffix = f" · {summary}" if summary else ""
     return f"## {icon} {title}{suffix}"
 
 
