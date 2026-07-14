@@ -17,6 +17,11 @@ jobs:
         run: |
           python -m pip install -U pip
           python -m pip install -e '.[agent]' pytest
+      - name: Validate strategy and rebuild projection
+        run: |
+          python -m arnold_pipelines.megaplan.cli strategy validate
+          rm -f .megaplan/strategy.projection.json
+          python -m arnold_pipelines.megaplan.cli strategy project --write
       - name: Check generated Arnold docs
         run: python scripts/generate_arnold_docs.py --check
       - name: Validate Arnold generated examples
