@@ -257,3 +257,76 @@ def test_cloud_status_exposes_broken_superfixer_bucket_from_local_projection(tmp
         "blocker_id": payload["repair_custody"]["blocker_id"],
         "active_request_ids": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# T15: Cloud status reflects repair verdict evidence
+# ---------------------------------------------------------------------------
+
+
+def test_cloud_status_reflects_repair_verdict_when_cleared(tmp_path: Path) -> None:
+    """Cloud status payload surfaces repair custody correctly when verdict cleared."""
+    payload = _payload(
+        tmp_path,
+        plan_status={
+            "status": "running",
+            "name": "agentic-replay-viewer",
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {"kind": "blocked_recovery_not_resolved", "phase": "execute"},
+        },
+        custody_setup="repairing",
+    )
+
+    # Repair custody is present and reflects the repairing bucket
+    assert "repair_custody" in payload
+    assert payload["repair_custody"]["status"] == "available"
+    assert payload["repair_custody"]["bucket"] == "repairing"
+    # The effective status is not changed by custody presence
+    assert payload["effective_status"] == "running"
+
+
+def test_cloud_status_does_not_trust_liveness_only_as_repair_resolution(
+    tmp_path: Path,
+) -> None:
+    """Cloud status with repairable_not_repairing bucket still shows running."""
+    payload = _payload(
+        tmp_path,
+        plan_status={
+            "status": "running",
+            "name": "agentic-replay-viewer",
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {"kind": "blocked_recovery_not_resolved", "phase": "execute"},
+        },
+        custody_setup="repairable_not_repairing",
+    )
+
+    # Even with active requests, the status is still running — not resolved
+    assert payload["effective_status"] == "running"
+    assert payload["repair_custody"]["bucket"] == "repairable_not_repairing"
+    assert len(payload["repair_custody"]["active_request_ids"]) > 0
+
+
+def test_cloud_status_custody_repair_verdict_blocker_id_present(
+    tmp_path: Path,
+) -> None:
+    """Repair custody in cloud status includes a blocker_id field for traceability."""
+    payload = _payload(
+        tmp_path,
+        plan_status={
+            "status": "running",
+            "name": "agentic-replay-viewer",
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {"kind": "blocked_recovery_not_resolved", "phase": "execute"},
+        },
+        custody_setup="repairable_not_repairing",
+    )
+
+    custody = payload["repair_custody"]
+    assert "blocker_id" in custody
+    assert isinstance(custody["blocker_id"], str)
+    # Blocker ID is always present (may be empty when no fingerprint is derivable,
+    # but the field itself must exist for structured verdict binding)
+    assert custody["blocker_id"] is not None

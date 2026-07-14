@@ -1,48 +1,68 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 296,
+  "evidence_ref_count": 320,
   "evidence_refs": [
     {
-      "kind": "verification_record"
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 218,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/218#issuecomment-4962013288"
     },
     {
-      "kind": "verification_record"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 218,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/218"
     },
     {
-      "kind": "verification_record"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 219,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/219"
     },
     {
-      "kind": "verification_record"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 221,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/221"
     },
     {
-      "kind": "verification_record"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 222,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/222"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -195,13 +215,13 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-13T16:00:37.028060+00:00",
+  "generated_at": "2026-07-13T23:02:15.292466+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
-  "latest_actor": "immediate_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "omitted_evidence_ref_count": 232,
-  "outcome": "attempted",
+  "latest_actor": "github_sync",
+  "next_expected_event": "six_hour_auditor.diagnosis",
+  "omitted_evidence_ref_count": 256,
+  "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "repeated_attempts_without_new_evidence",
@@ -215,10 +235,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
-    "last_seq": 344,
+    "digest": "sha256:fb5de21f68a75a1d2c93e9b0bc73a0cf8903a4d40ffb42e83f13acec7eba2b7f",
+    "last_seq": 479,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "inc-demo-session: repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-584/test_repair_loop_serializes_sa0/ws"
+  "state": "github_sync.issue_published",
+  "summary_text": "inc-demo-session: Published persistent problem problem-6e386e382223 update to GitHub issue #218"
 }

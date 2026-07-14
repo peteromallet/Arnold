@@ -3232,6 +3232,648 @@ def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
     return bool(plan_state.get("present")) or bool(chain_state.get("present"))
 
 
+# ---- ordinary repair completion verdict evidence -----------------------------
+
+_ORDINARY_REPAIR_COMPLETION_BOUNDARY_ID = "ordinary_repair_completion"
+_ORDINARY_REPAIR_COMPLETION_ROW_ID = "repair.ordinary_complete.1"
+
+RepairVerdictKind = Literal["cleared", "no_fix", "escalated", "stale", "no_verdict"]
+REPAIR_VERDICT_CLEARED: RepairVerdictKind = "cleared"
+REPAIR_VERDICT_NO_FIX: RepairVerdictKind = "no_fix"
+REPAIR_VERDICT_ESCALATED: RepairVerdictKind = "escalated"
+REPAIR_VERDICT_STALE: RepairVerdictKind = "stale"
+REPAIR_VERDICT_NO_VERDICT: RepairVerdictKind = "no_verdict"
+REPAIR_VERDICT_KINDS: frozenset[RepairVerdictKind] = frozenset(
+    {
+        REPAIR_VERDICT_CLEARED,
+        REPAIR_VERDICT_NO_FIX,
+        REPAIR_VERDICT_ESCALATED,
+        REPAIR_VERDICT_STALE,
+        REPAIR_VERDICT_NO_VERDICT,
+    }
+)
+
+# Outcomes that correspond to each verdict kind when building verdicts from
+# existing repair-data outcomes.
+_OUTCOME_TO_VERDICT_KIND: dict[str, RepairVerdictKind] = {
+    COMPLETE: REPAIR_VERDICT_CLEARED,
+    PROGRESSED: REPAIR_VERDICT_CLEARED,
+    TRUE_HUMAN_BLOCKER: REPAIR_VERDICT_ESCALATED,
+    NEEDS_HUMAN: REPAIR_VERDICT_ESCALATED,
+    REPAIR_EXHAUSTED: REPAIR_VERDICT_NO_FIX,
+    REPAIR_TIMEOUT: REPAIR_VERDICT_NO_FIX,
+    PARTIAL_LIVENESS: REPAIR_VERDICT_NO_VERDICT,
+    "live_with_fresh_activity": REPAIR_VERDICT_NO_VERDICT,
+    "recurring_retry_pending": REPAIR_VERDICT_NO_FIX,
+    "deterministic_failure": REPAIR_VERDICT_NO_FIX,
+    "discord_escalated": REPAIR_VERDICT_ESCALATED,
+}
+
+# Maximum age for repair data before it is considered stale.
+_DEFAULT_REPAIR_DATA_STALE_SECS: int = 86400  # 24 hours
+
+
+@dataclass(frozen=True)
+class RepairVerdict:
+    """Structured ordinary repair completion verdict evidence.
+
+    Carries the original finding/blocker identity, attempted actions,
+    before/after evidence refs, the verdict kind, and durable refs so
+    downstream consumers (auditor, custody, status) can decide whether
+    a liveness-only outcome is trustworthy.
+    """
+
+    verdict_kind: RepairVerdictKind
+    blocker_id: str
+    attempted_actions: tuple[str, ...] = ()
+    before_evidence_refs: tuple[str, ...] = ()
+    after_evidence_refs: tuple[str, ...] = ()
+    durable_refs: tuple[str, ...] = ()
+    evidence_timestamp: str = ""
+    contract_id: str = _ORDINARY_REPAIR_COMPLETION_ROW_ID
+    boundary_id: str = _ORDINARY_REPAIR_COMPLETION_BOUNDARY_ID
+    session: str = ""
+    request_id: str = ""
+    outcome: str = ""
+    stale_detected: bool = False
+    no_verdict_detected: bool = False
+    stale_reason: str = ""
+    no_verdict_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "verdict_kind": self.verdict_kind,
+            "blocker_id": self.blocker_id,
+            "attempted_actions": list(self.attempted_actions),
+            "before_evidence_refs": list(self.before_evidence_refs),
+            "after_evidence_refs": list(self.after_evidence_refs),
+            "durable_refs": list(self.durable_refs),
+            "evidence_timestamp": self.evidence_timestamp,
+            "contract_id": self.contract_id,
+            "boundary_id": self.boundary_id,
+            "session": self.session,
+            "request_id": self.request_id,
+            "outcome": self.outcome,
+            "stale_detected": self.stale_detected,
+            "no_verdict_detected": self.no_verdict_detected,
+            "stale_reason": self.stale_reason,
+            "no_verdict_reason": self.no_verdict_reason,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "RepairVerdict":
+        verdict_kind = _as_text(payload.get("verdict_kind"))
+        if verdict_kind not in REPAIR_VERDICT_KINDS:
+            verdict_kind = REPAIR_VERDICT_NO_VERDICT
+        return cls(
+            verdict_kind=cast(RepairVerdictKind, verdict_kind),
+            blocker_id=_as_text(payload.get("blocker_id")),
+            attempted_actions=tuple(
+                _as_text(item) for item in _as_list(payload.get("attempted_actions")) if _as_text(item)
+            ),
+            before_evidence_refs=tuple(
+                _as_text(item) for item in _as_list(payload.get("before_evidence_refs")) if _as_text(item)
+            ),
+            after_evidence_refs=tuple(
+                _as_text(item) for item in _as_list(payload.get("after_evidence_refs")) if _as_text(item)
+            ),
+            durable_refs=tuple(
+                _as_text(item) for item in _as_list(payload.get("durable_refs")) if _as_text(item)
+            ),
+            evidence_timestamp=_as_text(payload.get("evidence_timestamp")),
+            contract_id=_as_text(payload.get("contract_id")) or _ORDINARY_REPAIR_COMPLETION_ROW_ID,
+            boundary_id=_as_text(payload.get("boundary_id")) or _ORDINARY_REPAIR_COMPLETION_BOUNDARY_ID,
+            session=_as_text(payload.get("session")),
+            request_id=_as_text(payload.get("request_id")),
+            outcome=_as_text(payload.get("outcome")),
+            stale_detected=bool(payload.get("stale_detected")),
+            no_verdict_detected=bool(payload.get("no_verdict_detected")),
+            stale_reason=_as_text(payload.get("stale_reason")),
+            no_verdict_reason=_as_text(payload.get("no_verdict_reason")),
+        )
+
+
+def build_ordinary_repair_verdict(
+    *,
+    repair_data_payload: Mapping[str, Any] | None = None,
+    session: str = "",
+    request_id: str = "",
+    blocker_id: str = "",
+    attempted_actions: tuple[str, ...] | None = None,
+    before_evidence_refs: tuple[str, ...] | None = None,
+    after_evidence_refs: tuple[str, ...] | None = None,
+    durable_refs: tuple[str, ...] | None = None,
+    timestamp: str | None = None,
+) -> RepairVerdict:
+    """Build a structured ordinary repair completion verdict from available evidence.
+
+    When *repair_data_payload* is provided, the outcome is mapped to a verdict kind
+    via the canonical outcome-to-verdict table. When it is absent or the outcome is
+    unrecognized, the verdict defaults to ``no_verdict``.
+
+    Staleness and no-verdict detection are run against the payload and appended
+    as structured flags.
+    """
+    payload = _as_mapping(repair_data_payload)
+    outcome = _as_text(payload.get("outcome"))
+    verdict_kind = _OUTCOME_TO_VERDICT_KIND.get(outcome, REPAIR_VERDICT_NO_VERDICT)
+
+    stale_detected = False
+    stale_reason = ""
+    if payload:
+        stale_detected, stale_reason = detect_stale_repair_data(payload)
+
+    no_verdict_detected = False
+    no_verdict_reason = ""
+    if verdict_kind == REPAIR_VERDICT_NO_VERDICT or not outcome:
+        no_verdict_detected, no_verdict_reason = detect_no_verdict_artifact(payload)
+
+    evidence_ts = timestamp or _as_text(payload.get("evidence_timestamp") or payload.get("completed_at") or "")
+    if not evidence_ts:
+        evidence_ts = utc_now_iso()
+
+    return RepairVerdict(
+        verdict_kind=verdict_kind,
+        blocker_id=blocker_id or _as_text(payload.get("blocker_id")),
+        attempted_actions=attempted_actions or (),
+        before_evidence_refs=before_evidence_refs or (),
+        after_evidence_refs=after_evidence_refs or (),
+        durable_refs=durable_refs or (),
+        evidence_timestamp=evidence_ts,
+        contract_id=_ORDINARY_REPAIR_COMPLETION_ROW_ID,
+        boundary_id=_ORDINARY_REPAIR_COMPLETION_BOUNDARY_ID,
+        session=session or _as_text(payload.get("session")),
+        request_id=request_id or _as_text(payload.get("request_id")),
+        outcome=outcome,
+        stale_detected=stale_detected,
+        no_verdict_detected=no_verdict_detected,
+        stale_reason=stale_reason,
+        no_verdict_reason=no_verdict_reason,
+    )
+
+
+def detect_stale_repair_data(
+    payload: Mapping[str, Any],
+    *,
+    stale_threshold_secs: int = _DEFAULT_REPAIR_DATA_STALE_SECS,
+    now: datetime | None = None,
+) -> tuple[bool, str]:
+    """Return ``(True, reason)`` when *payload* is stale, else ``(False, "")``.
+
+    Staleness is detected by comparing the latest completed-at / last-success-at
+    timestamp against *stale_threshold_secs*.  A payload with no timestamp is
+    considered stale with an appropriate reason.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    completed_at = _as_text(payload.get("completed_at"))
+    last_success_at = _as_text(payload.get("last_success_at"))
+    timestamp_text = completed_at or last_success_at
+
+    if not timestamp_text:
+        return True, "repair data has no completion or success timestamp"
+
+    try:
+        ts = datetime.fromisoformat(timestamp_text.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return True, f"unparseable timestamp: {timestamp_text!r}"
+
+    age_secs = (now - ts).total_seconds()
+    if age_secs > stale_threshold_secs:
+        return True, (
+            f"repair data age {age_secs:.0f}s exceeds stale threshold "
+            f"{stale_threshold_secs}s (timestamp={timestamp_text})"
+        )
+
+    return False, ""
+
+
+def detect_no_verdict_artifact(
+    payload: Mapping[str, Any],
+) -> tuple[bool, str]:
+    """Return ``(True, reason)`` when *payload* has no meaningful verdict evidence.
+
+    A verdict is absent when there is no outcome or the outcome is liveness-only
+    (``partial_liveness`` / ``live_with_fresh_activity``) and no before/after
+    evidence refs exist.
+    """
+    outcome = _as_text(payload.get("outcome"))
+    if not outcome:
+        return True, "repair data payload has no outcome field"
+
+    liveness_outcomes = {PARTIAL_LIVENESS, "live_with_fresh_activity"}
+    if outcome in liveness_outcomes:
+        before = _as_list(payload.get("before_evidence_refs") or payload.get("before_evidence") or [])
+        after = _as_list(payload.get("after_evidence_refs") or payload.get("after_evidence") or [])
+        if not before and not after:
+            return True, f"liveness-only outcome {outcome!r} with no before/after evidence refs"
+
+    if outcome == REPAIRING:
+        return True, "repair data is still in non-terminal repairing state"
+
+    return False, ""
+
+
+def save_repair_verdict(
+    path: str | Path,
+    verdict: RepairVerdict,
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Validate and atomically persist a repair verdict JSON artifact.
+
+    The verdict is persisted alongside existing repair data so that downstream
+    custody/auditor/status consumers can read it without recomputing the mapping.
+    """
+    prepared = verdict.to_dict()
+    if redactor is not None:
+        prepared = _redact_verdict_payload(prepared, redactor)
+    atomic_write_json(path, prepared)
+    return prepared
+
+
+def validate_repair_verdict_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and normalize a repair verdict payload, raising ``ValueError`` on bad input."""
+    if not isinstance(payload, Mapping):
+        raise ValueError("repair verdict must be a JSON object")
+    verdict_kind = _as_text(payload.get("verdict_kind"))
+    if not verdict_kind:
+        raise ValueError("repair verdict missing required field 'verdict_kind'")
+    if verdict_kind not in REPAIR_VERDICT_KINDS:
+        raise ValueError(
+            f"unknown repair verdict kind {verdict_kind!r}; "
+            f"expected one of {sorted(REPAIR_VERDICT_KINDS)}"
+        )
+    return dict(payload)
+
+
+def utc_now_iso() -> str:
+    """Return the current UTC timestamp as an ISO-8601 string."""
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _redact_verdict_payload(
+    payload: dict[str, Any],
+    redactor: Callable[[str], str],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, str):
+            result[key] = redactor(value)
+        elif isinstance(value, list):
+            result[key] = [redactor(item) if isinstance(item, str) else item for item in value]
+        else:
+            result[key] = value
+    return result
+
+
+# ---- cloud custody classification evidence ----------------------------------
+
+# Stable contract IDs from the boundary-contracts registry.
+_CUSTODY_MANAGED_RUNNING_ROW_ID = "custody.managed_running.1"
+_CUSTODY_COMPLETE_ROW_ID = "custody.complete.1"
+_CUSTODY_UNMANAGED_WARNING_ROW_ID = "custody.unmanaged_warning.1"
+_CUSTODY_BLOCKED_RELAUNCH_ROW_ID = "custody.blocked_relaunch.1"
+_CUSTODY_ESCALATED_UNCHANGED_ROW_ID = "custody.escalated_unchanged.1"
+
+_CUSTODY_MANAGED_RUNNING_BOUNDARY_ID = "cloud_custody_managed_running"
+_CUSTODY_COMPLETE_BOUNDARY_ID = "cloud_custody_complete"
+_CUSTODY_UNMANAGED_WARNING_BOUNDARY_ID = "cloud_custody_unmanaged_running_warning"
+_CUSTODY_BLOCKED_RELAUNCH_BOUNDARY_ID = "cloud_custody_blocked_relaunch_failure"
+_CUSTODY_ESCALATED_UNCHANGED_BOUNDARY_ID = "cloud_custody_escalated_repeated_unchanged"
+
+CloudCustodyKind = Literal[
+    "managed-running",
+    "complete",
+    "unmanaged-running-with-warning",
+    "blocked-relaunch-failure",
+    "escalated-repeated-unchanged-findings",
+]
+CUSTODY_MANAGED_RUNNING: CloudCustodyKind = "managed-running"
+CUSTODY_COMPLETE: CloudCustodyKind = "complete"
+CUSTODY_UNMANAGED_WARNING: CloudCustodyKind = "unmanaged-running-with-warning"
+CUSTODY_BLOCKED_RELAUNCH: CloudCustodyKind = "blocked-relaunch-failure"
+CUSTODY_ESCALATED_UNCHANGED: CloudCustodyKind = "escalated-repeated-unchanged-findings"
+CLOUD_CUSTODY_KINDS: frozenset[CloudCustodyKind] = frozenset(
+    {
+        CUSTODY_MANAGED_RUNNING,
+        CUSTODY_COMPLETE,
+        CUSTODY_UNMANAGED_WARNING,
+        CUSTODY_BLOCKED_RELAUNCH,
+        CUSTODY_ESCALATED_UNCHANGED,
+    }
+)
+
+# Map custody kind -> (row_id, boundary_id).
+_CUSTODY_KIND_TO_CONTRACT_IDS: dict[CloudCustodyKind, tuple[str, str]] = {
+    CUSTODY_MANAGED_RUNNING: (_CUSTODY_MANAGED_RUNNING_ROW_ID, _CUSTODY_MANAGED_RUNNING_BOUNDARY_ID),
+    CUSTODY_COMPLETE: (_CUSTODY_COMPLETE_ROW_ID, _CUSTODY_COMPLETE_BOUNDARY_ID),
+    CUSTODY_UNMANAGED_WARNING: (_CUSTODY_UNMANAGED_WARNING_ROW_ID, _CUSTODY_UNMANAGED_WARNING_BOUNDARY_ID),
+    CUSTODY_BLOCKED_RELAUNCH: (_CUSTODY_BLOCKED_RELAUNCH_ROW_ID, _CUSTODY_BLOCKED_RELAUNCH_BOUNDARY_ID),
+    CUSTODY_ESCALATED_UNCHANGED: (_CUSTODY_ESCALATED_UNCHANGED_ROW_ID, _CUSTODY_ESCALATED_UNCHANGED_BOUNDARY_ID),
+}
+
+
+@dataclass(frozen=True)
+class CloudCustodyClassification:
+    """Structured cloud custody classification evidence.
+
+    Captures the custody determination for a cloud session — whether it is
+    under managed supervision, complete, running but unmanaged, blocked with
+    failed relaunch, or escalated due to repeated unchanged findings.
+
+    Every field is evidence-backed: tmux/session identity, supervisor identity,
+    live process fingerprints, active-step worker PID liveness, relaunch
+    commands, and failure reasons all contribute to the classification.
+    """
+
+    custody_kind: CloudCustodyKind
+    session_id: str = ""
+    supervisor_identity: str = ""
+    live_process_fingerprints: tuple[str, ...] = ()
+    active_step_worker_pid_liveness: bool = False
+    relaunch_command: str = ""
+    relaunch_command_available: bool = False
+    failure_reasons: tuple[str, ...] = ()
+    evidence_timestamp: str = ""
+    contract_id: str = ""
+    boundary_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        contract_id, boundary_id = _CUSTODY_KIND_TO_CONTRACT_IDS.get(
+            self.custody_kind, ("", "")
+        )
+        return {
+            "custody_kind": self.custody_kind,
+            "session_id": self.session_id,
+            "supervisor_identity": self.supervisor_identity,
+            "live_process_fingerprints": list(self.live_process_fingerprints),
+            "active_step_worker_pid_liveness": self.active_step_worker_pid_liveness,
+            "relaunch_command": self.relaunch_command,
+            "relaunch_command_available": self.relaunch_command_available,
+            "failure_reasons": list(self.failure_reasons),
+            "evidence_timestamp": self.evidence_timestamp,
+            "contract_id": self.contract_id or contract_id,
+            "boundary_id": self.boundary_id or boundary_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "CloudCustodyClassification":
+        custody_kind = _as_text(payload.get("custody_kind"))
+        if custody_kind not in CLOUD_CUSTODY_KINDS:
+            custody_kind = CUSTODY_ESCALATED_UNCHANGED
+        return cls(
+            custody_kind=cast(CloudCustodyKind, custody_kind),
+            session_id=_as_text(payload.get("session_id")),
+            supervisor_identity=_as_text(payload.get("supervisor_identity")),
+            live_process_fingerprints=tuple(
+                _as_text(item) for item in _as_list(payload.get("live_process_fingerprints"))
+                if _as_text(item)
+            ),
+            active_step_worker_pid_liveness=bool(
+                payload.get("active_step_worker_pid_liveness")
+            ),
+            relaunch_command=_as_text(payload.get("relaunch_command")),
+            relaunch_command_available=bool(payload.get("relaunch_command_available")),
+            failure_reasons=tuple(
+                _as_text(item) for item in _as_list(payload.get("failure_reasons"))
+                if _as_text(item)
+            ),
+            evidence_timestamp=_as_text(payload.get("evidence_timestamp")),
+            contract_id=_as_text(payload.get("contract_id")),
+            boundary_id=_as_text(payload.get("boundary_id")),
+        )
+
+
+def build_cloud_custody_classification(
+    *,
+    custody_kind: CloudCustodyKind,
+    session_id: str = "",
+    supervisor_identity: str = "",
+    live_process_fingerprints: tuple[str, ...] | None = None,
+    active_step_worker_pid_liveness: bool = False,
+    relaunch_command: str = "",
+    relaunch_command_available: bool = False,
+    failure_reasons: tuple[str, ...] | None = None,
+    evidence_timestamp: str | None = None,
+) -> CloudCustodyClassification:
+    """Build a structured cloud custody classification from available evidence.
+
+    The *custody_kind* is the primary classification; all other fields are
+    evidence supporting that determination.  Contract IDs are derived
+    automatically from the custody kind via the boundary-contracts registry
+    mapping.
+    """
+    contract_id, boundary_id = _CUSTODY_KIND_TO_CONTRACT_IDS.get(
+        custody_kind, ("", "")
+    )
+    ts = evidence_timestamp or utc_now_iso()
+    return CloudCustodyClassification(
+        custody_kind=custody_kind,
+        session_id=session_id,
+        supervisor_identity=supervisor_identity,
+        live_process_fingerprints=live_process_fingerprints or (),
+        active_step_worker_pid_liveness=active_step_worker_pid_liveness,
+        relaunch_command=relaunch_command,
+        relaunch_command_available=relaunch_command_available or bool(relaunch_command),
+        failure_reasons=failure_reasons or (),
+        evidence_timestamp=ts,
+        contract_id=contract_id,
+        boundary_id=boundary_id,
+    )
+
+
+def classify_cloud_custody(
+    *,
+    session_id: str = "",
+    supervisor_identity: str = "",
+    tmux_live: bool = False,
+    process_live: bool = False,
+    active_step_worker_pid_liveness: bool = False,
+    watchdog_status: str = "",
+    chain_complete: bool = False,
+    relaunch_command: str = "",
+    relaunch_command_available: bool = False,
+    needs_human: bool = False,
+    repair_active: bool = False,
+    failure_reasons: tuple[str, ...] | None = None,
+    previous_classification: CloudCustodyKind | None = None,
+    finding_unchanged_count: int = 0,
+) -> CloudCustodyClassification:
+    """Classify cloud custody from session evidence.
+
+    This is the canonical classification function that all custody producers
+    should call.  It produces one of the five accepted custody outcomes based
+    on the evidence provided, applying the precedence rules:
+
+    1. **complete** — chain is complete (watchdog confirms) and no live process.
+    2. **managed-running** — tmux session is live OR a process with a known
+       fingerprint is running, and the session is under managed supervision.
+    3. **unmanaged-running-with-warning** — process is live but not through a
+       managed tmux session (orphan process, detached runner, etc.).
+    4. **blocked-relaunch-failure** — session needs relaunch but the relaunch
+       command is unavailable or has failed.
+    5. **escalated-repeated-unchanged-findings** — repeated findings with no
+       change in classification over multiple sweeps.
+
+    The caller is responsible for providing accurate evidence; this function
+    applies the decision rules without performing its own I/O.
+    """
+    reasons: list[str] = list(failure_reasons or [])
+
+    # ── 1. Complete takes precedence ──────────────────────────────────────
+    if chain_complete:
+        return build_cloud_custody_classification(
+            custody_kind=CUSTODY_COMPLETE,
+            session_id=session_id,
+            supervisor_identity=supervisor_identity,
+            live_process_fingerprints=(),
+            active_step_worker_pid_liveness=False,
+            relaunch_command=relaunch_command,
+            relaunch_command_available=relaunch_command_available,
+            failure_reasons=("chain complete; no runner expected",),
+        )
+
+    # ── 2. Managed running: tmux session is live ──────────────────────────
+    if tmux_live:
+        return build_cloud_custody_classification(
+            custody_kind=CUSTODY_MANAGED_RUNNING,
+            session_id=session_id,
+            supervisor_identity=supervisor_identity,
+            live_process_fingerprints=(f"tmux:{session_id}",),
+            active_step_worker_pid_liveness=active_step_worker_pid_liveness,
+            relaunch_command=relaunch_command,
+            relaunch_command_available=relaunch_command_available,
+            failure_reasons=(),
+        )
+
+    # ── 3. Managed running: process is live via known fingerprint ─────────
+    if process_live and tmux_live is False:
+        # When process is live but not through tmux, classify based on
+        # whether there is a known supervisor identity.
+        if supervisor_identity:
+            return build_cloud_custody_classification(
+                custody_kind=CUSTODY_MANAGED_RUNNING,
+                session_id=session_id,
+                supervisor_identity=supervisor_identity,
+                live_process_fingerprints=(f"process:{session_id}",),
+                active_step_worker_pid_liveness=active_step_worker_pid_liveness,
+                relaunch_command=relaunch_command,
+                relaunch_command_available=relaunch_command_available,
+                failure_reasons=(),
+            )
+        # Process is live but unmanaged — tmux session missing.
+        unmanaged_reasons: list[str] = [
+            "process is live but no managed tmux session found",
+        ]
+        if not supervisor_identity:
+            unmanaged_reasons.append("supervisor identity unknown")
+        return build_cloud_custody_classification(
+            custody_kind=CUSTODY_UNMANAGED_WARNING,
+            session_id=session_id,
+            supervisor_identity=supervisor_identity,
+            live_process_fingerprints=(f"process:{session_id}",),
+            active_step_worker_pid_liveness=active_step_worker_pid_liveness,
+            relaunch_command=relaunch_command,
+            relaunch_command_available=relaunch_command_available,
+            failure_reasons=tuple(unmanaged_reasons),
+        )
+
+    # ── 4. No live process: blocked or escalated ──────────────────────────
+    if watchdog_status in {"needs_human", "restarted", "reaped", "stalled"}:
+        reasons.append(f"watchdog status: {watchdog_status}")
+
+    if needs_human and not repair_active:
+        reasons.append("needs-human marker present, no active repair")
+
+    # 4a. Blocked relaunch failure: relaunch is needed but unavailable/failed.
+    if not relaunch_command_available or not relaunch_command:
+        if not chain_complete:
+            reasons.append("relaunch command unavailable or empty")
+            return build_cloud_custody_classification(
+                custody_kind=CUSTODY_BLOCKED_RELAUNCH,
+                session_id=session_id,
+                supervisor_identity=supervisor_identity,
+                live_process_fingerprints=(),
+                active_step_worker_pid_liveness=False,
+                relaunch_command=relaunch_command,
+                relaunch_command_available=False,
+                failure_reasons=tuple(reasons),
+            )
+
+    # 4b. Escalated repeated unchanged findings: same classification persists.
+    if (
+        previous_classification is not None
+        and previous_classification != CUSTODY_COMPLETE
+        and previous_classification != CUSTODY_MANAGED_RUNNING
+        and finding_unchanged_count >= 2
+    ):
+        reasons.append(
+            f"finding unchanged for {finding_unchanged_count} consecutive sweeps "
+            f"(previous: {previous_classification})"
+        )
+        return build_cloud_custody_classification(
+            custody_kind=CUSTODY_ESCALATED_UNCHANGED,
+            session_id=session_id,
+            supervisor_identity=supervisor_identity,
+            live_process_fingerprints=(),
+            active_step_worker_pid_liveness=False,
+            relaunch_command=relaunch_command,
+            relaunch_command_available=relaunch_command_available,
+            failure_reasons=tuple(reasons),
+        )
+
+    # 4c. Default when no live process and no escalation: blocked.
+    if not reasons:
+        reasons.append("no live process and no clear failure reason")
+    return build_cloud_custody_classification(
+        custody_kind=CUSTODY_BLOCKED_RELAUNCH,
+        session_id=session_id,
+        supervisor_identity=supervisor_identity,
+        live_process_fingerprints=(),
+        active_step_worker_pid_liveness=False,
+        relaunch_command=relaunch_command,
+        relaunch_command_available=relaunch_command_available,
+        failure_reasons=tuple(reasons),
+    )
+
+
+def save_cloud_custody_classification(
+    path: str | Path,
+    classification: CloudCustodyClassification,
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Validate and atomically persist a cloud custody classification artifact.
+
+    The classification is persisted alongside session data so that downstream
+    custody/auditor/status consumers can read it without recomputing.
+    """
+    prepared = classification.to_dict()
+    if redactor is not None:
+        prepared = _redact_verdict_payload(prepared, redactor)
+    atomic_write_json(path, prepared)
+    return prepared
+
+
+def validate_cloud_custody_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and normalize a cloud custody payload, raising ``ValueError`` on bad input."""
+    if not isinstance(payload, Mapping):
+        raise ValueError("cloud custody classification must be a JSON object")
+    custody_kind = _as_text(payload.get("custody_kind"))
+    if not custody_kind:
+        raise ValueError(
+            "cloud custody classification missing required field 'custody_kind'"
+        )
+    if custody_kind not in CLOUD_CUSTODY_KINDS:
+        raise ValueError(
+            f"unknown cloud custody kind {custody_kind!r}; "
+            f"expected one of {sorted(CLOUD_CUSTODY_KINDS)}"
+        )
+    return dict(payload)
+
+
 __all__ = [
     "ADDITIVE_FIELD_DEFAULTS",
     "ATTEMPT_STATE_CLAIMED",
@@ -3316,4 +3958,32 @@ __all__ = [
     "validate_jsonl_summary",
     "validate_repair_index",
     "validate_repair_data",
+    # ── repair verdict evidence ────────────────────────────────────
+    "RepairVerdict",
+    "RepairVerdictKind",
+    "REPAIR_VERDICT_CLEARED",
+    "REPAIR_VERDICT_NO_FIX",
+    "REPAIR_VERDICT_ESCALATED",
+    "REPAIR_VERDICT_STALE",
+    "REPAIR_VERDICT_NO_VERDICT",
+    "REPAIR_VERDICT_KINDS",
+    "build_ordinary_repair_verdict",
+    "detect_stale_repair_data",
+    "detect_no_verdict_artifact",
+    "save_repair_verdict",
+    "validate_repair_verdict_payload",
+    "utc_now_iso",
+    # ── cloud custody classification evidence ──────────────────────
+    "CloudCustodyClassification",
+    "CloudCustodyKind",
+    "CUSTODY_MANAGED_RUNNING",
+    "CUSTODY_COMPLETE",
+    "CUSTODY_UNMANAGED_WARNING",
+    "CUSTODY_BLOCKED_RELAUNCH",
+    "CUSTODY_ESCALATED_UNCHANGED",
+    "CLOUD_CUSTODY_KINDS",
+    "build_cloud_custody_classification",
+    "classify_cloud_custody",
+    "save_cloud_custody_classification",
+    "validate_cloud_custody_payload",
 ]

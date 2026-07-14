@@ -17,6 +17,11 @@ from arnold_pipelines.megaplan.chain import (
 )
 import arnold_pipelines.megaplan.chain as chain_pkg
 from arnold_pipelines.megaplan.chain import git_ops
+from arnold_pipelines.megaplan.chain.git_ops import (
+    PRTransitionEvidence,
+    _build_pr_transition_evidence,
+    _check_merge_tip_containment,
+)
 from arnold_pipelines.megaplan.supervisor.model import RunNode, SupervisorState, SupervisorVariantKind
 from arnold_pipelines.megaplan.supervisor.pr_merge import (
     PRMergeResolution,
@@ -189,3 +194,221 @@ def test_chain_pr_handoff_sync_and_restart_state_use_faked_boundaries(
     loaded = load_chain_state(spec_path)
     assert loaded.metadata["platform_conformance"] == product_routing_markers
     assert not any("megaplan route" in " ".join(command).lower() for command in commands)
+
+
+# ── T13: PR/CI transition evidence tests ────────────────────────────────
+
+
+def test_pr_transition_evidence_frozen_dataclass_with_all_fields() -> None:
+    """PRTransitionEvidence is a frozen dataclass with 11 documented fields."""
+    evidence = PRTransitionEvidence(
+        pr_number=77,
+        pr_head_sha="abc123def456",
+        last_pushed_tip="abc123def456",
+        merge_commit_sha="fed654cba321",
+        ci_readiness_state="green",
+        evidence_timestamp="2026-07-05T00:00:00Z",
+        contract_id="pr.merged.1",
+        tip_containment_applicable=True,
+        tip_containment_verified=True,
+        tip_containment_reason="PR head is ancestor of merge commit",
+        pinned_pr_head=None,
+    )
+    assert evidence.pr_number == 77
+    assert evidence.pr_head_sha == "abc123def456"
+    assert evidence.last_pushed_tip == "abc123def456"
+    assert evidence.merge_commit_sha == "fed654cba321"
+    assert evidence.ci_readiness_state == "green"
+    assert evidence.evidence_timestamp == "2026-07-05T00:00:00Z"
+    assert evidence.contract_id == "pr.merged.1"
+    assert evidence.tip_containment_applicable is True
+    assert evidence.tip_containment_verified is True
+    assert evidence.tip_containment_reason == "PR head is ancestor of merge commit"
+    assert evidence.pinned_pr_head is None
+
+    # Frozen: mutation raises
+    try:
+        evidence.pr_number = 99  # type: ignore[misc]
+        raise AssertionError("frozen dataclass should not allow mutation")
+    except Exception:
+        pass
+
+
+def test_pr_transition_evidence_stale_head_pins_pr_head() -> None:
+    """When tip containment is NOT applicable (squash), pinned_pr_head is set."""
+    evidence = PRTransitionEvidence(
+        pr_number=42,
+        pr_head_sha="stale-head-sha",
+        merge_commit_sha="squash-commit-sha",
+        contract_id="pr.merged.1",
+        tip_containment_applicable=False,
+        tip_containment_verified=None,
+        tip_containment_reason="squash merge — tip containment not applicable",
+        pinned_pr_head="stale-head-sha",
+    )
+    assert evidence.tip_containment_applicable is False
+    assert evidence.tip_containment_verified is None
+    assert evidence.pinned_pr_head == "stale-head-sha"
+    assert evidence.pr_head_sha == "stale-head-sha"
+
+
+def test_pr_transition_evidence_merge_commit_with_containment_verified() -> None:
+    """Merge commit strategy supports tip containment when verified."""
+    evidence = PRTransitionEvidence(
+        pr_number=100,
+        pr_head_sha="pr-tip-sha",
+        merge_commit_sha="merge-commit-sha",
+        contract_id="pr.merged.1",
+        tip_containment_applicable=True,
+        tip_containment_verified=True,
+        tip_containment_reason="PR head abc is an ancestor of merge commit def",
+        pinned_pr_head=None,
+    )
+    assert evidence.tip_containment_applicable is True
+    assert evidence.tip_containment_verified is True
+    assert evidence.pinned_pr_head is None
+
+
+def test_build_pr_transition_evidence_ready_sets_correct_contract() -> None:
+    """_build_pr_transition_evidence for PR ready uses pr.ready.1 contract."""
+    evidence = _build_pr_transition_evidence(
+        pr_number=55,
+        contract_id="pr.ready.1",
+        pr_head_sha="ready-head-sha",
+        last_pushed_tip="ready-tip-sha",
+        ci_readiness_state="green",
+    )
+    assert evidence.contract_id == "pr.ready.1"
+    assert evidence.pr_number == 55
+    assert evidence.pr_head_sha == "ready-head-sha"
+    assert evidence.last_pushed_tip == "ready-tip-sha"
+    assert evidence.ci_readiness_state == "green"
+    assert evidence.evidence_timestamp is not None
+    # Ready evidence: no merge fields, no containment check
+    assert evidence.merge_commit_sha is None
+    assert evidence.tip_containment_applicable is None
+    assert evidence.tip_containment_verified is None
+    assert evidence.pinned_pr_head is None
+
+
+def test_build_pr_transition_evidence_merged_with_containment() -> None:
+    """_build_pr_transition_evidence for merge with containment sets pr.merged.1."""
+    evidence = _build_pr_transition_evidence(
+        pr_number=88,
+        contract_id="pr.merged.1",
+        pr_head_sha="merged-head-sha",
+        merge_commit_sha="merge-commit-sha",
+        tip_containment_applicable=True,
+        tip_containment_verified=True,
+        tip_containment_reason="ancestor check passed",
+    )
+    assert evidence.contract_id == "pr.merged.1"
+    assert evidence.pr_number == 88
+    assert evidence.pr_head_sha == "merged-head-sha"
+    assert evidence.merge_commit_sha == "merge-commit-sha"
+    assert evidence.tip_containment_applicable is True
+    assert evidence.tip_containment_verified is True
+    assert evidence.pinned_pr_head is None  # containment applicable → no pin
+    assert evidence.evidence_timestamp is not None
+
+
+def test_build_pr_transition_evidence_squash_pins_head() -> None:
+    """Squash merge evidence pins PR head since containment not applicable."""
+    evidence = _build_pr_transition_evidence(
+        pr_number=33,
+        contract_id="pr.merged.1",
+        pr_head_sha="squashed-head-sha",
+        merge_commit_sha="squash-commit-sha",
+        tip_containment_applicable=False,
+        tip_containment_verified=None,
+        tip_containment_reason="squash merge — tip containment not applicable; pinned PR head required",
+    )
+    assert evidence.contract_id == "pr.merged.1"
+    assert evidence.tip_containment_applicable is False
+    assert evidence.tip_containment_verified is None
+    # When containment not applicable, pinned_pr_head = pr_head_sha
+    assert evidence.pinned_pr_head == "squashed-head-sha"
+
+
+def test_build_pr_transition_evidence_stale_head_detected() -> None:
+    """Stale PR head: containment applicable but NOT verified — pinned still None,
+    but the failure reason is recorded."""
+    evidence = _build_pr_transition_evidence(
+        pr_number=22,
+        contract_id="pr.merged.1",
+        pr_head_sha="stale-head-sha",
+        merge_commit_sha="merge-commit-sha",
+        tip_containment_applicable=True,
+        tip_containment_verified=False,
+        tip_containment_reason="PR head stale-head-sha is NOT an ancestor of merge commit",
+    )
+    assert evidence.tip_containment_applicable is True
+    assert evidence.tip_containment_verified is False
+    assert evidence.pinned_pr_head is None  # not pinned; stale detected but not pinned
+    assert "NOT an ancestor" in (evidence.tip_containment_reason or "")
+
+
+def test_pr_merge_resolution_carries_evidence_fields() -> None:
+    """PRMergeResolution can carry pr_ready_evidence and pr_merged_evidence."""
+    ready_evidence = _build_pr_transition_evidence(
+        pr_number=11,
+        contract_id="pr.ready.1",
+        pr_head_sha="ready-sha",
+        ci_readiness_state="green",
+    )
+    merged_evidence = _build_pr_transition_evidence(
+        pr_number=11,
+        contract_id="pr.merged.1",
+        pr_head_sha="ready-sha",
+        merge_commit_sha="merge-sha",
+        tip_containment_applicable=True,
+        tip_containment_verified=True,
+        tip_containment_reason="ancestor verified",
+    )
+    resolution = PRMergeResolution(
+        handled=True,
+        advanced=True,
+        pr_number=11,
+        pr_state="merged",
+        reason="PR #11 merge-ready",
+        pr_ready_evidence=ready_evidence,
+        pr_merged_evidence=merged_evidence,
+    )
+    assert resolution.handled is True
+    assert resolution.advanced is True
+    assert resolution.pr_number == 11
+    assert resolution.pr_state == "merged"
+    assert resolution.pr_ready_evidence is not None
+    assert resolution.pr_ready_evidence.contract_id == "pr.ready.1"
+    assert resolution.pr_merged_evidence is not None
+    assert resolution.pr_merged_evidence.contract_id == "pr.merged.1"
+    assert resolution.pr_merged_evidence.tip_containment_verified is True
+
+
+def test_pr_transition_evidence_defaults_are_none() -> None:
+    """PRTransitionEvidence with only pr_number leaves all optionals as None."""
+    evidence = PRTransitionEvidence(pr_number=1)
+    assert evidence.pr_number == 1
+    assert evidence.pr_head_sha is None
+    assert evidence.last_pushed_tip is None
+    assert evidence.merge_commit_sha is None
+    assert evidence.ci_readiness_state is None
+    assert evidence.evidence_timestamp is None
+    assert evidence.contract_id is None
+    assert evidence.tip_containment_applicable is None
+    assert evidence.tip_containment_verified is None
+    assert evidence.tip_containment_reason is None
+    assert evidence.pinned_pr_head is None
+
+
+def test_check_merge_tip_containment_missing_inputs() -> None:
+    """_check_merge_tip_containment returns None,None when inputs are missing."""
+    applicable, verified, reason = _check_merge_tip_containment(
+        None,  # type: ignore[arg-type] - testing with None root
+        "",
+        None,
+        writer=print,
+    )
+    assert applicable is None
+    assert verified is None
+    assert "missing" in (reason or "").lower()

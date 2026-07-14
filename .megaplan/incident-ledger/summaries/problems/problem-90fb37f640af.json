@@ -1,6 +1,6 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-13T23:02:15.311753+00:00",
+  "generated_at": "2026-07-13T23:02:15.312023+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-workflow-boundary-contracts-corrective-20260710"
@@ -8,14 +8,14 @@
   "next_review_ts": null,
   "occurrence_count": 3,
   "owner_actor": "github_sync",
-  "problem_id": "problem-8f475cf8e677",
+  "problem_id": "problem-90fb37f640af",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
     "digest": "sha256:fb5de21f68a75a1d2c93e9b0bc73a0cf8903a4d40ffb42e83f13acec7eba2b7f",
-    "last_seq": 480,
+    "last_seq": 481,
     "projection": "problems"
   },
   "status": "open",
-  "summary_text": "problem-8f475cf8e677: meta-repair recursion guard blocked dispatch"
+  "summary_text": "problem-90fb37f640af: progress_stall:s2-contract-foundation-and-20260713-1544:iteration=1:attempt=20:plan_v_count=1:active_step.attempt=20>=10"
 }

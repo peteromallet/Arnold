@@ -769,3 +769,248 @@ def test_auditor_recursion_guard() -> None:
     assert finding["cycle_detected"] is True
     assert result["audit_complete"]["outcome"] == "auditor_human_escalation"
     assert result["next_expected_event"] == "auditor_escalate_to_human"
+
+
+# ---------------------------------------------------------------------------
+# T18: SixHourAuditorCompletionEvidence — audited windows, repair dispatch
+#      refs, escalation verdicts, stale repair-data findings, and missing
+#      repair verdict findings
+# ---------------------------------------------------------------------------
+
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import (  # noqa: E402
+    SixHourAuditorCompletionEvidence,
+    build_auditor_completion_evidence,
+    save_auditor_completion_evidence,
+)
+
+
+class TestSixHourAuditorCompletionEvidenceConstruction:
+    """SixHourAuditorCompletionEvidence construction, defaults, immutability."""
+
+    def test_construction_with_all_fields(self) -> None:
+        evidence = SixHourAuditorCompletionEvidence(
+            audited_window_hours=6.0,
+            audit_timestamp="2026-07-13T14:00:00Z",
+            finding_count=12,
+            highest_severity="error",
+            next_expected_event="immediate_repair.repair_attempt",
+            outcome="escalated",
+            repair_dispatch_count=3,
+            repair_dispatch_refs=("req-1", "req-2", "req-3"),
+            escalation_verdict_count=2,
+            escalation_verdict_refs=("reconciler:DRIFT_DETECTED", "watchdog:watchdog_report_stale"),
+            missing_repair_verdict_findings=(
+                {"layer": "immediate_repair", "code": "missing_evidence", "finding_kind": "missing_repair_verdict"},
+            ),
+            stale_repair_data_findings=(
+                {"layer": "meta_repair", "code": "running_stale", "finding_kind": "stale_repair_data"},
+            ),
+            evidence_timestamp="2026-07-13T14:00:00Z",
+        )
+        assert evidence.audited_window_hours == 6.0
+        assert evidence.audit_timestamp == "2026-07-13T14:00:00Z"
+        assert evidence.finding_count == 12
+        assert evidence.highest_severity == "error"
+        assert evidence.next_expected_event == "immediate_repair.repair_attempt"
+        assert evidence.outcome == "escalated"
+        assert evidence.repair_dispatch_count == 3
+        assert evidence.repair_dispatch_refs == ("req-1", "req-2", "req-3")
+        assert evidence.escalation_verdict_count == 2
+        assert evidence.escalation_verdict_refs == ("reconciler:DRIFT_DETECTED", "watchdog:watchdog_report_stale")
+        assert len(evidence.missing_repair_verdict_findings) == 1
+        assert len(evidence.stale_repair_data_findings) == 1
+
+    def test_default_contract_id(self) -> None:
+        evidence = SixHourAuditorCompletionEvidence()
+        assert evidence.contract_id == "auditor.6h_complete.1"
+        assert evidence.boundary_id == "auditor_6h_completion"
+
+    def test_default_audited_window_hours_is_6(self) -> None:
+        evidence = SixHourAuditorCompletionEvidence()
+        assert evidence.audited_window_hours == 6.0
+
+    def test_defaults_are_empty(self) -> None:
+        evidence = SixHourAuditorCompletionEvidence()
+        assert evidence.finding_count == 0
+        assert evidence.highest_severity == "ok"
+        assert evidence.repair_dispatch_count == 0
+        assert evidence.repair_dispatch_refs == ()
+        assert evidence.escalation_verdict_count == 0
+        assert evidence.escalation_verdict_refs == ()
+        assert evidence.missing_repair_verdict_findings == ()
+        assert evidence.stale_repair_data_findings == ()
+
+    def test_frozen_immutability(self) -> None:
+        evidence = SixHourAuditorCompletionEvidence(outcome="escalated")
+        with pytest.raises(Exception):
+            evidence.outcome = "changed"  # type: ignore[misc]
+
+
+class TestSixHourAuditorCompletionEvidenceRoundTrip:
+    """to_dict / from_dict round-trip."""
+
+    def test_round_trip_preserves_all_fields(self) -> None:
+        original = SixHourAuditorCompletionEvidence(
+            audited_window_hours=6.0,
+            audit_timestamp="2026-07-13T15:00:00Z",
+            finding_count=5,
+            highest_severity="warn",
+            next_expected_event="meta_repair.repair_attempt",
+            outcome="audit_cycle_complete",
+            repair_dispatch_count=1,
+            repair_dispatch_refs=("dispatch/req-a.json",),
+            escalation_verdict_count=1,
+            escalation_verdict_refs=("reconciler:DRIFT_DETECTED",),
+            missing_repair_verdict_findings=(
+                {"layer": "meta_repair", "code": "meta_repair_missing_evidence",
+                 "status": "error", "severity": "error", "message": "m",
+                 "finding_kind": "missing_repair_verdict"},
+            ),
+            stale_repair_data_findings=(
+                {"layer": "immediate_repair", "code": "immediate_repair_running_stale",
+                 "status": "error", "severity": "error", "message": "s",
+                 "finding_kind": "stale_repair_data"},
+            ),
+            evidence_timestamp="2026-07-13T15:00:00Z",
+        )
+        reloaded = SixHourAuditorCompletionEvidence.from_dict(original.to_dict())
+        assert reloaded == original
+
+    def test_from_dict_empty_payload(self) -> None:
+        evidence = SixHourAuditorCompletionEvidence.from_dict({})
+        assert evidence.contract_id == "auditor.6h_complete.1"
+        assert evidence.audited_window_hours == 6.0
+        assert evidence.finding_count == 0
+
+
+class TestBuildAuditorCompletionEvidence:
+    """build_auditor_completion_evidence extracts findings and refs."""
+
+    def test_build_with_audit_findings(self) -> None:
+        findings = [
+            {"layer": "reconciler", "code": "DRIFT_DETECTED", "status": "error",
+             "severity": "error", "recommendation": "auditor_escalate_to_human"},
+            {"layer": "watchdog", "code": "watchdog_report_stale", "status": "error",
+             "severity": "error", "recommendation": "watchdog.dispatch"},
+            {"layer": "project_progress", "code": "project_progress_stalled",
+             "status": "ok", "severity": "ok"},
+        ]
+        evidence = build_auditor_completion_evidence(
+            audit_findings=findings,
+            audit_outcome="escalated",
+            next_expected_event="immediate_repair.repair_attempt",
+            audited_window_hours=6.0,
+            repair_dispatch_refs=("dispatch/req-1.json",),
+        )
+        assert evidence.finding_count == 3
+        assert evidence.highest_severity == "error"
+        assert evidence.outcome == "escalated"
+        assert evidence.next_expected_event == "immediate_repair.repair_attempt"
+        assert evidence.audited_window_hours == 6.0
+        assert evidence.repair_dispatch_count == 1
+        assert evidence.repair_dispatch_refs == ("dispatch/req-1.json",)
+
+    def test_build_extracts_escalation_verdicts(self) -> None:
+        findings = [
+            {"layer": "reconciler", "code": "DRIFT_DETECTED", "status": "error",
+             "severity": "error", "recommendation": "auditor_escalate_to_human"},
+            {"layer": "resolver_confidence", "code": "resolver_low_confidence",
+             "status": "error", "severity": "error",
+             "recommendation": "auditor_escalate_to_human"},
+        ]
+        evidence = build_auditor_completion_evidence(
+            audit_findings=findings,
+            audit_outcome="auditor_human_escalation",
+        )
+        assert evidence.escalation_verdict_count == 2
+        assert "reconciler:DRIFT_DETECTED" in evidence.escalation_verdict_refs
+        assert "resolver_confidence:resolver_low_confidence" in evidence.escalation_verdict_refs
+
+    def test_build_extracts_missing_repair_verdict_findings(self) -> None:
+        findings = [
+            {"layer": "immediate_repair", "code": "missing_evidence", "status": "error",
+             "severity": "error", "message": "No repair verdict found",
+             "recommendation": "immediate_repair.repair_attempt"},
+            {"layer": "meta_repair", "code": "meta_repair_missing_evidence",
+             "status": "error", "severity": "error",
+             "message": "No meta-repair completion record",
+             "recommendation": "meta_repair.repair_attempt"},
+        ]
+        evidence = build_auditor_completion_evidence(
+            audit_findings=findings,
+            audit_outcome="escalated",
+        )
+        assert len(evidence.missing_repair_verdict_findings) == 2
+        for finding in evidence.missing_repair_verdict_findings:
+            assert finding["finding_kind"] == "missing_repair_verdict"
+
+    def test_build_extracts_stale_repair_data_findings(self) -> None:
+        findings = [
+            {"layer": "immediate_repair", "code": "immediate_repair_running_stale",
+             "status": "error", "severity": "error",
+             "message": "Immediate repair has been running too long",
+             "recommendation": "meta_repair.repair_attempt"},
+        ]
+        evidence = build_auditor_completion_evidence(
+            audit_findings=findings,
+            audit_outcome="escalated",
+        )
+        assert len(evidence.stale_repair_data_findings) == 1
+        assert evidence.stale_repair_data_findings[0]["finding_kind"] == "stale_repair_data"
+        assert evidence.stale_repair_data_findings[0]["code"] == "immediate_repair_running_stale"
+
+    def test_build_with_no_findings(self) -> None:
+        evidence = build_auditor_completion_evidence(
+            audit_findings=[],
+            audit_outcome="audit_cycle_complete",
+        )
+        assert evidence.finding_count == 0
+        assert evidence.highest_severity == "ok"
+        assert evidence.missing_repair_verdict_findings == ()
+        assert evidence.stale_repair_data_findings == ()
+
+    def test_build_preserves_audited_window(self) -> None:
+        evidence = build_auditor_completion_evidence(
+            audit_findings=[],
+            audited_window_hours=12.0,
+        )
+        assert evidence.audited_window_hours == 12.0
+
+    def test_build_default_window_is_6(self) -> None:
+        evidence = build_auditor_completion_evidence()
+        assert evidence.audited_window_hours == 6.0
+
+
+class TestSaveAuditorCompletionEvidence:
+    """save_auditor_completion_evidence persists and returns payload."""
+
+    def test_save_and_reload_round_trip(self, tmp_path: Path) -> None:
+        evidence = SixHourAuditorCompletionEvidence(
+            audited_window_hours=6.0,
+            audit_timestamp="2026-07-13T16:00:00Z",
+            finding_count=7,
+            highest_severity="error",
+            next_expected_event="watchdog.dispatch",
+            outcome="escalated",
+            repair_dispatch_count=2,
+            repair_dispatch_refs=("req-a", "req-b"),
+            escalation_verdict_count=1,
+            escalation_verdict_refs=("watchdog:watchdog_report_stale",),
+            missing_repair_verdict_findings=(
+                {"layer": "immediate_repair", "code": "missing_evidence",
+                 "finding_kind": "missing_repair_verdict"},
+            ),
+            stale_repair_data_findings=(),
+            evidence_timestamp="2026-07-13T16:00:00Z",
+        )
+        dest = tmp_path / "auditor-evidence.json"
+        saved = save_auditor_completion_evidence(dest, evidence)
+        assert dest.exists()
+        assert saved["finding_count"] == 7
+        assert saved["repair_dispatch_count"] == 2
+
+        import json
+        reloaded = SixHourAuditorCompletionEvidence.from_dict(
+            json.loads(dest.read_text(encoding="utf-8"))
+        )
+        assert reloaded == evidence

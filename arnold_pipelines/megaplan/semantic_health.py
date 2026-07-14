@@ -38,6 +38,7 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     contract_satisfies_profile,
     diff_contracts,
+    families_without_coverage,
     get_profile_by_kind,
     get_template_by_id,
 )
@@ -67,6 +68,29 @@ _EXECUTE_TERMINAL_BOUNDARY_IDS = {"execute_no_review_terminal"}
 _EXECUTE_APPROVAL_BOUNDARY_IDS = {"execute_approval"}
 _EXECUTE_AGGREGATE_BOUNDARY_IDS = {"execute_aggregate_promotion"}
 _EXECUTE_CHECKPOINT_BOUNDARY_IDS = {"execute_batch_checkpoint", "execute_partial_failure"}
+
+# ── T5 reducer evidence state keys ──────────────────────────────────
+# Keys written into state.json by _write_reducer_evidence_to_state in
+# arnold_pipelines/megaplan/execute/_binding/reducer.py (T5).
+_REDUCER_CHILD_OUTPUTS_KEY = "_reducer_child_outputs"
+_REDUCER_AGGREGATE_CANONICAL_KEY = "_reducer_aggregate_canonical_outputs"
+_REDUCER_PARENT_PROMOTION_KEY = "_reducer_parent_promotion_points"
+_REDUCER_SIDE_EFFECT_REFS_KEY = "_reducer_side_effect_refs"
+_REDUCER_BLOCKED_RETRY_KEY = "_reducer_blocked_retry_records"
+_REDUCER_REPAIR_DOMAIN_KEY = "_reducer_repair_domain_separation"
+_REDUCER_RESUME_ANCHORS_KEY = "_reducer_resume_anchors"
+
+_REDUCER_EVIDENCE_KEYS: frozenset[str] = frozenset(
+    {
+        _REDUCER_CHILD_OUTPUTS_KEY,
+        _REDUCER_AGGREGATE_CANONICAL_KEY,
+        _REDUCER_PARENT_PROMOTION_KEY,
+        _REDUCER_SIDE_EFFECT_REFS_KEY,
+        _REDUCER_BLOCKED_RETRY_KEY,
+        _REDUCER_REPAIR_DOMAIN_KEY,
+        _REDUCER_RESUME_ANCHORS_KEY,
+    }
+)
 _REVIEW_CHILD_OUTPUTS_BOUNDARY_ID = "review_child_outputs"
 _REVIEW_REDUCER_PROMOTION_BOUNDARY_ID = "review_reducer_promotion"
 _REVIEW_REWORK_EFFECTS_BOUNDARY_ID = "review_rework_effects"
@@ -128,6 +152,9 @@ def inspect_semantic_health(plan_dir: Path) -> list[SemanticFinding]:
                 phase_result=phase_result,
             )
         )
+
+    # ── cross-contract phase-family coverage check ──────────────────
+    findings.extend(_check_phase_family_coverage())
 
     return findings
 
@@ -710,6 +737,49 @@ def _check_profile_template_metadata(
     return findings
 
 
+# ── phase-family coverage check ────────────────────────────────────────
+
+
+def _check_phase_family_coverage() -> list[SemanticFinding]:
+    """Read-only check: every covered phase-family must have a contract or exemption.
+
+    Calls :func:`families_without_coverage` from the boundary-contracts
+    registry and emits a :class:`SemanticFinding` for every family that
+    is neither contract-backed nor exempted.
+
+    This check is intentionally stateless — it only inspects the registry
+    itself, not any plan-dir state.  Coverage gaps are reported at ERROR
+    severity because they represent a structural hole in the boundary
+    contract surface.
+    """
+    findings: list[SemanticFinding] = []
+    gaps = families_without_coverage()
+    for gap in gaps:
+        family = str(gap["family"])
+        missing = gap["missing_contracts"]
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-coverage-{family}-missing-contracts",
+                boundary_id="*",
+                description=(
+                    f"phase-family '{family}' is covered by the coverage matrix "
+                    f"but lacks expected contracts {tuple(missing)} and has no "
+                    f"tested exemption"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=family,
+                details={
+                    "family": family,
+                    "expected_contracts": list(gap["expected_contracts"]),
+                    "missing_contracts": list(missing),
+                    "exempted": gap["exempted"],
+                },
+            )
+        )
+    return findings
+
+
 def _check_override_authority(
     *,
     plan_dir: Path,
@@ -835,9 +905,12 @@ def _check_execute_semantics(
     if bid in _EXECUTE_APPROVAL_BOUNDARY_IDS:
         findings.extend(_check_execute_approval_authority(plan_dir, contract, state))
     if bid in _EXECUTE_AGGREGATE_BOUNDARY_IDS:
-        findings.extend(_check_execute_aggregate_promotion(plan_dir, contract))
+        findings.extend(_check_execute_aggregate_promotion(plan_dir, contract, state))
     if bid in _EXECUTE_TERMINAL_BOUNDARY_IDS:
         findings.extend(_check_execute_terminal_state(contract, state))
+
+    # T6: reducer-evidence-in-state checks for all execute-phase contracts.
+    findings.extend(_check_reducer_evidence_in_state(plan_dir, contract, state))
 
     return findings
 
@@ -976,8 +1049,15 @@ def _check_execute_approval_authority(
 def _check_execute_aggregate_promotion(
     plan_dir: Path,
     contract: Any,
+    state: dict[str, Any] | None = None,
 ) -> list[SemanticFinding]:
-    """Child output without reducer promotion / promotion without child evidence."""
+    """Child output without reducer promotion / promotion without child evidence.
+
+    T6 generalized: also cross-references T5 reducer evidence in state to
+    ensure child turn evidence never satisfies parent state advancement on
+    its own — only the reducer promotion contract (receipt + state
+    parent_promotion_points) can prove parent promotion.
+    """
     findings: list[SemanticFinding] = []
     bid = contract.boundary_id
     receipt = _load_receipt(plan_dir, bid)
@@ -986,8 +1066,24 @@ def _check_execute_aggregate_promotion(
 
     child_artifacts = list_batch_artifacts(plan_dir)
     has_child_evidence = bool(child_artifacts)
-    promotion_present = bool(receipt and receipt.get("reducer_promotion"))
 
+    # ── receipt-based promotion check ────────────────────────────────
+    receipt_promotion = bool(receipt and receipt.get("reducer_promotion"))
+
+    # ── T5 state-based promotion evidence ────────────────────────────
+    state_promotion_points: list[dict[str, Any]] = []
+    if isinstance(state, dict):
+        spp = state.get(_REDUCER_PARENT_PROMOTION_KEY)
+        if isinstance(spp, list):
+            state_promotion_points = [
+                p for p in spp if isinstance(p, dict)
+            ]
+    has_state_promotion = bool(state_promotion_points)
+
+    # Effective promotion: receipt-based OR state-based.
+    promotion_present = receipt_promotion or has_state_promotion
+
+    # ── child evidence without ANY promotion (receipt or state) ─────
     if has_child_evidence and not promotion_present:
         findings.append(
             SemanticFinding(
@@ -995,12 +1091,18 @@ def _check_execute_aggregate_promotion(
                 boundary_id=bid,
                 description=(
                     f"execute child batch outputs exist for '{bid}' but no "
-                    f"reducer promotion receipt is present"
+                    f"reducer promotion receipt nor state parent_promotion_points "
+                    f"are present — child turn evidence cannot satisfy parent "
+                    f"state advancement alone"
                 ),
-                severity=FindingSeverity.WARNING,
+                severity=FindingSeverity.ERROR,
                 diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
                 contract_ref=bid,
-                details={"child_batch_count": len(child_artifacts)},
+                details={
+                    "child_batch_count": len(child_artifacts),
+                    "receipt_promotion": receipt_promotion,
+                    "state_promotion": has_state_promotion,
+                },
             )
         )
     elif promotion_present and not has_child_evidence:
@@ -1015,9 +1117,258 @@ def _check_execute_aggregate_promotion(
                 severity=FindingSeverity.WARNING,
                 diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
                 contract_ref=bid,
-                details={"child_batch_count": 0},
+                details={
+                    "child_batch_count": 0,
+                    "receipt_promotion": receipt_promotion,
+                    "state_promotion": has_state_promotion,
+                },
             )
         )
+
+    # ── T6: child-evidence-only (without reducer promotion) cannot  ──
+    #      prove parent advancement — detect state-based child outputs
+    #      present without corresponding parent_promotion_points.
+    if isinstance(state, dict):
+        child_outputs = state.get(_REDUCER_CHILD_OUTPUTS_KEY)
+        if isinstance(child_outputs, dict) and child_outputs:
+            has_done_child = any(
+                isinstance(v, dict) and v.get("status") == "done"
+                for v in child_outputs.values()
+            )
+            if has_done_child and not has_state_promotion:
+                findings.append(
+                    SemanticFinding(
+                        finding_id=f"SH-{bid}-child-done-without-state-promotion",
+                        boundary_id=bid,
+                        description=(
+                            f"T5 reducer child_outputs record completed child "
+                            f"tasks for '{bid}' but _reducer_parent_promotion_points "
+                            f"is absent or empty — child evidence cannot substitute "
+                            f"for reducer promotion contract"
+                        ),
+                        severity=FindingSeverity.ERROR,
+                        diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                        contract_ref=bid,
+                        details={
+                            "child_output_count": len(child_outputs),
+                            "state_promotion": has_state_promotion,
+                        },
+                    )
+                )
+
+    return findings
+
+
+# ── T6: reducer evidence in state ───────────────────────────────────────
+
+
+def _check_reducer_evidence_in_state(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+) -> list[SemanticFinding]:
+    """Validate T5 reducer evidence keys in state for execute-phase contracts.
+
+    T6: child turn evidence never satisfies parent state advancement — only
+    the reducer promotion contract can prove parent promotion.  This check
+    detects:
+
+    * missing child evidence when reducer promotion is present in state
+    * missing reducer promotion when child evidence is present in state
+    * side-effect ref gaps (child tasks changed files but no side_effect_refs)
+    * resume-anchor gaps (partial/blocked execution without resume anchors)
+    * repair-domain mixing (is_repair_execution inconsistent with child tasks)
+    """
+    findings: list[SemanticFinding] = []
+    if not isinstance(state, dict):
+        return findings
+
+    bid = contract.boundary_id
+
+    # ── load T5 evidence dimensions from state ───────────────────────
+    child_outputs_raw = state.get(_REDUCER_CHILD_OUTPUTS_KEY)
+    child_outputs: dict[str, Any] = (
+        child_outputs_raw if isinstance(child_outputs_raw, dict) else {}
+    )
+
+    parent_promotion_raw = state.get(_REDUCER_PARENT_PROMOTION_KEY)
+    parent_promotion: list[dict[str, Any]] = (
+        parent_promotion_raw if isinstance(parent_promotion_raw, list) else []
+    )
+
+    side_effect_refs_raw = state.get(_REDUCER_SIDE_EFFECT_REFS_KEY)
+    side_effect_refs: list[str] = (
+        side_effect_refs_raw if isinstance(side_effect_refs_raw, list) else []
+    )
+
+    blocked_retry_raw = state.get(_REDUCER_BLOCKED_RETRY_KEY)
+    blocked_retry: list[dict[str, Any]] = (
+        blocked_retry_raw if isinstance(blocked_retry_raw, list) else []
+    )
+
+    repair_domain_raw = state.get(_REDUCER_REPAIR_DOMAIN_KEY)
+    repair_domain: dict[str, Any] = (
+        repair_domain_raw if isinstance(repair_domain_raw, dict) else {}
+    )
+
+    resume_anchors_raw = state.get(_REDUCER_RESUME_ANCHORS_KEY)
+    resume_anchors: list[dict[str, Any]] = (
+        resume_anchors_raw if isinstance(resume_anchors_raw, list) else []
+    )
+
+    has_any_evidence = any(
+        (
+            child_outputs,
+            parent_promotion,
+            side_effect_refs,
+            blocked_retry,
+            repair_domain,
+            resume_anchors,
+        )
+    )
+    if not has_any_evidence:
+        return findings  # no T5 evidence to validate
+
+    # ── 1. child evidence without parent promotion ────────────────────
+    has_done_children = any(
+        isinstance(v, dict) and v.get("status") == "done"
+        for v in child_outputs.values()
+    )
+    has_promotion_points = bool(parent_promotion)
+    if has_done_children and not has_promotion_points:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-reducer-child-evidence-no-promotion",
+                boundary_id=bid,
+                description=(
+                    f"T5 _reducer_child_outputs records completed child tasks "
+                    f"for '{bid}' but _reducer_parent_promotion_points is absent "
+                    f"or empty — child turn evidence must not satisfy parent "
+                    f"state advancement; only the reducer promotion contract "
+                    f"can prove parent promotion"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={
+                    "completed_child_count": sum(
+                        1 for v in child_outputs.values()
+                        if isinstance(v, dict) and v.get("status") == "done"
+                    ),
+                    "total_child_count": len(child_outputs),
+                },
+            )
+        )
+
+    # ── 2. parent promotion without child evidence ───────────────────
+    if has_promotion_points and not child_outputs:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-reducer-promotion-no-child-evidence",
+                boundary_id=bid,
+                description=(
+                    f"_reducer_parent_promotion_points exist for '{bid}' "
+                    f"but _reducer_child_outputs is absent or empty — reducer "
+                    f"promotion requires corresponding child task evidence"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=bid,
+                details={
+                    "promotion_point_count": len(parent_promotion),
+                },
+            )
+        )
+
+    # ── 3. side-effect ref gaps ──────────────────────────────────────
+    #    When child tasks claim files_changed but side_effect_refs is empty.
+    child_files_changed: set[str] = set()
+    for v in child_outputs.values():
+        if isinstance(v, dict):
+            fcs = v.get("files_changed", []) or []
+            for fc in fcs:
+                if isinstance(fc, str):
+                    child_files_changed.add(fc)
+
+    if child_files_changed and not side_effect_refs:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-reducer-missing-side-effect-refs",
+                boundary_id=bid,
+                description=(
+                    f"child tasks for '{bid}' report {len(child_files_changed)} "
+                    f"files_changed but _reducer_side_effect_refs is empty — "
+                    f"side-effect traceability gap"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={
+                    "child_files_changed_count": len(child_files_changed),
+                    "sample_files": sorted(list(child_files_changed))[:10],
+                },
+            )
+        )
+
+    # ── 4. resume-anchor gaps ────────────────────────────────────────
+    #    When blocked/retry records or uncorroborated tasks exist but no
+    #    resume anchors are recorded — the next invocation has no stable
+    #    resume point.
+    has_blocked_or_partial = bool(blocked_retry)
+    if has_blocked_or_partial and not resume_anchors:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-reducer-missing-resume-anchors",
+                boundary_id=bid,
+                description=(
+                    f"_reducer_blocked_retry_records exist for '{bid}' "
+                    f"({len(blocked_retry)} records) but _reducer_resume_anchors "
+                    f"is absent or empty — no stable resume point for next "
+                    f"invocation"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={
+                    "blocked_retry_count": len(blocked_retry),
+                    "resume_anchor_count": len(resume_anchors),
+                },
+            )
+        )
+
+    # ── 5. repair-domain mixing ──────────────────────────────────────
+    #    When _reducer_repair_domain_separation declares is_repair_execution
+    #    but child tasks all look ordinary (no deviation markers), or vice
+    #    versa when child tasks have repair markers but domain is ordinary.
+    is_repair = repair_domain.get("is_repair_execution", False)
+    if isinstance(is_repair, bool):
+        child_has_repair_markers = any(
+            isinstance(v, dict)
+            and isinstance(v.get("executor_notes"), str)
+            and ("[harness]" in v["executor_notes"] or "repair" in v["executor_notes"].lower())
+            for v in child_outputs.values()
+        )
+        if is_repair and not child_has_repair_markers and child_outputs:
+            findings.append(
+                SemanticFinding(
+                    finding_id=f"SH-{bid}-reducer-repair-domain-mixing",
+                    boundary_id=bid,
+                    description=(
+                        f"_reducer_repair_domain_separation declares "
+                        f"is_repair_execution=True for '{bid}' but no child "
+                        f"tasks show repair markers (harness notes / repair "
+                        f"references) — repair-domain evidence appears mixed"
+                    ),
+                    severity=FindingSeverity.WARNING,
+                    diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                    contract_ref=bid,
+                    details={
+                        "declared_repair_domain": is_repair,
+                        "child_output_count": len(child_outputs),
+                        "child_repair_markers_found": child_has_repair_markers,
+                    },
+                )
+            )
 
     return findings
 

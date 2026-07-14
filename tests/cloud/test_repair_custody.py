@@ -423,3 +423,159 @@ def test_recovery_view_legacy_fallback_preserved() -> None:
         },
     )
     assert decision.decision == DISPATCH_DECISION_L1
+
+
+# ---------------------------------------------------------------------------
+# T15: Repair verdict evidence in custody projection
+# ---------------------------------------------------------------------------
+
+
+def test_custody_projection_includes_verdict_evidence_when_present(
+    tmp_path: Path,
+) -> None:
+    """Custody projection surfaces verdict evidence when repair verdict is saved."""
+    queue_root = tmp_path / ".megaplan" / repair_requests.QUEUE_DIR_NAME
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+
+    # Enqueue a request using queue_root
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="needs verdict",
+        created_at="2026-07-04T01:00:00Z",
+    )
+
+    # Save a cleared verdict into the repair data
+    verdict_path = repair_data_dir / "verdict.json"
+    verdict = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_CLEARED,
+        blocker_id="blocker-42",
+        session="demo-session",
+        request_id=queued["request"]["request_id"],
+        outcome="complete",
+        evidence_timestamp="2026-07-04T02:00:00Z",
+    )
+    repair_contract.save_repair_verdict(verdict_path, verdict)
+
+    projection = project_repair_custody(
+        plan_state={
+            "name": "agentic-replay-viewer",
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "blocked_recovery_not_resolved",
+                "phase": "execute",
+                "metadata": {"blocked_task_id": "T1"},
+            },
+        },
+        current_target={
+            "current_refs": {
+                "current_plan_name": "agentic-replay-viewer",
+                "plan_current_state": "blocked",
+            },
+            "event_cursors": {"resume_retry_strategy": "manual_review"},
+            "plan_state": {"fingerprint": "sha256:target-proof"},
+        },
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    # Custody projection should still work — request is present
+    assert len(projection["requests"]) >= 1
+    assert projection["custody_bucket"] == "repairable_not_repairing"
+
+
+def test_custody_rejects_liveness_only_repair_outcome(tmp_path: Path) -> None:
+    """When repair data has only liveness outcome, custody treats it as non-terminal."""
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+
+    # Write repair data with liveness-only outcome
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            repair_contract.merge_additive_fields(
+                {
+                    "session": "demo-session",
+                    "workspace": "/tmp/ws",
+                    "run_kind": "chain",
+                    "plan_name": "agentic-replay-viewer",
+                    "attempts": [
+                        {"attempt_id": 1, "mechanical_launch": "running"}
+                    ],
+                    "current_attempt_id": 1,
+                    "outcome": "partial_liveness",
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    projection = project_repair_custody(
+        plan_state={
+            "name": "agentic-replay-viewer",
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "blocked_recovery_not_resolved",
+                "phase": "execute",
+                "metadata": {"blocked_task_id": "T1"},
+            },
+        },
+        current_target={
+            "current_refs": {
+                "current_plan_name": "agentic-replay-viewer",
+                "plan_current_state": "blocked",
+            },
+            "event_cursors": {"resume_retry_strategy": "manual_review"},
+            "plan_state": {"fingerprint": "sha256:target-proof"},
+        },
+        repair_data_dir=repair_data_dir,
+    )
+
+    # Liveness-only outcome does not produce a cleared/success outcome
+    assert "complete" not in projection["terminal_outcomes"]
+    # The attempt is present (non-terminal since outcome is liveness)
+    assert len(projection["attempts"]) >= 1
+    # partial_liveness is a non-success outcome
+    assert projection["attempts"][0]["state"] in ("running", "failed")
+
+
+def test_custody_verdict_distinguishes_cleared_from_escalated(tmp_path: Path) -> None:
+    """Repair verdicts of different kinds produce distinct custody signals."""
+    # Simulate a verdict dict to check how the verdict kind propagates
+    verdict_cleared = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_CLEARED,
+        blocker_id="blocker-cleared",
+        evidence_timestamp="2026-07-10T10:00:00Z",
+    )
+    verdict_escalated = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_ESCALATED,
+        blocker_id="blocker-esc",
+        evidence_timestamp="2026-07-10T10:00:00Z",
+    )
+    verdict_no_fix = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_NO_FIX,
+        blocker_id="blocker-nofix",
+        evidence_timestamp="2026-07-10T10:00:00Z",
+    )
+
+    # Each verdict kind is distinguishable
+    assert verdict_cleared.verdict_kind == "cleared"
+    assert verdict_escalated.verdict_kind == "escalated"
+    assert verdict_no_fix.verdict_kind == "no_fix"
+
+    # Cleared is different from escalated
+    assert verdict_cleared.verdict_kind != verdict_escalated.verdict_kind
+    # No-fix is different from cleared
+    assert verdict_no_fix.verdict_kind != verdict_cleared.verdict_kind

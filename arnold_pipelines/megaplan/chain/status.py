@@ -70,6 +70,7 @@ class ChainStatusSnapshot:
     runner: dict[str, Any]
     pr: dict[str, Any]
     sync: dict[str, Any]
+    milestone_boundary_evidence: dict[str, Any]
     classification: ChainStatusClassification
     diagnostics: list[dict[str, Any]]
 
@@ -91,6 +92,7 @@ class ChainStatusSnapshot:
             "runner": dict(self.runner),
             "pr": dict(self.pr),
             "sync": dict(self.sync),
+            "milestone_boundary_evidence": dict(self.milestone_boundary_evidence),
             "classification": self.classification.to_dict(),
             "diagnostics": list(self.diagnostics),
         }
@@ -143,6 +145,7 @@ def build_chain_status_snapshot(
     runner = _runner_facts(operation, resource_tuple, inspect_runner=inspect_runner)
     pr = _pr_facts(chain_state)
     sync = _sync_facts(chain_state)
+    milestone_boundary_evidence = _milestone_boundary_evidence_facts(chain_state, summary)
     classification = classify_chain_status(
         operation_state=operation.state,
         launch_state=_string_or_none(metadata.get("launch_state")),
@@ -172,6 +175,7 @@ def build_chain_status_snapshot(
         runner=runner,
         pr=pr,
         sync=sync,
+        milestone_boundary_evidence=milestone_boundary_evidence,
         classification=classification,
         diagnostics=diagnostics,
     )
@@ -465,6 +469,35 @@ def _sync_facts(chain_state: ChainState | None) -> dict[str, Any]:
         "sync_state": chain_state.sync_state,
         "extra_repo_sync": list(chain_state.extra_repo_sync),
     }
+
+
+def _milestone_boundary_evidence_facts(
+    chain_state: ChainState | None,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract read-only milestone boundary evidence refs from chain state.
+
+    Evidence is drawn from chain state (producer authority) and presented
+    as a read-only view.  The summary already carries a formatted variant;
+    this helper lifts the raw contract-level refs for direct inspection.
+    """
+    if chain_state is None:
+        return {"status": "unavailable"}
+    raw = chain_state.milestone_boundary_evidence
+    if not raw:
+        return {"status": "empty"}
+    compact: dict[str, Any] = {}
+    for label, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        compact[label] = {
+            "milestone_label": entry.get("milestone_label"),
+            "milestone_index": entry.get("milestone_index"),
+            "plan_name": entry.get("plan_name"),
+            "contract_id": entry.get("contract_id"),
+            "contract_boundary_id": entry.get("contract_boundary_id"),
+        }
+    return {"status": "available", "entries": compact}
 
 
 def _metadata_path(metadata: Mapping[str, Any], key: str) -> Path | None:

@@ -1399,6 +1399,85 @@ emit("PLAN_STATUS_TARGET_SOURCE", str(target.get("authoritative_source") or ""))
 PY
 }
 
+emit_custody_structured_facts() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local tmux_live="${6:-0}"
+  local process_live="${7:-0}"
+  local active_step_pid_alive="${8:-}"
+  local chain_complete="${9:-0}"
+  local supervisor_identity="${10:-}"
+  local relaunch_command="${11:-}"
+  local needs_human="${12:-0}"
+  local repair_active="${13:-0}"
+  local watchdog_status="${14:-unknown}"
+
+  local facts
+  facts="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$supervisor_identity" "$tmux_live" "$process_live" "$active_step_pid_alive" "$watchdog_status" "$chain_complete" "$relaunch_command" "$needs_human" "$repair_active" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import json
+import shlex
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    classify_cloud_custody,
+    CUSTODY_MANAGED_RUNNING,
+    CUSTODY_COMPLETE,
+    CUSTODY_UNMANAGED_WARNING,
+    CUSTODY_BLOCKED_RELAUNCH,
+    CUSTODY_ESCALATED_UNCHANGED,
+)
+
+
+def emit(name: str, value: str) -> None:
+    print(f"{name}={shlex.quote(value)}")
+
+
+session_id = sys.argv[1]
+supervisor_identity = sys.argv[2]
+tmux_live = sys.argv[3] == "1"
+process_live = sys.argv[4] == "1"
+active_step_pid_alive = sys.argv[5] == "1"
+watchdog_status = sys.argv[6]
+chain_complete = sys.argv[7] == "1"
+relaunch_command = sys.argv[8]
+needs_human = sys.argv[9] == "1"
+repair_active = sys.argv[10] == "1"
+
+classification = classify_cloud_custody(
+    session_id=session_id,
+    supervisor_identity=supervisor_identity,
+    tmux_live=tmux_live,
+    process_live=process_live,
+    active_step_worker_pid_liveness=active_step_pid_alive,
+    watchdog_status=watchdog_status,
+    chain_complete=chain_complete,
+    relaunch_command=relaunch_command,
+    relaunch_command_available=bool(relaunch_command),
+    needs_human=needs_human,
+    repair_active=repair_active,
+)
+
+emit("PLAN_STATUS_CUSTODY_KIND", classification.custody_kind)
+emit("PLAN_STATUS_CUSTODY_SESSION_ID", classification.session_id)
+emit("PLAN_STATUS_CUSTODY_SUPERVISOR_IDENTITY", classification.supervisor_identity)
+emit("PLAN_STATUS_CUSTODY_ACTIVE_STEP_PID_LIVE", "1" if classification.active_step_worker_pid_liveness else "0")
+emit("PLAN_STATUS_CUSTODY_UNMANAGED_PROCESS", "1" if classification.custody_kind == CUSTODY_UNMANAGED_WARNING else "0")
+emit("PLAN_STATUS_CUSTODY_LIVE_PROCESS_FINGERPRINTS", ",".join(classification.live_process_fingerprints))
+emit("PLAN_STATUS_CUSTODY_RELAUNCH_COMMAND_AVAILABLE", "1" if classification.relaunch_command_available else "0")
+emit("PLAN_STATUS_CUSTODY_FAILURE_REASONS", "; ".join(classification.failure_reasons))
+emit("PLAN_STATUS_CUSTODY_EVIDENCE_TIMESTAMP", classification.evidence_timestamp)
+emit("PLAN_STATUS_CUSTODY_CONTRACT_ID", classification.contract_id)
+emit("PLAN_STATUS_CUSTODY_BOUNDARY_ID", classification.boundary_id)
+PY
+)"
+  if [[ -n "$facts" ]]; then
+    eval "$facts"
+  fi
+}
+
 adopt_unmarked_tmux_sessions() {
   local discover_bin="${DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
   [[ -f "$discover_bin" ]] || return 0
@@ -1597,6 +1676,106 @@ PY
     else
       log "status snapshot early write failed (best-effort; not counted)"
     fi
+  fi
+
+  # --- custody disagreement detection ---
+  # Compare the watchdog's custody classification (produced during session
+  # processing and recorded in the watchdog report) with each session's custody
+  # in the freshly-written status snapshot.  Disagreements are emitted as
+  # structured custody_disagreement report items so S4 consumers can act on
+  # them without re-deriving custody from scratch.
+  if [[ "$track" != "notrack" ]]; then
+    detect_custody_disagreement "$report_path" "$status_dir/cloud-status.json" || true
+  fi
+}
+
+detect_custody_disagreement() {
+  local report_path="$1"
+  local snapshot_path="$2"
+  local disagreement_output
+  disagreement_output="$(PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$report_path" "$snapshot_path" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import json
+import sys
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+snapshot_path = Path(sys.argv[2])
+
+if not report_path.exists() or not snapshot_path.exists():
+    raise SystemExit(0)
+
+try:
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+
+if not isinstance(report, dict) or not isinstance(snapshot, dict):
+    raise SystemExit(0)
+
+# Build a lookup of watchdog custody items by session from the report.
+report_items = report.get("items")
+if not isinstance(report_items, list):
+    raise SystemExit(0)
+
+watchdog_custody = {}
+for item in report_items:
+    if not isinstance(item, dict):
+        continue
+    if item.get("action") != "custody":
+        continue
+    session = item.get("session")
+    if not isinstance(session, str) or not session:
+        continue
+    summary = item.get("summary")
+    if not isinstance(summary, str):
+        continue
+    # Parse custody_kind from summary "custody_kind=...; ..."
+    kind = ""
+    for part in summary.split(";"):
+        part = part.strip()
+        if part.startswith("custody_kind="):
+            kind = part[len("custody_kind="):]
+            break
+    if kind:
+        watchdog_custody[session] = kind
+
+# Compare with each snapshot session's cloud_custody.
+snapshot_sessions = snapshot.get("sessions")
+if not isinstance(snapshot_sessions, list):
+    raise SystemExit(0)
+
+disagreements = []
+for session_entry in snapshot_sessions:
+    if not isinstance(session_entry, dict):
+        continue
+    session = session_entry.get("session")
+    if not isinstance(session, str) or not session:
+        continue
+    snapshot_custody = session_entry.get("cloud_custody")
+    if not isinstance(snapshot_custody, dict):
+        continue
+    snapshot_kind = snapshot_custody.get("custody_kind", "")
+
+    wd_kind = watchdog_custody.get(session, "")
+    if not wd_kind or not snapshot_kind:
+        continue
+
+    if wd_kind != snapshot_kind:
+        disagreements.append(
+            f"session={session} watchdog_custody={wd_kind} snapshot_custody={snapshot_kind}"
+        )
+
+if disagreements:
+    for line in disagreements:
+        print(line)
+PY
+)"
+  if [[ -n "$disagreement_output" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      log "custody_disagreement: $line"
+    done <<< "$disagreement_output"
   fi
 }
 
@@ -5620,9 +5799,9 @@ def chain_state_paths() -> list[pathlib.Path]:
     return sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
-def gh_pr_state(pr_number: int) -> tuple[str, str]:
+def gh_pr_state(pr_number: int) -> tuple[str, str, str]:
     proc = subprocess.run(
-        ["gh", "pr", "view", str(pr_number), "--json", "state,mergeCommit"],
+        ["gh", "pr", "view", str(pr_number), "--json", "state,mergeCommit,headRefOid"],
         cwd=workspace,
         check=False,
         capture_output=True,
@@ -5630,18 +5809,22 @@ def gh_pr_state(pr_number: int) -> tuple[str, str]:
         timeout=120,
     )
     if proc.returncode != 0:
-        return "", ""
+        return "", "", ""
     try:
         payload = json.loads(proc.stdout or "{}")
     except Exception:
-        return "", ""
+        return "", "", ""
     state = payload.get("state")
     merge_commit = payload.get("mergeCommit")
     oid = ""
     if isinstance(merge_commit, dict):
         raw_oid = merge_commit.get("oid")
         oid = raw_oid if isinstance(raw_oid, str) else ""
-    return (state.lower() if isinstance(state, str) else "", oid)
+    head_oid = ""
+    raw_head = payload.get("headRefOid")
+    if isinstance(raw_head, str) and raw_head:
+        head_oid = raw_head
+    return (state.lower() if isinstance(state, str) else "", oid, head_oid)
 
 
 def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> str:
@@ -5697,16 +5880,37 @@ for path in chain_state_paths():
     except Exception:
         emit("missing_pr", f"{path} has no PR number")
         raise SystemExit(0)
-    pr_state, merge_oid = gh_pr_state(pr_number_int)
+    pr_state, merge_oid, pr_head_sha = gh_pr_state(pr_number_int)
     payload["pr_state"] = pr_state or payload.get("pr_state")
     payload.setdefault("metadata", {})
+    evidence_ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     if isinstance(payload["metadata"], dict):
         payload["metadata"]["watchdog_pr_merge_reconciliation"] = {
-            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "checked_at": evidence_ts,
             "pr_number": pr_number_int,
             "pr_state": pr_state or "unknown",
             "merge_commit": merge_oid,
         }
+        # PR boundary-contract conformant evidence — queued/waiting/merged
+        # reconciliation conforms to pr_ready / pr_merged boundary contracts
+        # (pr.ready.1 / pr.merged.1) while preserving the existing
+        # watchdog_pr_merge_reconciliation metadata.
+        boundary_contract_id = "pr.merged.1" if pr_state == "merged" else "pr.ready.1"
+        boundary_evidence = {
+            "contract_id": boundary_contract_id,
+            "boundary_id": "pr_merged" if pr_state == "merged" else "pr_ready",
+            "workflow_id": "megaplan-review",
+            "pr_number": pr_number_int,
+            "pr_state": pr_state or "unknown",
+            "pr_head_sha": pr_head_sha or None,
+            "evidence_timestamp": evidence_ts,
+            "expected_state_delta": {
+                "pr_stage": "merged" if pr_state == "merged" else pr_state or "ready",
+            },
+        }
+        if pr_state == "merged":
+            boundary_evidence["merge_commit_sha"] = merge_oid or None
+        payload["metadata"]["pr_boundary_evidence"] = boundary_evidence
     try:
         path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     except Exception:
@@ -6838,6 +7042,53 @@ PY
   if [[ -n "$plan_status_env" ]]; then
     eval "$plan_status_env"
   fi
+
+  # --- custody structured facts ---
+  # Emit custody classification evidence from the same observations the
+  # watchdog already collects (active-step PID liveness, tmux/process health,
+  # chain completion, relaunch command availability).  This turns what was
+  # previously a prompt-only hint (stale_active_step text summary) into
+  # structured facts consumers can act on mechanically.
+  local custody_tmux_live custody_process_live custody_supervisor custody_watchdog_status
+  custody_tmux_live=0
+  custody_process_live=0
+  custody_supervisor=""
+  if tmux has-session -t "$session" 2>/dev/null; then
+    custody_tmux_live=1
+  fi
+  if [[ "$health" == "alive" ]]; then
+    custody_process_live=1
+  fi
+  # supervisor_identity may be present in the marker; extract it defensively.
+  custody_supervisor="$(json_field "$MARKER_DIR/$session.json" supervisor_identity 2>/dev/null || true)"
+  custody_watchdog_status="$health"
+  if [[ "$health" == "alive" ]]; then
+    custody_watchdog_status="alive"
+  elif [[ "$health" == "awaiting_pr_merge" ]]; then
+    custody_watchdog_status="awaiting_pr_merge"
+  fi
+  PLAN_STATUS_CUSTODY_KIND=""
+  PLAN_STATUS_CUSTODY_SESSION_ID=""
+  PLAN_STATUS_CUSTODY_SUPERVISOR_IDENTITY=""
+  PLAN_STATUS_CUSTODY_ACTIVE_STEP_PID_LIVE="0"
+  PLAN_STATUS_CUSTODY_UNMANAGED_PROCESS="0"
+  PLAN_STATUS_CUSTODY_LIVE_PROCESS_FINGERPRINTS=""
+  PLAN_STATUS_CUSTODY_RELAUNCH_COMMAND_AVAILABLE="0"
+  PLAN_STATUS_CUSTODY_FAILURE_REASONS=""
+  PLAN_STATUS_CUSTODY_EVIDENCE_TIMESTAMP=""
+  PLAN_STATUS_CUSTODY_CONTRACT_ID=""
+  PLAN_STATUS_CUSTODY_BOUNDARY_ID=""
+  emit_custody_structured_facts \
+    "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" \
+    "$custody_tmux_live" "$custody_process_live" \
+    "${PLAN_STATUS_ACTIVE_STEP_PID_ALIVE:-}" \
+    "${PLAN_STATUS_CHAIN_COMPLETE:-0}" \
+    "${custody_supervisor:-}" \
+    "${relaunch_command:-}" \
+    "${PLAN_STATUS_AWAITING_HUMAN:-0}" \
+    "0" \
+    "${custody_watchdog_status:-unknown}"
+
   if [[ "$run_kind" == "chain" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" && "${PLAN_STATUS_CHAIN_COMPLETE:-0}" == "1" ]]; then
     log "chain complete; skipping repair/relaunch session=$session state=done"
     report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
@@ -6851,6 +7102,14 @@ PY
     stale_active_summary="stale_active_step: plan=${PLAN_STATUS_PLAN_NAME:-unknown}; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; phase=${PLAN_STATUS_ACTIVE_STEP_PHASE:-unknown}; worker_pid=${PLAN_STATUS_ACTIVE_STEP_WORKER_PID:-none} not live"
     emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$stale_active_summary" "stale_active_step" "immediate_repair"
     repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stale_active_summary" || true
+
+    # --- stale active-step custody fact ---
+    # When worker PID is present but not alive, emit a structured custody fact
+    # alongside the existing text summary so consumers (S4 status, auditor) can
+    # classify the custody state mechanically without parsing free text.
+    report_item "$report_items" "$session" "custody" "stale_active_step" \
+      "custody_kind=${PLAN_STATUS_CUSTODY_KIND:-unknown}; active_step_pid_alive=0; worker_pid=${PLAN_STATUS_ACTIVE_STEP_WORKER_PID:-none}" \
+      "$workspace" "$remote_spec"
     return 0
   fi
   if [[ "${PLAN_STATUS_STATE_MISMATCH:-0}" == "1" ]]; then

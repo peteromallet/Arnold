@@ -1,9 +1,19 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 82,
+  "evidence_ref_count": 87,
   "evidence_refs": [
     {
-      "kind": "verification_record"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 217,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/217"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -126,13 +136,7 @@
       "kind": "verification_record"
     },
     {
-      "kind": "attempt_ids"
-    },
-    {
-      "kind": "attempt_ids"
-    },
-    {
-      "kind": "attempt_ids"
+      "kind": "verification_record"
     },
     {
       "kind": "attempt_ids"
@@ -195,13 +199,13 @@
       "kind": "attempt_ids"
     }
   ],
-  "generated_at": "2026-07-13T16:00:37.036955+00:00",
+  "generated_at": "2026-07-13T23:02:15.307193+00:00",
   "incident_id": "incident-42",
   "kind": "incident_summary",
-  "latest_actor": "immediate_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "omitted_evidence_ref_count": 18,
-  "outcome": "attempted",
+  "latest_actor": "github_sync",
+  "next_expected_event": "six_hour_auditor.diagnosis",
+  "omitted_evidence_ref_count": 23,
+  "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "repeated_attempts_without_new_evidence",
@@ -212,10 +216,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5302758f7120ee52008cfe31db3de73b599332d3723ae44ded10b2a1bce73c",
-    "last_seq": 268,
+    "digest": "sha256:fb5de21f68a75a1d2c93e9b0bc73a0cf8903a4d40ffb42e83f13acec7eba2b7f",
+    "last_seq": 460,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "incident-42: repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
+  "state": "github_sync.issue_published",
+  "summary_text": "incident-42: Published persistent problem problem-68a048c70af7 to GitHub as a new issue"
 }
