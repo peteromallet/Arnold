@@ -67,9 +67,9 @@ by `arnold_pipelines.megaplan.resident`. Each launch creates this durable set:
 - `.megaplan/plans/resident-subagents/<run-id>/run.log`
 - `.megaplan/plans/resident-subagents/<run-id>/result.md`
 
-The manifest schema is `arnold-resident-agent-run-v1`, with
+The manifest schema is `arnold-managed-agent-run-v2`, with
 `run_kind: resident_delegated_agent` and
-`custodian: arnold.megaplan.resident`. Those identity fields distinguish this
+`custodian: arnold.megaplan.managed_agent`. Those identity fields distinguish this
 surface from workflow-internal subagents. The supervisor seals stdin, starts
 Codex with `danger-full-access`, streams the complete output to `run.log`,
 captures the last response in `result.md`, and finalizes the manifest as
@@ -120,9 +120,77 @@ reuses the same nonce for the recovery attempt. HTTP 404/401/403 and malformed
 targets fail permanently; timeouts, network failures, rate limits, and server
 errors retry with bounded exponential backoff. Never re-target from a
 conversation cursor, the latest message, or agent final text. Ambiguous burst
-provenance fails the delegation before process launch. Launch retries with the
-same provenance/delegation/task key return the existing manifest; an intentional
-retry must name `retry_of_run_id`.
+provenance fails the delegation before process launch. Launch retries converge
+only when provenance, task digest, canonical description, relationship,
+aggregation role, and synthesis group all match; an intentional retry must name
+`retry_of_run_id`.
+
+### Semantic request descriptions and synthesis groups
+
+Every resident-managed launch supplies one purpose-built semantic `description`.
+The normalized, redacted value is persisted with `request_summary_line` and is
+reused in the delegated prompt, resident-agent hot context, launch
+acknowledgement, completion verification, and terminal delivery header. Raw
+inbound content remains in its immutable message record and digest; legacy
+manifests without a description may use only the explicitly labeled
+`immutable_inbound_source_fallback` path.
+
+Immutable Discord reply ancestry establishes a follow-up directly. The
+resident may also submit a high-confidence semantic judgment naming an exact
+earlier inbound `source_record_id`; the runtime revalidates conversation,
+author, ordering, and existing ancestry before persisting that inference.
+Nearby messages or lexical similarity alone never establish a relationship.
+
+Request relationships do not control delivery cardinality by themselves.
+Independent launches have independent delivery identities. A multi-agent batch
+must instead declare one explicit `synthesis_group`: contributors use
+`internal_contributor`, exactly one later run uses
+`synthesis_delivery_owner`, and that owner receives the contributors' manifest
+and result paths. A delivered group cannot acquire a second owner, while a
+newer follow-up has a new current request/delivery target even when it shares a
+relationship root.
+
+### Resident-managed follow-up and continuation
+
+Use the isolated resident seam to add work to an existing managed agent session:
+
+```bash
+python -P -m arnold_pipelines.megaplan.resident.subagent follow-up \
+  --run-id subagent-YYYYMMDD-HHMMSS-XXXXXXXX \
+  --message "The bounded follow-up message" \
+  --idempotency-key stable-caller-retry-key
+```
+
+`--message-file` is available instead of `--message`. The command requires the
+immutable `ARNOLD_RESIDENT_DELEGATION_CONTEXT` inherited by the calling resident
+process; there is deliberately no CLI flag for constructing `discord_origin` or
+overriding custody. The caller may be a later Discord message, but its validated
+conversation/channel/DM ownership must match the target session. Missing,
+malformed, cross-conversation, or ambiguous provenance fails closed.
+
+Every accepted message is written under the lineage root's `followups/`
+directory as an immutable message file plus an
+`arnold-resident-agent-followup-v1` evidence record. A child managed-run
+manifest is committed with `parent_run_id`, `lineage_root_run_id`,
+`followup_id`, `parent_manifest_path`, and the caller's inherited launch
+provenance. Repeating the same idempotency key with the same message and custody
+returns that child; reusing it with different content or custody is rejected.
+
+An active Codex CLI session is never resumed concurrently. Its continuation
+supervisor waits on the exact parent manifest and matching supervisor process,
+then resumes the uniquely recovered persistent session after the parent becomes
+terminal. A terminal parent is resumed immediately. Multiple follow-ups form a
+single locked parent/child chain, so there is one writer to the model session at
+a time; branched lineages or session IDs claimed by unrelated lineages are
+rejected as ambiguous.
+
+Acceptance is not completion. The follow-up evidence state
+`continuation_started` proves the resident committed the message and started its
+continuation supervisor. The child manifest's
+`session_dispatch.status: accepted` with evidence
+`codex_resume_process_started` proves the resume process accepted the message.
+Only the child run's ordinary terminal manifest/result and completion-delivery
+records may be used to claim model completion or Discord delivery.
 
 Startup delivery sweeps additively backfill legacy manifests only when an exact
 inbound resident record resolves the Discord snowflake. Malformed Discord hints

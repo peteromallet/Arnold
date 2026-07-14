@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, re
 
 from .config import ResidentConfig
 from .provenance import environment_with_provenance
+from .request_summary import current_request_summary_line
 from .tool_schemas import ToolCallAuditRecord, ToolResult
 from .tool_registry import ToolRegistry
 
@@ -317,10 +318,25 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
     def _messages(self, request: AgentRequest) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [{"role": "system", "content": request.system_prompt}]
         if request.hot_context:
+            current_request = request.hot_context.get("current_request")
+            summary_line = (
+                current_request.get("summary_line")
+                if isinstance(current_request, Mapping)
+                else None
+            )
             messages.append(
                 {
                     "role": "system",
-                    "content": "Hot context JSON:\n" + json.dumps(request.hot_context, sort_keys=True, default=str),
+                    "content": (
+                        current_request_summary_line(
+                            summary_line.removeprefix("Current request: ")
+                            if isinstance(summary_line, str)
+                            and summary_line.startswith("Current request: ")
+                            else None
+                        )
+                        + "\nHot context JSON:\n"
+                        + json.dumps(request.hot_context, sort_keys=True, default=str)
+                    ),
                 }
             )
         for message in request.messages:
@@ -709,8 +725,37 @@ def _durable_launch_handoff_response(
         # follow-up; never hide it behind a success acknowledgement.
         return None
     run_ids = durable_launch_run_ids(tuple(all_tool_calls))
-    rendered_ids = ", ".join(f"`{run_id}`" for run_id in run_ids)
+    launch_lines: list[str] = []
+    for record in all_tool_calls:
+        run_id = _durable_launch_run_id(record)
+        if run_id is None or run_id not in run_ids:
+            continue
+        result = record.result if isinstance(record.result, dict) else {}
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        description = str(
+            data.get("description") or record.arguments.get("description") or ""
+        ).strip()
+        role = str(
+            record.arguments.get("aggregation_role") or "synthesis_delivery_owner"
+        ).replace("_", " ")
+        launch_lines.append(
+            f"`{run_id}` ({role}) — {description}"
+            if description
+            else f"`{run_id}` ({role})"
+        )
+    rendered_ids = "; ".join(launch_lines)
     noun = "run" if len(run_ids) == 1 else "runs"
+    roles = [
+        str(record.arguments.get("aggregation_role") or "synthesis_delivery_owner")
+        for record in all_tool_calls
+        if _durable_launch_run_id(record) in run_ids
+    ]
+    owner_count = sum(role == "synthesis_delivery_owner" for role in roles)
+    delivery_sentence = (
+        "One synthesis owner will consolidate terminal results and reply automatically to this message."
+        if owner_count == 1
+        else "Each independently deliverable run will reply automatically to this message."
+    )
     metadata: dict[str, Any] = {
         "steps_executed": steps_executed,
         "tool_calls_executed": len(all_tool_calls),
@@ -721,8 +766,7 @@ def _durable_launch_handoff_response(
         metadata["model"] = model
     return AgentResponse(
         final_text=(
-            f"Launched resident-managed {noun} {rendered_ids}. "
-            "Terminal results will reply automatically to this message."
+            f"Launched resident-managed {noun} {rendered_ids}. {delivery_sentence}"
         ),
         tool_calls=tuple(all_tool_calls),
         metadata=metadata,

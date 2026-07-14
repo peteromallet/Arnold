@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from arnold_pipelines.megaplan.resident.context_tree import (
     build_context_root,
     classify_intent_packs,
+    delegation_policy_hot_context,
     read_context_node,
     search_context,
 )
@@ -104,6 +105,35 @@ def test_intent_policy_routing_selects_relevant_packs_only() -> None:
     assert "root_cause" in packs
     assert "conversation" in packs
     assert "todos" not in packs
+
+
+def test_delegation_policy_pack_preserves_decomposition_and_safety_exceptions() -> None:
+    policy = delegation_policy_hot_context()
+    sources = _sources()
+    rendered = read_context_node(sources, node_id="policies/delegation")["node"]["value"][
+        "instruction"
+    ]
+
+    assert "independent actionable sub-problems" in policy["preference"]
+    assert "one clear owner per sub-problem" in policy["ownership"]
+    assert "action-oriented task prompt" in policy["task_prompt_contract"]
+    assert "explanation, review, status" in policy["exceptions"]["non_execution"]
+    assert "trivial or non-independent fragments" in policy["exceptions"][
+        "trivial_or_non_independent"
+    ]
+    assert "never expands" in policy["exceptions"]["authorization"]
+    assert "returned durable run ID" in policy["launch_evidence"]
+    assert all(
+        fragment in rendered
+        for fragment in (
+            "independent actionable sub-problems",
+            "one clear owner per sub-problem",
+            "explanation, review, status",
+            "trivial or non-independent fragments",
+            "authorization boundaries",
+            "returned durable run ID",
+        )
+    )
 
 
 def test_empty_tool_registry_catalog_remains_a_directory() -> None:

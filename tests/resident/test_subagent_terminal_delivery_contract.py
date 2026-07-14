@@ -17,7 +17,9 @@ SOURCE_RECORD_ID = "msg_deliverycontract1"
 CONVERSATION_ID = "rconv_deliverycontract1"
 SOURCE_DISCORD_ID = "1526239110321274921"
 CONVERSATION_KEY = "discord:dm:42"
-VERIFIED_SUMMARY = "Verification outcome: success. Durable completion evidence was verified."
+VERIFIED_SUMMARY = "Durable completion evidence was verified. The verification outcome is success."
+REQUEST_SUMMARY = "Current request: original request"
+DELIVERED_SUMMARY = f"{REQUEST_SUMMARY}\n\n{VERIFIED_SUMMARY}"
 
 
 def _write_terminal_manifest(
@@ -25,6 +27,7 @@ def _write_terminal_manifest(
     *,
     status: str = "completed",
     with_verified_payload: bool = True,
+    source_content: object = "original request",
 ) -> Path:
     resident_root = tmp_path / ".megaplan/resident"
     messages = resident_root / "messages"
@@ -40,7 +43,7 @@ def _write_terminal_manifest(
                 "conversation_id": CONVERSATION_ID,
                 "direction": "inbound",
                 "discord_message_id": SOURCE_DISCORD_ID,
-                "content": "original request",
+                "content": source_content,
             }
         )
     )
@@ -141,10 +144,12 @@ def _write_terminal_manifest(
             "resident_turn_id": "turn_completion",
         }
         delivery["payload"] = {
-            "content": VERIFIED_SUMMARY,
+            "content": DELIVERED_SUMMARY,
             "content_sha256": "fixture-sha",
             "result_kind": "resident_verified_summary",
             "verification_outcome": "success",
+            "request_summary_line": REQUEST_SUMMARY,
+            "request_summary_authority": "immutable_inbound_source_record",
         }
     manifest_path = run_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest))
@@ -198,7 +203,7 @@ def test_launch_turn_can_end_before_verified_terminal_reply(tmp_path: Path) -> N
 
     assert result.delivered == 1
     assert handler_calls == 1
-    assert outbound.sent[0].content == VERIFIED_SUMMARY
+    assert outbound.sent[0].content == DELIVERED_SUMMARY
     assert outbound.sent[0].metadata["discord_reply_to_message_id"] == SOURCE_DISCORD_ID
 
 
@@ -238,7 +243,7 @@ def test_persisted_outbox_recovers_with_same_payload_and_nonce(tmp_path: Path) -
 
     assert first.retry_pending == 1
     assert second.delivered == 1
-    assert restarted_outbound.sent[0].content == VERIFIED_SUMMARY
+    assert restarted_outbound.sent[0].content == DELIVERED_SUMMARY
     assert restarted_outbound.sent[0].metadata["discord_nonce"] == first_outbound.nonce
 
 
@@ -365,3 +370,127 @@ def test_verification_and_delivery_timestamps_use_actual_transition_times(
     assert manifest["completion_delivery"]["delivered_at"].startswith(
         "2026-07-13T15:03:00"
     )
+
+
+def test_multiline_authoritative_request_is_first_delivery_line(tmp_path: Path) -> None:
+    manifest_path = _write_terminal_manifest(
+        tmp_path,
+        with_verified_payload=False,
+        source_content="implement this\nwith tests\tand docs",
+    )
+
+    async def verify(_path, _manifest):
+        return ManagedCompletionTurnResult(
+            final_text=VERIFIED_SUMMARY,
+            verification_outcome="success",
+        )
+
+    outbound = _AcceptedOutbound()
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=verify,
+        )
+    )
+
+    assert result.delivered == 1
+    assert outbound.sent[0].content.splitlines()[0] == (
+        "Current request: implement this with tests and docs"
+    )
+    payload = json.loads(manifest_path.read_text())["completion_delivery"]["payload"]
+    assert payload["content"] == outbound.sent[0].content
+    assert payload["request_summary_authority"] == "immutable_inbound_source_fallback"
+
+
+def test_missing_authoritative_request_uses_safe_delivery_fallback(tmp_path: Path) -> None:
+    _write_terminal_manifest(
+        tmp_path,
+        with_verified_payload=False,
+        source_content=None,
+    )
+
+    async def verify(_path, _manifest):
+        return ManagedCompletionTurnResult(
+            final_text=VERIFIED_SUMMARY,
+            verification_outcome="success",
+        )
+
+    outbound = _AcceptedOutbound()
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=verify,
+        )
+    )
+
+    assert result.delivered == 1
+    assert outbound.sent[0].content.splitlines()[0] == (
+        "Current request: unavailable from the authoritative inbound request"
+    )
+
+
+def test_ambiguous_authoritative_records_use_safe_delivery_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_terminal_manifest(tmp_path, with_verified_payload=False)
+    other_store = tmp_path / "other-resident-store"
+    other_messages = other_store / "messages"
+    other_messages.mkdir(parents=True)
+    (other_messages / f"{SOURCE_RECORD_ID}.json").write_text(
+        json.dumps(
+            {
+                "id": SOURCE_RECORD_ID,
+                "conversation_id": CONVERSATION_ID,
+                "direction": "inbound",
+                "discord_message_id": SOURCE_DISCORD_ID,
+                "content": "conflicting exact-record content",
+            }
+        )
+    )
+    monkeypatch.setenv("MEGAPLAN_RESIDENT_STORE_ROOT", str(other_store))
+    outbound = _AcceptedOutbound()
+
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+        )
+    )
+
+    assert result.delivered == 1
+    assert outbound.sent[0].content.splitlines()[0] == (
+        "Current request: unavailable from the authoritative inbound request"
+    )
+
+
+def test_frozen_precontract_payload_fails_closed_without_breaking_idempotency(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_terminal_manifest(tmp_path)
+    manifest = json.loads(manifest_path.read_text())
+    payload = manifest["completion_delivery"]["payload"]
+    payload.pop("request_summary_line")
+    payload.pop("request_summary_authority")
+    payload["content"] = VERIFIED_SUMMARY
+    manifest_path.write_text(json.dumps(manifest))
+    outbound = _AcceptedOutbound()
+
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+        )
+    )
+
+    delivery = json.loads(manifest_path.read_text())["completion_delivery"]
+    assert result.failed == 1
+    assert not outbound.sent
+    assert delivery["status"] == "failed"
+    assert delivery["last_error_category"] == "invalid_completion_payload"
+    assert delivery["payload"]["content"] == VERIFIED_SUMMARY

@@ -80,6 +80,8 @@ from .reply_chain import (
     decode_reply_cursor,
     reply_chain_page,
 )
+from .request_summary import current_request_summary_line
+from .query_relationship import correlate_semantic_follow_up
 from .status_tree import (
     DEFAULT_NODE_LIMIT,
     MAX_NODE_LIMIT,
@@ -90,11 +92,12 @@ from .context_tree import (
     POLICY_PACKS,
     build_context_root,
     classify_intent_packs,
+    delegation_policy_hot_context,
     read_context_node,
     search_context,
 )
 
-MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v6"
+MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v8"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
 # of staleness before treating broad status as degraded.
 _SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
@@ -264,6 +267,8 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 "backend",
                 "model",
                 "task_kind",
+                "description",
+                "request_summary_line",
                 "difficulty",
                 "task_excerpt",
                 "created_at",
@@ -271,6 +276,8 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 "finished_at",
                 "terminal_outcome",
                 "parent_run_id",
+                "query_relationship",
+                "aggregation",
             )
             if row.get(key) is not None
         } | {
@@ -736,6 +743,39 @@ class SetTimezonePreferenceInput(ToolInput):
 
 class LaunchSubagentInput(ToolInput):
     task: str
+    description: str | None = Field(
+        default=None,
+        max_length=180,
+        description=(
+            "Purpose-built one-line human-readable description shown in launch acknowledgements "
+            "and resident agent status. Supply this for every managed launch."
+        ),
+    )
+    aggregation_role: Literal[
+        "synthesis_delivery_owner", "internal_contributor"
+    ] = Field(
+        default="synthesis_delivery_owner",
+        description=(
+            "Use internal_contributor for reviewer/worker runs that must never reply to Discord; "
+            "launch exactly one synthesis_delivery_owner last to consolidate their durable results."
+        ),
+    )
+    synthesis_group: str | None = Field(
+        default=None,
+        max_length=80,
+        description=(
+            "Stable explicit batch id shared by internal contributors and their one synthesis "
+            "owner. Omit for an independently deliverable launch."
+        ),
+    )
+    follow_up_to_source_record_id: str | None = Field(
+        default=None,
+        description=(
+            "Authoritative earlier inbound msg_* record when this request is semantically a "
+            "high-confidence follow-up. Omit when independent or uncertain."
+        ),
+    )
+    follow_up_rationale: str | None = Field(default=None, max_length=300)
     task_kind: DelegatedTaskKind = "routine"
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
@@ -771,8 +811,8 @@ def _resident_core_prompt() -> str:
         "use read_context_node/search_context (or the listed python -P CLI twins) for only the branch "
         "needed. Never load a complete cloud-status JSON. conversation_history and model history are "
         "bounded excerpts; search the authoritative current conversation before historical claims.\n"
-        "Default to `launch_subagent` for any user-requested execution work; make that tool call before replying "
-        "so the launch is durable. Never invent a run ID. Do not babysit normal delegated work or Megaplan/cloud "
+        f"Delegation policy: {POLICY_PACKS['delegation']}\n"
+        "Do not babysit normal delegated work or Megaplan/cloud "
         "chains; durable agents, runners, watchdogs, and bounded repair own continuation. Babysitting should be exceptionally rare.\n"
         "The vp_special_requests_todos preview contains pending, not necessarily due, items; call "
         "`read_todo_list` with no arguments for the full retained list.\n"
@@ -859,6 +899,14 @@ class MegaplanResidentProfile:
             "non-secret reply provenance and the terminal sweep automatically replies to that exact "
             "message with the subagent's concise final summary. Delivery state and evidence are visible "
             "in `resident_agents`; surface retry, failed, or unknown delivery states honestly. "
+            "Before every managed launch, write one genuinely semantic description and reuse it as "
+            "the canonical request header. Judge whether the current request is a high-confidence "
+            "semantic follow-up to an earlier authoritative inbound record; when it is, pass that "
+            "exact msg_* id plus a short rationale in follow_up_to_source_record_id and "
+            "follow_up_rationale. Omit both when independent or uncertain—nearby text and lexical "
+            "similarity alone are insufficient. For a multi-agent synthesis batch, give every "
+            "contributor and its one final owner the same explicit synthesis_group; omit the group "
+            "for independently deliverable launches. "
             "Default to `launch_subagent` for any user-requested execution work, and make that "
             "tool call before replying so the work is durably started rather than merely acknowledged. "
             "A successful durable launch hands off the rest of the turn by default: the runtime sends "
@@ -940,7 +988,10 @@ class MegaplanResidentProfile:
     def system_prompt_for(self, request_text: str | None) -> str:
         packs = classify_intent_packs(request_text)
         rendered = "\n".join(f"[{name}] {POLICY_PACKS[name]}" for name in packs)
-        return f"{_resident_core_prompt()}\nSelected policy packs:\n{rendered}"
+        return (
+            f"{current_request_summary_line(None)}\n"
+            f"{_resident_core_prompt()}\nSelected policy packs:\n{rendered}"
+        )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
         async def bounded_live_cloud() -> dict[str, Any] | None:
@@ -1038,6 +1089,7 @@ class MegaplanResidentProfile:
                 },
                 "subagent_launch": {
                     "standard": MANAGED_RUN_SCHEMA,
+                    "delegation_policy": delegation_policy_hot_context(),
                     "codex_sandbox": "danger-full-access",
                     "stdin": "sealed",
                     "lifecycle": "detached with durable manifest, log, and result",
@@ -1378,7 +1430,7 @@ class MegaplanResidentProfile:
             ToolRegistration("complete_todo_item", "Mark a to-do item done and clear it from the list; pass a short result summary.", "write", CompleteTodoItemInput, ToolResult, self._complete_todo_item),
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
-            ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, full log, and result path. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, concise one-line description, full log, and result path. Multiple launches for one logical query have one newest synthesis/delivery owner; prior runs become internal contributors. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -2610,6 +2662,8 @@ class MegaplanResidentProfile:
         task = payload.task.strip()
         if not task:
             return _fail("task is required")
+        if not payload.description or not payload.description.strip():
+            return _fail("a purpose-built semantic description is required")
         runtime_context = current_tool_runtime_context()
         launch_origin = runtime_context.launch_origin if runtime_context is not None else None
         if (
@@ -2626,9 +2680,39 @@ class MegaplanResidentProfile:
             )
             if todo_item is not None and isinstance(todo_item.get("launch_provenance"), dict):
                 launch_origin = todo_item["launch_provenance"]
+        query_relationship = None
+        if (
+            isinstance(launch_origin, Mapping)
+            and launch_origin.get("applicability") == "applicable"
+            and self.store is not None
+        ):
+            source_record_id = str(launch_origin.get("source_record_id") or "")
+            conversation_id = str(
+                launch_origin.get("resident_conversation_id") or ""
+            )
+            conversation = self.store.load_resident_conversation(conversation_id)
+            if conversation is None:
+                if payload.follow_up_to_source_record_id:
+                    return _fail("launch relationship conversation is unavailable")
+            else:
+                try:
+                    query_relationship = correlate_semantic_follow_up(
+                        store=self.store,
+                        conversation=conversation,
+                        current_source_record_id=source_record_id,
+                        earlier_source_record_id=payload.follow_up_to_source_record_id,
+                        semantic_description=payload.description,
+                        rationale=payload.follow_up_rationale,
+                        project_root=Path(payload.project_dir or Path.cwd()),
+                    )
+                except ValueError as exc:
+                    return _fail(str(exc))
         result = await launch_subagent_task(
             self.config,
             task=task,
+            description=payload.description,
+            aggregation_role=payload.aggregation_role,
+            synthesis_group=payload.synthesis_group,
             toolsets=payload.toolsets,
             project_dir=payload.project_dir,
             backend=payload.backend,
@@ -2640,6 +2724,7 @@ class MegaplanResidentProfile:
             request_id=payload.request_id,
             launch_origin=launch_origin,
             retry_of_run_id=payload.retry_of_run_id,
+            query_relationship=query_relationship,
         )
         if not result.ok:
             return ToolResult(
@@ -2659,6 +2744,7 @@ class MegaplanResidentProfile:
                 "log_path": result.log_path,
                 "result_path": result.result_path,
                 "pid": result.pid,
+                "description": result.description,
             },
         )
 

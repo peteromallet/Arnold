@@ -382,7 +382,11 @@ def test_todo_sweep_launch_recovers_original_discord_provenance(tmp_path, monkey
     monkeypatch.setattr(profile_module, "launch_subagent_task", fake_launch)
     result = asyncio.run(
         profile._launch_subagent(
-            LaunchSubagentInput(task="scheduled work", request_id=item["id"])
+            LaunchSubagentInput(
+                task="scheduled work",
+                description="Run the scheduled work",
+                request_id=item["id"],
+            )
         )
     )
     assert result.ok

@@ -98,7 +98,12 @@ def test_launch_subagent_tool_wraps_dispatcher(tmp_path, monkeypatch) -> None:
 
     result = asyncio.run(
         profile._launch_subagent(
-            LaunchSubagentInput(task="summarize readme", toolsets="file,web", project_dir="/repo")
+            LaunchSubagentInput(
+                task="summarize readme",
+                description="Summarize the repository README",
+                toolsets="file,web",
+                project_dir="/repo",
+            )
         )
     )
     assert result.ok is True
@@ -118,7 +123,11 @@ def test_launch_subagent_tool_propagates_failure(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(profile_module, "launch_subagent_task", fake_launch)
 
-    result = asyncio.run(profile._launch_subagent(LaunchSubagentInput(task="x")))
+    result = asyncio.run(
+        profile._launch_subagent(
+            LaunchSubagentInput(task="x", description="Run the delegated task")
+        )
+    )
     assert result.ok is False
     assert result.data["returncode"] == 6
 
@@ -145,6 +154,16 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
     assert context["resident_runtime"]["subagent_launch"]["standard"] == (
         "arnold-managed-agent-run-v2"
     )
+    policy = context["resident_runtime"]["subagent_launch"]["delegation_policy"]
+    assert "independent actionable sub-problems" in policy["preference"]
+    assert "one clear owner per sub-problem" in policy["ownership"]
+    assert "action-oriented task prompt" in policy["task_prompt_contract"]
+    assert "explanation, review, status" in policy["exceptions"]["non_execution"]
+    assert "trivial or non-independent fragments" in policy["exceptions"][
+        "trivial_or_non_independent"
+    ]
+    assert "never expands" in policy["exceptions"]["authorization"]
+    assert "returned durable run ID" in policy["launch_evidence"]
 
 
 def test_hot_context_vp_todos_is_empty_when_no_pending_items(tmp_path) -> None:
@@ -258,5 +277,9 @@ def test_hot_context_vp_todos_labels_conditional_work_and_full_list_retrieval(tm
 
 def test_launch_subagent_tool_rejects_empty_task(tmp_path) -> None:
     profile = _profile(tmp_path)
-    result = asyncio.run(profile._launch_subagent(LaunchSubagentInput(task="")))
+    result = asyncio.run(
+        profile._launch_subagent(
+            LaunchSubagentInput(task="", description="Reject the empty task")
+        )
+    )
     assert result.ok is False
