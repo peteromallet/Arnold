@@ -1,0 +1,19 @@
+## Forensic Diagnosis: agent-edit-verifiable-transaction-spine
+
+### Ranked Failure Shapes
+
+**1. Evidence-Contract Gap (PRIMARY/RANK 1)** — The plan is `blocked` on T12 (`execution_blocked`, 2026-07-13T23:52:55Z). The executor exhausted its tool-calling iteration budget attempting to create `authority_receipts.py` + wire it into `session.py`. A detailed 4-step implementation plan exists in the blocking reason but was never executed. **Missing authority-receipt evidence is materially the executor's unfinished implementation description, not an external/human dependency.** The plan state records `blocked_by_prereq` with `retry_strategy: manual_review`, but the task is purely a Codex budget-exhaustion on new-module creation. No external gate, no human-required decision — the evidence gap *is* the undone code.
+
+**2. Token Drift / Unreachable Repair (RANK 2)** — The watchdog attempted repair launch at 00:20:48Z but failed with `run_id=missing manifest=missing`. The repair loop's managed-agent provenance contract expects `ARNOLD_MANAGED_AGENT_RUN_ID` and `ARNOLD_MANAGED_AGENT_MANIFEST` environment variables; neither was passed. This is a **version-skew failure** between deployed wrappers at `4847a74c` (11 commits ahead of pinned `282c89a5`) and the dirty `/workspace/arnold` runtime. The repair loop cannot take custody, making the blocked state de facto unreachable through automatic repair channels.
+
+**3. Blind Fixer Risk (RANK 3)** — The executor's partial implementation was fully reverted (no files changed in final state), but the detailed plan describes creating `authority_receipts.py` with `build_and_persist_authority_receipt()` plus a JSON schema. If a subsequent repair attempt implements from this description without running the replay-verification guard (`replayed_candidate_hash != persisted candidate_hash`), it risks stamping unverified authority receipts. The fail-closed behavior ("strip authority fields if replay != persisted candidate") must survive the implementation.
+
+**4. Guard-Weakening Risk** — The proposed fix wires `build_and_persist_authority_receipt` before `_write_response_atomic` in `record_idempotent_response`. If the receipt's `matches_persisted` check degenerates to always-true (e.g., due to hash comparison shortcut), authority receipts become decorative rather than evidentiary. The `authority/receipt.json` namespace must remain per-turn immutable and independently replay-verifiable.
+
+**5. Spinning (NEGLIGIBLE)** — Only 1 `stuck_tick`, chain-health shows `plan_signal_liveness: stalled` at 1918s. The watchdog correctly escalated to `needs_human` + Discord DM at 00:20:56Z. Not looping.
+
+**6. False Success (ABSENT)** — No task falsely passed. T1-T11 are verifiably `done` with test commands recorded.
+
+### Core Verdict
+
+The missing authority-receipt is **not an external blocker** — it is unfinished implementation work where the executor's budget ran out mid-exploration. The actual custody-break is the **managed-agent provenance mismatch** preventing the repair loop from launching, combined with a source-version skew (deployed wrappers ahead of pinned runtime). The evidence-contract gap is real but self-contained: create `authority_receipts.py` per the executor's plan, wire it, and re-run the batch. No guard weakening is acceptable — replay verification must remain hard-fail on mismatch.

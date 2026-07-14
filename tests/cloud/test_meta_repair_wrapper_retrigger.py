@@ -183,7 +183,8 @@ def test_failed_launch_record_does_not_poison_recursion(tmp_path: Path) -> None:
 def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> None:
     marker = (
         'python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" '
-        '"$BRIEF_PATH" "$REPAIR_DATA_DIR" <<'
+        '"$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" '
+        '"$META_WORKER_MANIFEST" <<'
     )
     program = _extract_meta_repair_embedded_python(marker)
     prog_path = tmp_path / "_persist.py"
@@ -219,6 +220,8 @@ def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> 
             str(resp_path),
             str(brief_path),
             str(repair_data_dir / "demo-session.repair-data.json"),
+            "",
+            "",
         ],
         capture_output=True,
         text=True,

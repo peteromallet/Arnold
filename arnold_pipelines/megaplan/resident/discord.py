@@ -1277,7 +1277,7 @@ class ResidentDiscordService:
         except Exception:
             LOGGER.exception("Resident currently-running command failed")
             rendered = (
-                "**Currently running**\n"
+                "# Currently running\n"
                 "⚠️ Canonical status is temporarily unavailable; no running-state claims were made."
             )
         for chunk in split_discord_message(rendered):

@@ -10,6 +10,7 @@ disk.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 import json
 from typing import Any
 from urllib.parse import quote, unquote
@@ -19,6 +20,8 @@ STATUS_TREE_SCHEMA = "megaplan-resident-status-tree-v1"
 DEFAULT_NODE_LIMIT = 10
 MAX_NODE_LIMIT = 25
 MAX_TEXT_CHARS = 600
+_RECENT_COMPLETED_LIMIT = MAX_NODE_LIMIT
+_RECENT_COMPLETED_WINDOW = timedelta(hours=12)
 
 
 def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -32,7 +35,22 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
         if isinstance(item, Mapping)
     ]
     active = [item for item in sessions if _root_session_needs_detail(item)]
-    completed = [item for item in sessions if not _root_session_needs_detail(item)]
+    completed = [item for item in sessions if _is_completed_session(item)]
+    # Completion is a terminal canonical status, not an inference from an idle
+    # process.  Sort by terminal receipt time so a watchdog refresh cannot make
+    # an old completion eligible for the bounded resident card.
+    # Use the snapshot's own observation clock so archived/replayed snapshots
+    # retain the truthful rolling window they had when generated.
+    snapshot_time = _parse_utc_timestamp(snapshot.get("generated_at"))
+    recent_candidates = [
+        item for item in completed
+        if _is_within_recent_completion_window(item, snapshot_time)
+    ]
+    recent_completed = sorted(
+        recent_candidates,
+        key=_completion_sort_key,
+        reverse=True,
+    )[:_RECENT_COMPLETED_LIMIT]
     return {
         "schema_version": STATUS_TREE_SCHEMA,
         "node_id": "root",
@@ -48,13 +66,17 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
         # sessions are represented by a tiny preview and remain navigable.
         "sessions": active,
         "completed_session_count": len(completed),
+        "recently_completed": recent_completed,
+        "recently_completed_omitted_count": max(0, len(recent_candidates) - len(recent_completed)),
+        # Kept for compatibility with existing hot-context consumers. New
+        # callers must use ``recently_completed`` rather than this tiny preview.
         "completed_sessions_preview": [
             {
                 key: item.get(key)
-                for key in ("node_id", "session", "display_name", "status", "latest_activity")
+                for key in ("node_id", "session", "display_name", "status", "completed_at", "latest_activity")
                 if item.get(key) is not None
             }
-            for item in completed[:3]
+            for item in recent_completed[:3]
         ],
         "navigation": {
             "cli": (
@@ -78,6 +100,50 @@ def _root_session_needs_detail(session: Mapping[str, Any]) -> bool:
         or session.get("process")
         or status not in {"complete", "completed", "finished", "success", "succeeded"}
     )
+
+
+def _is_completed_session(session: Mapping[str, Any]) -> bool:
+    """Return only canonical terminal-success session classifications."""
+
+    return str(session.get("status") or "").casefold() in {
+        "complete",
+        "completed",
+        "finished",
+        "success",
+        "succeeded",
+    }
+
+
+def _completion_sort_key(session: Mapping[str, Any]) -> str:
+    """Sort terminal completion timestamps newest first without guessing."""
+
+    completed_at = session.get("completed_at")
+    return str(completed_at).strip() if completed_at is not None else ""
+
+
+def _is_within_recent_completion_window(
+    session: Mapping[str, Any], snapshot_time: datetime | None
+) -> bool:
+    """Accept only durable terminal timestamps in the snapshot's last 12 hours."""
+
+    completed_at = _parse_utc_timestamp(session.get("completed_at"))
+    return bool(
+        snapshot_time is not None
+        and completed_at is not None
+        and timedelta() <= snapshot_time - completed_at <= _RECENT_COMPLETED_WINDOW
+    )
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, (str, datetime)):
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
 
 
 def read_cloud_status_node(
@@ -191,6 +257,7 @@ def _compact_session(session: Mapping[str, Any]) -> dict[str, Any]:
         "repairing": session.get("repairing"),
         "current_plan": session.get("current_plan"),
         "active_phase": session.get("active_phase"),
+        "completed_at": session.get("completed_at"),
         "latest_activity": session.get("latest_activity"),
         "operator_next": _bounded_text(session.get("operator_next")),
         "progress": progress,

@@ -1,0 +1,20 @@
+Now I have all evidence needed. Here's the complete FALSE SUCCESS assessment:
+
+---
+
+## FALSE SUCCESS: YES
+**First affected layer: L1 (plan state / chain JSON)**
+
+### Evidence
+
+**Plan `state.json` contradicts itself:** `"current_state":"finalized"` (claims completion) yet `"active_step":{"phase":"execute","worker_pid":1004788,"started_at":"2026-07-14T00:31:09Z","model":"deepseek:deepseek-v4-pro"}` — a live Hermes/DeepSeek worker actively executing. The state was never updated from `finalized` to `executing` when the phase restarted.
+
+**Chain JSON confirms stale completion:** `chain-06e4c6966e36.json` records `"last_state":"finalized"` with empty `"ground_truth_reconciliation":{}`. Its last reconciliation (00:06:18Z) saw `active_step=null`, but execute relaunched at 00:31:09Z — a 25-minute state lag.
+
+**Real progress provably underway:** 21 `execute_batch_*_output.json` files exist; chain log shows active writes to `batch_19/tasks_fb02525dca60.json`. 6,257 heartbeat events, 23 LLM calls, 21 completions — the chain is productively executing, not done.
+
+**Repair-data accounting inflates success:** `attempt_counter:66` but `attempts` array has only 1 real attempt. The single repair (`3ff595994e` on engine `editible-install`) genuinely unblocked the C1 gate-loop, enabling advancement through S2 into S3. However, canonical status still reports `[repairing]` (request/claim/attempt=1/0/1) despite the repair having completed on 2026-07-11 — a stale classification.
+
+**No queue/managed-repair artifacts:** No `repair-queue` directory, no `repair-progress.json` for this session, no managed-repair `completed` record. The marker JSON lacks `chain-health` and `repair-progress` projections.
+
+**Contamination path:** L1's false `finalized` claim would cause L2 (meta-repair) and L3 (auditor) to treat the chain as complete, suppressing legitimate repair dispatch for the current S3 execute stall.

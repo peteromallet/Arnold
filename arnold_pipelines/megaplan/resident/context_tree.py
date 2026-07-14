@@ -9,6 +9,7 @@ conversation message, initiative, tool schema, and policy into every turn.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 import json
 from typing import Any
 
@@ -160,11 +161,18 @@ def build_context_root(
     """Build the small always-on orientation and navigation node."""
 
     status_sessions = list((status or {}).get("sessions") or [])
-    attention = [
+    attention_candidates = [
         row for row in status_sessions
         if isinstance(row, Mapping)
         and (row.get("status") not in {None, "complete", "completed"} or row.get("repairing"))
-    ][:4]
+    ]
+    # The status tree groups sessions by classification, so taking its first
+    # four rows can hide current work behind older alphabetically ordered
+    # attention rows.  The hot root is an orientation surface: prefer live
+    # execution/repair, then the newest operator-attention evidence.  Detailed
+    # status remains available through the paginated status route.
+    attention_candidates.sort(key=_context_attention_priority, reverse=True)
+    attention = attention_candidates[:4]
     return {
         "schema_version": CONTEXT_TREE_SCHEMA,
         "node_id": "root",
@@ -183,6 +191,7 @@ def build_context_root(
                 }
                 for row in attention
             ],
+            "sessions_omitted_count": max(0, len(attention_candidates) - len(attention)),
             "running_agent_count": (agents or {}).get("running_count", 0),
             "agent_delivery_attention_count": (agents or {}).get("delivery_attention_count", 0),
             "pending_todo_count": (todos or {}).get("pending_count", 0),
@@ -216,6 +225,29 @@ def build_context_root(
         "runtime_orientation": _safe(runtime or {}, depth=1),
         "conversation_orientation": _safe(conversation or {}, depth=1),
     }
+
+
+def _context_attention_priority(row: Mapping[str, Any]) -> tuple[int, float]:
+    """Rank bounded root orientation by liveness and authoritative recency."""
+
+    status = str(row.get("status") or "").casefold()
+    live = bool(
+        row.get("process") is True
+        or row.get("tmux") is True
+        or row.get("repairing") is True
+        or status in {"running", "repairing"}
+    )
+    needs_attention = status in {"attention", "blocked"}
+    latest = row.get("latest_activity")
+    timestamp = 0.0
+    if isinstance(latest, str) and latest.strip():
+        try:
+            timestamp = datetime.fromisoformat(
+                latest.strip().replace("Z", "+00:00")
+            ).timestamp()
+        except ValueError:
+            pass
+    return (2 if live else 1 if needs_attention else 0, timestamp)
 
 
 def read_context_node(

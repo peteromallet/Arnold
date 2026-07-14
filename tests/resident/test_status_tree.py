@@ -78,6 +78,85 @@ def test_hot_context_root_excludes_raw_repair_evidence() -> None:
     assert root["sessions"][0]["children"][-1].endswith("/events")
 
 
+def test_root_exposes_recency_sorted_canonical_completed_sessions_beyond_legacy_preview() -> None:
+    snapshot = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {
+                "session": f"older-{index}",
+                "display_name": f"Older {index}",
+                "status": "complete",
+                "latest_activity": f"2026-07-01T00:0{index}:00Z",
+            }
+            for index in range(3)
+        ]
+        + [
+            {
+                "session": "repository-strategy-roadmap",
+                "display_name": "Repository strategy roadmap",
+                "status": "complete",
+                "completed_at": "2026-07-14T17:18:48Z",
+                "latest_activity": "2026-07-14T17:18:48Z",
+                "completed_count": 5,
+                "milestone_count": 5,
+                "progress": {"completed_count": 5, "milestone_count": 5},
+            },
+            {"session": "paused", "status": "paused"},
+            {"session": "failed", "status": "failed"},
+        ],
+    }
+
+    root = compact_cloud_status_snapshot(snapshot)
+
+    assert root["completed_session_count"] == 4
+    assert [row["session"] for row in root["recently_completed"]] == [
+        "repository-strategy-roadmap",
+    ]
+    strategy = root["recently_completed"][0]
+    assert strategy["progress"]["completed_count"] == 5
+    assert strategy["progress"]["milestone_count"] == 5
+
+
+def test_root_only_includes_completed_sessions_within_rolling_twelve_hours() -> None:
+    snapshot = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {"session": "inside", "status": "complete", "completed_at": "2026-07-14T06:00:01Z"},
+            {"session": "boundary", "status": "complete", "completed_at": "2026-07-14T06:00:00Z"},
+            {"session": "outside", "status": "complete", "completed_at": "2026-07-14T05:59:59Z"},
+        ],
+    }
+
+    root = compact_cloud_status_snapshot(snapshot)
+
+    assert [row["session"] for row in root["recently_completed"]] == ["inside", "boundary"]
+    assert root["recently_completed_omitted_count"] == 0
+
+
+def test_root_excludes_stale_completion_despite_fresh_watchdog_activity() -> None:
+    snapshot = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {
+                "session": "old-completion",
+                "status": "complete",
+                "completed_at": "2026-07-08T19:28:14.239295Z",
+                "latest_activity": "2026-07-14T17:59:59Z",
+            },
+            {
+                "session": "missing-terminal-receipt",
+                "status": "complete",
+                "latest_activity": "2026-07-14T17:59:59Z",
+            },
+        ],
+    }
+
+    root = compact_cloud_status_snapshot(snapshot)
+
+    assert root["completed_session_count"] == 2
+    assert root["recently_completed"] == []
+
+
 def test_status_tree_navigates_to_bounded_repair_evidence() -> None:
     snapshot = _large_snapshot()
     run = "session/workflow-boundary-contracts"
@@ -117,3 +196,38 @@ def test_status_tree_paginates_plan_history_without_full_plan_state() -> None:
     assert len(result["node"]["items"]) == 4
     assert result["node"]["next_cursor"] == 9
     assert result["node"]["total_count"] == 21
+
+
+def test_root_does_not_infer_chain_completion_from_terminal_plan_progress() -> None:
+    """Plan-level done/100% must not override the canonical session status."""
+
+    snapshot = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {
+                "session": "repository-strategy-roadmap",
+                "status": "attention",
+                "display_state": "done",
+                "chain_complete": False,
+                "completed_count": 4,
+                "milestone_count": 5,
+                "latest_activity": "2026-07-14T17:32:20Z",
+                "operator_next": "terminal plan requires chain reconciliation",
+                "progress": {
+                    "percent": 100,
+                    "plan_percent": 100,
+                    "display_state": "done",
+                    "completed_count": 4,
+                    "milestone_count": 5,
+                },
+            }
+        ],
+    }
+
+    root = compact_cloud_status_snapshot(snapshot)
+
+    assert root["recently_completed"] == []
+    assert root["completed_sessions_preview"] == []
+    assert root["completed_session_count"] == 0
+    assert root["sessions"][0]["status"] == "attention"
+    assert root["sessions"][0]["display_state"] == "done"

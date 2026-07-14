@@ -75,6 +75,15 @@ from arnold.workflow.boundary_evidence import (
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.refs import is_manifest_hash, is_ref
 from arnold.workflow.semantic_evidence import (
+    S2_CRITIQUE_ROW_ID,
+    S2_GATE_ROW_ID,
+    S2_PLAN_ROW_ID,
+    S2_PREP_ROW_ID,
+    S2_REVISE_ROW_ID,
+    S3_TIEBREAKER_CHALLENGER_ROW_ID,
+    S3_TIEBREAKER_DECISION_ROW_ID,
+    S3_TIEBREAKER_RESEARCHER_ROW_ID,
+    S3_TIEBREAKER_SYNTHESIS_ROW_ID,
     S5_FINALIZE_ARTIFACTS_ROW_ID,
     S5_FINALIZE_FALLBACK_ROW_ID,
     S5_FINAL_PROJECTION_ROW_ID,
@@ -1736,14 +1745,13 @@ def _collect_front_half_rows(
 def _front_half_row_specs(
     boundary_contracts: Sequence[BoundaryContract] = (),
 ) -> Mapping[str, tuple[str, str]]:
-    """Build row_specs mapping component_ref → (row_id, phase) from boundary contracts.
+    """Build component-ref to stable front-half row/phase mappings.
 
-    This is a neutral interface: callers inject their own BoundaryContract
-    sequences.  The generic source compiler does not import
-    ``arnold_pipelines.megaplan``.
+    Stable row IDs live in the generic ``arnold.workflow`` contract package,
+    so missing or partial caller-supplied contracts can still produce AWF246.
+    Injected contracts extend or override those stable mappings without
+    importing the Megaplan runtime or its concrete contract registry.
     """
-    if not boundary_contracts:
-        return MappingProxyType({})
     front_half_phases = frozenset(
         {
             "prep",
@@ -1758,19 +1766,33 @@ def _front_half_row_specs(
         }
     )
     row_specs: dict[str, tuple[str, str]] = {}
-    for contract in boundary_contracts:
-        if contract.phase is None or contract.row_id is None:
-            continue
-        if contract.phase.value not in front_half_phases:
-            continue
-        phase_name = contract.phase.value.upper()
+    stable_rows = (
+        (S2_PREP_ROW_ID, "prep"),
+        (S2_PLAN_ROW_ID, "plan"),
+        (S2_CRITIQUE_ROW_ID, "critique"),
+        (S2_GATE_ROW_ID, "gate"),
+        (S2_REVISE_ROW_ID, "revise"),
+        (S3_TIEBREAKER_RESEARCHER_ROW_ID, "tiebreaker_researcher"),
+        (S3_TIEBREAKER_CHALLENGER_ROW_ID, "tiebreaker_challenger"),
+        (S3_TIEBREAKER_SYNTHESIS_ROW_ID, "tiebreaker_synthesis"),
+        (S3_TIEBREAKER_DECISION_ROW_ID, "tiebreaker_decision"),
+    )
+    supplied_rows = tuple(
+        (contract.row_id, contract.phase.value)
+        for contract in boundary_contracts
+        if contract.phase is not None
+        and contract.row_id is not None
+        and contract.phase.value in front_half_phases
+    )
+    for row_id, phase in (*stable_rows, *supplied_rows):
+        phase_name = phase.upper()
         # Prefixed exports (SOURCE_*, AUTHORING_*) plus the bare export name
         # so that components like TIEBREAKER_RESEARCHER (which don't follow
         # the SOURCE_/AUTHORING_ convention) are still detected.
         for export_name in (f"SOURCE_{phase_name}", f"AUTHORING_{phase_name}", phase_name):
             row_specs[
                 f"arnold_pipelines.megaplan.workflows.components:{export_name}"
-            ] = (contract.row_id, contract.phase.value)
+            ] = (row_id, phase)
     return MappingProxyType(row_specs)
 
 

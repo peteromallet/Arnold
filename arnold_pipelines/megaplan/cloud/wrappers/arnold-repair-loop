@@ -41,7 +41,7 @@ fi
 arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
-HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
+HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
@@ -4147,6 +4147,10 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     merge_additive_fields,
     save_repair_data,
 )
+from arnold_pipelines.megaplan.managed_agent import (
+    is_managed_manifest,
+    normalize_machine_origin_provenance,
+)
 
 (
     path,
@@ -4195,6 +4199,29 @@ incident_id = str(existing.get("incident_id") or "").strip() or f"inc-{session}"
 # Preserve dispatch-level request/blocker identity from triggering env.
 dispatch_request_id = str(request_id or existing.get("request_id") or "").strip()
 dispatch_blocker_id = str(blocker_id or existing.get("blocker_id") or "").strip()
+managed_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip()
+managed_manifest = str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or "").strip()
+managed_launch_verified = False
+if managed_run_id and managed_manifest:
+    try:
+        managed_payload = json.loads(pathlib.Path(managed_manifest).read_text(encoding="utf-8"))
+        normalize_machine_origin_provenance(managed_payload.get("launch_provenance") or {})
+        managed_links = managed_payload.get("links") if isinstance(managed_payload.get("links"), dict) else {}
+        request_matches = not dispatch_request_id or managed_links.get("repair_request_id") == dispatch_request_id
+        blocker_matches = not dispatch_blocker_id or managed_links.get("blocker_id") == dispatch_blocker_id
+        managed_launch_verified = bool(
+            is_managed_manifest(managed_payload)
+            and managed_payload.get("run_id") == managed_run_id
+            and request_matches
+            and blocker_matches
+            and any(
+                item.get("status") == "running"
+                for item in managed_payload.get("status_history") or []
+                if isinstance(item, dict)
+            )
+        )
+    except (OSError, ValueError, TypeError):
+        managed_launch_verified = False
 
 payload = {
     "session": session,
@@ -4246,13 +4273,11 @@ payload = {
     "current_failure_context": failure_context_payload,
     "run_recurrence_detected": False,
     "iterations": [],
-    "outcome": "repairing",
+    "outcome": "repairing" if managed_launch_verified else "repair_launch_unverified",
     "request_id": dispatch_request_id,
     "blocker_id": dispatch_blocker_id,
 }
-managed_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip()
-managed_manifest = str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or "").strip()
-if managed_run_id:
+if managed_launch_verified:
     payload["managed_agent_run_id"] = managed_run_id
     payload["managed_agent_manifest_path"] = managed_manifest
     managed_runs = [
@@ -5909,7 +5934,7 @@ run_dev_fix_turn() {
   prepare_repair_agent_exec_env
   run_id_file="$RUN_DIR/iter${iteration}-dev-fix-managed-run-id"
   if [[ "$dispatch_kind" == "hermes" ]]; then
-    worker_cmd=(timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file="$prompt_path" --project_dir="$repair_workdir")
+    worker_cmd=(timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file=@managed-stdin@ --project_dir="$repair_workdir")
   else
     worker_cmd=(timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec --sandbox danger-full-access -c model="$dispatch_model" -c model_reasoning_effort="$reasoning_effort" -)
   fi
@@ -5925,6 +5950,11 @@ run_dev_fix_turn() {
     --route-class "repair_${dispatch_kind}${fallback_reason:+_fallback}"
     --backend "$dispatch_kind"
     --command-display "automatic repair dev-fix iteration $iteration"
+    --origin-kind repair_loop_worker
+    --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
+    --origin-component arnold-repair-loop
+    --trigger-id "$attempt_id"
+    --require-output
     --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:dev"
     --run-id-file "$run_id_file"
     --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
@@ -5938,9 +5968,7 @@ run_dev_fix_turn() {
   if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
     managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
   fi
-  if [[ "$dispatch_kind" != "hermes" ]]; then
-    managed_cmd+=(--stdin-file "$prompt_path")
-  fi
+  managed_cmd+=(--stdin-file "$prompt_path")
   managed_cmd+=(-- "${worker_cmd[@]}")
   (cd "$repair_workdir" && "${managed_cmd[@]}") >> "$LOG" 2>&1 &
   local child_pid=$!
@@ -5976,7 +6004,7 @@ run_kimi_launch_turn() {
   worker_cmd=(
     env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"
     PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent
-    --query_file="$prompt_path"
+    --query_file=@managed-stdin@
     --model="$KIMI_MODEL"
     --api_key="${KIMI_API_KEY:-}"
     --base_url="$KIMI_BASE_URL"
@@ -5996,6 +6024,12 @@ run_kimi_launch_turn() {
     --route-class repair_kimi_recovery
     --backend kimi
     --command-display "automatic repair Kimi recovery iteration $iteration"
+    --origin-kind repair_loop_worker
+    --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
+    --origin-component arnold-repair-loop
+    --trigger-id "$CURRENT_ATTEMPT_ID"
+    --require-output
+    --stdin-file "$prompt_path"
     --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:kimi"
     --run-id-file "$run_id_file"
     --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
