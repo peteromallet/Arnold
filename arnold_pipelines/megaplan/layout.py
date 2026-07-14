@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ ALLOWED_INITIATIVE_SUBDIRS = frozenset(
     {"briefs", "research", "decisions", "notes", "assets", "handoff"}
 )
 ROOT_INITIATIVE_FILES = frozenset({"README.md", "NORTHSTAR.md", "chain.yaml"})
+INITIATIVE_RETIREMENT_MARKER = ".retired"
 
 InitiativeDocKind = Literal[
     "briefs",
@@ -67,6 +69,55 @@ def initiatives_dir(repo_root: str | Path) -> Path:
 
 def initiative_root(repo_root: str | Path, slug: str) -> Path:
     return initiatives_dir(repo_root) / slugify_initiative(slug)
+
+
+def initiative_retirement_marker(repo_root: str | Path, slug: str) -> Path:
+    """Return the metadata-only retirement marker for one initiative."""
+
+    return initiative_root(repo_root, slug) / INITIATIVE_RETIREMENT_MARKER
+
+
+def is_initiative_retired(repo_root: str | Path, slug: str) -> bool:
+    """Fail closed when a canonical initiative retirement marker exists."""
+
+    marker = initiative_retirement_marker(repo_root, slug)
+    return marker.is_symlink() or marker.is_file()
+
+
+def retired_chain_marker(spec_path: str | Path, repo_root: str | Path) -> Path | None:
+    """Return the retirement marker when *spec_path* is a retired initiative chain."""
+
+    path = Path(spec_path).expanduser().resolve()
+    root = Path(repo_root).expanduser().resolve()
+    if not is_canonical_chain_spec(path, root):
+        return None
+    marker = path.parent / INITIATIVE_RETIREMENT_MARKER
+    return marker if marker.is_symlink() or marker.is_file() else None
+
+
+def read_initiative_retirement(repo_root: str | Path, slug: str) -> dict[str, Any] | None:
+    """Read JSON retirement evidence, retaining legacy key/value markers."""
+
+    marker = initiative_retirement_marker(repo_root, slug)
+    if marker.is_symlink():
+        return {"status": "retired", "marker_path": str(marker), "valid": False}
+    if not marker.is_file():
+        return None
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {"status": "retired", "marker_path": str(marker), "valid": False}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = {}
+        for line in text.splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key.strip():
+                payload[key.strip()] = value.strip()
+    if not isinstance(payload, dict):
+        payload = {}
+    return {"status": "retired", "marker_path": str(marker), **payload}
 
 
 def initiative_doc_dir(repo_root: str | Path, slug: str, kind: InitiativeDocKind) -> Path:
@@ -160,6 +211,8 @@ def initiative_metadata(repo_root: str | Path, slug: str) -> dict[str, Any]:
         ],
         "recent_docs": docs,
         "layout_policy_version": LAYOUT_POLICY_VERSION,
+        "retired": is_initiative_retired(repo_root, slug),
+        "retirement": read_initiative_retirement(repo_root, slug),
     }
 
 
@@ -186,6 +239,8 @@ def initiative_compact_index(repo_root: str | Path, *, limit: int = 50) -> list[
     for path in sorted(base.iterdir()):
         if not path.is_dir():
             continue
+        if is_initiative_retired(repo_root, path.name):
+            continue
         metadata = initiative_metadata(repo_root, path.name)
         rows.append(
             {
@@ -207,6 +262,7 @@ def search_initiatives(
     *,
     keywords_all: bool = False,
     limit: int = 25,
+    include_retired: bool = False,
 ) -> list[dict[str, Any]]:
     """Search initiatives by slug/title/description with forgiving token matching."""
     terms = _search_terms(query)
@@ -218,6 +274,8 @@ def search_initiatives(
     rows: list[dict[str, Any]] = []
     for path in sorted(base.iterdir()):
         if not path.is_dir():
+            continue
+        if not include_retired and is_initiative_retired(repo_root, path.name):
             continue
         metadata = initiative_metadata(repo_root, path.name)
         searchable = " ".join(

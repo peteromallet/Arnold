@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
+from arnold_pipelines.megaplan.chain import run_chain_cli
 from arnold_pipelines.megaplan.cli import handle_initiative
 from arnold_pipelines.megaplan.cloud.cli import _run_chain_wrapper, _run_preflight
 from arnold_pipelines.megaplan.cloud.spec import (
@@ -95,6 +98,98 @@ def test_initiative_new_scaffolds_cloud_ready_canonical_layout(tmp_path: Path) -
     assert cloud["ssh"]["host"] == "TODO_SSH_HOST"
     assert cloud["chain_session"] == "cloud-ready-project"
     assert result["next"]["launch"].endswith(f"cloud chain {chain_path} --cloud-yaml {cloud_path}")
+
+
+def test_initiative_retire_hides_discovery_and_blocks_chain_continuation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    handle_initiative(tmp_path, _initiative_args(slug="old-work", cloud=False))
+    handle_initiative(tmp_path, _initiative_args(slug="replacement", cloud=False))
+    old_root = tmp_path / ".megaplan" / "initiatives" / "old-work"
+    chain_path = old_root / "chain.yaml"
+    evidence = old_root / "handoff" / "replacement-evidence.json"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text('{"replacement":"replacement"}\n', encoding="utf-8")
+    chain_sha = hashlib.sha256(chain_path.read_bytes()).hexdigest()
+
+    result = handle_initiative(
+        tmp_path,
+        argparse.Namespace(
+            initiative_action="retire",
+            slug="old-work",
+            superseded_by="replacement",
+            reason="replacement owns the remaining work",
+            expect_chain_sha256=chain_sha,
+            evidence=[str(evidence.relative_to(tmp_path))],
+        ),
+    )
+
+    assert result["success"] is True
+    assert result["retirement"]["truthfulness"] == {
+        "completion_asserted": False,
+        "unfinished_milestones_completed": False,
+        "historical_evidence_deleted": False,
+    }
+    assert (old_root / ".retired").is_file()
+
+    listed = handle_initiative(
+        tmp_path,
+        argparse.Namespace(initiative_action="list", limit=None, include_retired=False),
+    )
+    assert [item["slug"] for item in listed["initiatives"]] == ["replacement"]
+    historical = handle_initiative(
+        tmp_path,
+        argparse.Namespace(initiative_action="list", limit=None, include_retired=True),
+    )
+    assert {item["slug"] for item in historical["initiatives"]} == {"old-work", "replacement"}
+    search = handle_initiative(
+        tmp_path,
+        argparse.Namespace(
+            initiative_action="search",
+            keywords=["old-work"],
+            keywords_all=True,
+            limit=None,
+            include_retired=False,
+        ),
+    )
+    assert "old-work" not in {item["slug"] for item in search["initiatives"]}
+    historical_search = handle_initiative(
+        tmp_path,
+        argparse.Namespace(
+            initiative_action="search",
+            keywords=["old-work"],
+            keywords_all=True,
+            limit=None,
+            include_retired=True,
+        ),
+    )
+    assert "old-work" in {item["slug"] for item in historical_search["initiatives"]}
+
+    rc = run_chain_cli(
+        tmp_path,
+        argparse.Namespace(chain_action="start", spec=str(chain_path)),
+    )
+    assert rc != 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"] == "initiative_retired"
+
+
+def test_initiative_retire_rejects_changed_chain(tmp_path: Path) -> None:
+    handle_initiative(tmp_path, _initiative_args(slug="old-work", cloud=False))
+    handle_initiative(tmp_path, _initiative_args(slug="replacement", cloud=False))
+
+    with pytest.raises(CliError, match="Chain SHA-256 changed"):
+        handle_initiative(
+            tmp_path,
+            argparse.Namespace(
+                initiative_action="retire",
+                slug="old-work",
+                superseded_by="replacement",
+                reason="replacement owns the remaining work",
+                expect_chain_sha256="0" * 64,
+                evidence=[],
+            ),
+        )
 
 
 def test_cloud_preflight_rejects_template_placeholders_without_override(
