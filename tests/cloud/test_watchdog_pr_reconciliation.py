@@ -243,7 +243,14 @@ tmux() {
         ]
     )
 
-    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    result = _run_watchdog_shell(
+        script,
+        path_prefix=tmp_path,
+        extra_env={
+            "ARNOLD_AUTONOMY": "1",
+            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
+        },
+    )
 
     assert result.returncode == 0, result.stderr
     assert advanced_flag.read_text(encoding="utf-8").strip() == "advanced"
