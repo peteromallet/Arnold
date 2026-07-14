@@ -16,6 +16,8 @@ INITIATIVES_DIR = Path(".megaplan") / "initiatives"
 LEGACY_BRIEFS_DIR = Path(".megaplan") / "briefs"
 RUNTIME_PLANS_DIR = Path(".megaplan") / "plans"
 RUNTIME_EPICS_DIR = Path(".megaplan") / "epics"
+STRATEGY_PATH = Path(".megaplan") / "STRATEGY.md"
+STRATEGY_PROJECTION_PATH = Path(".megaplan") / "strategy.projection.json"
 ALLOWED_INITIATIVE_SUBDIRS = frozenset(
     {"briefs", "research", "decisions", "notes", "assets", "handoff"}
 )
@@ -37,6 +39,24 @@ def slugify_initiative(value: str) -> str:
     if not slug:
         raise ValueError("initiative slug must not be empty")
     return slug
+
+
+def strategy_file_path(repo_root: str | Path) -> Path:
+    """Return the absolute path to ``.megaplan/STRATEGY.md``.
+
+    This is a pure path computation — it does not create directories or
+    verify that the file exists.
+    """
+    return Path(repo_root) / STRATEGY_PATH
+
+
+def strategy_projection_file_path(repo_root: str | Path) -> Path:
+    """Return the absolute path to ``.megaplan/strategy.projection.json``.
+
+    This is a pure path computation — it does not create directories or
+    verify that the file exists.
+    """
+    return Path(repo_root) / STRATEGY_PROJECTION_PATH
 
 
 def initiatives_dir(repo_root: str | Path) -> Path:
