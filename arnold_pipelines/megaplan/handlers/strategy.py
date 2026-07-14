@@ -477,7 +477,11 @@ def handle_strategy_project(
     )
     _error_diags = []
     for _d in _raw_diags:
-        _sev = _d.get("severity", "") if isinstance(_d, dict) else getattr(_d, "severity", "")
+        # StrategyDiagnostic exposes the level on the ``level`` attribute
+        # (``DiagnosticLevel`` = Literal["error", "warning"]); the older
+        # ``severity`` spelling is not present, so reading it never detected
+        # error-level diagnostics and let invalid authority through.
+        _sev = _d.get("level", "") if isinstance(_d, dict) else getattr(_d, "level", "")
         if str(_sev).lower() == "error":
             _error_diags.append(_d)
     if _error_diags:
@@ -877,11 +881,10 @@ def _require_valid_authority(
     1. **Version status must be ``current``.** The tolerant inspection surface
        (doctor/migrate) classifies legacy / missing-version / unsupported-old /
        unsupported-new / malformed states, but those are *not* valid authority
-       for strict commands. An unsupported ``schema_version`` (e.g. ``999``) is
-       reported by the parser only as a *warning* diagnostic, so a pure
-       severity filter would let it through — the explicit version check closes
-       that gap.
-    2. **No hard ``error``-severity diagnostics** from parsing/validation.
+       for strict commands. The explicit version check closes this gap
+       regardless of the diagnostic level the parser assigns to the version.
+    2. **No hard ``error``-level diagnostics** from parsing/validation
+       (``StrategyDiagnostic.level == 'error'``).
 
     A no-op for clean, current documents.
     """
@@ -902,9 +905,9 @@ def _require_valid_authority(
     )
     for diag in raw_diags:
         sev = (
-            diag.get("severity", "")
+            diag.get("level", "")
             if isinstance(diag, dict)
-            else getattr(diag, "severity", "")
+            else getattr(diag, "level", "")
         )
         if str(sev).lower() == "error":
             msg = (

@@ -358,31 +358,37 @@ class TestCurrentVersion:
 
 
 class TestLegacyVersion:
-    """Legacy recognized versions generate upgrade actions."""
+    """Unrecognized older versions (not in LEGACY_VERSIONS) are blocked.
 
-    def test_legacy_version_needs_migration(self, tmp_path: Path) -> None:
+    The settled gate is that unknown pre-v1 versions have no safe, reversible
+    upgrade path, so the inspector reports an error/blocker and never proposes
+    an upgrade action. The apply path must therefore refuse to write.
+    """
+
+    def test_legacy_version_is_blocked(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         _write_strategy(repo, _minimal_strategy(schema_version="megaplan-strategy-v0"))
         report = inspect_strategy_migration(repo)
-        assert report.status == "needs-migration"
         assert report.version_status == "unsupported-old"  # v0 not in LEGACY_VERSIONS
+        assert report.status == "blocked"
+        assert report.safe_to_apply is False
 
-    def test_legacy_version_has_legacy_finding(self, tmp_path: Path) -> None:
+    def test_legacy_version_has_error_finding(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         _write_strategy(repo, _minimal_strategy(schema_version="megaplan-strategy-v0"))
         report = inspect_strategy_migration(repo)
         findings = [f for f in report.findings
                      if f.kind == FINDING_VERSION_UNSUPPORTED_OLD]
         assert len(findings) == 1
-        assert findings[0].severity == "warning"
+        assert findings[0].severity == "error"
 
-    def test_legacy_version_has_upgrade_action(self, tmp_path: Path) -> None:
+    def test_legacy_version_has_blocker_and_no_upgrade_action(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         _write_strategy(repo, _minimal_strategy(schema_version="megaplan-strategy-v0"))
         report = inspect_strategy_migration(repo)
+        assert len(report.blockers) >= 1
         actions = [a for a in report.proposed_actions if a.kind == ACTION_UPGRADE_VERSION]
-        assert len(actions) == 1
-        assert actions[0].safe is True
+        assert actions == []
 
 
 class TestMissingVersion:

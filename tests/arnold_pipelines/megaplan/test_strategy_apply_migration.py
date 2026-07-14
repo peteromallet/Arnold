@@ -194,6 +194,9 @@ class TestComputeApplyPlan:
             write_strategy(repo, content)
             plan = compute_apply_plan(repo)
             assert plan.do_version_upgrade is False
+            # Unsupported versions are blockers — apply must refuse.
+            assert plan.blocked is True
+            assert plan.has_rewrites is False
 
     def test_legacy_strategy_scheduled(self, tmp_path: Path, monkeypatch):
         # ``legacy`` is unreachable with the shipped (empty) LEGACY_VERSIONS;
@@ -255,7 +258,10 @@ class TestApplyVersionUpgrade:
     def test_unsupported_old_not_upgraded(self, tmp_path: Path):
         spath = write_strategy(tmp_path, UNSUPPORTED_OLD_STRATEGY)
         result = apply_strategy_migration(tmp_path)
+        # Unsupported-old is a blocker — apply must refuse without writes.
         assert result["applied"] is False
+        assert result["blocked"] is True
+        assert result["success"] is False
         assert "schema_version: -5" in spath.read_text()
 
 

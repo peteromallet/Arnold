@@ -475,29 +475,31 @@ def _classify_version_status(
 
     if version_status == "unsupported-old":
         # Older-than-current version that is not in the recognized legacy set.
-        # The *inspector* is the tolerant surface: it warns and *proposes* an
-        # upgrade so the user can see what is available. The actual apply path
-        # (compute_apply_plan / apply_strategy_migration) is the separate
-        # safety gate that decides which rewrites are truly reversible; it may
-        # refuse to execute for versions it cannot safely upgrade. Proposing
-        # here never performs a write, so it does not violate the "no unknown
-        # pre-v1 upgrades" guard, which applies to the mutation surface.
+        # There is no safe, reversible, in-place upgrade path for an
+        # unrecognized older version — it might encode semantics this tool does
+        # not understand. The inspector therefore reports a hard error and a
+        # blocker. Because the apply path (compute_apply_plan /
+        # apply_strategy_migration) refuses whenever *any* blocker is present,
+        # this guarantees ``strategy migrate --apply`` performs no writes for
+        # such versions. This is consistent with the settled gate: no unknown
+        # pre-v1 upgrades.
         msg = (
             f"Strategy schema version '{schema_version}' is older than "
             f"the current version '{CURRENT_SCHEMA_VERSION}' and is not "
-            f"in the recognized legacy set. An upgrade to "
-            f"'{CURRENT_SCHEMA_VERSION}' is proposed for review; manual "
-            f"verification is recommended before applying."
+            f"in the recognized legacy set, so it cannot be safely upgraded."
         )
         findings.append(
             MigrationFinding(
                 kind=FINDING_VERSION_UNSUPPORTED_OLD,
-                severity="warning",
+                severity="error",
                 message=msg,
                 source=path_str,
             )
         )
-        _add_upgrade_action(actions, path_str, schema_version)
+        blockers.append(
+            f"Strategy version '{schema_version}' is an unrecognized older "
+            f"version \u2014 no safe migration path; reconcile manually."
+        )
         return
 
     if version_status == "unsupported-new":
