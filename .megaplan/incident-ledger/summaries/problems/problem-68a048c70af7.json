@@ -1,19 +1,19 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-14T01:41:46.232137+00:00",
+  "generated_at": "2026-07-14T07:41:54.661353+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "incident-42"
   ],
   "next_review_ts": null,
-  "occurrence_count": 41,
-  "owner_actor": "immediate_repair",
+  "occurrence_count": 42,
+  "owner_actor": "github_sync",
   "problem_id": "problem-68a048c70af7",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
-    "last_seq": 268,
+    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
+    "last_seq": 353,
     "projection": "problems"
   },
   "status": "open",

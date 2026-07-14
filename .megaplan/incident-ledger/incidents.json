@@ -1347,7 +1347,7 @@
       ],
       "deadline_ts": null,
       "decisions": [],
-      "event_count": 300,
+      "event_count": 306,
       "events": [
         {
           "actor": "meta_repair",
@@ -8264,10 +8264,412 @@
           "timestamp": "2026-07-13T16:31:50.078354+00:00",
           "trigger": null,
           "type": "repair_attempt"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-387aa99d64fb",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 2,
+              "problem_id": "problem-6a1177eb343e",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 542,
+              "body_sha256": "sha256:ec9b8b58de6565a13860988520fdd3e803a3771d99b2fb507fb6fad048b235bd",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-demo-session",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 349,
+              "session_id": "demo-session"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 239,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/239"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-6a1177eb343e",
+          "seq": 354,
+          "session_id": null,
+          "summary": "Published persistent problem problem-6a1177eb343e to GitHub as a new issue",
+          "timestamp": "2026-07-14T01:52:54.291278+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-f2768debcaf9",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 234,
+              "problem_id": "problem-6e386e382223",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 549,
+              "body_sha256": "sha256:c06540abe034b34df3c4d2824e5cc60d8d142e729ef2a16d315737aa51e43179",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-demo-session",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 349,
+              "session_id": "demo-session"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 240,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/240"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-6e386e382223",
+          "seq": 355,
+          "session_id": null,
+          "summary": "Published persistent problem problem-6e386e382223 to GitHub as a new issue",
+          "timestamp": "2026-07-14T01:52:57.559557+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-bbb2cd94444a",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 3,
+              "problem_id": "problem-6eaee57d9632",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 542,
+              "body_sha256": "sha256:f340e955ce59541f6a97059d304c1ca29c9085305de7a78121b068fa66baeb04",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-demo-session",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 349,
+              "session_id": "demo-session"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 241,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/241"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-6eaee57d9632",
+          "seq": 356,
+          "session_id": null,
+          "summary": "Published persistent problem problem-6eaee57d9632 to GitHub as a new issue",
+          "timestamp": "2026-07-14T01:53:00.931749+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-f2897fec4fc6",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 57,
+              "problem_id": "problem-9e338df241c5",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 548,
+              "body_sha256": "sha256:22e5771cbf1ca972cd965cadd5b51a9cb209cf874820cb94e16ca3cc3964c1e2",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-demo-session",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 349,
+              "session_id": "demo-session"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 243,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/243"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-9e338df241c5",
+          "seq": 358,
+          "session_id": null,
+          "summary": "Published persistent problem problem-9e338df241c5 to GitHub as a new issue",
+          "timestamp": "2026-07-14T01:53:07.412733+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-ab103470a103",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 2,
+              "problem_id": "problem-b3c4cc0b2599",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 547,
+              "body_sha256": "sha256:8d6fece4ed6be32d4833de30e490e75b2cd20ac76ba0471c5419a348f4b2658d",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-demo-session",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 349,
+              "session_id": "demo-session"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 244,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/244"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-b3c4cc0b2599",
+          "seq": 359,
+          "session_id": null,
+          "summary": "Published persistent problem problem-b3c4cc0b2599 to GitHub as a new issue",
+          "timestamp": "2026-07-14T01:53:10.512398+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-83f4aed7ae05",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 2,
+              "problem_id": "problem-c7e2d7ad616b",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 542,
+              "body_sha256": "sha256:d73a2d19cac133a3fe555cdd94c539fdb0cd531159f7c6705263a10a0890c6c9",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-demo-session",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 349,
+              "session_id": "demo-session"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 245,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/245"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-c7e2d7ad616b",
+          "seq": 360,
+          "session_id": null,
+          "summary": "Published persistent problem problem-c7e2d7ad616b to GitHub as a new issue",
+          "timestamp": "2026-07-14T01:53:13.839722+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
         }
       ],
       "evidence_refs": [
         {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 239,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/239"
+        },
+        {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 240,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/240"
+        },
+        {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 241,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/241"
+        },
+        {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 243,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/243"
+        },
+        {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 244,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/244"
+        },
+        {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 245,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/245"
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
+        },
+        {
           "blocker_id": "",
           "kind": "managed_agent_execution",
           "manifest_path": "/workspace/arnold/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-5530a94b5363c83be3c3/manifest.json",
@@ -8296,6 +8698,36 @@
           "run_id": "managed-automatic-meta-repair-f4dea26284a43b01a2eb"
         },
         {
+          "body_bytes": 542,
+          "body_sha256": "sha256:d73a2d19cac133a3fe555cdd94c539fdb0cd531159f7c6705263a10a0890c6c9",
+          "kind": "github_sync.publication_payload"
+        },
+        {
+          "body_bytes": 542,
+          "body_sha256": "sha256:ec9b8b58de6565a13860988520fdd3e803a3771d99b2fb507fb6fad048b235bd",
+          "kind": "github_sync.publication_payload"
+        },
+        {
+          "body_bytes": 542,
+          "body_sha256": "sha256:f340e955ce59541f6a97059d304c1ca29c9085305de7a78121b068fa66baeb04",
+          "kind": "github_sync.publication_payload"
+        },
+        {
+          "body_bytes": 547,
+          "body_sha256": "sha256:8d6fece4ed6be32d4833de30e490e75b2cd20ac76ba0471c5419a348f4b2658d",
+          "kind": "github_sync.publication_payload"
+        },
+        {
+          "body_bytes": 548,
+          "body_sha256": "sha256:22e5771cbf1ca972cd965cadd5b51a9cb209cf874820cb94e16ca3cc3964c1e2",
+          "kind": "github_sync.publication_payload"
+        },
+        {
+          "body_bytes": 549,
+          "body_sha256": "sha256:c06540abe034b34df3c4d2824e5cc60d8d142e729ef2a16d315737aa51e43179",
+          "kind": "github_sync.publication_payload"
+        },
+        {
           "data": {},
           "kind": "verification_record"
         },
@@ -9478,17 +9910,95 @@
         {
           "data": {},
           "kind": "verification_record"
+        },
+        {
+          "incident_id": "inc-demo-session",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 349,
+          "session_id": "demo-session"
+        },
+        {
+          "incident_id": "inc-demo-session",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 349,
+          "session_id": "demo-session"
+        },
+        {
+          "incident_id": "inc-demo-session",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 349,
+          "session_id": "demo-session"
+        },
+        {
+          "incident_id": "inc-demo-session",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 349,
+          "session_id": "demo-session"
+        },
+        {
+          "incident_id": "inc-demo-session",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 349,
+          "session_id": "demo-session"
+        },
+        {
+          "incident_id": "inc-demo-session",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 349,
+          "session_id": "demo-session"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 2,
+          "problem_id": "problem-6a1177eb343e",
+          "recurred_after_fix": false,
+          "status": "open"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 2,
+          "problem_id": "problem-b3c4cc0b2599",
+          "recurred_after_fix": false,
+          "status": "open"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 2,
+          "problem_id": "problem-c7e2d7ad616b",
+          "recurred_after_fix": false,
+          "status": "open"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 234,
+          "problem_id": "problem-6e386e382223",
+          "recurred_after_fix": false,
+          "status": "open"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 3,
+          "problem_id": "problem-6eaee57d9632",
+          "recurred_after_fix": false,
+          "status": "open"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 57,
+          "problem_id": "problem-9e338df241c5",
+          "recurred_after_fix": false,
+          "status": "open"
         }
       ],
       "first_seq": 5,
       "first_timestamp": "2026-07-03T21:24:24.562997+00:00",
       "incident_id": "inc-demo-session",
-      "last_seq": 349,
-      "last_timestamp": "2026-07-13T16:31:50.078354+00:00",
-      "latest_actor": "meta_repair",
-      "latest_kind": "incident.repair_attempt",
-      "next_expected_event": "repair_attempt.verification",
-      "outcome": "attempted",
+      "last_seq": 360,
+      "last_timestamp": "2026-07-14T01:53:13.839722+00:00",
+      "latest_actor": "github_sync",
+      "latest_kind": "incident.github_sync.issue_published",
+      "next_expected_event": "six_hour_auditor.diagnosis",
+      "outcome": "published",
       "placeholders": {
         "install_freshness": "unknown",
         "recurrence": "repeated_attempts_without_new_evidence",
@@ -9505,8 +10015,8 @@
       "session_ids": [
         "demo-session"
       ],
-      "state": "repair_attempt",
-      "summary": "managed automatic_meta_repair execution started"
+      "state": "github_sync.issue_published",
+      "summary": "Published persistent problem problem-c7e2d7ad616b to GitHub as a new issue"
     },
     {
       "actions": [],
@@ -9515,6 +10025,26 @@
           "attempt_id": "repository-strategy-roadmap-partial_liveness-1",
           "event_seqs": [
             350
+          ],
+          "latest_outcome": "partial_liveness",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "repository-strategy-roadmap-partial_liveness-2",
+          "event_seqs": [
+            361
+          ],
+          "latest_outcome": "partial_liveness",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "repository-strategy-roadmap-partial_liveness-3",
+          "event_seqs": [
+            362
           ],
           "latest_outcome": "partial_liveness",
           "types": [
@@ -9706,7 +10236,7 @@
           "seq": 352
         }
       ],
-      "event_count": 3,
+      "event_count": 6,
       "events": [
         {
           "actor": "immediate_repair",
@@ -10004,12 +10534,151 @@
           "timestamp": "2026-07-14T01:52:44.749571+00:00",
           "trigger": null,
           "type": "six_hour_auditor.audit_complete"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-3a52c6d5b316",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 4,
+              "problem_id": "problem-72f87afd3954",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 686,
+              "body_sha256": "sha256:059d0c9770073c265285d1dffb90daab84709b0b0e17dc69bf08d35d51e01283",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-repository-strategy-roadmap",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 352,
+              "session_id": "repository-strategy-roadmap"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 242,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/242"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-72f87afd3954",
+          "seq": 357,
+          "session_id": null,
+          "summary": "Published persistent problem problem-72f87afd3954 to GitHub as a new issue",
+          "timestamp": "2026-07-14T01:53:04.145985+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "repository-strategy-roadmap-partial_liveness-2",
+          "deadline_ts": null,
+          "event_id": "ira-31daa167dfd9",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "partial_liveness",
+          "parent": [],
+          "problem_id": null,
+          "seq": 361,
+          "session_id": "repository-strategy-roadmap",
+          "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/repository-strategy-roadmap/Arnold",
+          "timestamp": "2026-07-14T03:12:35.931376+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "repository-strategy-roadmap-partial_liveness-3",
+          "deadline_ts": null,
+          "event_id": "ira-a47bf8f38000",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "partial_liveness",
+          "parent": [],
+          "problem_id": null,
+          "seq": 362,
+          "session_id": "repository-strategy-roadmap",
+          "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/repository-strategy-roadmap/Arnold",
+          "timestamp": "2026-07-14T05:14:01.379484+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
         }
       ],
       "evidence_refs": [
         {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 242,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/242"
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
+        },
+        {
+          "body_bytes": 686,
+          "body_sha256": "sha256:059d0c9770073c265285d1dffb90daab84709b0b0e17dc69bf08d35d51e01283",
+          "kind": "github_sync.publication_payload"
+        },
+        {
           "data": {},
           "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "incident_id": "inc-repository-strategy-roadmap",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 352,
+          "session_id": "repository-strategy-roadmap"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 4,
+          "problem_id": "problem-72f87afd3954",
+          "recurred_after_fix": false,
+          "status": "open"
         },
         {
           "kind": "incident_brief",
@@ -10075,12 +10744,12 @@
       "first_seq": 350,
       "first_timestamp": "2026-07-13T23:51:33.042976+00:00",
       "incident_id": "inc-repository-strategy-roadmap",
-      "last_seq": 352,
-      "last_timestamp": "2026-07-14T01:52:44.749571+00:00",
-      "latest_actor": "six_hour_auditor",
-      "latest_kind": "incident.six_hour_auditor.audit_complete",
-      "next_expected_event": "github_sync.publish",
-      "outcome": "escalated",
+      "last_seq": 362,
+      "last_timestamp": "2026-07-14T05:14:01.379484+00:00",
+      "latest_actor": "immediate_repair",
+      "latest_kind": "incident.repair_attempt",
+      "next_expected_event": "repair_attempt.verification",
+      "outcome": "partial_liveness",
       "placeholders": {
         "install_freshness": "unknown",
         "recurrence": "unknown",
@@ -10092,8 +10761,8 @@
       "session_ids": [
         "repository-strategy-roadmap"
       ],
-      "state": "six_hour_auditor.audit_complete",
-      "summary": "Audit found 1 blocking layer(s) for inc-repository-strategy-roadmap: github_sync:github_sync_publish_due."
+      "state": "repair_attempt",
+      "summary": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/repository-strategy-roadmap/Arnold"
     },
     {
       "actions": [],
@@ -10346,7 +11015,7 @@
       "claims": [],
       "deadline_ts": null,
       "decisions": [],
-      "event_count": 41,
+      "event_count": 42,
       "events": [
         {
           "actor": "meta_repair",
@@ -11618,10 +12287,82 @@
           "timestamp": "2026-07-07T15:14:18.225686+00:00",
           "trigger": null,
           "type": "repair_attempt"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-4d582c138b9a",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 41,
+              "problem_id": "problem-68a048c70af7",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 573,
+              "body_sha256": "sha256:de1e4ea22b2ccbfd5062f5e51aef03d8e09b018a0f650a79de9a46dd4b1beba7",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "incident-42",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 268,
+              "session_id": "demo-session"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 238,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/238"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-68a048c70af7",
+          "seq": 353,
+          "session_id": null,
+          "summary": "Published persistent problem problem-68a048c70af7 to GitHub as a new issue",
+          "timestamp": "2026-07-14T01:52:51.108082+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
         }
       ],
       "evidence_refs": [
         {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 238,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/238"
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
+        },
+        {
+          "body_bytes": 573,
+          "body_sha256": "sha256:de1e4ea22b2ccbfd5062f5e51aef03d8e09b018a0f650a79de9a46dd4b1beba7",
+          "kind": "github_sync.publication_payload"
+        },
+        {
           "data": {
             "recorded_at": "2026-07-02T20:00:00+00:00"
           },
@@ -12112,17 +12853,30 @@
             "attempt-demo-0001"
           ],
           "kind": "attempt_ids"
+        },
+        {
+          "incident_id": "incident-42",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 268,
+          "session_id": "demo-session"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 41,
+          "problem_id": "problem-68a048c70af7",
+          "recurred_after_fix": false,
+          "status": "open"
         }
       ],
       "first_seq": 1,
       "first_timestamp": "2026-07-03T20:59:15.263244+00:00",
       "incident_id": "incident-42",
-      "last_seq": 268,
-      "last_timestamp": "2026-07-07T15:14:18.225686+00:00",
-      "latest_actor": "immediate_repair",
-      "latest_kind": "incident.repair_attempt",
-      "next_expected_event": "repair_attempt.verification",
-      "outcome": "attempted",
+      "last_seq": 353,
+      "last_timestamp": "2026-07-14T01:52:51.108082+00:00",
+      "latest_actor": "github_sync",
+      "latest_kind": "incident.github_sync.issue_published",
+      "next_expected_event": "six_hour_auditor.diagnosis",
+      "outcome": "published",
       "placeholders": {
         "install_freshness": "unknown",
         "recurrence": "repeated_attempts_without_new_evidence",
@@ -12134,29 +12888,11 @@
       "session_ids": [
         "demo-session"
       ],
-      "state": "repair_attempt",
-      "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
+      "state": "github_sync.issue_published",
+      "summary": "Published persistent problem problem-68a048c70af7 to GitHub as a new issue"
     }
   ],
   "integrity": [
-    {
-      "actual": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
-      "code": "index_divergence",
-      "expected": "sha256:0abba1e66f12e6d064ce037cf10272d4750800ec8df94edca116821731536c59",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9' != 'sha256:0abba1e66f12e6d064ce037cf10272d4750800ec8df94edca116821731536c59'",
-      "projection": "incidents",
-      "recommendation": "system.integrity_repair",
-      "severity": "error"
-    },
-    {
-      "actual": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
-      "code": "index_divergence",
-      "expected": "sha256:0abba1e66f12e6d064ce037cf10272d4750800ec8df94edca116821731536c59",
-      "message": "problems projection source metadata diverged for digest: 'sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9' != 'sha256:0abba1e66f12e6d064ce037cf10272d4750800ec8df94edca116821731536c59'",
-      "projection": "problems",
-      "recommendation": "system.integrity_repair",
-      "severity": "error"
-    },
     {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
@@ -12177,10 +12913,10 @@
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:0abba1e66f12e6d064ce037cf10272d4750800ec8df94edca116821731536c59",
-    "event_count": 352,
-    "journal_line_count": 352,
-    "last_seq": 352,
+    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
+    "event_count": 362,
+    "journal_line_count": 362,
+    "last_seq": 362,
     "malformed_line_count": 0
   }
 }
