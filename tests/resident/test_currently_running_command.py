@@ -339,6 +339,42 @@ def test_render_includes_recent_completed_strategy_chain_with_terminal_evidence(
     assert "## 🤖 Managed agents · 0 live —" in rendered
 
 
+def test_render_keeps_terminal_plan_without_chain_completion_in_attention() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "generated_at": "2026-07-14T18:00:00Z",
+                "sessions": [
+                    {
+                        "session": "repository-strategy-roadmap",
+                        "status": "attention",
+                        "display_state": "done",
+                        "chain_complete": False,
+                        "latest_activity": "2026-07-14T17:32:20Z",
+                        "operator_next": "terminal plan requires chain reconciliation",
+                        "progress": {
+                            "percent": 100,
+                            "plan_percent": 100,
+                            "display_state": "done",
+                            "completed_count": 4,
+                            "milestone_count": 5,
+                        },
+                    }
+                ],
+                "recently_completed": [],
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "## ⚠️ Needs attention · 1 —" in rendered
+    assert "**repository-strategy-roadmap**" in rendered
+    assert "`done` · 100% overall · 100% in-flight plan · ⚠️ attention" in rendered
+    assert "terminal plan requires chain reconciliation" in rendered
+    assert "## Recently completed · 0 shown —" in rendered
+    assert "`completed`" not in rendered
+
+
 def test_recent_completed_is_bounded_and_rejects_nonterminal_rows() -> None:
     rows = [
         {
