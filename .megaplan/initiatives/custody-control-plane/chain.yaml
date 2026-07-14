@@ -8,6 +8,11 @@ anchors:
   north_star: NORTHSTAR.md
 
 launch_preconditions:
+  - name: Immutable chain execution binding guard is installed and attested
+    path: .megaplan/initiatives/custody-control-plane/evidence/chain-execution-binding-receipt.json
+    check:
+      kind: contains_text
+      text: 'arnold.megaplan.chain_execution_binding.v1'
   - name: Run Authority three-milestone source lineage exists for reconciliation
     path: .megaplan/initiatives/runauthority-epic/chain.yaml
     check:
@@ -18,6 +23,10 @@ launch_preconditions:
     check:
       kind: contains_text
       text: 'arnold.megaplan.chain_completion_manifest.v1'
+  - name: Workflow Boundary Contracts merge result has current completion proof
+    kind: chain_completed
+    chain: .megaplan/initiatives/workflow-boundary-contracts/chain.yaml
+    require_manifest: true
 
 milestones:
   - label: m5-run-authority-receipt-reconciliation-and-retirement
@@ -58,9 +67,15 @@ milestones:
     prep_clarify: false
     prep_direction: >-
       Start only from M5's accepted Run Authority receipts, zero-divergence
-      verification, regenerated manifest, and retirement attestation. Verify
-      the current WBC completion manifest, proof/support maps, landed revisions,
-      and ownership record; freeze only residual gaps. Capture deterministic
+      verification, regenerated manifest, and retirement attestation. Obtain
+      the exact WBC merge commit from the operator after the in-progress merge;
+      never infer it from a topic branch, working-tree content, or latest ref.
+      Verify that commit against the current WBC completion manifest,
+      proof/support maps, installed/runtime revisions, and ownership record;
+      generate the maintained boundary inventory by joining WBC declarations to
+      every discovered producer, writer, consumer, wrapper, migration, and
+      runtime trace. A support-manifest label or schema test is not adoption
+      proof. Capture deterministic
       Transaction Spine and Strategy Roadmap replay fixtures, exact repair
       signatures, legacy paths, and honest unknown baselines for projection I/O,
       compaction, and productive-versus-replayed work. Do not implement a second
@@ -70,9 +85,39 @@ milestones:
       - m5-run-authority-receipt-reconciliation-and-retirement
     notes: >-
       Difficulty 5/5; partnered-5/full/high @codex +prep. Read-only contract and
-      inventory freeze. M6 must fail closed if M5 evidence, WBC's current
-      content-addressed manifest, or the approval record is absent or invalid;
-      its manually reviewed handoff gates every implementation milestone.
+      inventory freeze. M6 must fail closed if the operator-supplied WBC merge
+      commit is absent, if M5 evidence or WBC's content-addressed manifest does
+      not bind that commit, if any boundary row is unexplained, or if the
+      approval record is absent or invalid; its manually reviewed handoff gates
+      every implementation milestone.
+
+  - label: m6a-wbc-transactional-ledger-foundation
+    idea: .megaplan/initiatives/custody-control-plane/briefs/m6a-wbc-transactional-ledger-foundation.md
+    branch: megaplan/custody-control-plane/m6a-wbc-transactional-ledger-foundation
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_clarify: false
+    prep_direction: >-
+      Start only from M6's exact final landed WBC revision/runtime vector,
+      generated zero-exemption boundary inventory, and accepted approval record.
+      The audited candidate ledger is schema-only: implement the WBC-owned
+      transactional store/API, durable start-before-dispatch and exactly-one-
+      terminal invariants, outbox/reconciliation semantics, process-safe
+      adapters, enforced payload privacy/retention/encryption, and deterministic
+      crash-resumable migrations. Preserve the Run Authority/WBC/Custody split.
+      Do not mark producer adoption complete merely because the substrate or
+      support manifest exists.
+    depends_on:
+      - m6-authority-contract-and-residual-inventory
+    notes: >-
+      Difficulty 5/5; partnered-5/thorough/high @codex +prep. This is the first
+      implementation milestone and remains blocked until the exact landed WBC
+      revision, landed/source/editable/runtime proof, M6 inventory, and human
+      approval are current. Persistence ambiguity must be explicit and
+      replayable; deployment, restart, and production effects remain disabled.
 
   - label: m7-controlled-authoritative-writers
     idea: .megaplan/initiatives/custody-control-plane/briefs/m7-controlled-authoritative-writers.md
@@ -83,20 +128,24 @@ milestones:
     depth: high
     prep_clarify: false
     prep_direction: >-
-      Start only after M6's manually accepted ownership handoff and accepted
-      approval record. Reuse the
-      landed Run Authority decisions/fences and WBC execution-attempt/effect
-      ledger. Consolidate only residual authority-increasing writers and their
-      projection adapters; add immutable attempt-scoped evidence, adoptable
-      repair-receipt identity, terminal custody joins, and the append/atomic-
-      rebuild projection writer boundary. Reject any design that creates a
-      parallel history, transition owner, queue, or lifecycle.
+      Start only after M6's manually accepted ownership handoff, M6A's proved
+      WBC transactional ledger/API, and accepted approval record. Reuse the
+      landed Run Authority decisions/fences and WBC-owned execution-attempt/
+      effect ledger. Define the custody-owned action-target, repair-occurrence, and renewable lease contract,
+      including ownership transfer, expiry, reconciliation, and a monotonic
+      custody epoch distinct from the Run Authority coordinator fence. Require
+      both the current Run Authority grant/fence and current custody lease/epoch
+      at every authority-increasing writer. Consolidate only residual writers
+      and their projection adapters; add immutable attempt-scoped evidence,
+      adoptable repair-receipt identity, terminal custody joins, and the
+      append/atomic-rebuild projection writer boundary. Reject any design that
+      creates a parallel history, transition owner, queue, or lifecycle.
     depends_on:
-      - m6-authority-contract-and-residual-inventory
+      - m6a-wbc-transactional-ledger-foundation
     notes: >-
-      Difficulty 5/5; partnered-5/thorough/high @codex. M7 is the first
-      implementation milestone and must fail closed unless M5/M6 evidence and
-      the approval record remain current. Writer ordering,
+      Difficulty 5/5; partnered-5/thorough/high @codex. M7 is the first Custody
+      implementation milestone and must fail closed unless M5/M6/M6A evidence
+      and the approval record remain current. Writer ordering,
       fencing, and partial persistence can pass local tests while duplicating
       effects or advancing global authority.
 
@@ -109,10 +158,15 @@ milestones:
     depth: high
     prep_clarify: false
     prep_direction: >-
-      Consume M7's controlled writer registry and the exact WBC support
-      manifest. Migrate only residual runtime, chain, resident, cloud, child-
-      lineage, and compatibility adopters. Treat every WBC-owned producer proven
-      by its manifest as satisfied evidence, not implementation scope.
+      Consume M7's controlled writer registry, M6A's WBC store/API, and M6's
+      generated boundary inventory. Migrate every production WBC producer and
+      writer across phase, runtime, chain, resident, cloud, child-lineage,
+      repair, publication/delivery, and compatibility seams. No producer is
+      exempt because a manifest says supported or a fixture emits a receipt.
+      Dispatch,
+      repair, completion, cancellation, publication, and delivery must validate
+      a current Run Authority grant/fence plus a current custody lease/epoch;
+      no receipt, finding, projection, process fact, or status label substitutes.
     depends_on:
       - m7-controlled-authoritative-writers
     notes: >-
@@ -153,12 +207,15 @@ milestones:
     depth: high
     prep_clarify: false
     prep_direction: >-
-      Trace every remaining status, liveness, watchdog, resident, cloud, and
-      operator reader from the M6 registry. Prove each is a pure rebuildable
+      Trace every status, liveness, watchdog, repair/auditor, chain/publication,
+      resident, cloud, migration/retention, and operator reader from the M6
+      registry. Prove each uses exact-version canonical WBC queries and is a pure rebuildable
       projection or coherent evidence adapter over one exact-version reducer;
       join productive/replayed task, token, cost, and latency dimensions and
-      deterministic auditor reasons. No process, marker, snapshot, or display
-      fallback may authorize action.
+      deterministic auditor reasons. A projection may reject, block, or explain,
+      but cannot positively authorize action without rereading and validating
+      the source Run Authority records and custody lease. No process, marker,
+      snapshot, receipt, or display fallback may authorize action.
     depends_on:
       - m8a-planner-compiler-and-executor-efficiency
     notes: >-
@@ -175,13 +232,15 @@ milestones:
     depth: high
     prep_clarify: false
     prep_direction: >-
-      Exercise crash and ambiguity edges across retry, fallback, repair,
+      Exercise failure injection and ambiguity edges across WBC reserve/start/
+      terminal/outbox/migration plus retry, fallback, repair,
       publication, delivery, source/install/retrigger, and provider effects.
       Reuse WBC effect evidence and Run Authority fences; require reconciliation,
       authoritative reread, exact live failure-signature validation, event-
       driven recovery with p95 accepted repair/escalation under five minutes,
-      terminal custody, and independent verification before closure. Preserve
-      the six-hour pass as a missed-event reconciliation backstop.
+      terminal custody, cross-host lease handoff with stale-owner fencing, and
+      independent verification before closure. Preserve the six-hour pass as a
+      missed-event reconciliation backstop.
     depends_on:
       - m9-rebuildable-projections-and-liveness
     notes: >-
@@ -198,9 +257,18 @@ milestones:
     depth: high
     prep_clarify: false
     prep_direction: >-
-      Close every residual migration-matrix row using exact prerequisite and
-      milestone evidence. Run cross-version, replay, projection-rebuild,
-      rollback, and zero-bypass gates before proposing removal. Require shadow
+      Close every residual migration-matrix and WBC boundary-inventory row using
+      exact prerequisite and milestone evidence. Deliver the comprehensive cross-contract acceptance
+      and conformance suite: current Run Authority grant/fence plus current
+      custody lease/epoch are required for every authoritative action; WBC
+      declarations, evidence, receipts, findings, and all projections alone can
+      never dispatch, repair, complete, cancel, publish, or deliver; stale epochs,
+      stale fences, cross-host handoffs, duplicate/out-of-order retries, exact
+      repair-occurrence identity, persistence failure, restart, replay, and
+      reconciliation all fail safely. Require generated call-site set equality
+      plus captured runtime-trace coverage; declared support, schema-only tests,
+      fixtures, and manual assertions cannot pass. Run cross-version, migration,
+      projection-rebuild, rollback, and zero-bypass gates before proposing removal. Require shadow
       telemetry, both captured-plan replays, idle projection canary, planner/
       executor and repair/worker canaries, installed-runtime provenance,
       controlled deployment evidence, and one genuine blocked-run recovery
@@ -221,6 +289,13 @@ on_escalate:
 driver:
   robustness: thorough
   vendor: codex
+  # Generic chain control validates this immutable bundle before the first
+  # milestone and again on load/resume/reconcile. The revision is deliberately
+  # unresolved until the initiative changes are reviewed and landed.
+  execution_binding: required
+  intended_initiative_revision: UNSET_REQUIRED_BEFORE_LAUNCH
+  initiative_path: .megaplan/initiatives/custody-control-plane
+  require_editable_runtime_match: true
   phase_timeout: 10800
   auto_approve: false
   require_clean_base: true

@@ -23,17 +23,19 @@ collection/import failures. M3's reducer suite now passes 12/12, but that result
 is not yet bound into its canonical phase/suite/completion evidence. M5 owns
 this reconciliation and canonical retirement proof before adoption proceeds.
 
-WBC owns and is implementing the broad boundary/attempt/effect ledger and
-supported-runtime conformance portions of the original migration design. Its
-authoritative resident session is still in flight, while the current checkout
-has no WBC completion manifest. M5 does not depend on WBC; M6 validates WBC's
-current completion/support proof and treats proven rows as satisfied prerequisite
-evidence. M7-M11 remain blocked until M5 and M6 handoffs plus the human approval
-record pass. No WBC-owned ledger, contract, finding, payload policy, or producer
-migration may be recreated here.
+WBC owns the broad boundary/attempt/effect ledger and supported-runtime
+conformance portions of the original migration design. A later read-only audit
+on 2026-07-14 found completed candidate `cbe69337…` but no final landed revision:
+its attempt ledger is explicitly schema-only and its producer inventory remains
+partially declared/unknown. The current checkout still has no accepted WBC
+completion manifest. M6 validates the final landed/runtime proof and generates
+the boundary inventory; M6A operationalizes the WBC-owned ledger/API; M8 adopts
+every producer without changing ownership. M6A-M11 remain blocked until M5/M6
+handoffs plus the human approval record pass. No competing Custody ledger,
+renamed WBC contract, or manually asserted support is allowed.
 
-The residual gap is integration and retirement: controlled authoritative
-writers, exact-version adoption outside or around the WBC-proven set,
+The residual gap is operational storage, universal integration and retirement:
+transactional WBC writes/queries, controlled authoritative writers, exact-version adoption across the complete WBC set,
 rebuildable projections and pure observers, effect-safe retry/recovery with
 independent verification, cross-system conformance, and legacy deletion only
 after parity/proof.

@@ -8,8 +8,9 @@ status: planning-only
 
 ## Assessment and packaging decision
 
-Keep the existing M5, M6, M7, M8, M8A, M9, M10, and M11 technical breakup
-unchanged and package it as eight primary sprints of roughly two weeks each.
+Keep M5, M6, M7, M8, M8A, M9, M10, and M11 and insert M6A for the independently
+necessary WBC transactional substrate, yielding nine primary sprints of roughly
+two weeks each.
 The briefs already bound every milestone to one sprint, give each one a distinct
 outcome and anti-scope, and require a content-addressed handoff before the next
 acceptance boundary. No inspected evidence supports merging milestones,
@@ -18,9 +19,11 @@ dropping controls, or inventing another milestone now.
 The boundaries are substantive rather than ceremonial:
 
 - M5 repairs prerequisite Run Authority evidence; M6 freezes contracts and the
-  residual inventory without implementing controls.
-- M7 establishes controlled writers and immutable attempt/repair evidence; M8
-  adopts those contracts across runtimes and boundaries.
+  generated zero-exemption inventory without implementing controls.
+- M6A turns the WBC candidate's schema-only ledger into a transactional store/
+  API with payload policy and migrations; M7 then establishes Custody writers.
+- M8 adopts WBC at every producer and those composed contracts across runtimes
+  and boundaries.
 - M8A remains separate because DAG feasibility, task sizing, deterministic
   validation, launcher bounds, repair adoption, and executor circuits are
   Megaplan-domain policy rather than authority-kernel or recovery policy.
@@ -101,13 +104,38 @@ accepted approval record; empty blocker list.
 ownership, stale prerequisite proof, mutating inspection, or non-replayable
 input blocks all implementation.
 
-### Sprint 3 (weeks 5–6) — M7: controlled writers and immutable evidence
+### Sprint 3 (weeks 5–6) — M6A: WBC transactional ledger foundation
+
+**Objective:** implement the WBC-owned durable store/query API, transactional or
+outbox semantics, start-before-dispatch and exactly-one-terminal invariants,
+explicit indeterminate/reconciliation behavior, enforced privacy/retention/
+encryption, and deterministic crash-resumable migrations.
+
+**Dependencies:** accepted M6 exact landed WBC/runtime vector, generated
+boundary inventory, unchanged ownership decision, and accepted approval record.
+
+**Parallel tracks and owners:** WBC storage/API owners implement ordering and
+queries; lifecycle/outbox owners prove atomic/reconciled joins; data-policy
+owners implement storage-level privacy/retention/encryption; migration owners
+build mixed-version backfill/resume; test owners inject persistence faults and
+capture runtime traces.
+
+**Acceptance evidence:** process-safe store/API; durable start and terminal
+queries; transaction/outbox reconciliation; stored-byte policy proof; migration
+checksums and crash-resume; failure/replay traces; zero swallowed required
+writes; no second ledger owner.
+
+**Exit:** M6A publishes its versioned API/migrations and substrate proof. Any
+silent append loss, optimistic query, fabricated backfill, data-policy failure,
+or unresolved final-revision/runtime mismatch keeps M7 closed.
+
+### Sprint 4 (weeks 7–8) — M7: controlled writers and immutable evidence
 
 **Objective:** put every residual authority-increasing write behind the landed
 Run Authority/WBC identities, make attempts and repair receipts immutable and
 adoptable, and establish append-safe/atomic-rebuild projection writing.
 
-**Dependencies:** accepted M6 proof/ownership bundle and approval record.
+**Dependencies:** accepted M6 proof/ownership bundle, M6A substrate, and approval record.
 
 **Parallel tracks and owners:**
 
@@ -129,35 +157,41 @@ expiry map and rollback evidence that never restores raw write authority.
 **Exit:** M7 publishes the controlled-writer/adaptor registry, immutable receipt
 contract, projection boundary, reconciliation runbook, and no-new-owner proof.
 
-### Sprint 4 (weeks 7–8) — M8: exact-version runtime and boundary adoption
+### Sprint 5 (weeks 9–10) — M8: universal WBC producer and runtime adoption
 
-**Objective:** move every residual supported phase, chain, resident, cloud,
-child-lineage, provider, and compatibility adopter onto the M7 contract while
-leaving WBC-proven producers with WBC.
+**Objective:** move every production WBC producer and every supported phase,
+chain, resident, cloud, repair/auditor, finalize/publication, cancellation/
+resume, child-lineage, provider, and compatibility adopter onto M6A/M7. WBC
+retains ownership; manifest-proven or fixture-only producers are not exempt.
 
-**Dependencies:** accepted M7 handoff and exact WBC support manifest.
+**Dependencies:** accepted M6 boundary inventory, M6A store/API, M7 handoff,
+and exact WBC revision/support manifest.
 
 **Parallel tracks and owners:**
 
-- Workflow/chain owners migrate phase, execute, fallback, resume/cancel,
+- Workflow/chain owners migrate admission/common dispatch, all phase, execute,
+  tiebreaker, review/reducer, fallback, finalize, resume/cancel/override,
   publication, and delivery seams.
 - Resident/cloud/AgentBox owners migrate managed-child, parent aggregation,
   provider, wrapper, and runtime-package seams.
 - Custody owners prove mutual exclusion between current worker and repair and
   enforce parent/root delivery authority.
-- Compatibility/conformance owners prove exact-version lookup, post-write
-  authoritative reread, read-only history, and zero residual bypass.
+- Compatibility/conformance owners prove durable start before dispatch,
+  exactly-one terminal/indeterminate, exact-version lookup, post-write reread,
+  read-only history, generated call-site/runtime-trace equality, and zero bypass.
 
-**Acceptance evidence:** combined support manifest with no unexplained adopter;
+**Acceptance evidence:** combined support manifest and independent generated
+inventory with no unexplained producer/adopter;
 fail-closed missing/stale identity tests before user code/effects; joined causal
 start/terminal/retry/suspend/effect traces; parent-owned delivery crash/replay
 proof; static/runtime zero-bypass inventory; compatibility expiry map.
 
-**Exit:** exact-version adopter manifest, decision joins, child/root evidence,
-and residual reader registry are accepted. No warn-only supported adopter or
+**Exit:** exact-version producer/adopter manifest, decision joins, child/root
+evidence, runtime trace digests and reader registry are accepted. No schema-
+only, declared-only, unknown, fixture/manual-only, warn-only, best-effort, or
 implicit-latest path proceeds to M8A.
 
-### Sprint 5 (weeks 9–10) — M8A: feasible plans and bounded execution
+### Sprint 6 (weeks 11–12) — M8A: feasible plans and bounded execution
 
 **Objective:** prevent avoidable orchestration work without changing authority
 semantics: enforce explainable feasible DAGs/tasks, deterministic non-model
@@ -191,7 +225,7 @@ or explicit unavailable reason.
 and all decisions/counters carry exact attempt identity. Existing plans remain
 unchanged.
 
-### Sprint 6 (weeks 11–12) — M9: one reducer, rebuildable views, honest telemetry
+### Sprint 7 (weeks 13–14) — M9: one reducer, rebuildable views, honest telemetry
 
 **Objective:** cut every control-relevant reader to the exact reducer cursor/hash,
 prove projections disposable and observers pure, and expose joined productive-
@@ -220,7 +254,7 @@ idle canary with zero false stalls.
 **Exit:** accepted projection schemas/digests, reader registry, ledger,
 deterministic reasons, compatibility expiry, and shadow/canary comparison.
 
-### Sprint 7 (weeks 13–14) — M10: effect-safe retry and event-driven recovery
+### Sprint 8 (weeks 15–16) — M10: effect-safe retry and event-driven recovery
 
 **Objective:** make retries, repair, replay, publication, delivery, provider
 effects, and recovery safe under crashes and ambiguity, with exact-signature
@@ -251,7 +285,7 @@ block candidate.
 terminal-custody and verifier evidence, canary/kill-switch/rollback package, and
 evidence-backed retirement candidates. M10 authorizes no deletion itself.
 
-### Sprint 8 (weeks 15–16) — M11: integrated proof, rollout, and retirement
+### Sprint 9 (weeks 17–18) — M11: integrated proof, rollout, and retirement
 
 **Objective:** prove the whole exact-version control plane in installed runtimes,
 exercise mixed versions and rollback, run the staged canaries and one genuine
@@ -289,10 +323,10 @@ keeps the epic open.
 
 ## Range, capacity, and uncertainty
 
-The nominal plan is **eight two-week sprints, or 16 staffed working weeks**.
-For commitment and staffing, reserve **eight to ten sprints (16–20 active
+The nominal plan is **nine two-week sprints, or 18 staffed working weeks**.
+For commitment and staffing, reserve **nine to eleven sprints (18–22 active
 working weeks)** without reducing scope. A reasonable elapsed-calendar planning
-range is **18–22 weeks**, because manual review/merge, prerequisite evidence,
+range is **20–24 weeks**, because manual review/merge, prerequisite evidence,
 operational approvals, canary windows, and a genuine eligible blocked-run may
 not align exactly with sprint boundaries. External prerequisite or approval
 delay can extend elapsed time beyond that range without adding engineering
@@ -304,7 +338,9 @@ the next two-week box; downstream acceptance does not borrow incomplete proof.
 The main uncertainties are:
 
 - M5 forensic receipt reconstruction and structural-suite repair;
-- current WBC proof/version drift and residual inventory size discovered in M6;
+- current WBC proof/version drift and inventory size discovered in M6;
+- M6A transactional backend, data-policy, migration and crash-reconciliation
+  behavior across supported runtimes;
 - hidden writer/adopter/reader surfaces and adversarial fault findings in
   M7–M10;
 - calibration of M8A feasibility/circuit rules without false semantic changes;

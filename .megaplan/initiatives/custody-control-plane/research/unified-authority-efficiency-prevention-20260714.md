@@ -44,10 +44,15 @@ necessary proof/review.
   `completion_verdict.json` files. The manifest says `done`, but each current
   verdict has `accepted: false`; this is why M5 remains a hard prerequisite.
 - Current Custody North Star, single-authority decision, lineage/gap audit,
-  migration matrix, M5-M11 briefs, sequencing handoff, and prep note.
+  migration matrix, M5-M11 plus M6A briefs, sequencing handoff, and prep note.
 - WBC North Star, execution-attempt-ledger decision, corrective ownership
   decision, TransitionWriter/phase/repair/cloud boundary briefs, and launch
   ownership matrix.
+- Read-only WBC revision audit: completed candidate `cbe69337…`; in-progress
+  consolidation merge `24afce00…`; final landed revision unknown. The candidate
+  ledger is schema-only, and its 35-row producer inventory is 5 auto-matched, 8
+  manual-emission, 13 declared-only, and 9 unknown. These are planning inputs,
+  not the runtime/landing proof required by M6.
 - Maintenance North Star, authority-ledger/loop decision, coherent authority,
   independent verification, six-hour product, daily efficiency auditor, and
   managed repair/L3 handoffs.
@@ -76,7 +81,7 @@ bypass survives completion.
 |---|---|---|
 | Run Authority | capability/dispatch grants; coordinator and subject attempts; accepted/rejected/quarantined/superseded decisions; fences; dependency acceptance; the pure authoritative reducer and authority-increasing views | lifecycle writes, repair queue policy, WBC event storage, DAG design, model routing, executor budgets, status rendering, auditing |
 | TransitionWriter and repair custody | plan/chain lifecycle CAS; occurrence request/claim/lease/fence; repair dispatch; terminalization; recurrence/reopen; independent verification scheduling | accepting task claims, inventing attempt identity, self-verifying, direct sidecar authority, analytics policy |
-| WBC | exact-version boundary contracts; immutable execution-attempt and external-effect ledger; receipts/evidence and payload/reference governance; semantic findings; supported-runtime conformance | grants/acceptance, lifecycle mutation, repair custody, aggregate status, planner/executor policy |
+| WBC | exact-version boundary contracts; transactional immutable execution-attempt and external-effect store/API; receipts/evidence and payload/reference governance; semantic findings; supported-runtime conformance | grants/acceptance, lifecycle mutation, repair custody, aggregate status, planner/executor policy |
 | Megaplan Maintenance | coherent observation envelopes; incident/maintenance analytical events; six-hour reconciliation/backstop; daily read-only efficiency analysis; deterministic findings and ticket proposals | a second authority ledger, direct run mutation, active-chain redesign, model/budget changes, self-verified repair |
 | Planner/compiler/finalizer | semantic dependency reasons; routing groups; critical-path/parallelism and turn-budget feasibility; complexity splitting; validation-job compilation; task/rework ceilings in the finalized contract | authority acceptance, repair custody, provider effects, projection truth |
 | Executor/launcher/runtime packaging | bounded invalid-ref/startup validation; worker/import/model isolation; timeout/failover/compaction/rework circuits; deterministic harness jobs; verify-only repair-receipt adoption | silently widening scope/budget, rewriting attempts, blind retry, accepting stale repair work |
@@ -116,7 +121,8 @@ deletion gate.
 - Owner/control: WBC emits durable block/exit events; repair custody consumes a
   deduplicated trigger; Run Authority validates current identity/fence. Hourly
   scan and six-hour Maintenance pass reconcile missed events only.
-- Milestone/proof: M10; deterministic lost/duplicate/out-of-order trigger
+- Milestone/proof: M6A/M8 make block/exit writes durable; M10 runs deterministic
+  lost/duplicate/out-of-order trigger
   fixtures and a real eligible blocked-run prove p95 under five minutes plus
   missed-event recovery by the six-hour backstop.
 - Rollout gate: action-off shadow SLO, then one allowlisted repair/worker canary.
@@ -130,7 +136,8 @@ deletion gate.
   proof and could not become accepted checkpoints.
 - Owner/control: WBC stores immutable receipt evidence; Run Authority validates
   and accepts/quarantines; executor offers a verify-only adoption path.
-- Milestone/proof: M7 defines immutable receipt/attempt form; M8A implements
+- Milestone/proof: M6A/M8 make WBC receipt/attempt evidence durable; M7 joins
+  custody identity; M8A implements
   verify-only adoption. Valid T7/T12 fixtures skip full replay; any altered
   contract, tree, test set, or fence rejects adoption and executes normally.
 - Rollout gate: shadow comparison, captured replay, executor canary.
@@ -143,7 +150,8 @@ deletion gate.
   and historical record.
 - Owner/control: WBC owns append-only attempt-scoped artifacts/events; Run
   Authority reducer selects accepted attempt; aliases become projections.
-- Milestone/proof: M7. Two review/rework cycles preserve byte-identical attempt
+- Milestone/proof: M6A supplies the store, M8 adopts review/rework producers,
+  and M10 proves replay. Two review/rework cycles preserve byte-identical attempt
   1, monotonic ordinals, causal parents, and deterministic current projection.
 - Rollout gate: dual-write shadow and deterministic replay before enforcement.
 - Fail closed/retirement: append failure is `persistence_failed`/`indeterminate`;
@@ -337,36 +345,45 @@ M5 remains prerequisite evidence reconciliation, not prevention implementation.
 
 1. **M6 — contract, inventory, captured corpus, and baselines.** Observe only.
    Freeze owners, exact signatures, current WBC/Run Authority evidence, legacy
-   paths, deterministic Transaction/Strategy replay fixtures, SLO definitions,
-   and unknown projection/compaction/productive-replay baselines. Stop if any
-   owner or prerequisite proof is missing.
-2. **M7 — controlled writers, immutable attempts, receipts, and append-safe
+   paths, generated boundary/call-site/consumer inventory, deterministic
+   Transaction/Strategy replay fixtures, SLO definitions, and unknown
+   projection/compaction/productive-replay baselines. Stop if any owner or
+   prerequisite proof is missing.
+2. **M6A — WBC transactional ledger and migration foundation.** Implement the
+   WBC-owned durable store/query API, start-before-dispatch and exactly-one-
+   terminal/indeterminate semantics, transaction/outbox reconciliation,
+   process-safe adapters, stored-byte privacy/retention/encryption, and
+   crash-resumable mixed-version migrations.
+3. **M7 — controlled writers, immutable attempts, receipts, and append-safe
    projection boundary.** Establish attempt-scoped evidence, fences/quarantine,
    repair receipt form, terminal custody joins, and the cursor/atomic projection
    writer. Roll back by disabling promotion while append/reconciliation stays on;
    never restore raw writers.
-3. **M8 — residual runtime and boundary adoption.** Move supported stage, chain,
-   resident, cloud, worker, repair, and compatibility adopters to exact identity
-   and post-write reread. Historical adapters remain read-only.
-4. **M8A — planner/compiler and executor efficiency.** Add DAG feasibility,
+4. **M8 — universal WBC producer and runtime adoption.** Move every declared
+   and discovered stage, chain, resident, cloud, worker, repair, finalize,
+   cancellation/resume, publication/delivery and wrapper producer through the
+   WBC API with generated static/runtime evidence. Historical adapters remain read-only.
+5. **M8A — planner/compiler and executor efficiency.** Add DAG feasibility,
    complexity split, deterministic validation, bounded invalid-ref/provider/
    compaction/rework behavior, repair adoption, and plan circuits. This is a new
    milestone because those controls are a separate domain and do not fit safely
    inside the already broad M8/M10 custody work.
-5. **M9 — one reducer, rebuildable projections, pure observers, and joined
+6. **M9 — canonical WBC consumers, one reducer, rebuildable projections, pure observers, and joined
    latency ledger.** Cut all views to one reducer cursor/hash, complete projection
    rebuild, separate work classes, and emit deterministic auditor reasons.
-6. **M10 — event-driven recovery and effect-safe retry.** Enforce exact repair
+7. **M10 — failure injection, event-driven recovery and effect-safe retry.** Enforce exact repair
    signatures, bounded trigger/retry custody, p95 under five minutes, six-hour
    reconciliation, terminalization, independent verification, and repair/worker
    canary proof.
-7. **M11 — controlled rollout, conformance, genuine block, and retirement.**
+8. **M11 — controlled rollout, conformance, genuine block, and retirement.**
    Verify runtime provenance, mixed versions, deterministic replay, idle and
    worker/repair canaries, forced rollback, controlled deployment, and one real
    eligible blocked-run recovery before deleting any bypass and generating the
    content-addressed completion manifest.
 
-Each milestone is approximately one sprint. M8A prevents M8 and M10 from
+Each post-M5 milestone is approximately one sprint. M6A prevents the WBC
+transactional substrate from being hidden inside Custody M7 or universal M8;
+M8A prevents M8 and M10 from
 becoming multi-domain, superficially testable mega-sprints.
 
 ## Rollout and promotion gates
@@ -414,6 +431,8 @@ Completion requires all of the following together:
   classification;
 - 100% reducer-cursor agreement across supported views;
 - static and runtime proof of zero legacy authority bypasses;
+- exact equality of generated WBC contracts, semantic call sites and captured
+  runtime traces, with no schema/support/manual-only completion row;
 - approved removal list, actual deletion/retirement receipts, compatibility
   expiry register, and forced rollback proof.
 
