@@ -2992,6 +2992,28 @@ def _reconstruct_gate_payload(plan_dir: Path, current_payload: dict) -> dict | N
     return reconstructed
 
 
+def _recover_plan_payload_from_raw_markdown(
+    payload: dict,
+    raw_markdown: str,
+) -> dict | None:
+    """Promote substantive raw plan markdown without inventing plan steps.
+
+    Some workers return a valid implementation plan as their raw response but
+    leave only a summary in the structured ``plan`` field. Recovery is allowed
+    only when the raw text has both an implementation-plan heading and at least
+    one explicit step; otherwise the normal validation failure remains intact.
+    """
+
+    markdown = str(raw_markdown or "").strip()
+    if not markdown.startswith("# Implementation Plan"):
+        return None
+    if not any(line.lstrip().startswith("### Step ") for line in markdown.splitlines()):
+        return None
+    recovered = dict(payload) if isinstance(payload, dict) else {}
+    recovered["plan"] = markdown
+    return recovered
+
+
 def _fill_schema_defaults(payload: dict, schema: dict) -> None:
     """Fill missing required fields with safe defaults based on schema types.
 
