@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "24e7395c2956e7d1275ae158183b74aed21a33903477a7b6554367677bf51b68",
+  "created_at": "2026-07-14T02:24:48Z",
+  "source": "lifecycle_failure",
+  "session": "ticket-and-epic-lifecycle-20260714-0054",
+  "workspace": "/workspace/repository-strategy-roadmap/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/repository-strategy-roadmap/Arnold/.megaplan/plans/ticket-and-epic-lifecycle-20260714-0054",
+  "queue_dir": "/workspace/repository-strategy-roadmap/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/repository-strategy-roadmap/Arnold/.megaplan/plans/ticket-and-epic-lifecycle-20260714-0054",
+    "plan_name": "ticket-and-epic-lifecycle-20260714-0054",
+    "workspace_path": "/workspace/repository-strategy-roadmap/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "execution_blocked",
+    "current_state": "blocked",
+    "phase_or_step": "execute",
+    "milestone_or_plan": "ticket-and-epic-lifecycle-20260714-0054",
+    "gate_recommendation": "Inspect the prerequisite evidence or resolve the blocked task dependency before rerunning execute.",
+    "blocked_task_id": "",
+    "event_signature": ""
+  },
+  "problem_signature_key": "c15098a43053a96ac85158ae5fc78676b72066a81fc0df00f8c6be012d400d2c",
+  "root_cause_hint_hash": "7b4725cda120a11808f9224bba8563a1fb6120eacbd8720d2cc177e9c49b8ac4",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "applicable",
+    "transport": "discord",
+    "correlation_id": "discord-corr-55e4a28c026ba63f2e6f909a",
+    "custody_id": "discord-custody-55e4a28c026ba63f2e6f909a",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "source_record_id": "msg_8a047f81185b",
+    "conversation_key": "discord:dm:301463647895683072",
+    "discord_message_id": "1526340320781144124",
+    "reply_to_message_id": "1526340320781144124",
+    "guild_id": null,
+    "channel_id": "1451308037074714654",
+    "thread_id": null,
+    "dm_user_id": "301463647895683072",
+    "resident_turn_id": "turn_cd2e2e30b5cc",
+    "root_run_id": "subagent-20260713-213230-19df9380",
+    "source_kind": "discord_inbound_message",
+    "timezone_name": "UTC"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "img_8badd547786e",
+  "epic_id": "epic_7569bba081cb",
+  "source": "agent_generated",
+  "prompt": null,
+  "storage_url": "images/b.png",
+  "quality": null,
+  "size": null,
+  "created_at": "2026-07-14T01:19:38.308599Z",
+  "reference_key": "hero",
+  "description": null,
+  "caption": null,
+  "in_body": false,
+  "active": false,
+  "discord_attachment_id": null,
+  "blob_backend": null,
+  "blob_id": null,
+  "blob_sha256": null,
+  "blob_size_bytes": null,
+  "content_type": null
+}

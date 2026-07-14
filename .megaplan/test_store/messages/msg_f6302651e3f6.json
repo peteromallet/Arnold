@@ -1,0 +1,18 @@
+{
+  "id": "msg_f6302651e3f6",
+  "epic_id": null,
+  "conversation_id": null,
+  "idempotency_key": "contract:bootstrap:create_message:0cfb2a2be5",
+  "direction": "inbound",
+  "content": "bootstrap hello",
+  "sent_at": "2026-07-14T01:19:38.260411Z",
+  "discord_message_id": null,
+  "discord_reply_provenance": null,
+  "has_code_attachment": false,
+  "has_image_attachment": false,
+  "in_burst_with": [],
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": null
+}

@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-14T01:41:46.232382+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-demo-session"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 2,
+  "owner_actor": "meta_repair",
+  "problem_id": "problem-6a1177eb343e",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
+    "last_seq": 349,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-6a1177eb343e: managed automatic_meta_repair execution started"
+}

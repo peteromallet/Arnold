@@ -693,6 +693,351 @@ class TestResolveValidResolution:
 
 
 # ---------------------------------------------------------------------------
+# Resolver: lifecycle diagnostics — ticket status
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTicketLifecycle:
+    """``resolve_strategy`` emits warnings for dismissed/addressed tickets
+    and promoted/superseded tickets."""
+
+    def test_dismissed_ticket_is_warning(self, tmp_path: pathlib.Path) -> None:
+        _prepare_repo(tmp_path)
+        _write_ticket(tmp_path, _VALID_ULID, "fix-auth-timeout",
+                       "Fix auth timeout", status="dismissed")
+        doc = _make_doc({
+            "Now": [_make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        dismissed = [w for w in _warnings(result)
+                     if "Dismissed ticket" in w.message]
+        assert len(dismissed) >= 1, (
+            f"Expected 'Dismissed ticket' warning, got: {_warnings(result)}"
+        )
+
+    def test_addressed_ticket_is_warning(self, tmp_path: pathlib.Path) -> None:
+        _prepare_repo(tmp_path)
+        _write_ticket(tmp_path, _VALID_ULID, "fix-auth-timeout",
+                       "Fix auth timeout", status="addressed")
+        doc = _make_doc({
+            "Now": [_make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        addressed = [w for w in _warnings(result)
+                     if "Addressed ticket" in w.message]
+        assert len(addressed) >= 1, (
+            f"Expected 'Addressed ticket' warning, got: {_warnings(result)}"
+        )
+
+    def test_open_ticket_no_lifecycle_warning(self, tmp_path: pathlib.Path) -> None:
+        _prepare_repo(tmp_path)
+        _write_ticket(tmp_path, _VALID_ULID, "fix-auth-timeout",
+                       "Fix auth timeout", status="open")
+        doc = _make_doc({
+            "Now": [_make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        lifecycle = [w for w in _warnings(result)
+                     if "dismissed" in w.message.lower()
+                     or "addressed" in w.message.lower()
+                     or "superseded" in w.message.lower()]
+        assert lifecycle == [], (
+            f"Open ticket should not get lifecycle warnings: {lifecycle}"
+        )
+
+    def test_superseded_ticket_is_warning(self, tmp_path: pathlib.Path) -> None:
+        """A ticket with a promoted_to_epic link should get a superseded warning."""
+        _prepare_repo(tmp_path)
+        _write_ticket_with_epics(
+            tmp_path, _VALID_ULID, "fix-auth-timeout",
+            "Fix auth timeout", status="open",
+            epics=[{"epic_id": "my-epic", "resolves_on_complete": True,
+                    "kind": "promoted_to_epic", "provenance": "promotion:test"}],
+        )
+        doc = _make_doc({
+            "Now": [_make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        superseded = [w for w in _warnings(result)
+                      if "Superseded ticket" in w.message]
+        assert len(superseded) >= 1, (
+            f"Expected 'Superseded ticket' warning, got: {_warnings(result)}"
+        )
+
+    def test_ticket_with_associated_link_no_superseded_warning(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        """A ticket with only an 'associated' link should not get superseded."""
+        _prepare_repo(tmp_path)
+        _write_ticket_with_epics(
+            tmp_path, _VALID_ULID, "fix-auth-timeout",
+            "Fix auth timeout", status="open",
+            epics=[{"epic_id": "my-epic", "resolves_on_complete": False,
+                    "kind": "associated"}],
+        )
+        doc = _make_doc({
+            "Now": [_make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        superseded = [w for w in _warnings(result)
+                      if "Superseded ticket" in w.message]
+        assert superseded == [], (
+            f"Associated ticket should not be superseded: {superseded}"
+        )
+
+    def test_dismissed_ticket_warning_has_source_location(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        _prepare_repo(tmp_path)
+        _write_ticket(tmp_path, _VALID_ULID, "fix-auth-timeout",
+                       "Fix auth timeout", status="dismissed")
+        doc = _make_doc({
+            "Now": [_make_entry("ticket", _VALID_ULID, "Fix auth timeout",
+                                "Now", path="s.md", line=55)],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        dismissed = [w for w in _warnings(result)
+                     if "Dismissed ticket" in w.message]
+        for diag in dismissed:
+            assert diag.source_location is not None
+            assert diag.source_location.path == "s.md"
+            assert diag.source_location.line == 55
+
+
+# ---------------------------------------------------------------------------
+# Resolver: lifecycle diagnostics — epic completion
+# ---------------------------------------------------------------------------
+
+
+class TestResolveEpicLifecycle:
+    """``resolve_strategy`` emits warnings for completed/archived epics."""
+
+    def test_completed_epic_is_warning(self, tmp_path: pathlib.Path) -> None:
+        _prepare_repo(tmp_path)
+        _write_initiative_with_state(tmp_path, "my-epic", "My Epic", "archived")
+        doc = _make_doc({
+            "Now": [_make_entry("epic", "my-epic", "My Epic", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        completed = [w for w in _warnings(result)
+                     if "Completed epic" in w.message]
+        assert len(completed) >= 1, (
+            f"Expected 'Completed epic' warning, got: {_warnings(result)}"
+        )
+
+    def test_non_archived_epic_no_lifecycle_warning(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        _prepare_repo(tmp_path)
+        _write_initiative_with_state(tmp_path, "my-epic", "My Epic", "sprinting")
+        doc = _make_doc({
+            "Now": [_make_entry("epic", "my-epic", "My Epic", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        completed = [w for w in _warnings(result)
+                     if "Completed epic" in w.message]
+        assert completed == [], (
+            f"Active epic should not get completed warning: {completed}"
+        )
+
+    def test_completed_epic_via_filesystem_marker(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        """An epic with a COMPLETED marker file should warn."""
+        _prepare_repo(tmp_path)
+        init_dir = tmp_path / ".megaplan" / "initiatives" / "done-epic"
+        init_dir.mkdir(parents=True, exist_ok=True)
+        (init_dir / "README.md").write_text("# Done Epic\n\nDesc.\n", encoding="utf-8")
+        (init_dir / "COMPLETED.md").write_text("done\n", encoding="utf-8")
+        doc = _make_doc({
+            "Now": [_make_entry("epic", "done-epic", "Done Epic", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        completed = [w for w in _warnings(result)
+                     if "Completed epic" in w.message]
+        assert len(completed) >= 1, (
+            f"Expected 'Completed epic' from filesystem marker, got: {_warnings(result)}"
+        )
+
+    def test_completed_epic_warning_has_source_location(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        _prepare_repo(tmp_path)
+        _write_initiative_with_state(tmp_path, "my-epic", "My Epic", "archived")
+        doc = _make_doc({
+            "Now": [_make_entry("epic", "my-epic", "My Epic",
+                                "Now", path="e.md", line=77)],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        completed = [w for w in _warnings(result)
+                     if "Completed epic" in w.message]
+        for diag in completed:
+            assert diag.source_location is not None
+            assert diag.source_location.path == "e.md"
+            assert diag.source_location.line == 77
+
+
+# ---------------------------------------------------------------------------
+# Resolver: duplicate-intent (ticket + epic for same promoted work)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveDuplicateIntent:
+    """``resolve_strategy`` warns when both a ticket and its promoted epic
+    appear in the roadmap."""
+
+    def test_ticket_and_promoted_epic_both_in_roadmap_is_warning(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        _prepare_repo(tmp_path)
+        _write_ticket_with_epics(
+            tmp_path, _VALID_ULID, "fix-auth-timeout",
+            "Fix auth timeout", status="open",
+            epics=[{"epic_id": "my-epic", "resolves_on_complete": True,
+                    "kind": "promoted_to_epic", "provenance": "promotion:test"}],
+        )
+        _write_initiative(tmp_path, "my-epic", "My Epic")
+        doc = _make_doc({
+            "Now": [
+                _make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now"),
+                _make_entry("epic", "my-epic", "My Epic", "Now"),
+            ],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        dup_intent = [w for w in _warnings(result)
+                      if "Duplicate intent" in w.message]
+        assert len(dup_intent) >= 1, (
+            f"Expected 'Duplicate intent' warning, got: {_warnings(result)}"
+        )
+
+    def test_ticket_without_promoted_epic_in_roadmap_no_warning(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        """Only the ticket is in roadmap; the epic is not — no duplicate intent."""
+        _prepare_repo(tmp_path)
+        _write_ticket_with_epics(
+            tmp_path, _VALID_ULID, "fix-auth-timeout",
+            "Fix auth timeout", status="open",
+            epics=[{"epic_id": "my-epic", "resolves_on_complete": True,
+                    "kind": "promoted_to_epic", "provenance": "promotion:test"}],
+        )
+        _write_initiative(tmp_path, "my-epic", "My Epic")
+        doc = _make_doc({
+            "Now": [_make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        dup_intent = [w for w in _warnings(result)
+                      if "Duplicate intent" in w.message]
+        assert dup_intent == [], (
+            f"Epic not in roadmap, should not be duplicate intent: {dup_intent}"
+        )
+
+    def test_promoted_epic_without_ticket_no_duplicate_warning(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        """Only the epic is in roadmap; ticket not — no duplicate intent."""
+        _prepare_repo(tmp_path)
+        _write_ticket(tmp_path, _VALID_ULID, "fix-auth-timeout",
+                       "Fix auth timeout", status="open")
+        _write_initiative(tmp_path, "my-epic", "My Epic")
+        doc = _make_doc({
+            "Now": [_make_entry("epic", "my-epic", "My Epic", "Now")],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        dup_intent = [w for w in _warnings(result)
+                      if "Duplicate intent" in w.message]
+        assert dup_intent == [], (
+            f"No promoted ticket in roadmap, should not be duplicate intent: {dup_intent}"
+        )
+
+    def test_duplicate_intent_names_both_horizons(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        """Duplicate-intent message should include both horizon names."""
+        _prepare_repo(tmp_path)
+        _write_ticket_with_epics(
+            tmp_path, _VALID_ULID, "fix-auth-timeout",
+            "Fix auth timeout", status="open",
+            epics=[{"epic_id": "my-epic", "resolves_on_complete": True,
+                    "kind": "promoted_to_epic", "provenance": "promotion:test"}],
+        )
+        _write_initiative(tmp_path, "my-epic", "My Epic")
+        doc = _make_doc({
+            "Now": [_make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now")],
+            "Next": [_make_entry("epic", "my-epic", "My Epic", "Next")],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        dup_intent = [w for w in _warnings(result)
+                      if "Duplicate intent" in w.message]
+        assert len(dup_intent) >= 1
+        msg = dup_intent[0].message
+        assert "Now" in msg and "Next" in msg, (
+            f"Duplicate intent should name both horizons: {msg}"
+        )
+
+    def test_multiple_promoted_epics_duplicate_detected(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        """A ticket promoted to multiple epics — duplicate intent for each."""
+        _prepare_repo(tmp_path)
+        _write_ticket_with_epics(
+            tmp_path, _VALID_ULID, "fix-auth-timeout",
+            "Fix auth timeout", status="open",
+            epics=[
+                {"epic_id": "epic-a", "resolves_on_complete": True,
+                 "kind": "promoted_to_epic", "provenance": "p:a"},
+                {"epic_id": "epic-b", "resolves_on_complete": True,
+                 "kind": "promoted_to_epic", "provenance": "p:b"},
+            ],
+        )
+        _write_initiative(tmp_path, "epic-a", "Epic A")
+        _write_initiative(tmp_path, "epic-b", "Epic B")
+        doc = _make_doc({
+            "Now": [
+                _make_entry("ticket", _VALID_ULID, "Fix auth timeout", "Now"),
+                _make_entry("epic", "epic-a", "Epic A", "Now"),
+                _make_entry("epic", "epic-b", "Epic B", "Now"),
+            ],
+            "Next": [],
+            "Later": [],
+        })
+        result = resolve_strategy(doc, str(tmp_path))
+        dup_intents = [w for w in _warnings(result)
+                       if "Duplicate intent" in w.message]
+        assert len(dup_intents) >= 2, (
+            f"Expected 2 duplicate intent warnings for 2 promoted epics, "
+            f"got {len(dup_intents)}: {dup_intents}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Fixture helpers — set up minimal repo layout under tmp_path
 # ---------------------------------------------------------------------------
 
@@ -703,14 +1048,21 @@ def _prepare_repo(root: pathlib.Path) -> None:
     (root / ".megaplan" / "initiatives").mkdir(parents=True, exist_ok=True)
 
 
-def _write_ticket(root: pathlib.Path, ulid: str, slug: str, title: str) -> None:
+def _write_ticket(
+    root: pathlib.Path,
+    ulid: str,
+    slug: str,
+    title: str,
+    *,
+    status: str = "open",
+) -> None:
     """Write a minimal ticket ``.md`` file with YAML frontmatter."""
     ticket_path = root / ".megaplan" / "tickets" / f"{ulid}-{slug}.md"
     content = textwrap.dedent(f"""\
     ---
     id: {ulid}
     title: {title}
-    status: open
+    status: {status}
     ---
 
     # {title}
@@ -720,9 +1072,56 @@ def _write_ticket(root: pathlib.Path, ulid: str, slug: str, title: str) -> None:
     ticket_path.write_text(content, encoding="utf-8")
 
 
-def _write_initiative(root: pathlib.Path, slug: str, title: str) -> None:
+def _write_ticket_with_epics(
+    root: pathlib.Path,
+    ulid: str,
+    slug: str,
+    title: str,
+    *,
+    status: str = "open",
+    epics: list[dict] | None = None,
+) -> None:
+    """Write a ticket file with an ``epics`` list in the YAML frontmatter."""
+    import yaml
+
+    ticket_path = root / ".megaplan" / "tickets" / f"{ulid}-{slug}.md"
+    fm = {
+        "id": ulid,
+        "title": title,
+        "status": status,
+    }
+    if epics:
+        fm["epics"] = epics
+    content = f"---\n{yaml.dump(fm, allow_unicode=True, sort_keys=False)}---\n\n# {title}\n\nTicket body.\n"
+    ticket_path.write_text(content, encoding="utf-8")
+
+
+def _write_initiative(
+    root: pathlib.Path,
+    slug: str,
+    title: str,
+) -> None:
     """Write a minimal initiative directory with a README.md."""
     init_dir = root / ".megaplan" / "initiatives" / slug
     init_dir.mkdir(parents=True, exist_ok=True)
     readme = init_dir / "README.md"
     readme.write_text(f"# {title}\n\nInitiative description.\n", encoding="utf-8")
+
+
+def _write_initiative_with_state(
+    root: pathlib.Path,
+    slug: str,
+    title: str,
+    state: str,
+) -> None:
+    """Write an initiative with a chain.yaml that declares its state."""
+    import yaml
+
+    init_dir = root / ".megaplan" / "initiatives" / slug
+    init_dir.mkdir(parents=True, exist_ok=True)
+    readme = init_dir / "README.md"
+    readme.write_text(f"# {title}\n\nInitiative description.\n", encoding="utf-8")
+    chain = init_dir / "chain.yaml"
+    chain.write_text(
+        yaml.dump({"state": state}, allow_unicode=True), encoding="utf-8"
+    )

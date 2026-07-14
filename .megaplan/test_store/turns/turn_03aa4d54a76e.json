@@ -1,0 +1,24 @@
+{
+  "id": "turn_03aa4d54a76e",
+  "epic_id": null,
+  "triggered_by_message_ids": [],
+  "prompt_snapshot": {
+    "phase": "bootstrap"
+  },
+  "prompt_version": null,
+  "reasoning": null,
+  "final_output_message_id": null,
+  "status_message_id": null,
+  "status": "in_progress",
+  "state_at_turn": null,
+  "plan_edited": false,
+  "code_consulted": false,
+  "image_generated": false,
+  "second_opinion_requested": false,
+  "message_sent": false,
+  "warnings_issued": null,
+  "current_activity": null,
+  "started_at": "2026-07-14T01:19:38.257612Z",
+  "completed_at": null,
+  "model_version": null
+}
