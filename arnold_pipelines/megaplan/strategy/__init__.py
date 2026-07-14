@@ -49,6 +49,7 @@ from arnold_pipelines.megaplan.strategy.contract import (
     StrategySection,
 )
 from arnold_pipelines.megaplan.strategy.parser import (
+    extract_schema_version,
     parse_strategy,
     serialize_strategy,
 )
@@ -76,6 +77,7 @@ from arnold_pipelines.megaplan.strategy.io import (
     StrategyFileState,
     format_diagnostic,
     format_diagnostics,
+    inspect_strategy,
     load_strategy,
     load_strategy_for_write,
     load_strategy_projection,
@@ -86,8 +88,16 @@ from arnold_pipelines.megaplan.strategy.io import (
     write_projection,
     write_strategy,
 )
+from arnold_pipelines.megaplan.strategy.versions import (
+    CURRENT_SCHEMA_VERSION,
+    SUPPORTED_VERSIONS,
+    StrategyVersionStatus,
+    classify_version,
+    inspect_strategy_file,
+)
 
 __all__ = [
+    "CURRENT_SCHEMA_VERSION",
     "DiagnosticLevel",
     "PROJECTION_SCHEMA_VERSION",
     "REQUIRED_ROADMAP_SECTIONS",
@@ -96,6 +106,7 @@ __all__ = [
     "RoadmapHorizon",
     "RoadmapItemType",
     "SCHEMA_VERSION",
+    "SUPPORTED_VERSIONS",
     "SourceLocation",
     "StrategyDiagnostic",
     "StrategyDocument",
@@ -103,9 +114,14 @@ __all__ = [
     "StrategySection",
     "StrategyConflictError",
     "StrategyFileState",
+    "StrategyVersionStatus",
     "add_roadmap_entry",
+    "classify_version",
+    "extract_schema_version",
     "format_diagnostic",
     "format_diagnostics",
+    "inspect_strategy",
+    "inspect_strategy_file",
     "load_strategy",
     "load_strategy_for_write",
     "load_strategy_projection",
