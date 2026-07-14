@@ -1,9 +1,66 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 300,
+  "evidence_ref_count": 330,
   "evidence_refs": [
     {
-      "kind": "managed_agent_execution"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 239,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/239"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 240,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/240"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 241,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/241"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 243,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/243"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 244,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/244"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 245,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/245"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
     },
     {
       "kind": "managed_agent_execution"
@@ -15,58 +72,25 @@
       "kind": "managed_agent_execution"
     },
     {
-      "kind": "verification_record"
+      "kind": "managed_agent_execution"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -195,13 +219,13 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-14T01:41:46.226490+00:00",
+  "generated_at": "2026-07-14T07:41:54.653684+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
-  "latest_actor": "meta_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "omitted_evidence_ref_count": 236,
-  "outcome": "attempted",
+  "latest_actor": "github_sync",
+  "next_expected_event": "six_hour_auditor.diagnosis",
+  "omitted_evidence_ref_count": 266,
+  "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "repeated_attempts_without_new_evidence",
@@ -217,10 +241,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
-    "last_seq": 349,
+    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
+    "last_seq": 360,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "inc-demo-session: managed automatic_meta_repair execution started"
+  "state": "github_sync.issue_published",
+  "summary_text": "inc-demo-session: Published persistent problem problem-c7e2d7ad616b to GitHub as a new issue"
 }
