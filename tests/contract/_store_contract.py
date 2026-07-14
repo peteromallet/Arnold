@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+import subprocess
 from typing import Callable
 
 import pytest
@@ -20,6 +21,39 @@ from arnold_pipelines.megaplan.store import (
     deterministic_idempotency_key,
 )
 from arnold_pipelines.megaplan.tickets.identity import repo_codebase_identity
+
+
+def _init_contract_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "contract@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Contract Test"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    (repo / "README.md").write_text("# Contract Repo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo, check=True, capture_output=True)
+    return repo
+
+
+def make_file_store_factory(tmp_path: Path) -> Callable[[], FileStore]:
+    """Return a FileStore factory with a committed repo for ticket identity."""
+    repo = _init_contract_repo(tmp_path)
+    store_root = repo / ".megaplan" / "store"
+
+    def _factory() -> FileStore:
+        return FileStore(root=store_root, repo_root=repo)
+
+    return _factory
 
 
 def _store_protocol_method_names() -> list[str]:
@@ -1225,14 +1259,27 @@ def run_ticket_relationship_contract(store_factory: Callable[[], Store]) -> None
     assert remaining == []
 
 
+def test_db_copy_columns_preserve_ticket_epic_relationship_metadata() -> None:
+    """Migration copy allowlist must preserve new relationship metadata."""
+
+    from arnold_pipelines.megaplan.store._db.common import _COPY_TABLE_COLUMNS
+
+    row = {
+        "ticket_id": "ticket-1",
+        "epic_id": "epic-1",
+        "resolves_on_complete": True,
+        "kind": "promoted_to_epic",
+        "provenance": "promotion:ticket-1",
+        "linked_at": "2026-07-14T00:00:00+00:00",
+    }
+    copied_columns = [column for column in row if column in _COPY_TABLE_COLUMNS["ticket_epics"]]
+    assert {"kind", "provenance"}.issubset(copied_columns)
+
+
 @pytest.fixture
 def file_store_factory(tmp_path: Path):
     """Return a fresh FileStore factory so direct path selection collects tests."""
-
-    def _factory() -> FileStore:
-        return FileStore(tmp_path / "store")
-
-    return _factory
+    return make_file_store_factory(tmp_path)
 
 
 def test_store_contract_explicit_ids_and_idempotency(file_store_factory) -> None:

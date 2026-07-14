@@ -19,9 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from arnold_pipelines.megaplan.store import FileStore
-
 from tests.contract._store_contract import (
+    make_file_store_factory,
     run_arnold_adapter_contract,
     run_store_contract,
     run_ticket_relationship_contract,
@@ -31,11 +30,7 @@ from tests.contract._store_contract import (
 @pytest.fixture
 def file_store_factory(tmp_path: Path):
     """Return a fresh-``FileStore`` factory scoped to a per-test temp dir."""
-
-    def _factory() -> FileStore:
-        return FileStore(tmp_path / "store")
-
-    return _factory
+    return make_file_store_factory(tmp_path)
 
 
 def test_store_contract_explicit_ids_and_idempotency(file_store_factory) -> None:
