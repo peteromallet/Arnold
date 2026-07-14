@@ -1,10 +1,10 @@
 {
   "schema": "m5.final-attestation.v2",
-  "generated_at": "2026-07-14T19:59:07.867027Z",
+  "generated_at": "2026-07-14T20:27:36.310029Z",
   "canonical_initiative": "runauthority-epic",
   "canonical_session": "runauthority-epic-cloud",
   "superseded_by": "custody-control-plane",
-  "repository_subject_head": "0c188edc3a371dd28fe218d6e02fa3405b557334",
+  "repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
   "retirement_status": "completed",
   "retirement_scope": "metadata_only",
   "gates": {
@@ -45,6 +45,10 @@
       "exists": true,
       "sha256": "bc540b2b227b08d2135c8e7c23e856674f28dd8863d53578ba1c4447ac01e016"
     },
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/selector-path-reconciliation.json": {
+      "exists": true,
+      "sha256": "e06341fd30a5abb9be281ec3d06a92b82cab81566fc4ffaece6ab3070ea3dfda"
+    },
     ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/duplicate-session-tombstone.json": {
       "exists": true,
       "sha256": "054370c1ffa047f54609b3f7ff03c10edcdd150f0bb71ad14f2a058fef6e8624"
@@ -55,7 +59,7 @@
     },
     ".megaplan/plans/m5-run-authority-receipt-20260714-1428/review_evidence.json": {
       "exists": true,
-      "sha256": "1cc9dba0d336eb3aa3233f2a07406a314d5f3c78f55921b1c583f25f62f265e2"
+      "sha256": "8e8d1914a4e96a36cfddec677bccaf8a426d2cde573d7d2f2d4a4e4f466b9da2"
     },
     ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json": {
       "exists": true,
@@ -74,6 +78,7 @@
   "notes": [
     "Receipts were regenerated through completion-contract providers, not edited.",
     "The canonical completion manifest was generated through `megaplan chain manifest` and copied byte-semantically into this handoff.",
+    "Every lifecycle-selected test path is retained; current CLI conformance paths and explicit archived-module retirement skips make the exact M1-M3 selector sets structurally collectible without restoring legacy product code.",
     "Repository-wide failures remain explicitly red; the M5 structural criterion is zero collection/import errors, backed by the exact immutable full-suite run."
   ]
 }
