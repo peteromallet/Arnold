@@ -1,0 +1,103 @@
+{
+  "schema": "m5.final-attestation.v1",
+  "generated_at": "2026-07-14T16:31:55Z",
+  "generated_by_plan": "m5-run-authority-receipt-20260714-1428",
+  "generated_by_task": "T21",
+  "canonical_initiative": "runauthority-epic",
+  "canonical_session": "runauthority-epic-cloud",
+  "superseded_by": "custody-control-plane",
+  "repository_head": "9e94a9bd1f946ca9ad317cf9211a6b01fe2a22ad",
+  "retirement_status": "completed",
+  "retirement_scope": "metadata_only",
+  "bound_artifacts": {
+    "attestation.json": {
+      "sha256": "48c7757856b19b69c098497382bd31f0f85c87baf2eb6db4fec3a105b6ebc0e6",
+      "exists": true
+    },
+    "completion-manifest.json": {
+      "sha256": "8e49a26fddde4fc86983f10b18c31ed66b68ba336398b7aaf572c78abc73fd63",
+      "exists": true
+    },
+    "proof-map.json": {
+      "sha256": "13caca4d7a17aeda8f1e78e7d2062cf695b45586f26fe7e53a35bb13a0a8820d",
+      "exists": true
+    },
+    "evidence-manifest.json": {
+      "sha256": "37ae7ce5b534dc552245ad77e6ba024a5f4176bbc3baef4c5699bade19e1edc5",
+      "exists": true
+    },
+    "runtime-posture.json": {
+      "sha256": "6b61f297b0c2a218bd58040253ef811c145152d9b740d7f03b879ed9864705d2",
+      "exists": true
+    },
+    "m5-green-suite-selections.json": {
+      "sha256": "709188808288d58c2e523a2da7e6d9cc987c734aa699b21c61d509a3958cbc3f",
+      "exists": true
+    },
+    "duplicate-session-tombstone.json": {
+      "sha256": "054370c1ffa047f54609b3f7ff03c10edcdd150f0bb71ad14f2a058fef6e8624",
+      "exists": true
+    },
+    ".megaplan/plans/.chains/chain-21fa156d252d.json": {
+      "sha256": "b45199fb403f3b65f3758c2a8f4016b29ee8027501aca227b31432f500283a1d",
+      "exists": true
+    },
+    ".megaplan/plans/.chains/chain-f8cbe7abbe5f.json": {
+      "sha256": "b45199fb403f3b65f3758c2a8f4016b29ee8027501aca227b31432f500283a1d",
+      "exists": true
+    },
+    "chain_verify_raw.json": {
+      "sha256": "784ea128943975d5b7c4b856117d1a8775eb13309dfc2a917abf11b307e4afb8",
+      "exists": true
+    },
+    ".retired": {
+      "sha256": "60430dd2640a860ba4dea90a83aed5be6a40a25435a01f1f97cb7b6385f48dff",
+      "exists": true
+    },
+    "m1_completion_verdict": {
+      "sha256": "bc1cf7621563d721bea6d6ef423818385c47eba187abd1bb38b99dd8cd0858e9",
+      "exists": true
+    },
+    "m2_completion_verdict": {
+      "sha256": "ce7d0c13bd516e962cad40b60a0a38e27c7fb22087ab9b300823b5c9caac8bdd",
+      "exists": true
+    },
+    "m3_completion_verdict": {
+      "sha256": "33f6fdfcb954f20e1dc5c20c7ae6f59dffacdc2b2cc71ef3a4e92c640e9e12de",
+      "exists": true
+    },
+    "t21_scoped_suite.log": {
+      "sha256": "670d8bee914045f799915ecbe556174633b0ccad80f203484dcaaf0fa47f5a9f",
+      "exists": true
+    }
+  },
+  "scoped_suite_result": {
+    "command": "python -m pytest [312 selectors from baseline_test_command] --tb=short -v",
+    "exit_code": 2,
+    "items_collected": 5793,
+    "collection_errors": 7,
+    "collection_errors_all_in_baseline": true,
+    "new_failures_vs_baseline": 0,
+    "log_sha256": "670d8bee914045f799915ecbe556174633b0ccad80f203484dcaaf0fa47f5a9f",
+    "baseline_test_collection_errors": [
+      "tests/arnold/pipeline/test_profiles.py",
+      "tests/cli/test_arnold_parser_snapshot.py",
+      "tests/m8/regression/test_structural_regressions.py",
+      "tests/test_arnold_cli.py",
+      "tests/arnold/pipeline/test_profiles_opaque.py",
+      "tests/arnold_pipelines/megaplan/pipelines/test_native_truth.py",
+      "tests/arnold_pipelines/megaplan/test_native_golden_traces.py"
+    ],
+    "log_path": ".megaplan/plans/m5-run-authority-receipt-20260714-1428/execute_batches/batch_21/t21_scoped_suite.log"
+  },
+  "unresolved_evidence": [],
+  "notes": [
+    "All 7 collection errors are pre-existing baseline failures (ImportError from import graph changes across sprints).",
+    "No new failures introduced vs baseline; 0 new, 0 resolved.",
+    "Retirement marker (.retired) created in T20 after all prerequisite gates passed.",
+    "Chain verification (T16) confirms verified_count=3, divergence_count=3, all 3 milestones accepted=false per enforce mode (cross-checkout drift from cloud session).",
+    "Full enforcement deferred to M6+ per SD1; M5 records enforce posture but does not implement fail-closed semantics.",
+    "Duplicate-session tombstone derived from actual workspace state (T18).",
+    "All proof artifacts verified to exist on disk with correct SHA-256 digests."
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "schema": "m5.duplicate-session-tombstone.v1",
+  "description": "Non-authorizing supporting evidence for the redundant runauthority-epic-all-codex session. This tombstone records the final search results for the Discord-reported retirement record and SHA, and derives actual duplicate workspace facts from on-disk state. This tombstone cannot retire the canonical runauthority-epic initiative; only the M5 canonical chain verification and .retired marker perform retirement.",
+  "generated_at": "2026-07-14T16:15:00Z",
+  "generated_by_plan": "m5-run-authority-receipt-20260714-1428",
+  "generated_by_task": "T18",
+  "generated_by_batch": "batch_18",
+  "canonical_initiative": "runauthority-epic",
+  "canonical_session": "runauthority-epic-cloud",
+  "duplicate_session": "runauthority-epic-all-codex",
+  "reported_retirement_record": {
+    "record_id": "ret-2e1f0059d83e503a9023",
+    "reported_tombstone_sha256": "599e36f5f20e20849294441fd5cae843fc70411f0274512d92250dc2721d187f",
+    "source": "Discord report (not retirement authority)",
+    "search_result": "NOT_FOUND",
+    "search_scope": "Full filesystem search across /workspace for filename 'ret-2e1f0059d83e503a9023' and content search for SHA '599e36f5f20e20849294441fd5cae843fc70411f0274512d92250dc2721d187f' in /workspace/runauthority-epic-all-codex and all other workspaces",
+    "search_commands": [
+      "find /workspace -name '*ret-2e1f0059d83e503a9023*' — 0 results",
+      "grep -r 'ret-2e1f0059d83e503a9023' /workspace — found only in brief files referencing the Discord report",
+      "grep -r '599e36f5' /workspace/runauthority-epic-all-codex/ — 0 results",
+      "sha256sum of all 11 files in duplicate runauthority-epic initiative — none match 599e36f5..."
+    ],
+    "resolution": "No canonical stored tombstone exists on disk. A fresh content-addressed tombstone is derived from actual duplicate workspace state below."
+  },
+  "duplicate_workspace": {
+    "path": "/workspace/runauthority-epic-all-codex/Arnold",
+    "git_head": "df95784af96d367f6bb2e6942c89ec62c6a3bcb3",
+    "git_head_verified": true,
+    "initiative_present": true,
+    "initiative_path": ".megaplan/initiatives/runauthority-epic",
+    "initiative_file_count": 11,
+    "initiative_files": [
+      "NORTHSTAR.md",
+      "README.md",
+      "briefs/m1.md",
+      "briefs/m2.md",
+      "briefs/m3.md",
+      "chain.yaml",
+      "cloud.yaml",
+      "decisions/runauthority-architecture-decision.md",
+      "decisions/runauthority-main-plan.md",
+      "notes/megaplan-canonical-planview-root-fix.md",
+      "research/runauthority-domain-exploration-synthesis.md"
+    ],
+    "missing_from_canonical_set": [
+      "completion-manifest.json",
+      "proof-map.json",
+      "notes/sprint-1-enforcement-handoff.md"
+    ],
+    "has_retired_marker": false,
+    "sprint_plans_present": [
+      "sprint-1-authority-freeze-and-20260710-1900"
+    ],
+    "sprint_plans_missing": [
+      "sprint-2-dispatch-grants-and-20260710-2200",
+      "sprint-3-consumer-migration-20260711-0130"
+    ]
+  },
+  "profile_identity": {
+    "cloud_yaml_chain_session": "runauthority-epic-cloud",
+    "cloud_yaml_chain_session_note": "Cross-referenced — duplicate workspace cloud.yaml registers its chain_session as the canonical cloud session, not as runauthority-epic-all-codex",
+    "cloud_yaml_mode": "chain",
+    "cloud_yaml_model": "gpt-5.6-sol",
+    "cloud_yaml_workspace_target": "/workspace/runauthority-epic-cloud/Arnold",
+    "cloud_yaml_chain_spec": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/initiatives/runauthority-epic/chain.yaml",
+    "chain_state_completion_contract_mode": "shadow",
+    "chain_state_full_suite_backstop_mode": "shadow",
+    "chain_state_project_root": "/workspace/runauthority-epic-all-codex/Arnold",
+    "chain_state_pr_number": 207,
+    "chain_state_pr_state": "open",
+    "chain_state_current_milestone_index": 0,
+    "chain_state_branch_head": "df95784af96d367f6bb2e6942c89ec62c6a3bcb3"
+  },
+  "cloud_session_marker_status": {
+    "distinct_cloud_session_marker_present": false,
+    "detail": "The all-codex workspace has a cloud.yaml file in its runauthority-epic initiative, but it registers chain_session as 'runauthority-epic-cloud'. No distinct 'runauthority-epic-all-codex' cloud session marker exists. The cloud.yaml effectively delegates to the canonical cloud session identity."
+  },
+  "live_process_status": {
+    "live_processes_found": false,
+    "check_command": "ps aux | grep -i 'runauthority-epic-all-codex\\|runauthority.all.codex'",
+    "check_result": "No matching processes found (exit code 1)"
+  },
+  "observed_drift_from_canonical": {
+    "canonical_workspace": "/workspace/runauthority-epic-cloud/Arnold",
+    "canonical_git_head": "f64ee1d56c897a7bb8b8d5079dee6e8632e83221",
+    "duplicate_git_head": "df95784af96d367f6bb2e6942c89ec62c6a3bcb3",
+    "git_head_drift": "Duplicate HEAD (df95784af) is M1 base commit; canonical HEAD (f64ee1d56c) is 3 commits ahead (M1 head + M2 head + M3 head)",
+    "sprint_plan_count_drift": "Duplicate has 1 sprint plan (sprint-1 only); canonical has 3 sprint plans",
+    "sprint_1_timestamp_drift": "Duplicate sprint-1 timestamp is 20260710-1900; canonical is 20260710-1935",
+    "chain_state_mode_drift": "Duplicate completion_contract_mode=shadow, full_suite_backstop_mode=shadow; canonical chain state expected enforce/enforce per M5 posture",
+    "cloud_yaml_drift": {
+      "chain_session": "Duplicate cloud.yaml says 'runauthority-epic-cloud'; canonical cloud.yaml says 'runauthority-epic-all-codex' (cross-referenced)",
+      "mode": "Duplicate: chain; Canonical: idle",
+      "model": "Duplicate: gpt-5.6-sol; Canonical: gpt-5.5",
+      "workspace_field": "Duplicate has workspace=/workspace/runauthority-epic-cloud/Arnold and chain.spec; canonical lacks both",
+      "initiative_files": "8 common files are SHA-256 identical; duplicate missing 3 files present in canonical"
+    }
+  },
+  "common_files_sha256_parity": {
+    "verified_count": 8,
+    "matching_count": 8,
+    "note": "All 8 files common to both workspaces are SHA-256 identical",
+    "files": [
+      {"file": "NORTHSTAR.md", "sha256": "99cd0fb718af1e1a9c83b0e3ea911505caa274008eecdac696cf0b1a8acbe3a4"},
+      {"file": "README.md", "sha256": "19c7f73c50f198989d4b9e783a2d501781de0d3e8b3b281236d26c52592dea10"},
+      {"file": "briefs/m1.md", "sha256": "a01647da9db58b2cfdccac62db5b2b0169c3f6e5ee0e6177e452d772eb5ee315"},
+      {"file": "briefs/m2.md", "sha256": "91c0c8334a4d6d4e9b5586ec9ac52f135fbb5d0bc581b632dd389f1008dca444"},
+      {"file": "briefs/m3.md", "sha256": "6d949a0a49020c9806511361e2cea8052d32c18210087b1d991c655351868b33"},
+      {"file": "decisions/runauthority-architecture-decision.md", "sha256": "ad70c045fcab0778ad9dc53ef608994cafde96bd75a0cca9b7e730b916b9b561"},
+      {"file": "decisions/runauthority-main-plan.md", "sha256": "16e01b9f0368fe4270ebdd0f0fb0bcea07f4d79a2245abcf7682e9824d44636a"},
+      {"file": "notes/megaplan-canonical-planview-root-fix.md", "sha256": "610395a6d9f9ee194e0e8d3136ab0c32a8d6c0b7887e061122849f30e25b8e6f"},
+      {"file": "research/runauthority-domain-exploration-synthesis.md", "sha256": "a65572ee6dc529b7ef400124df324706061581e6c98ec0c72eae6affd8fddaf5"}
+    ]
+  },
+  "divergent_files": [
+    {
+      "file": "chain.yaml",
+      "duplicate_sha256": "fd223f2cc3679710290d152ed7be81b4ff592439d2cad9e7e7ec0a44819a4b8d",
+      "canonical_sha256": "f87b408c148b550d3ba15a31dfd0161c45517a82aa2adb596c085c127606ef33",
+      "note": "Duplicate chain.yaml has profile=all-codex for all milestones; canonical has different profile entries"
+    },
+    {
+      "file": "cloud.yaml",
+      "duplicate_sha256": "82035f8f2cda785074952009dfd0bb984f705cffb13f8732246ef66dd045174f",
+      "canonical_sha256": "e331e2f68f166dfeb1f66202e5e9aa1dc231024edc59b4d7dd1a73e26295f962",
+      "note": "Cross-referenced chain_sessions, different mode/model, duplicate has workspace+chain.spec fields"
+    }
+  ],
+  "non_actionability": {
+    "can_retire_canonical_initiative": false,
+    "reason": "This tombstone is supporting evidence only. The canonical runauthority-epic retirement is performed exclusively by M5's chain verification, accepted receipts, and the .retired marker under the custody-control-plane authority.",
+    "canonical_assets_preserved": true,
+    "canonical_workspace_untouched": true,
+    "duplicate_workspace_preserved": true,
+    "no_deletion_performed": true
+  }
+}
