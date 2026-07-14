@@ -1,0 +1,37 @@
+I now have all the evidence needed. Here is the forensic verdict:
+
+---
+
+**FORENSIC VERDICT — agent-edit-verifiable-transaction-spine**
+
+**Evidence chain (exact timestamps):**
+
+1. **00:20:23** — First scan's `repair-trigger` returns `"no_actionable_requests"` *before* the session is observed (ordering defect).
+
+2. **00:20:36** — Session observed: `last_state: "blocked"`, `resume_retry_strategy: "manual_review"`. Chain fingerprint `91c1a4d8` confirms state is stale/frozen.
+
+3. **00:20:48** — Repair launch **fails**: `pid=1107128 run_id=missing manifest=missing`. The command was invoked with missing required arguments (`--origin-kind`, `--origin-id`, `--origin-component`, `--trigger-id`), producing an argparse error (lines 101795–101809). This is a **syntax-level launch defect** in the repair loop invocation.
+
+4. **00:20:49** — Watchdog correctly classifies: `"manual_review classified for repair dispatch but repair loop is unavailable; needs human"`. Discord DM delivered at 00:20:56. Report `20260714T002152Z` filed.
+
+5. **00:24:37** (second scan) — **The contradiction.** `repair_trigger_observe` for request `70650274cd6c1e45d715a70851aad82ccc26385d2dea87bb28286baf921f51ef` shows:
+   - `"custody_bucket": "repairing"`
+   - `"dispatch_decision": "repairing"`
+   - `"dispatch_intent": "queue_only"`
+   - `"status": "eligible"`
+
+6. **00:24:38** — Claim event: `"status": "already_claimed"` with blocker `blocker:v1:b57165454d...`. Repair-trigger then reports `"no_actionable_requests"`.
+
+7. **00:24:55** — *Second* `"session requires human review"` and *second* Discord DM at 00:25:01. Duplicate escalation.
+
+**Why the session appeared both "repairing" and "human review" simultaneously:**
+
+The watchdog's observe path correctly reads `retry=manual_review` from the chain state and routes to human escalation (lines 101811–101812). But the **repair-trigger subsystem** independently evaluates eligibility from the same chain state and classifies any `blocked` session as `custody_bucket: "repairing"` without consulting `resume_retry_strategy`. It creates a repair request, which a blocker claims (creating the illusion of active repair), but the repair loop itself correctly declines to execute because the session is `manual_review`. Result: two conflicting custody signals from the same scan.
+
+**Source-layer defect:** The `repair_trigger_observe` eligibility check lacks a guard on `resume_retry_strategy`. A session with `retry=manual_review` should never enter `custody_bucket: "repairing"`. The classifier should bucket it as `"human_review"` or skip it entirely.
+
+**Missed backstop:** The claim handler (`repair_trigger_claim`) accepts claims against any eligible request without validating that the target session's retry strategy permits automated repair. The blocker `b57165454d...` claimed a request that no repair worker should ever execute.
+
+**Did the alert faithfully represent custody?** Partially. The `"session requires human review"` line and Discord DMs correctly identify the problem (T12 blocked on tool-calling budget exhaustion, partial implementation reverted). But the simultaneous repair-request creation falsely signals that automated recovery is possible, undermining the alert's clarity. The duplicate human-review notification in the second scan (4 minutes later) is redundant noise.
+
+**Verdict:** The watchdog correctly detected a genuinely blocked session requiring human intervention (tool budget exhaustion on authority receipt wiring). However, a **classification defect** in the repair-trigger eligibility path causes it to create repair queue entries for `manual_review` sessions, producing contradictory custody signals. The claim handler's lack of retry-strategy validation is a missed backstop that allows these zombie repair requests to persist.

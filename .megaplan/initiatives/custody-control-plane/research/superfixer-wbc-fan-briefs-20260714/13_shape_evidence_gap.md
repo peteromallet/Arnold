@@ -1,0 +1,3 @@
+Follow the full megaplan-cloud skill at `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md`; read-only.
+
+For `workflow-boundary-contracts-corrective-20260710`, test specifically for EVIDENCE-CONTRACT GAP / CONTEXT failure. Ask whether L1 completion wrote the terminal artifact consumed by watchdog/status/L2/L3, whether recovery updated repair-progress/incident projections, and whether stale conclusions remain baked into downstream auditor/queue data. Return YES/NO, first failed producer-consumer edge, exact paths/timestamps, and sibling evidence under 450 words.

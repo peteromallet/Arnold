@@ -1,0 +1,3 @@
+Read the full megaplan-cloud skill at `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md`. Read-only only.
+
+Perform the `can I even see?` probe for `workflow-boundary-contracts-corrective-20260710`: PATH/PYTHONPATH/import origin, pinned resident revision versus current source and clean runtime mirror, canonical status operation, container/on-box reachability, clock/timestamp sanity, and whether any status/auditor command is importing stale or mismatched code. Also note concurrent wrapper deployment if observed. Return PASS/FAIL with exact roots/revisions/fingerprints under 400 words.

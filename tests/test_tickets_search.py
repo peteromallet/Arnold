@@ -87,7 +87,7 @@ class TestKeywordMatching:
         _make(repo, registry_home, "Gamma", "only gadgets here")
 
         proc = _run(
-            ["ticket", "search", "widgets", "gadgets", "--all", "--json"],
+            ["ticket", "search", "widgets", "gadgets", "--keywords-all", "--json"],
             cwd=repo, registry_home=registry_home,
         )
         data = json.loads(proc.stdout)

@@ -72,7 +72,7 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
 
     rendered = render_currently_running(report)
 
-    assert "**Epics & chains · 1 active**" in rendered
+    assert "**⛓️ Epics & chains · 1 active**" in rendered
     assert "**Custody control plane · m7-runtime-adoption**" in rendered
     assert "`executing`" in rendered
     assert "42.5% overall" in rendered
@@ -101,6 +101,43 @@ def test_active_execute_phase_is_executing_when_display_state_is_absent() -> Non
 
     assert "**epic**" in rendered
     assert "`executing` · overall progress unavailable" in rendered
+
+
+def test_render_uses_distinct_restrained_section_headings() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [
+                    {
+                        "session": "status-refresh",
+                        "status": "running",
+                        "progress": {"display_state": "executing", "percent": 25},
+                    }
+                ]
+            },
+            managed_agents={
+                "running": [
+                    {
+                        "run_id": "status-agent",
+                        "description": "Refresh resident status",
+                        "status": "running",
+                        "live": True,
+                    }
+                ]
+            },
+        )
+    )
+
+    assert rendered == (
+        "**◈ Currently running**\n"
+        "**⛓️ Epics & chains · 1 active**\n"
+        "• **status-refresh**\n"
+        "  `executing` · 25% overall · chain running\n"
+        "\n"
+        "**🤖 Resident-managed agents · 1 live**\n"
+        "• **Refresh resident status**\n"
+        "  `running` · agent `status-agent`"
+    )
 
 
 def test_agents_render_lifecycle_duration_and_persisted_token_usage() -> None:
@@ -488,7 +525,7 @@ def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
 
     chunks = split_discord_message(rendered)
 
-    assert "**Resident-managed agents · 40 live**" in rendered
+    assert "**🤖 Resident-managed agents · 40 live**" in rendered
     assert "Progress unavailable" not in rendered
     assert rendered.count(" · agent `run-") == 40
     assert "Resident task 39" in rendered
