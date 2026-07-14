@@ -388,17 +388,21 @@ def _scan_under_lock(
         return 0
 
     if not authorized:
+        blocked_intent = str(dispatch_candidate.get("dispatch_intent") or "")
+        blocked_reason = (
+            "L3 mutation requires ARNOLD_AUTONOMY and ARNOLD_AUDIT_AUTOFIX_ENABLED"
+            if blocked_intent == "deep_superfixer_repair"
+            else "L2 mutation requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED"
+            if blocked_intent == "broken_superfixer"
+            else "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED"
+        )
         _emit(
             {
                 "event": "repair_trigger",
                 "status": "blocked",
                 "enabled": enabled,
                 "authorized": False,
-                "reason": (
-                    "L3 mutation requires ARNOLD_AUTONOMY and ARNOLD_AUDIT_AUTOFIX_ENABLED"
-                    if request_id
-                    else "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED"
-                ),
+                "reason": blocked_reason,
             }
         )
         return 0

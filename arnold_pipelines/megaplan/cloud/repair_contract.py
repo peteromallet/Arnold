@@ -3717,6 +3717,12 @@ def _is_known_repairable_shape(
     if (
         current_state == "failed"
         and retry_strategy == "rerun_phase"
+        and failure_kind == "phase_callback_failed"
+    ):
+        return _has_current_target_evidence(current_target)
+    if (
+        current_state == "failed"
+        and retry_strategy == "rerun_phase"
         and failure_kind in {"phase_failed", "execution_blocked"}
         and _as_text(resume_authority_failure.get("code")) == "resume_execute_authority_blocked"
         and _as_text(resume_authority_failure.get("reason")) == "execute_authority_diverged"

@@ -285,6 +285,14 @@ def test_trigger_reports_current_target_resolution_evidence(tmp_path: Path) -> N
     assert observe["target"]["target_session"] == "demo"
     assert observe["target"]["current_refs"]["remote_spec"] == str(spec)
     assert observe["dispatch_decision"] == "dispatch_l1_repair"
+    blocked = next(
+        event
+        for event in _events(result)
+        if event["event"] == "repair_trigger" and event["status"] == "blocked"
+    )
+    assert blocked["reason"] == (
+        "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED"
+    )
 
 
 def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) -> None:

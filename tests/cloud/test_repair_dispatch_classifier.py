@@ -351,6 +351,72 @@ def test_classifier_dispatches_failed_rerun_phase_execute_authority_divergence(
     assert decision.failure_kind == "phase_failed"
 
 
+def test_classifier_dispatches_failed_phase_callback_rerun_with_current_evidence(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    state = _plan_state(
+        current_state="failed",
+        resume_cursor={"retry_strategy": "rerun_phase"},
+        latest_failure={
+            "kind": "phase_callback_failed",
+            "phase": "execute",
+            "metadata": {"iteration": 2},
+        },
+    )
+    target = _current_target(
+        current_refs={
+            "current_plan_name": "agentic-replay-viewer",
+            "plan_current_state": "failed",
+        },
+        plan_state={"present": True, "fingerprint": "sha256:callback-proof"},
+    )
+    queued = enqueue_repair_request(
+        queue_root=marker_dir.parent / ".megaplan" / "repair-queue",
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "phase_callback_failed",
+            "current_state": "failed",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+        },
+        root_cause_hint="phase completion callback failed after execute",
+    )
+
+    projection = project_repair_custody(
+        plan_state=state,
+        current_target=target,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+    decision = classify_repair_dispatch(
+        canonical_run_state=CanonicalRunState(
+            canonical_state=CanonicalState.UNKNOWN,
+            confidence="low",
+            repairable=False,
+            running=False,
+            next_action="inspect_evidence",
+            reason="resolver lacked a typed phase-callback classifier",
+        ),
+        event_plan_dir=tmp_path,
+        plan_state=state,
+        current_target=target,
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == DISPATCH_INTENT_L1
+    assert decision.request_id == queued["request"]["request_id"]
+    assert decision.current_state == "failed"
+    assert decision.retry_strategy == "rerun_phase"
+    assert decision.failure_kind == "phase_callback_failed"
+
+
 def test_quality_failure_tokens_dispatch_l1_only_with_current_target_evidence() -> None:
     for failure_kind in ("quality_gate_blocked", "deterministic_quality_blocked"):
         plan_state = _plan_state(
