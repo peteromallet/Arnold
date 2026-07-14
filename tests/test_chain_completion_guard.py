@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ from arnold_pipelines.megaplan.chain import (
     save_chain_state,
 )
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_spec
-from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
+from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE, STATE_DONE
 
 
 def _git(root: Path, *args: str) -> str:
@@ -579,6 +580,41 @@ def test_run_chain_recovers_merged_pr_with_unfinished_claimed_changes(
     assert saved.pr_state == "open"
     assert saved.metadata["stale_merged_pr_recovery"]["stale_pr_number"] == 122
     assert "src/app.py" not in _git(tmp_path, "status", "--porcelain")
+
+
+def test_reconcile_terminal_pr_state_reopens_done_chain_when_final_pr_is_open(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=1,
+            current_plan_name="plan-m1",
+            last_state=STATE_DONE,
+            pr_number=249,
+            pr_state="open",
+            completed=[{"label": "m1", "plan": "plan-m1", "status": "done", "pr_number": 249, "pr_state": "open"}],
+        ),
+    )
+
+    with patch(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        return_value=SimpleNamespace(
+            _pr_state=lambda *_args, **_kwargs: "open",
+            save_chain_state=chain_module.save_chain_state,
+        ),
+    ):
+        reconciled = chain_module._reconcile_terminal_pr_state(
+            tmp_path,
+            spec_path,
+            load_chain_state(spec_path),
+            writer=lambda _msg: None,
+        )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.last_state == STATE_AWAITING_PR_MERGE
 
 
 def test_run_chain_logs_stale_merged_pr_recovery_for_unfinished_plan(
