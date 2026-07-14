@@ -254,19 +254,44 @@ def _snapshot_list(repo_root: Path) -> dict[str, Any]:
 
 
 def _snapshot_project(repo_root: Path) -> dict[str, Any]:
-    """Take a project snapshot via capsys."""
-    import io
-    import sys
+    """Take a project snapshot — handler now returns JSON string directly."""
+    output = handle_strategy_project(repo_root, _ns(write=False, output=None))
+    return json.loads(output)
 
-    old_stdout = sys.stdout
-    try:
-        buf = io.StringIO()
-        sys.stdout = buf
-        handle_strategy_project(repo_root, _ns(write=False, output=None))
-        result = json.loads(buf.getvalue())
-    finally:
-        sys.stdout = old_stdout
-    return result
+
+def _setup_ticket_file(repo_root: Path, ulid: str, title: str = "Test ticket") -> Path:
+    """Create a minimal ticket artifact file so the ref resolves in handlers."""
+    tickets_dir = repo_root / ".megaplan" / "tickets"
+    tickets_dir.mkdir(parents=True, exist_ok=True)
+    from arnold_pipelines.megaplan.tickets.files import slugify
+
+    slug = slugify(title)
+    fpath = tickets_dir / f"{ulid}-{slug}.md"
+    fpath.write_text(
+        f"---\n"
+        f"id: {ulid}\n"
+        f"title: {title}\n"
+        f"status: open\n"
+        f"source: human\n"
+        f"tags: []\n"
+        f"created_at: 2025-01-01T00:00:00+00:00\n"
+        f"last_edited_at: 2025-01-01T00:00:00+00:00\n"
+        f"epics: []\n"
+        f"---\n"
+        f"\n"
+        f"Test body.\n",
+        encoding="utf-8",
+    )
+    return fpath
+
+
+def _setup_initiative_dir(repo_root: Path, slug: str, title: str = "Test Initiative") -> Path:
+    """Create a minimal initiative directory so the epic ref resolves."""
+    init_dir = repo_root / ".megaplan" / "initiatives" / slug
+    init_dir.mkdir(parents=True, exist_ok=True)
+    readme = init_dir / "README.md"
+    readme.write_text(f"# {title}\n\nTest initiative.\n", encoding="utf-8")
+    return init_dir
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +488,7 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQNEWTKT", "New ticket for testing")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -486,6 +512,7 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
+        _setup_initiative_dir(repo_root, "comments-preserved-epic", "Comments survive add")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -513,6 +540,7 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TPRSETST", "Prose preservation test")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -541,6 +569,7 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQDONLY", "Only Next changes")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -580,6 +609,7 @@ class TestAddPreservesNonRoadmapContent:
         original = _read_strategy(repo_root)
         assert "<!-- No entries yet" in original
 
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TFILLNXT", "Filling Next")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -603,6 +633,7 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_INTERLEAVED_BLANKS)
         original = _read_strategy(repo_root)
 
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TBLNKTST", "Blank line test")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -755,6 +786,7 @@ class TestMovePreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
 
         # Add an entry to Next first so we can move it.
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQMOVEME", "Move me please")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -812,6 +844,7 @@ class TestMovePreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
 
         # Add an entry to Next (which has a comment) so we can move it out.
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQMVOUT", "Moving out of Next")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -875,6 +908,7 @@ class TestShowListProjectEquivalence:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         show_before = _snapshot_show(repo_root)
 
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TSHOWADD", "Show equivalence test")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -953,6 +987,7 @@ class TestShowListProjectEquivalence:
         show_original = _snapshot_show(repo_root)
 
         # Add a temporary entry.
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TTEMPADD", "Temporary add")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -1014,6 +1049,7 @@ class TestShowListProjectEquivalence:
         proj_before = _snapshot_project(repo_root)
 
         # Add and remove a temporary entry in Next.
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TTMPCYCL", "Cycle test")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -1069,6 +1105,7 @@ class TestFullRoundTripEquivalence:
         _setup_repo(tmp_path, content)
 
         # Step 2: Do a lossless write (via CLI add).
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TRNDTRP", "Round-trip ticket")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -1094,6 +1131,7 @@ class TestFullRoundTripEquivalence:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_FRONTMATTER_VARIATIONS)
 
         # Add an entry via lossless write.
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TCUSTMFM", "Custom FM test")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -1127,6 +1165,7 @@ class TestFullRoundTripEquivalence:
         ]
 
         # Perform a sequence: add, move, remove.
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TALLHDRS", "All headers test")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -1158,6 +1197,7 @@ class TestFullRoundTripEquivalence:
         mutations."""
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
 
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TPRSABLE", "Parsable after add")
         handle_strategy_add(
             repo_root,
             _ns(
@@ -1285,6 +1325,7 @@ class TestIdempotentWriteProducesIdenticalFile:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TADDRMV", "Add then remove")
         handle_strategy_add(
             repo_root,
             _ns(

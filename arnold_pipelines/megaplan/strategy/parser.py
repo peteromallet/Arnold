@@ -461,11 +461,20 @@ def _parse_roadmap_section(
     entries: list[RoadmapEntry] = []
     horizon: RoadmapHorizon = horizon_title  # type: ignore[assignment]
 
-    # Iterate over lines in this section's body range.
+    # Iterate over lines in this section's body range, skipping HTML comments.
+    in_comment = False
     for line_idx in range(raw.body_start_line - 1, raw.body_end_line - 1):
         line = lines[line_idx]
         stripped = line.strip()
         line_no = line_idx + 1  # 1-indexed
+
+        # Track HTML comment block boundaries.
+        if stripped.startswith("<!--"):
+            in_comment = True
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
 
         # Skip blank lines and non-bullet lines.
         if not stripped.startswith("- "):
@@ -553,10 +562,24 @@ def _check_typed_bullets_outside_roadmap(
     path: str,
     diagnostics: list[StrategyDiagnostic],
 ) -> None:
-    """Scan a stable-direction section body for typed bullets and emit diagnostics."""
+    """Scan a stable-direction section body for typed bullets and emit diagnostics.
+
+    HTML comments are skipped — typed bullet examples inside ``<!-- ... -->``
+    blocks are treated as documentation, not live entries.
+    """
+    in_comment = False
     for line_idx in range(raw.body_start_line - 1, raw.body_end_line - 1):
         line = lines[line_idx]
         stripped = line.strip()
+
+        # Track HTML comment block boundaries.
+        if stripped.startswith("<!--"):
+            in_comment = True
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+
         if _TYPED_BULLET_HINT_RE.match(stripped):
             line_no = line_idx + 1
             diagnostics.append(

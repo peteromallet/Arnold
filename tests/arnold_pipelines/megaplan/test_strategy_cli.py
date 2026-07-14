@@ -219,6 +219,41 @@ def _setup_empty_repo(tmp_path: Path) -> Path:
     return repo_root
 
 
+def _setup_ticket_file(repo_root: Path, ulid: str, title: str = "Test ticket") -> Path:
+    """Create a minimal ticket artifact file so the ref resolves."""
+    tickets_dir = repo_root / ".megaplan" / "tickets"
+    tickets_dir.mkdir(parents=True, exist_ok=True)
+    from arnold_pipelines.megaplan.tickets.files import slugify
+
+    slug = slugify(title)
+    fpath = tickets_dir / f"{ulid}-{slug}.md"
+    fpath.write_text(
+        f"---\n"
+        f"id: {ulid}\n"
+        f"title: {title}\n"
+        f"status: open\n"
+        f"source: human\n"
+        f"tags: []\n"
+        f"created_at: 2025-01-01T00:00:00+00:00\n"
+        f"last_edited_at: 2025-01-01T00:00:00+00:00\n"
+        f"epics: []\n"
+        f"---\n"
+        f"\n"
+        f"Test body.\n",
+        encoding="utf-8",
+    )
+    return fpath
+
+
+def _setup_initiative_dir(repo_root: Path, slug: str, title: str = "Test Initiative") -> Path:
+    """Create a minimal initiative directory so the epic ref resolves."""
+    init_dir = repo_root / ".megaplan" / "initiatives" / slug
+    init_dir.mkdir(parents=True, exist_ok=True)
+    readme = init_dir / "README.md"
+    readme.write_text(f"# {title}\n\nTest initiative.\n", encoding="utf-8")
+    return init_dir
+
+
 def _ns(**kwargs: Any) -> argparse.Namespace:
     """Build a convenient argparse.Namespace."""
     return argparse.Namespace(**kwargs)
@@ -485,12 +520,12 @@ class TestStrategyCLIValidate:
         assert exc_info.value.exit_code == 1
 
     def test_validate_missing_file_raises_cli_error(self, tmp_path: Path) -> None:
-        """validate on a missing strategy file raises FileNotFoundError
-        (wrapped by the load function)."""
+        """validate on a missing strategy file raises CliError('strategy_missing')."""
         repo_root = _setup_empty_repo(tmp_path)
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(CliError) as exc_info:
             handle_strategy_validate(repo_root, _ns(json=False))
+        assert exc_info.value.code == "strategy_missing"
 
     def test_validate_warnings_dont_cause_nonzero_exit(self, tmp_path: Path) -> None:
         """validate with only warnings returns clean=False but does not raise."""
@@ -612,16 +647,14 @@ class TestStrategyCLIList:
 class TestStrategyCLIProject:
     """Tests for strategy project command handler."""
 
-    def test_project_stdout(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-        """project prints JSON to stdout by default."""
+    def test_project_stdout(self, tmp_path: Path) -> None:
+        """project returns JSON as a string by default."""
         repo_root = _setup_repo(tmp_path)
         result = handle_strategy_project(repo_root, _ns(write=False, output=None))
 
-        assert result["success"] is True
-        assert result["output"] == "stdout"
-
-        captured = capsys.readouterr().out
-        projection = json.loads(captured)
+        # The handler now returns the JSON string directly (render_response prints strings).
+        assert isinstance(result, str)
+        projection = json.loads(result)
         assert "source_version" in projection
         assert "roadmap" in projection
 
@@ -657,13 +690,12 @@ class TestStrategyCLIProject:
         assert exc_info.value.code == "invalid_args"
         assert "not both" in exc_info.value.message.lower()
 
-    def test_project_stdout_is_valid_json(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-        """project stdout output is parseable JSON."""
+    def test_project_stdout_is_valid_json(self, tmp_path: Path) -> None:
+        """project returns parseable JSON string."""
         repo_root = _setup_repo(tmp_path)
-        handle_strategy_project(repo_root, _ns(write=False, output=None))
-        captured = capsys.readouterr().out
-        # Must be valid JSON
-        parsed = json.loads(captured)
+        result = handle_strategy_project(repo_root, _ns(write=False, output=None))
+        # Must be valid JSON string
+        parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
 
@@ -678,6 +710,7 @@ class TestStrategyCLIAdd:
     def test_add_entry_success(self, tmp_path: Path) -> None:
         """add successfully places a new entry and writes to the strategy file."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "New feature")
         result = handle_strategy_add(
             repo_root,
             _ns(
@@ -702,6 +735,7 @@ class TestStrategyCLIAdd:
     def test_add_duplicate_raises_entry_exists(self, tmp_path: Path) -> None:
         """add with an existing identity raises strategy_entry_exists."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "New feature")
         # First add succeeds
         handle_strategy_add(
             repo_root,
@@ -794,6 +828,7 @@ class TestStrategyCLIAdd:
     def test_add_epic_type_success(self, tmp_path: Path) -> None:
         """add with epic type works."""
         repo_root = _setup_repo(tmp_path)
+        _setup_initiative_dir(repo_root, "my-initiative", "My Initiative")
         result = handle_strategy_add(
             repo_root,
             _ns(type="epic", ref="my-initiative", title="My Initiative", horizon="Later"),
@@ -844,6 +879,7 @@ class TestStrategyCLIAdd:
             "\n"
         )
         repo_root = _setup_repo(tmp_path, content=content)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "Test")
 
         handle_strategy_add(
             repo_root,
@@ -867,6 +903,7 @@ class TestStrategyCLIRemove:
     def test_remove_entry_success(self, tmp_path: Path) -> None:
         """remove successfully removes an existing entry."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "Remove me")
         # Add an entry first
         handle_strategy_add(
             repo_root,
@@ -926,6 +963,7 @@ class TestStrategyCLIMove:
     def test_move_entry_success(self, tmp_path: Path) -> None:
         """move relocates an entry between horizons."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "Move me")
         # Add entry first
         handle_strategy_add(
             repo_root,
@@ -949,6 +987,7 @@ class TestStrategyCLIMove:
     def test_move_same_horizon_noop(self, tmp_path: Path) -> None:
         """moving to the same horizon is a successful no-op."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "Already here")
         handle_strategy_add(
             repo_root,
             _ns(type="ticket", ref="01KT50AZRMK5X890TQ565DDB5X", title="Already here", horizon="Now"),
@@ -1201,6 +1240,7 @@ class TestStrategyCLIConflict:
     def test_add_handler_conflict_raises_strategy_conflict(self, tmp_path: Path) -> None:
         """add handler raises strategy_conflict CliError on concurrent modification."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "Conflict test")
 
         # Load once to get valid state, then externally modify
         document, _ = load_strategy_for_write(repo_root)
@@ -1232,6 +1272,7 @@ class TestStrategyCLIConflict:
     def test_remove_handler_conflict_raises_strategy_conflict(self, tmp_path: Path) -> None:
         """remove handler raises strategy_conflict CliError on write conflict."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "To remove")
 
         # Add an entry first
         handle_strategy_add(
@@ -1254,6 +1295,7 @@ class TestStrategyCLIConflict:
     def test_move_handler_conflict_raises_strategy_conflict(self, tmp_path: Path) -> None:
         """move handler raises strategy_conflict CliError on write conflict."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "To move")
 
         handle_strategy_add(
             repo_root,
@@ -1285,6 +1327,7 @@ class TestStrategyCLIFileEditIntegrity:
         """Adding an entry preserves stable direction sections byte-for-byte."""
         content = _valid_strategy_content()
         repo_root = _setup_repo(tmp_path, content=content)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "New")
 
         handle_strategy_add(
             repo_root,
@@ -1301,6 +1344,7 @@ class TestStrategyCLIFileEditIntegrity:
     def test_remove_preserves_stable_direction(self, tmp_path: Path) -> None:
         """Removing an entry preserves stable direction sections."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "Temp")
         # Add an entry first so we have something to remove
         handle_strategy_add(
             repo_root,
@@ -1318,6 +1362,7 @@ class TestStrategyCLIFileEditIntegrity:
     def test_move_preserves_stable_direction(self, tmp_path: Path) -> None:
         """Moving an entry preserves stable direction sections."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "Movable")
         # Add an entry first so we have something to move
         handle_strategy_add(
             repo_root,
@@ -1336,6 +1381,7 @@ class TestStrategyCLIFileEditIntegrity:
     def test_add_preserves_frontmatter(self, tmp_path: Path) -> None:
         """Adding an entry preserves the YAML frontmatter."""
         repo_root = _setup_repo(tmp_path)
+        _setup_initiative_dir(repo_root, "test-epic", "Test Epic")
 
         handle_strategy_add(
             repo_root,
@@ -1348,6 +1394,7 @@ class TestStrategyCLIFileEditIntegrity:
     def test_round_trip_add_remove_preserves_structure(self, tmp_path: Path) -> None:
         """A full add-then-remove cycle preserves the original structure."""
         repo_root = _setup_repo(tmp_path)
+        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQ565DDB5X", "Temp")
 
         # Add
         handle_strategy_add(

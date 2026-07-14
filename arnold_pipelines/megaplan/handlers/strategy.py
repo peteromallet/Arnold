@@ -168,7 +168,14 @@ def handle_strategy_validate(
     """
     json_flag = bool(getattr(args, "json", False))
 
-    document = load_strategy(repo_root)
+    try:
+        document = load_strategy(repo_root)
+    except FileNotFoundError:
+        raise CliError(
+            "strategy_missing",
+            "No strategy file found. Run 'strategy init' first.",
+        )
+
     diagnostics = format_diagnostics(document)
 
     error_count = sum(1 for d in diagnostics if d["severity"] == "error")
@@ -236,7 +243,14 @@ def handle_strategy_show(
     """
     json_flag = bool(getattr(args, "json", False))
 
-    document = load_strategy(repo_root)
+    try:
+        document = load_strategy(repo_root)
+    except FileNotFoundError:
+        raise CliError(
+            "strategy_missing",
+            "No strategy file found. Run 'strategy init' first.",
+        )
+
     projection = project_to_dict(document)
 
     if json_flag:
@@ -331,7 +345,13 @@ def handle_strategy_list(
             f"Invalid type filter '{type_filter}'. Must be 'ticket' or 'epic'.",
         )
 
-    document = load_strategy(repo_root)
+    try:
+        document = load_strategy(repo_root)
+    except FileNotFoundError:
+        raise CliError(
+            "strategy_missing",
+            "No strategy file found. Run 'strategy init' first.",
+        )
 
     entries: list[dict[str, Any]] = []
     for horizon in REQUIRED_ROADMAP_SECTIONS:
@@ -357,7 +377,7 @@ def handle_strategy_list(
     warning_count = sum(1 for d in diagnostics if d["severity"] == "warning")
 
     if json_flag:
-        # Print compact JSON to stdout and return a minimal response.
+        # Return the JSON as a string — render_response prints strings directly.
         output = {
             "horizon_filter": horizon_filter,
             "type_filter": type_filter,
@@ -366,13 +386,7 @@ def handle_strategy_list(
             "error_count": error_count,
             "warning_count": warning_count,
         }
-        print(json.dumps(output, separators=(",", ":"), ensure_ascii=False))
-        return {
-            "success": True,
-            "step": "strategy",
-            "action": "list",
-            "output": "stdout",
-        }
+        return json.dumps(output, separators=(",", ":"), ensure_ascii=False) + "\n"
 
     return {
         "success": True,
@@ -435,7 +449,14 @@ def handle_strategy_project(
             "Pass either --write or --output, not both.",
         )
 
-    document = load_strategy(repo_root)
+    try:
+        document = load_strategy(repo_root)
+    except FileNotFoundError:
+        raise CliError(
+            "strategy_missing",
+            "No strategy file found. Run 'strategy init' first.",
+        )
+
     projection_json = project_to_json(document)
 
     if output_path:
@@ -469,14 +490,8 @@ def handle_strategy_project(
             "summary": f"Projection written to {output}",
         }
 
-    # Default: print to stdout.
-    print(projection_json, end="")
-    return {
-        "success": True,
-        "step": "strategy",
-        "action": "project",
-        "output": "stdout",
-    }
+    # Default: return projection JSON as a string — render_response prints strings directly.
+    return projection_json
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +571,9 @@ def handle_strategy_add(
             "strategy_missing",
             "No strategy file found. Run 'strategy init' first.",
         )
+
+    # ---- Preflight: reject unknown artifact references -----------------------
+    _validate_artifact_exists(item_type, ref, repo_root)
 
     entry = make_roadmap_entry(
         type_=item_type,  # type: ignore[arg-type]
@@ -797,6 +815,41 @@ def handle_strategy_move(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _validate_artifact_exists(
+    item_type: str,
+    ref: str,
+    repo_root: Path,
+) -> None:
+    """Raise ``CliError('strategy_unknown_ref')`` if the artifact doesn't exist.
+
+    For tickets, checks if any ``.megaplan/tickets/*.md`` file has a matching
+    ULID in its frontmatter.  For epics, checks if the initiative directory
+    ``.megaplan/initiatives/<ref>`` exists.
+    """
+    if item_type == "ticket":
+        from arnold_pipelines.megaplan.tickets.files import iterate_ticket_files as _iter
+
+        found = False
+        for _fpath, fm in _iter(str(repo_root)):
+            if fm.get("id") == ref:
+                found = True
+                break
+        if not found:
+            raise CliError(
+                "strategy_unknown_ref",
+                f"Ticket '{ref}' not found in .megaplan/tickets/. "
+                f"Create the ticket first, then add it to the roadmap.",
+            )
+    elif item_type == "epic":
+        initiatives_dir = Path(repo_root) / ".megaplan" / "initiatives" / ref
+        if not initiatives_dir.is_dir():
+            raise CliError(
+                "strategy_unknown_ref",
+                f"Epic/initiative '{ref}' not found at {initiatives_dir}. "
+                f"Create the initiative first, then add it to the roadmap.",
+            )
 
 
 def _roadmap_unchanged(

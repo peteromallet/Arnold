@@ -207,7 +207,8 @@ def new(
     else:
         repo_root = os.getcwd()
 
-    # ---- Roadmap opt-in preflight: strategy must exist BEFORE ticket creation
+    # ---- Roadmap opt-in preflight: strategy must exist and be valid BEFORE
+    #      ticket creation.
     strategy_doc = None
     strategy_state = None
     if roadmap_horizon is not None:
@@ -218,6 +219,21 @@ def new(
                 f"Cannot create roadmap-linked ticket: strategy file not found.\n"
                 f"Run 'python -P -m arnold_pipelines.megaplan strategy init' "
                 f"to create one, then retry."
+            )
+
+        # Reject if the loaded document has hard errors (invalid scaffold, etc.)
+        hard_errors = [
+            d for d in strategy_doc.diagnostics if d.level == "error"
+        ]
+        if hard_errors:
+            error_msgs = "\n".join(
+                f"  - {d.message}" for d in hard_errors[:5]
+            )
+            raise ValueError(
+                f"Cannot create roadmap-linked ticket: strategy document has "
+                f"{len(hard_errors)} validation error(s):\n{error_msgs}\n"
+                f"Run 'python -P -m arnold_pipelines.megaplan strategy validate' "
+                f"to see full details, then fix the strategy file before retrying."
             )
 
     source, turn_id, actor_id = _derive_source()

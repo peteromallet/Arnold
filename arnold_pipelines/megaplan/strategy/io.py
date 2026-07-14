@@ -565,10 +565,19 @@ def _rewrite_roadmap_sections(
 
         section_start, section_end = section_ranges[horizon]
 
-        # Find all typed bullet lines within this section body.
+        # Find all typed bullet lines within this section body,
+        # skipping lines that are inside HTML comments (<!-- ... -->).
         bullet_indices: list[int] = []
+        in_comment = False
         for i in range(section_start + 1, section_end):
             stripped = lines[i].strip()
+            # Track HTML comment block boundaries.
+            if stripped.startswith("<!--"):
+                in_comment = True
+            if in_comment:
+                if "-->" in stripped:
+                    in_comment = False
+                continue
             if _BULLET_RE.match(stripped):
                 bullet_indices.append(i)
 
