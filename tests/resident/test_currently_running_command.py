@@ -75,7 +75,8 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
 
     rendered = render_currently_running(report)
 
-    assert "## ⛓️ Epics & chains · 1 active —" in rendered
+    assert "## ⛓️ Epics & chains · 1 active" in rendered
+    assert "### 🟢 Running · 1" in rendered
     assert "**Custody control plane · m7-runtime-adoption**" in rendered
     assert "`executing`" in rendered
     assert "42.5% overall" in rendered
@@ -130,7 +131,7 @@ def test_active_executing_attention_remains_listed_with_overlay_visible() -> Non
         CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
     )
 
-    assert "## ⛓️ Epics & chains · 1 active —" in rendered
+    assert "## ⛓️ Epics & chains · 1 active" in rendered
     assert "`executing`" in rendered
     assert "⚠️ attention" in rendered
     assert "chain custody mismatch" in rendered
@@ -215,7 +216,7 @@ def test_needs_attention_only_shows_authoritative_activity_in_preceding_twelve_h
         CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
     )
 
-    assert "## ⚠️ Needs attention · 2 —" in rendered
+    assert "### ⚠️ Needs attention · 2" in rendered
     assert "**just-inside**" in rendered
     assert "**exact-boundary**" in rendered
     for session in ("just-outside", "missing-activity", "invalid-activity"):
@@ -244,7 +245,7 @@ def test_recently_active_installed_session_remains_visible_as_attention() -> Non
         CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
     )
 
-    assert "## ⚠️ Needs attention · 1 —" in rendered
+    assert "### ⚠️ Needs attention · 1" in rendered
     assert "**Custody control plane**" in rendered
     assert "`executed` · 0% overall · ⚠️ attention · workspace missing or unreadable" in rendered
 
@@ -292,7 +293,7 @@ def test_plan_state_is_used_only_when_display_state_and_execute_are_absent() -> 
     assert "`blocked` · overall progress unavailable · chain running" in rendered
 
 
-def test_render_uses_h1_title_and_h2_section_heading_hierarchy() -> None:
+def test_render_uses_epics_parent_and_nonempty_h3_status_subsections() -> None:
     rendered = render_currently_running(
         CurrentlyRunningReport(
             status_node={
@@ -319,19 +320,51 @@ def test_render_uses_h1_title_and_h2_section_heading_hierarchy() -> None:
 
     assert rendered == (
         "# Currently running\n"
-        "## ⛓️ Epics & chains · 1 active —\n"
+        "## ⛓️ Epics & chains · 1 active\n"
+        "### 🟢 Running · 1\n"
         "• **status-refresh**\n"
         "  `executing` · 25% overall · chain running\n"
         "\n"
-        "## ⚠️ Needs attention · 0 —\n"
-        "_No epics or chains need attention._\n"
-        "\n"
-        "## Recently completed · 0 shown —\n"
-        "_No recently completed chains._\n"
-        "\n"
-        "## 🤖 Managed agents · 1 live —\n"
+        "## 🤖 Managed agents · 1 live\n"
         "• **Refresh resident status**\n"
         "  `running` · agent `status-agent`"
+    )
+
+
+def test_epics_status_groups_are_nonempty_subsections_without_trailing_dashes() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "generated_at": "2026-07-14T18:00:00Z",
+                "sessions": [
+                    {"session": "running-chain", "status": "running"},
+                    {
+                        "session": "blocked-chain",
+                        "status": "attention",
+                        "latest_activity": "2026-07-14T17:59:00Z",
+                    },
+                ],
+                "recently_completed": [
+                    {"session": "done-chain", "status": "completed"},
+                ],
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "## ⛓️ Epics & chains · 1 active" in rendered
+    assert "### 🟢 Running · 1" in rendered
+    assert "### ⚠️ Needs attention · 1" in rendered
+    assert "### ✅ Recently completed · 1 shown" in rendered
+    assert rendered.index("## ⛓️ Epics & chains") < rendered.index("### 🟢 Running")
+    assert rendered.index("### 🟢 Running") < rendered.index("### ⚠️ Needs attention")
+    assert rendered.index("### ⚠️ Needs attention") < rendered.index("### ✅ Recently completed")
+    assert "\n## ⚠️ Needs attention" not in rendered
+    assert "\n## Recently completed" not in rendered
+    assert not any(
+        line.endswith("—")
+        for line in rendered.splitlines()
+        if line.startswith(("##", "###"))
     )
 
 
@@ -354,12 +387,12 @@ def test_render_includes_recent_completed_strategy_chain_with_terminal_evidence(
         )
     )
 
-    assert "## Recently completed · 1 shown —" in rendered
+    assert "### ✅ Recently completed · 1 shown" in rendered
     assert "**Repository strategy roadmap**" in rendered
     assert "`completed` · 5/5 milestones" in rendered
     assert "2026-07-14 17:18:48 UTC (UTC+00:00)" in rendered
-    assert "## ⛓️ Epics & chains · 1 active —" in rendered
-    assert "## 🤖 Managed agents · 0 live —" in rendered
+    assert "## ⛓️ Epics & chains · 1 active" in rendered
+    assert "## 🤖 Managed agents · 0 live" in rendered
 
 
 def test_render_keeps_terminal_plan_without_chain_completion_in_attention() -> None:
@@ -390,11 +423,11 @@ def test_render_keeps_terminal_plan_without_chain_completion_in_attention() -> N
         )
     )
 
-    assert "## ⚠️ Needs attention · 1 —" in rendered
+    assert "### ⚠️ Needs attention · 1" in rendered
     assert "**repository-strategy-roadmap**" in rendered
     assert "`done` · 100% overall · 100% in-flight plan · ⚠️ attention" in rendered
     assert "terminal plan requires chain reconciliation" in rendered
-    assert "## Recently completed · 0 shown —" in rendered
+    assert "Recently completed" not in rendered
     assert "`completed`" not in rendered
 
 
@@ -423,7 +456,7 @@ def test_recent_completed_is_bounded_and_rejects_nonterminal_rows() -> None:
         )
     )
 
-    assert "## Recently completed · 5 shown —" in rendered
+    assert "### ✅ Recently completed · 5 shown" in rendered
     assert "**completed-4**" in rendered
     assert "completed-5" not in rendered
     assert "…2 older completed chains omitted" in rendered
@@ -816,7 +849,7 @@ def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
 
     chunks = split_discord_message(rendered)
 
-    assert "## 🤖 Managed agents · 40 live —" in rendered
+    assert "## 🤖 Managed agents · 40 live" in rendered
     assert "Progress unavailable" not in rendered
     assert rendered.count(" · agent `run-") == 40
     assert "Resident task 39" in rendered
