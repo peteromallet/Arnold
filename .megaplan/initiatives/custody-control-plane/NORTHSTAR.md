@@ -192,10 +192,12 @@ transactional attempt/effect evidence, payload/reference policy, findings, and
 supported-runtime conformance. Read-only audit found the completed candidate's
 ledger is schema-only and its declared support exceeds production producer
 coverage, so this initiative must operationalize and adopt that owned contract
-rather than treating its manifest as universal proof. Its exact merge revision is deliberately unbound while the
-operator's merge is in progress; chain entry requires current content-addressed
-WBC proof, and M6 binds the operator-supplied merge commit rather than guessing
-from topic branches or the working tree. M5 first reconciles the three currently rejected Run
+rather than treating its manifest as universal proof. Candidate
+`cbe69337d6f469fd7ae12f1fd0a51007d93b5d70` is landed by audited merge
+`24afce006b9ad20391ac7af10ef67ea0b1774f9f`; chain entry verifies that evidence
+without pretending the invalid old four-milestone session completed the current
+six-milestone corrective chain. M6 binds the exact landed/runtime vector rather
+than guessing from topic branches or the working tree. M5 first reconciles the three currently rejected Run
 Authority completion receipts and establishes zero-divergence completion plus
 canonical retirement evidence. It may begin without already-accepted receipts
 because producing them is its purpose. M6 inventories the exact landed revision;
@@ -215,7 +217,7 @@ No post-M5 milestone may be admitted until M5's exact current evidence contains
 three accepted receipts, canonical verification with zero divergences, a
 lifecycle-generated content-addressed manifest, and durable canonical Run
 Authority retirement evidence. M6 additionally validates the exact
-operator-supplied WBC merge revision and current WBC proof;
+audited WBC merge ancestry and current support/runtime proof;
 M6A and later implementation remain blocked until M6's ownership handoff and
 the human approval record are accepted. Uncertainty, staleness, or hash mismatch
 stops the serial chain.

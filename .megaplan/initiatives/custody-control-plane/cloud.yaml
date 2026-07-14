@@ -1,0 +1,39 @@
+provider: ssh
+
+repo:
+  url: https://github.com/peteromallet/Arnold.git
+  branch: main
+  workspace: /workspace/custody-control-plane-20260714/Arnold
+
+agents:
+  default: codex
+
+codex:
+  model: gpt-5.6-sol
+  reasoning: high
+
+chain_session: custody-control-plane-20260714
+mode: chain
+
+chain:
+  spec: /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml
+
+megaplan:
+  ref: PIN_AFTER_CONTENT_COMMIT
+  codex_auth: chatgpt
+  repo: https://github.com/peteromallet/Arnold.git
+  src_path: /workspace/arnold-custody-delivery-20260714
+
+resources:
+  volume: agent-volume
+  port: 8080
+
+ssh:
+  host: 159.69.51.216
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent
+
+secrets: []

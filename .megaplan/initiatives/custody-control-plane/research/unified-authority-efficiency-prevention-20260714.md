@@ -48,11 +48,11 @@ necessary proof/review.
 - WBC North Star, execution-attempt-ledger decision, corrective ownership
   decision, TransitionWriter/phase/repair/cloud boundary briefs, and launch
   ownership matrix.
-- Read-only WBC revision audit: completed candidate `cbe69337…`; in-progress
-  consolidation merge `24afce00…`; final landed revision unknown. The candidate
+- Read-only WBC revision audit: completed candidate `cbe69337…`, landed by
+  audited consolidation merge `24afce00…`. The candidate
   ledger is schema-only, and its 35-row producer inventory is 5 auto-matched, 8
   manual-emission, 13 declared-only, and 9 unknown. These are planning inputs,
-  not the runtime/landing proof required by M6.
+  not universal-adoption proof; M6 still binds exact landed and runtime vectors.
 - Maintenance North Star, authority-ledger/loop decision, coherent authority,
   independent verification, six-hour product, daily efficiency auditor, and
   managed repair/L3 handoffs.

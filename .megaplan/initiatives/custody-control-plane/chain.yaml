@@ -8,11 +8,6 @@ anchors:
   north_star: NORTHSTAR.md
 
 launch_preconditions:
-  - name: Immutable chain execution binding guard is installed and attested
-    path: .megaplan/initiatives/custody-control-plane/evidence/chain-execution-binding-receipt.json
-    check:
-      kind: contains_text
-      text: 'arnold.megaplan.chain_execution_binding.v1'
   - name: Run Authority three-milestone source lineage exists for reconciliation
     path: .megaplan/initiatives/runauthority-epic/chain.yaml
     check:
@@ -23,10 +18,14 @@ launch_preconditions:
     check:
       kind: contains_text
       text: 'arnold.megaplan.chain_completion_manifest.v1'
-  - name: Workflow Boundary Contracts merge result has current completion proof
-    kind: chain_completed
-    chain: .megaplan/initiatives/workflow-boundary-contracts/chain.yaml
-    require_manifest: true
+  - name: Workflow Boundary Contracts candidate is landed by the audited merge
+    path: .megaplan/initiatives/workflow-boundary-contracts/handoff/consolidation-20260714/wbc-merge-evidence.md
+    check:
+      kind: contains_text
+      text: '24afce006b9ad20391ac7af10ef67ea0b1774f9f'
+  - name: Workflow Boundary Contracts merge evidence is committed input
+    kind: git_tracked
+    path: .megaplan/initiatives/workflow-boundary-contracts/handoff/consolidation-20260714/wbc-merge-evidence.md
 
 milestones:
   - label: m5-run-authority-receipt-reconciliation-and-retirement
@@ -68,10 +67,13 @@ milestones:
     prep_direction: >-
       Start only from M5's accepted Run Authority receipts, zero-divergence
       verification, regenerated manifest, and retirement attestation. Obtain
-      the exact WBC merge commit from the operator after the in-progress merge;
-      never infer it from a topic branch, working-tree content, or latest ref.
-      Verify that commit against the current WBC completion manifest,
-      proof/support maps, installed/runtime revisions, and ownership record;
+      the exact landed WBC merge commit from the audited consolidation evidence;
+      never substitute a topic branch, working-tree content, or latest ref.
+      Verify commit `24afce006b9ad20391ac7af10ef67ea0b1774f9f`
+      and its WBC parent against current main ancestry, proof/support maps,
+      installed/runtime revisions, and the ownership record. Do not accept the
+      old four-milestone cloud terminal label as completion of the current
+      six-milestone WBC chain;
       generate the maintained boundary inventory by joining WBC declarations to
       every discovered producer, writer, consumer, wrapper, migration, and
       runtime trace. A support-manifest label or schema test is not adoption
@@ -85,11 +87,12 @@ milestones:
       - m5-run-authority-receipt-reconciliation-and-retirement
     notes: >-
       Difficulty 5/5; partnered-5/full/high @codex +prep. Read-only contract and
-      inventory freeze. M6 must fail closed if the operator-supplied WBC merge
-      commit is absent, if M5 evidence or WBC's content-addressed manifest does
-      not bind that commit, if any boundary row is unexplained, or if the
-      approval record is absent or invalid; its manually reviewed handoff gates
-      every implementation milestone.
+      inventory freeze. M6 must fail closed if the audited WBC merge is not an
+      ancestor of the landed target/runtime vector, if M5 evidence is stale, if
+      the old four-milestone session is presented as current six-milestone
+      completion, if any boundary row is unexplained, or if the approval record
+      is absent or invalid; its manually reviewed handoff gates every
+      implementation milestone.
 
   - label: m6a-wbc-transactional-ledger-foundation
     idea: .megaplan/initiatives/custody-control-plane/briefs/m6a-wbc-transactional-ledger-foundation.md

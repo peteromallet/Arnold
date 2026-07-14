@@ -182,8 +182,8 @@ their separately approved restoration proof preserves single authority.
 ## Handoff and dependencies
 
 Dependencies: M10 evidence bundle, unchanged M5-M11 plus M6A chain/briefs/North Star,
-current Run Authority evidence, the exact operator-supplied WBC merge commit
-and matching completion/support evidence, approved deletion/promotion record,
+current Run Authority evidence, the exact audited WBC merge commit and matching
+ancestry/support/runtime evidence, approved deletion/promotion record,
 and clean pinned runtime identity. Handoff: chain-generated completion
 manifest and proof map, final support/ownership matrix, compatibility expiry
 register, canary/controlled-deployment/genuine-block receipts, conformance and

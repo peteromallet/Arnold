@@ -14,14 +14,15 @@ row-level inventory from the final landed WBC revision and joins it here to
 production call sites, consumers, implementation commits, tests, and runtime
 traces.
 
-Read-only audit observed the completed candidate
-`cbe69337d6f469fd7ae12f1fd0a51007d93b5d70` and an in-progress integration
-merge `24afce006b9ad20391ac7af10ef67ea0b1774f9f`. Neither is declared the final
-landed revision. The candidate's `ExecutionAttemptLedger` is schema-only, and
+Read-only audit observed completed candidate
+`cbe69337d6f469fd7ae12f1fd0a51007d93b5d70`, subsequently landed by audited
+no-ff merge `24afce006b9ad20391ac7af10ef67ea0b1774f9f`. The candidate's
+`ExecutionAttemptLedger` is schema-only, and
 its 35-row producer matrix reports 5 auto-matched, 8 manual-emission, 13
 declared-only, and 9 unknown contracts. Its 76-entry support manifest therefore
 cannot establish universal runtime adoption. M6 must replace this observational
-baseline with exact landed/source/editable/runtime proof supplied after merge.
+baseline with exact landed/source/editable/runtime proof and must reject the old
+four-milestone cloud terminal label as completion of the current C1-C6 chain.
 
 ## Generated artifact and completion equation
 

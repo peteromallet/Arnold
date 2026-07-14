@@ -30,19 +30,18 @@ normalized.
   `/workspace/arnold-wbc-source-verify`.
 - Candidate milestone ancestry includes `9a1d3f02…`, `3e788c90…`,
   `599cd2fa…`, then `cbe69337…`.
-- In-progress integration: merge commit
-  `24afce006b9ad20391ac7af10ef67ea0b1774f9f` joins the WBC candidate into local
-  `consolidate/arnold-runtime-activation-20260714`; the current consolidation
-  tip observed was `e8da858e…`.
-- Neither project `main` `612b1399…` nor observed `origin/main` `7644f55d…`
-  contains the WBC candidate. The final landed commit is unknown.
+- Audited integration: no-ff merge commit
+  `24afce006b9ad20391ac7af10ef67ea0b1774f9f` joined the WBC candidate into
+  canonical main. Consolidation run `subagent-20260714-124257-a1b920cf`
+  independently verified its exact parents, remote containment, and activated
+  source/editable/runtime vector at `1fc545cc0c95c933a88fbf5b2556b479d76a31bd`.
 - `origin/editible-install` `405eb641…`, local `editible-install` `91a33dab…`,
   and old detached WBC baseline `826863ce…` are stale/non-authoritative for this
   work and lack the audited ledger/conformance core.
 
-M6 must replace these observations with the operator-supplied final landed
-revision plus current source/editable/install/runtime and completion-manifest
-proof. No observed hash above may be copied into the pending approval fields.
+M6 must verify the audited merge against the then-current landed and
+source/editable/install/runtime vector. It must not fabricate a completion
+manifest for the current C1-C6 chain from the old S1-S4 terminal state.
 
 ## Contract and substrate verdict
 
@@ -129,7 +128,7 @@ indeterminate on gaps, migration uncertainty or persistence failure.
 
 ## Planning disposition
 
-- M6 binds the unknown final landed/runtime revision and generates exact set
+- M6 binds the audited merge and current landed/runtime vector and generates exact set
   equality across contracts, call sites, consumers, wrappers and traces.
 - M6A implements the WBC-owned transactional store/query/data-policy/migration
   substrate without moving ownership to Custody.
