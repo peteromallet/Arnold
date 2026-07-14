@@ -29,6 +29,16 @@ SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"
 FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
 FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
 ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+# shellcheck disable=SC1090
+. "$SUPERVISOR_RUNTIME_LIB"
+arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"

@@ -82,6 +82,28 @@ REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"
 REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
 ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+# shellcheck disable=SC1090
+. "$SUPERVISOR_RUNTIME_LIB"
+arnold_supervisor_stdlib_init progress-auditor || exit $?
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$REPORT_DIR"
+SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-gap-scan}"
+if [[ ! -x "$SUPERVISOR_GAP_SCAN" ]]; then
+  SUPERVISOR_GAP_SCAN="/usr/local/bin/arnold-supervisor-gap-scan"
+fi
+SUPERVISOR_GAP_EVIDENCE="$REPORT_DIR/${TS}-dependency-independent-gaps.json"
+if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
+  "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P "$SUPERVISOR_GAP_SCAN" \
+    --marker-dir "$MARKER_DIR" --output "$SUPERVISOR_GAP_EVIDENCE" >/dev/null 2>&1 || true
+fi
+arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
@@ -109,7 +131,6 @@ WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megapl
 #   --project-dir="$workspace"
 
 mkdir -p "$REPORT_DIR" "$(dirname "$REPORT_LOG")"
-TS="$(date -u +%Y%m%dT%H%M%SZ)"
 JSON_OUT="$REPORT_DIR/${TS}-audit.json"
 MD_OUT="$REPORT_DIR/${TS}-audit.md"
 WORKLIST="$(mktemp)"
@@ -581,6 +602,7 @@ PY
 fi
 
 # Build per-plan evidence + decide which need a research subagent.
+MEGAPLAN_SUPERVISOR_GAP_EVIDENCE="$SUPERVISOR_GAP_EVIDENCE" \
 python3 - "$WORKLIST" "$GATHER_DIR" "$AUDIT_WINDOW_HOURS" "$ARNOLD_SRC" "$stall_summary" <<'PY'
 import datetime as dt
 import json
@@ -591,9 +613,19 @@ import subprocess
 import sys
 
 worklist, gather_dir, window_h, arnold_src, stall_summary = sys.argv[1:6]
+supervisor_gap_path = os.environ.get("MEGAPLAN_SUPERVISOR_GAP_EVIDENCE", "")
 window = float(window_h)
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=window)
+try:
+    dependency_gap_payload = json.loads(pathlib.Path(supervisor_gap_path).read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    dependency_gap_payload = {}
+dependency_gap_by_session = {
+    str(item.get("session") or ""): item
+    for item in (dependency_gap_payload.get("findings") or [])
+    if isinstance(item, dict) and item.get("session")
+}
 sys.path.insert(0, str(pathlib.Path.cwd()))
 # The deployed source must win over the caller's working directory.  Audits
 # are often invoked from /workspace/arnold while a corrective runtime is
@@ -3382,6 +3414,17 @@ def _marker_present_stopped_without_chain_state_reason(ev):
         f"current_state={current_state or 'unknown'} tmux_status={tmux_process.get('live_status') or 'unknown'}"
     )
 
+def _dependency_independent_launch_gap_reason(ev):
+    session = str(ev.get("session") or "").strip() if isinstance(ev, dict) else ""
+    finding = dependency_gap_by_session.get(session)
+    if not finding:
+        return ""
+    ev["dependency_independent_launch_gap"] = finding
+    return (
+        "dependency_independent_launch_gap: stopped marker has no chain or repair state; "
+        f"session={session} reason={finding.get('reason') or 'unknown'}"
+    )
+
 def _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_audit):
     findings = incident_audit.get("findings") if isinstance(incident_audit, dict) else []
     for finding in findings if isinstance(findings, list) else []:
@@ -3934,6 +3977,7 @@ for entry in plans:
         _green_with_recent_repair_churn_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
         _marker_present_stopped_without_chain_state_reason(ev),
+        _dependency_independent_launch_gap_reason(ev),
     ):
         if deterministic_reason:
             reasons.append(deterministic_reason)
