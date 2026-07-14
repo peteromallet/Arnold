@@ -22,6 +22,8 @@ from arnold_pipelines.megaplan.strategy.contract import (
 from arnold_pipelines.megaplan.strategy.mutations import (
     _MUTATION_PATH,
     add_roadmap_entry,
+    make_roadmap_entry,
+    move_roadmap_entry,
     promote_ticket_to_epic,
     remove_roadmap_entry,
     replace_roadmap_entry,
@@ -720,3 +722,291 @@ class TestMutationSourceLocation:
         assert result.roadmap["Now"][0].source_location.path == _MUTATION_PATH
         assert result.roadmap["Now"][0].source_location.line == 0
         assert result.roadmap["Now"][0].source_location.column == 0
+
+
+# ---------------------------------------------------------------------------
+# make_roadmap_entry
+# ---------------------------------------------------------------------------
+
+
+class TestMakeRoadmapEntry:
+    """Tests for the make_roadmap_entry convenience constructor."""
+
+    def test_constructs_ticket_entry(self) -> None:
+        """make_roadmap_entry builds a valid ticket entry with mutation sentinel."""
+        entry = make_roadmap_entry("ticket", "T-100", "Test Ticket")
+        assert entry.identity.type == "ticket"
+        assert entry.identity.ref == "T-100"
+        assert entry.display_title == "Test Ticket"
+        assert entry.source_location.path == _MUTATION_PATH
+
+    def test_constructs_epic_entry(self) -> None:
+        """make_roadmap_entry builds a valid epic entry."""
+        entry = make_roadmap_entry("epic", "my-initiative", "My Initiative", horizon="Later")
+        assert entry.identity.type == "epic"
+        assert entry.identity.ref == "my-initiative"
+        assert entry.display_title == "My Initiative"
+        assert entry.horizon == "Later"
+
+    def test_default_horizon_is_now(self) -> None:
+        """When horizon is None, the entry defaults to 'Now' as sentinel."""
+        entry = make_roadmap_entry("ticket", "T-default", "Default")
+        assert entry.horizon == "Now"
+
+    def test_source_location_is_mutation_sentinel(self) -> None:
+        """All entries built by make_roadmap_entry carry the mutation sentinel."""
+        entry = make_roadmap_entry("epic", "sentinel-epic", "Sentinel")
+        assert entry.source_location.path == _MUTATION_PATH
+        assert entry.source_location.line == 0
+        assert entry.source_location.column == 0
+
+
+# ---------------------------------------------------------------------------
+# move_roadmap_entry
+# ---------------------------------------------------------------------------
+
+
+class TestMoveRoadmapEntry:
+    """Tests for move_roadmap_entry — horizon relocation built on add/remove."""
+
+    def test_moves_between_horizons(self) -> None:
+        """Moving an entry from one horizon to another relocates it."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-mv", "Move me"), "Now")
+        assert len(doc.roadmap["Now"]) == 1
+
+        ident = StrategyIdentity(type="ticket", ref="T-mv")
+        result = move_roadmap_entry(doc, ident, "Later")
+
+        assert len(result.roadmap["Now"]) == 0
+        assert len(result.roadmap["Later"]) == 1
+        assert result.roadmap["Later"][0].identity.ref == "T-mv"
+
+    def test_preserves_display_title_on_move(self) -> None:
+        """Moving an entry preserves its display_title."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("epic", "preserve-me", "Preserved Title"), "Next")
+
+        ident = StrategyIdentity(type="epic", ref="preserve-me")
+        result = move_roadmap_entry(doc, ident, "Now")
+
+        assert result.roadmap["Now"][0].display_title == "Preserved Title"
+
+    def test_preserves_source_location_on_move(self) -> None:
+        """Moving an entry preserves its original source_location."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-src-loc", path="original.md"), "Later")
+
+        ident = StrategyIdentity(type="ticket", ref="T-src-loc")
+        result = move_roadmap_entry(doc, ident, "Next")
+
+        assert result.roadmap["Next"][0].source_location.path == "original.md"
+
+    def test_move_idempotent_same_horizon(self) -> None:
+        """Moving to the same horizon is an explicit no-op with diagnostic."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-same", "Same horizon"), "Now")
+
+        ident = StrategyIdentity(type="ticket", ref="T-same")
+        result = move_roadmap_entry(doc, ident, "Now")
+
+        # Entry unchanged
+        assert len(result.roadmap["Now"]) == 1
+        assert result.roadmap["Now"][0].identity.ref == "T-same"
+        # Diagnostic emitted
+        warnings = [d for d in result.diagnostics if d.level == "warning"]
+        assert len(warnings) == 1
+        assert "already in horizon" in warnings[0].message
+        assert "no-op" in warnings[0].message
+
+    def test_missing_entry_signaling(self) -> None:
+        """Moving a non-existent entry signals the caller with a diagnostic."""
+        doc = _empty_document()
+        ident = StrategyIdentity(type="ticket", ref="no-such-entry")
+        result = move_roadmap_entry(doc, ident, "Now")
+
+        # Document unchanged
+        _assert_unchanged(doc, result)
+        # Warning diagnostic emitted
+        warnings = [d for d in result.diagnostics if d.level == "warning"]
+        assert len(warnings) == 1
+        assert "not present in any roadmap horizon" in warnings[0].message
+        assert "no-such-entry" in warnings[0].message
+
+    def test_missing_entry_does_not_force_visibility(self) -> None:
+        """A missing entry is never forced into any horizon by a move attempt."""
+        doc = _empty_document()
+        ident = StrategyIdentity(type="epic", ref="ghost-epic")
+        result = move_roadmap_entry(doc, ident, "Later")
+
+        for h in ("Now", "Next", "Later"):
+            assert not any(
+                e.identity.ref == "ghost-epic" for e in result.roadmap[h]
+            )
+
+    def test_original_document_immutable(self) -> None:
+        """The original document is never mutated by move_roadmap_entry."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-imm-mv"), "Now")
+        ident = StrategyIdentity(type="ticket", ref="T-imm-mv")
+        _ = move_roadmap_entry(doc, ident, "Later")
+
+        assert doc.roadmap["Now"][0].identity.ref == "T-imm-mv"
+        assert doc.roadmap["Now"][0].horizon == "Now"
+
+    def test_repeated_move_idempotent(self) -> None:
+        """Moving the same entry twice in a row is idempotent after first success."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-rep-mv"), "Now")
+        ident = StrategyIdentity(type="ticket", ref="T-rep-mv")
+
+        r1 = move_roadmap_entry(doc, ident, "Later")
+        assert len(r1.roadmap["Later"]) == 1
+        assert len(r1.roadmap["Now"]) == 0
+
+        # Second move to the same target is no-op with diagnostic
+        r2 = move_roadmap_entry(r1, ident, "Later")
+        assert len(r2.roadmap["Later"]) == 1
+        noop_diags = [d for d in r2.diagnostics if "no-op" in d.message]
+        assert len(noop_diags) == 1
+
+    def test_move_preserves_other_entries(self) -> None:
+        """Moving one entry leaves all other entries untouched."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-keep-now"), "Now")
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-move-me"), "Now")
+        doc = add_roadmap_entry(doc, _entry("epic", "E-keep-next"), "Next")
+
+        ident = StrategyIdentity(type="ticket", ref="T-move-me")
+        result = move_roadmap_entry(doc, ident, "Later")
+
+        # T-keep-now still in Now
+        assert any(e.identity.ref == "T-keep-now" for e in result.roadmap["Now"])
+        # E-keep-next still in Next
+        assert any(e.identity.ref == "E-keep-next" for e in result.roadmap["Next"])
+        # T-move-me is in Later, absent from Now
+        assert not any(e.identity.ref == "T-move-me" for e in result.roadmap["Now"])
+        assert any(e.identity.ref == "T-move-me" for e in result.roadmap["Later"])
+
+    def test_move_horizon_independent_of_type(self) -> None:
+        """Both ticket and epic entries can move freely between any horizons."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-free"), "Now")
+        doc = add_roadmap_entry(doc, _entry("epic", "E-free"), "Later")
+
+        # Move ticket: Now → Next
+        r1 = move_roadmap_entry(doc, StrategyIdentity(type="ticket", ref="T-free"), "Next")
+        assert any(e.identity.ref == "T-free" for e in r1.roadmap["Next"])
+
+        # Move epic: Later → Now
+        r2 = move_roadmap_entry(r1, StrategyIdentity(type="epic", ref="E-free"), "Now")
+        assert any(e.identity.ref == "E-free" for e in r2.roadmap["Now"])
+        assert not any(e.identity.ref == "E-free" for e in r2.roadmap["Later"])
+
+    def test_move_diagnostic_has_mutation_source(self) -> None:
+        """Move-generated diagnostics carry the mutation sentinel source location."""
+        doc = _empty_document()
+        ident = StrategyIdentity(type="ticket", ref="ghost")
+        result = move_roadmap_entry(doc, ident, "Now")
+
+        warnings = [d for d in result.diagnostics if d.level == "warning"]
+        assert len(warnings) == 1
+        assert warnings[0].source_location is not None
+        assert warnings[0].source_location.path == _MUTATION_PATH
+
+
+# ---------------------------------------------------------------------------
+# Deterministic serialization with move
+# ---------------------------------------------------------------------------
+
+
+class TestDeterministicSerializationWithMove:
+    """Serialization remains deterministic after move_roadmap_entry operations."""
+
+    def test_serialize_deterministic_after_move(self) -> None:
+        """Same document after a move produces byte-for-byte identical serialization."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-det-mv"), "Now")
+        result = move_roadmap_entry(
+            doc,
+            StrategyIdentity(type="ticket", ref="T-det-mv"),
+            "Later",
+        )
+
+        s1 = serialize_strategy(result)
+        s2 = serialize_strategy(result)
+        assert s1 == s2
+
+    def test_serialize_round_trip_after_move(self) -> None:
+        """After a move, serialize → re-parse preserves the relocated state."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-rt-mv", "Round trip move"), "Now")
+
+        result = move_roadmap_entry(
+            doc,
+            StrategyIdentity(type="ticket", ref="T-rt-mv"),
+            "Next",
+        )
+
+        serialized = serialize_strategy(result)
+        re_parsed = parse_strategy(serialized, "test.md")
+
+        assert len(re_parsed.roadmap["Now"]) == 0
+        assert len(re_parsed.roadmap["Next"]) == 1
+        assert re_parsed.roadmap["Next"][0].identity.ref == "T-rt-mv"
+        assert re_parsed.roadmap["Next"][0].display_title == "Round trip move"
+
+
+# ---------------------------------------------------------------------------
+# Cross-cutting: add/remove/move idempotency chain
+# ---------------------------------------------------------------------------
+
+
+class TestAddRemoveMoveIdempotency:
+    """End-to-end idempotency chains combining add, remove, and move."""
+
+    def test_add_remove_move_chain_idempotent(self) -> None:
+        """add → remove → move cycles produce consistent, predictable results."""
+        doc = _empty_document()
+
+        # Add
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-chain"), "Now")
+        assert len(doc.roadmap["Now"]) == 1
+
+        # Move to Next
+        doc = move_roadmap_entry(doc, StrategyIdentity(type="ticket", ref="T-chain"), "Next")
+        assert len(doc.roadmap["Now"]) == 0
+        assert len(doc.roadmap["Next"]) == 1
+
+        # Remove
+        doc = remove_roadmap_entry(doc, StrategyIdentity(type="ticket", ref="T-chain"))
+        assert len(doc.roadmap["Next"]) == 0
+
+        # Remove again — idempotent
+        result = remove_roadmap_entry(doc, StrategyIdentity(type="ticket", ref="T-chain"))
+        assert len(result.roadmap["Next"]) == 0
+        _assert_unchanged(doc, result)
+
+    def test_add_move_same_horizon_idempotent(self) -> None:
+        """Adding then moving to the same horizon is idempotent for the move step."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-ams"), "Now")
+        result = move_roadmap_entry(doc, StrategyIdentity(type="ticket", ref="T-ams"), "Now")
+
+        assert len(result.roadmap["Now"]) == 1
+        noop = [d for d in result.diagnostics if "no-op" in d.message]
+        assert len(noop) == 1
+
+    def test_move_then_add_same_identity_idempotent(self) -> None:
+        """Moving an entry then trying to add the same identity is idempotent."""
+        doc = _empty_document()
+        doc = add_roadmap_entry(doc, _entry("ticket", "T-mat"), "Now")
+        doc = move_roadmap_entry(doc, StrategyIdentity(type="ticket", ref="T-mat"), "Later")
+
+        # Try to add the same identity to Now — should be idempotent
+        result = add_roadmap_entry(doc, _entry("ticket", "T-mat"), "Now")
+        # Entry stays in Later (not duplicated)
+        assert len(result.roadmap["Later"]) == 1
+        assert len(result.roadmap["Now"]) == 0
+        warnings = [d for d in result.diagnostics if d.level == "warning"]
+        assert any("already exists in horizon" in w.message for w in warnings)

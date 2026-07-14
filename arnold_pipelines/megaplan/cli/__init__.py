@@ -80,6 +80,7 @@ from arnold_pipelines.megaplan.handlers import (
     handle_tiebreaker_run,
     handle_verify_human,
 )
+from arnold_pipelines.megaplan.handlers.strategy import handle_strategy
 from arnold_pipelines.megaplan.loop.handlers import (
     handle_loop_init,
     handle_loop_pause,
@@ -383,6 +384,8 @@ def build_parser() -> argparse.ArgumentParser:
     ticket_new.add_argument("--edit", action="store_true")
     ticket_new.add_argument("--tags")
     ticket_new.add_argument("--project")
+    ticket_new.add_argument("--roadmap-horizon", choices=["Now", "Next", "Later"], default=None)
+    ticket_new.add_argument("--roadmap-title", default=None)
     ticket_list = ticket_sub.add_parser("list")
     ticket_list.add_argument("--status")
     ticket_list.add_argument("--tags")
@@ -433,6 +436,32 @@ def build_parser() -> argparse.ArgumentParser:
     ticket_promote.add_argument("--no-resolve", action="store_true")
     ticket_promote.add_argument("--skip-strategy", action="store_true")
     ticket_promote.add_argument("--json", action="store_true")
+
+    strategy_parser = subparsers.add_parser("strategy")
+    strategy_sub = strategy_parser.add_subparsers(dest="strategy_action", required=True)
+    strategy_init = strategy_sub.add_parser("init")
+    strategy_init.add_argument("--force", action="store_true")
+    strategy_validate = strategy_sub.add_parser("validate")
+    strategy_validate.add_argument("--json", action="store_true")
+    strategy_show = strategy_sub.add_parser("show")
+    strategy_show.add_argument("--json", action="store_true")
+    strategy_list = strategy_sub.add_parser("list")
+    strategy_list.add_argument("--horizon", choices=["Now", "Next", "Later"])
+    strategy_project = strategy_sub.add_parser("project")
+    strategy_project.add_argument("--write", action="store_true")
+    strategy_project.add_argument("--output")
+    strategy_add = strategy_sub.add_parser("add")
+    strategy_add.add_argument("--type", required=True, choices=["ticket", "epic"])
+    strategy_add.add_argument("--ref", required=True)
+    strategy_add.add_argument("--title", required=True)
+    strategy_add.add_argument("--horizon", required=True, choices=["Now", "Next", "Later"])
+    strategy_remove = strategy_sub.add_parser("remove")
+    strategy_remove.add_argument("--type", required=True, choices=["ticket", "epic"])
+    strategy_remove.add_argument("--ref", required=True)
+    strategy_move = strategy_sub.add_parser("move")
+    strategy_move.add_argument("--type", required=True, choices=["ticket", "epic"])
+    strategy_move.add_argument("--ref", required=True)
+    strategy_move.add_argument("--horizon", required=True, choices=["Now", "Next", "Later"])
 
     # `status` is defined above with its dedicated flags; only add the
     # lightweight observability siblings here.
@@ -2597,6 +2626,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "brief": handle_brief,
     "initiative": handle_initiative,
     "contract": handle_contract,
+    "strategy": handle_strategy,
     "ticket": handle_ticket,
     "epic": handle_epic,
     "migrate-local-plans": handle_migrate_local_plans,

@@ -239,6 +239,156 @@ def replace_roadmap_entry(
     return add_roadmap_entry(after_removal, new_entry, horizon)
 
 
+def make_roadmap_entry(
+    type_: RoadmapItemType,
+    ref: str,
+    title: str,
+    horizon: RoadmapHorizon | None = None,
+) -> RoadmapEntry:
+    """Build a :class:`RoadmapEntry` from its identity components.
+
+    This is a convenience constructor for callers that only have the
+    ``(type, ref, title)`` triple and want a fully-formed entry.  The
+    generated entry carries the mutation sentinel source location.
+
+    Parameters
+    ----------
+    type_:
+        The artifact type (``"ticket"`` or ``"epic"``).
+    ref:
+        The unique artifact reference (e.g. a ULID or initiative slug).
+    title:
+        The human-readable display title.
+    horizon:
+        The horizon to assign.  When *None* the entry has no placement
+        preference — callers must still supply a horizon when adding.
+
+    Returns
+    -------
+    RoadmapEntry
+        A frozen entry ready for use with :func:`add_roadmap_entry` or
+        :func:`move_roadmap_entry`.
+    """
+    return RoadmapEntry(
+        identity=StrategyIdentity(type=type_, ref=ref),
+        display_title=title,
+        horizon=horizon or "Now",  # sentinel; actual horizon comes from caller
+        source_location=_mutation_source_location(),
+    )
+
+
+def move_roadmap_entry(
+    document: StrategyDocument,
+    identity: StrategyIdentity,
+    target_horizon: RoadmapHorizon,
+) -> StrategyDocument:
+    """Move the entry identified by *identity* to *target_horizon*.
+
+    Built on top of :func:`add_roadmap_entry` and
+    :func:`remove_roadmap_entry` — no horizon-level logic is duplicated.
+    The move is *identity-preserving*: only the horizon changes; the
+    entry's ``display_title`` and ``source_location`` are carried forward
+    unchanged.
+
+    **Idempotency**: moving an entry to the horizon it already occupies is
+    an explicit no-op.  A diagnostic is emitted so CLI callers receive
+    clear feedback instead of silent success.
+
+    **Missing-entry signaling**: when *identity* is not present in any
+    roadmap horizon, the document is returned unchanged and a warning
+    diagnostic is appended.  No entry is forced into any horizon.
+
+    **Horizon independence**: the move does not inspect or depend on
+    artifact type.  Both ``ticket`` and ``epic`` entries can freely move
+    between any horizons.
+
+    Parameters
+    ----------
+    document:
+        The parsed strategy document.
+    identity:
+        The ``(type, ref)`` pair identifying the entry to move.
+    target_horizon:
+        The destination horizon (``Now``, ``Next``, or ``Later``).
+
+    Returns
+    -------
+    StrategyDocument
+        A new document with the entry relocated, or the unchanged document
+        if the identity was not found or is already in the target horizon.
+    """
+    diagnostics: list[StrategyDiagnostic] = list(document.diagnostics)
+
+    # ---- Locate the entry ---------------------------------------------------
+    current_horizon, current_idx = _find_entry(document.roadmap, identity)
+    if current_horizon is None:
+        diagnostics.append(
+            StrategyDiagnostic(
+                level="warning",
+                message=(
+                    f"Cannot move '{identity.type}:{identity.ref}' to "
+                    f"'{target_horizon}': entry is not present in any "
+                    f"roadmap horizon."
+                ),
+                source_location=_mutation_source_location(),
+            )
+        )
+        return StrategyDocument(
+            schema_version=document.schema_version,
+            stable_direction=list(document.stable_direction),
+            roadmap=_copy_roadmap(document.roadmap),
+            diagnostics=diagnostics,
+        )
+
+    # ---- Already in the target horizon: idempotent no-op --------------------
+    if current_horizon == target_horizon:
+        diagnostics.append(
+            StrategyDiagnostic(
+                level="warning",
+                message=(
+                    f"Entry '{identity.type}:{identity.ref}' is already in "
+                    f"horizon '{target_horizon}'; move is a no-op."
+                ),
+                source_location=_mutation_source_location(),
+            )
+        )
+        return StrategyDocument(
+            schema_version=document.schema_version,
+            stable_direction=list(document.stable_direction),
+            roadmap=_copy_roadmap(document.roadmap),
+            diagnostics=diagnostics,
+        )
+
+    # ---- Preserve the existing entry's attributes ---------------------------
+    existing_entry = document.roadmap[current_horizon][current_idx]
+    entry_for_target = RoadmapEntry(
+        identity=existing_entry.identity,
+        display_title=existing_entry.display_title,
+        horizon=target_horizon,
+        source_location=existing_entry.source_location,
+    )
+
+    # ---- Remove from current horizon (reuses remove_roadmap_entry) ----------
+    after_removal = remove_roadmap_entry(document, identity)
+
+    # ---- Add to target horizon (reuses add_roadmap_entry) -------------------
+    result = add_roadmap_entry(after_removal, entry_for_target, target_horizon)
+
+    # Merge diagnostics from the sub-operations.
+    all_diagnostics = diagnostics + [
+        d
+        for d in result.diagnostics
+        if d not in diagnostics and d not in document.diagnostics
+    ]
+
+    return StrategyDocument(
+        schema_version=document.schema_version,
+        stable_direction=list(document.stable_direction),
+        roadmap=result.roadmap,
+        diagnostics=all_diagnostics,
+    )
+
+
 def promote_ticket_to_epic(
     document: StrategyDocument,
     ticket_ref: str,
