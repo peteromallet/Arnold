@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -2265,7 +2266,66 @@ class TestAutoExecuteRecovery:
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         assert state["current_state"] == "gated"
         assert "active_step" not in state
+        assert state["last_gate"]["recommendation"] == "PROCEED"
+        assert state["history"][-1]["step"] == "gate"
+        assert state["history"][-1]["result"] == "success"
+        assert state["history"][-1]["recovered_from_artifact"] is True
+        assert state["history"][-1]["artifact_hash"].startswith("sha256:")
         assert state["meta"]["gate_artifact_recovery"]["gate_recommendation"] == "PROCEED"
+
+    def test_stale_gate_artifact_is_not_adopted_after_same_iteration_replan(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _recover_completed_gate_artifact_after_failure,
+        )
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        gate_path = plan_dir / "gate.json"
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "recommendation": "PROCEED",
+                    "passed": True,
+                    "unresolved_flags": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        plan_path = plan_dir / "plan_v3a.md"
+        plan_path.write_text("# corrected plan\n", encoding="utf-8")
+        critique_path = plan_dir / "critique_v3.json"
+        critique_path.write_text("{}\n", encoding="utf-8")
+        gate_path.touch()
+        os.utime(gate_path, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(plan_path, ns=(2_000_000_000, 2_000_000_000))
+        os.utime(critique_path, ns=(3_000_000_000, 3_000_000_000))
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "current_state": "critiqued",
+                    "active_step": {"phase": "gate"},
+                    "plan_versions": [{"version": 3, "file": plan_path.name}],
+                    "history": [
+                        {
+                            "step": "critique",
+                            "result": "success",
+                            "output_file": critique_path.name,
+                        }
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        assert _recover_completed_gate_artifact_after_failure(plan_dir) is False
+
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "critiqued"
+        assert state["history"][-1]["step"] == "critique"
 
     def test_non_proceed_gate_artifact_is_not_adopted_after_worker_failure(
         self, tmp_path: Path

@@ -2627,12 +2627,75 @@ def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> boo
     if gate_data.get("unresolved_flags"):
         return False
 
+    # A same-iteration replan can leave an older passing gate.json behind.
+    # Adopting that artifact would approve a plan the gate never evaluated.
+    # Bind recovery to the newest declared plan and critique artifacts; when a
+    # declaration exists but its artifact is missing, fail closed and rerun
+    # gate through the ordinary handler.
+    freshness_refs: list[Path] = []
+    plan_versions = state_data.get("plan_versions")
+    if isinstance(plan_versions, list) and plan_versions:
+        latest_plan = plan_versions[-1]
+        if isinstance(latest_plan, Mapping):
+            plan_file = latest_plan.get("file")
+            if isinstance(plan_file, str) and plan_file:
+                plan_path = plan_dir / plan_file
+                if not plan_path.is_file():
+                    return False
+                freshness_refs.append(plan_path)
+                plan_meta_path = plan_path.with_suffix(".meta.json")
+                if plan_meta_path.is_file():
+                    freshness_refs.append(plan_meta_path)
+    history = state_data.get("history")
+    if isinstance(history, list):
+        latest_critique = next(
+            (
+                entry
+                for entry in reversed(history)
+                if isinstance(entry, Mapping) and entry.get("step") == "critique"
+            ),
+            None,
+        )
+        if isinstance(latest_critique, Mapping):
+            critique_file = latest_critique.get("output_file")
+            if isinstance(critique_file, str) and critique_file:
+                critique_path = plan_dir / critique_file
+                if not critique_path.is_file():
+                    return False
+                freshness_refs.append(critique_path)
+    try:
+        gate_mtime_ns = (plan_dir / "gate.json").stat().st_mtime_ns
+        if any(gate_mtime_ns < ref.stat().st_mtime_ns for ref in freshness_refs):
+            return False
+        gate_hash = "sha256:" + hashlib.sha256((plan_dir / "gate.json").read_bytes()).hexdigest()
+    except OSError:
+        return False
+
+    recovered_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     def _patch(current: dict[str, Any]) -> bool:
         current["current_state"] = STATE_GATED
         current.pop("active_step", None)
+        current["last_gate"] = dict(gate_data)
+        current.setdefault("history", []).append(
+            {
+                "step": "gate",
+                "timestamp": recovered_at,
+                "duration_ms": 0,
+                "cost_usd": 0,
+                "result": "success",
+                "output_file": "gate.json",
+                "artifact_hash": gate_hash,
+                "recommendation": "PROCEED",
+                "recovered_from_artifact": True,
+            }
+        )
         current.setdefault("meta", {})["gate_artifact_recovery"] = {
             "reason": "adopted passing gate.json after worker failure",
             "gate_recommendation": gate_data.get("recommendation"),
+            "gate_artifact_hash": gate_hash,
+            "recovered_at": recovered_at,
+            "freshness_refs": [ref.name for ref in freshness_refs],
         }
         return True
 
