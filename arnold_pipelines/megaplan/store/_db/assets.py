@@ -6,8 +6,39 @@ import uuid
 from typing import Any, Sequence
 
 from arnold_pipelines.megaplan.schemas import CodeArtifact, Codebase, Feedback, Ticket, TicketEpicLink
+from arnold_pipelines.megaplan.tickets.relationships import (
+    KIND_ASSOCIATED,
+    KIND_RESOLVES_ON_COMPLETE,
+    RELATIONSHIP_KINDS,
+)
 
 from .common import _OBSERVATION_KINDS, _jb
+
+
+def _normalize_epic_link_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a ticket_epics DB row so NULL *kind* / *provenance* fields
+    are safe to unpack into a TicketEpicLink.
+
+    Legacy rows inserted before the ``kind`` and ``provenance`` columns
+    existed carry SQL NULL.  We backfill them with the same semantics as
+    ``parse_frontmatter_links``:
+
+    * ``kind`` NULL or unrecognised → infer from ``resolves_on_complete``
+      (``True`` → ``'resolves_on_complete'``, otherwise ``'associated'``).
+    * ``provenance`` NULL or empty-string → ``None``.
+    """
+    row = dict(row)  # shallow copy – avoid mutating caller's view
+
+    raw_kind = row.get("kind")
+    if not isinstance(raw_kind, str) or raw_kind not in RELATIONSHIP_KINDS:
+        resolves = bool(row.get("resolves_on_complete"))
+        row["kind"] = KIND_RESOLVES_ON_COMPLETE if resolves else KIND_ASSOCIATED
+
+    raw_prov = row.get("provenance")
+    if not isinstance(raw_prov, str) or not raw_prov:
+        row["provenance"] = None
+
+    return row
 
 class DBAssetMixin:
     def create_codebase(
@@ -398,7 +429,7 @@ class DBAssetMixin:
             f"SELECT * FROM ticket_epics{where} ORDER BY linked_at DESC",
             values,
         ).fetchall()
-        return [TicketEpicLink(**row) for row in rows]
+        return [TicketEpicLink(**_normalize_epic_link_row(row)) for row in rows]
 
     def address_tickets_resolved_by_epic(self, epic_id: str) -> list[str]:
         """Flip open tickets linked to *epic_id* with resolves_on_complete=true to 'addressed'.

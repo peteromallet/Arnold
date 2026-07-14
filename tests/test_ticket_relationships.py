@@ -178,12 +178,14 @@ def test_parse_empty_epics() -> None:
 
 
 def test_parse_skips_invalid_entries() -> None:
-    """Non-dict entries and entries without epic_id are skipped."""
+    """Non-string non-dict entries, dicts without epic_id, and empty strings are skipped."""
     record = {
         "id": "01J1234567890",
         "epics": [
-            "not-a-dict",
-            {"resolves_on_complete": True},  # no epic_id
+            42,                               # int — invalid
+            None,                             # None — invalid
+            "",                               # empty string — invalid
+            {"resolves_on_complete": True},   # no epic_id
             {"epic_id": None},
             {"epic_id": ""},
             {"epic_id": "epic-valid", "resolves_on_complete": True},
@@ -766,3 +768,313 @@ def test_store_replay_does_not_fork_links(
     assert links[0].provenance == "second"
     # Newer link keeps newer linked_at but original linked_at is preserved
     assert links[0].linked_at == link.linked_at
+
+
+# ---------------------------------------------------------------------------
+# Store-backed row normalization (_normalize_epic_link_row)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_row_null_kind_resolves_true() -> None:
+    """Row with NULL kind and resolves_on_complete=True → kind='resolves_on_complete'."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-1",
+        "epic_id": "epic-1",
+        "resolves_on_complete": True,
+        "kind": None,
+        "provenance": None,
+        "linked_at": utc_now(),
+    }
+    normalized = _normalize_epic_link_row(row)
+    link = TicketEpicLink(**normalized)
+    assert link.kind == KIND_RESOLVES_ON_COMPLETE
+    assert link.provenance is None
+    assert link.resolves_on_complete is True
+
+
+def test_normalize_row_null_kind_resolves_false() -> None:
+    """Row with NULL kind and resolves_on_complete=False → kind='associated'."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-2",
+        "epic_id": "epic-2",
+        "resolves_on_complete": False,
+        "kind": None,
+        "provenance": None,
+        "linked_at": utc_now(),
+    }
+    normalized = _normalize_epic_link_row(row)
+    link = TicketEpicLink(**normalized)
+    assert link.kind == KIND_ASSOCIATED
+    assert link.provenance is None
+    assert link.resolves_on_complete is False
+
+
+def test_normalize_row_preserves_valid_kind() -> None:
+    """Row with recognized kind is left unchanged."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-3",
+        "epic_id": "epic-3",
+        "resolves_on_complete": False,
+        "kind": KIND_PROMOTED_TO_EPIC,
+        "provenance": "promotion/ticket-3",
+        "linked_at": utc_now(),
+    }
+    normalized = _normalize_epic_link_row(row)
+    link = TicketEpicLink(**normalized)
+    assert link.kind == KIND_PROMOTED_TO_EPIC
+    assert link.provenance == "promotion/ticket-3"
+
+
+def test_normalize_row_unrecognized_kind_falls_back() -> None:
+    """Row with unrecognized kind string falls back to resolves_on_complete inference."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-4",
+        "epic_id": "epic-4",
+        "resolves_on_complete": True,
+        "kind": "some-legacy-kind",
+        "provenance": "old-provenance",
+        "linked_at": utc_now(),
+    }
+    normalized = _normalize_epic_link_row(row)
+    link = TicketEpicLink(**normalized)
+    # Unrecognized kind → fall back to resolves_on_complete-based
+    assert link.kind == KIND_RESOLVES_ON_COMPLETE
+    # provenance is preserved (it's a valid non-empty string)
+    assert link.provenance == "old-provenance"
+
+
+def test_normalize_row_empty_provenance_becomes_none() -> None:
+    """Row with empty-string provenance → None."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-5",
+        "epic_id": "epic-5",
+        "resolves_on_complete": False,
+        "kind": KIND_ASSOCIATED,
+        "provenance": "",
+        "linked_at": utc_now(),
+    }
+    normalized = _normalize_epic_link_row(row)
+    link = TicketEpicLink(**normalized)
+    assert link.provenance is None
+
+
+def test_normalize_row_null_provenance_stays_none() -> None:
+    """Row with None provenance stays None after normalization."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-6",
+        "epic_id": "epic-6",
+        "resolves_on_complete": True,
+        "kind": None,
+        "provenance": None,
+        "linked_at": utc_now(),
+    }
+    normalized = _normalize_epic_link_row(row)
+    link = TicketEpicLink(**normalized)
+    assert link.provenance is None
+    assert link.kind == KIND_RESOLVES_ON_COMPLETE
+
+
+def test_normalize_row_missing_kind_key() -> None:
+    """Row where 'kind' key is absent entirely → inferred from resolves_on_complete."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-7",
+        "epic_id": "epic-7",
+        "resolves_on_complete": False,
+        "provenance": None,
+        "linked_at": utc_now(),
+    }
+    normalized = _normalize_epic_link_row(row)
+    link = TicketEpicLink(**normalized)
+    assert link.kind == KIND_ASSOCIATED
+
+
+def test_normalize_row_provenance_key_absent() -> None:
+    """Row where 'provenance' key is entirely absent → None."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-8",
+        "epic_id": "epic-8",
+        "resolves_on_complete": True,
+        "kind": None,
+        "linked_at": utc_now(),
+    }
+    normalized = _normalize_epic_link_row(row)
+    link = TicketEpicLink(**normalized)
+    assert link.provenance is None
+    assert link.kind == KIND_RESOLVES_ON_COMPLETE
+
+
+# ---------------------------------------------------------------------------
+# Auto-address parity: store-normalized links behave identically to frontmatter
+# ---------------------------------------------------------------------------
+
+
+def test_normalized_store_link_triggers_auto_address() -> None:
+    """A TicketEpicLink built from a NULL-kind normalised row still triggers
+    auto-address when resolves_on_complete=True."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-auto",
+        "epic_id": "epic-auto",
+        "resolves_on_complete": True,
+        "kind": None,
+        "provenance": None,
+        "linked_at": utc_now(),
+    }
+    link = TicketEpicLink(**_normalize_epic_link_row(row))
+    assert auto_address_predicate(link) is True
+
+
+def test_normalized_store_link_does_not_auto_address_when_false() -> None:
+    """A normalised link with resolves_on_complete=False is NOT auto-addressed."""
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    row = {
+        "ticket_id": "tid-noauto",
+        "epic_id": "epic-noauto",
+        "resolves_on_complete": False,
+        "kind": None,
+        "provenance": None,
+        "linked_at": utc_now(),
+    }
+    link = TicketEpicLink(**_normalize_epic_link_row(row))
+    assert auto_address_predicate(link) is False
+
+
+# ---------------------------------------------------------------------------
+# Bare-string parity: FileStore parses bare strings; DBStore normalises NULL kind
+# Both must produce equivalent TicketEpicLink records for equivalent inputs
+# ---------------------------------------------------------------------------
+
+
+def test_bare_string_parity_null_kind_normalization() -> None:
+    """A bare-string frontmatter entry and a NULL-kind store row with
+    resolves_on_complete=False produce equivalent links (both associated)."""
+    # Frontmatter bare-string path
+    fm_links = parse_frontmatter_links(
+        {"id": "tid-parity", "epics": ["epic-bare"]},
+        ticket_id="tid-parity",
+    )
+    assert len(fm_links) == 1
+    assert fm_links[0].kind == KIND_ASSOCIATED
+    assert fm_links[0].provenance is None
+    assert fm_links[0].resolves_on_complete is False
+
+    # DB NULL-kind normalisation path (equivalent: resolves=False → associated)
+    from arnold_pipelines.megaplan.store._db.assets import _normalize_epic_link_row
+
+    db_row = {
+        "ticket_id": "tid-parity",
+        "epic_id": "epic-bare",
+        "resolves_on_complete": False,
+        "kind": None,
+        "provenance": None,
+        "linked_at": fm_links[0].linked_at,
+    }
+    db_link = TicketEpicLink(**_normalize_epic_link_row(db_row))
+
+    # Both paths produce equivalent links
+    assert db_link.kind == fm_links[0].kind == KIND_ASSOCIATED
+    assert db_link.provenance == fm_links[0].provenance is None
+    assert db_link.resolves_on_complete == fm_links[0].resolves_on_complete is False
+
+
+# ---------------------------------------------------------------------------
+# FileStore parity: FileStore list_ticket_epic_links also normalises legacy rows
+# ---------------------------------------------------------------------------
+
+
+def test_filestore_normalizes_legacy_links_on_list(
+    file_store: FileStore,
+) -> None:
+    """FileStore.list_ticket_epic_links returns normalized links for legacy
+    frontmatter entries (no kind/provenance)."""
+    _make_ticket(file_store, "FileStore Norm Ticket", "01JTEST-FNORM")
+
+    from arnold_pipelines.megaplan.tickets.files import read_ticket_file, write_ticket_file
+
+    ticket_path = None
+    for p, rec in file_store._ticket_file_records():
+        if rec.get("id") == "01JTEST-FNORM":
+            ticket_path = p
+            break
+    assert ticket_path is not None
+
+    record = read_ticket_file(ticket_path)
+    assert record is not None
+    # Write a mix: one bare string, one dict without kind/provenance, one dict with kind/provenance
+    record["epics"] = [
+        "epic-bare-str",
+        {"epic_id": "epic-legacy-no-kind", "resolves_on_complete": True},
+        {
+            "epic_id": "epic-full",
+            "resolves_on_complete": False,
+            "kind": KIND_PROMOTED_TO_EPIC,
+            "provenance": "promo",
+        },
+    ]
+    write_ticket_file(ticket_path, record)
+
+    links = file_store.list_ticket_epic_links(ticket_id="01JTEST-FNORM")
+    assert len(links) == 3
+
+    bare = next(link for link in links if link.epic_id == "epic-bare-str")
+    assert bare.kind == KIND_ASSOCIATED
+    assert bare.provenance is None
+    assert bare.resolves_on_complete is False
+
+    legacy = next(link for link in links if link.epic_id == "epic-legacy-no-kind")
+    assert legacy.kind == KIND_RESOLVES_ON_COMPLETE
+    assert legacy.provenance is None
+    assert legacy.resolves_on_complete is True
+
+    full = next(link for link in links if link.epic_id == "epic-full")
+    assert full.kind == KIND_PROMOTED_TO_EPIC
+    assert full.provenance == "promo"
+
+
+def test_filestore_list_skips_invalid_frontmatter_entries(
+    file_store: FileStore,
+) -> None:
+    """FileStore.list_ticket_epic_links skips invalid entries (non-string, non-dict)."""
+    _make_ticket(file_store, "Invalid Entry Ticket", "01JTEST-INVENT")
+
+    from arnold_pipelines.megaplan.tickets.files import read_ticket_file, write_ticket_file
+
+    ticket_path = None
+    for p, rec in file_store._ticket_file_records():
+        if rec.get("id") == "01JTEST-INVENT":
+            ticket_path = p
+            break
+    assert ticket_path is not None
+
+    record = read_ticket_file(ticket_path)
+    assert record is not None
+    record["epics"] = [
+        42,                # int — invalid
+        None,              # None — invalid
+        "",                # empty string — invalid
+        {"epic_id": "epic-valid", "resolves_on_complete": True},
+    ]
+    write_ticket_file(ticket_path, record)
+
+    links = file_store.list_ticket_epic_links(ticket_id="01JTEST-INVENT")
+    assert len(links) == 1
+    assert links[0].epic_id == "epic-valid"
+    assert links[0].kind == KIND_RESOLVES_ON_COMPLETE
