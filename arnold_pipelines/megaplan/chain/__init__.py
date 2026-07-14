@@ -7312,6 +7312,8 @@ def build_chain_parser(subparsers: Any) -> None:
     reconcile_source_parser.add_argument("--milestone", required=True)
     reconcile_source_parser.add_argument("--authoritative-source", required=True)
     reconcile_source_parser.add_argument("--reason", required=True)
+    reconcile_source_parser.add_argument("--promotion-receipt")
+    reconcile_source_parser.add_argument("--require-promotion-receipt", action="store_true")
 
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
@@ -7524,6 +7526,12 @@ def run_chain_cli(
                 milestone_label=args.milestone,
                 authoritative_source=Path(args.authoritative_source).expanduser().resolve(),
                 reason=args.reason,
+                promotion_receipt=(
+                    Path(args.promotion_receipt).expanduser().resolve()
+                    if args.promotion_receipt
+                    else None
+                ),
+                require_promotion_receipt=bool(args.require_promotion_receipt),
             )
             chain_spec.save_chain_state(spec_path, chain_state)
         except CliError as exc:

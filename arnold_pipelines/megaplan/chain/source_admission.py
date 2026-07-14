@@ -42,6 +42,8 @@ def require_milestone_source_update(
     milestone_label: str,
     authoritative_source: Path,
     reason: str,
+    promotion_receipt: Path | None = None,
+    require_promotion_receipt: bool = False,
 ) -> dict[str, Any]:
     index, installed_idea = _milestone_index_and_idea(spec, milestone_label)
     active_index = int(getattr(state, "current_milestone_index", -1))
@@ -64,6 +66,24 @@ def require_milestone_source_update(
     if not installed_path.is_absolute():
         installed_path = project_root / installed_path
     observed = canonical_source_identity(installed_path, project_dir=project_root)
+    receipt_report: dict[str, Any] | None = None
+    if require_promotion_receipt and promotion_receipt is None:
+        raise CliError(
+            "invalid_runtime_promotion_receipt",
+            "A valid content-addressed runtime promotion receipt is required.",
+        )
+    if promotion_receipt is not None:
+        from arnold_pipelines.megaplan.chain.promotion_receipt import (
+            verify_promotion_receipt,
+        )
+
+        receipt_report = verify_promotion_receipt(
+            promotion_receipt,
+            expected_milestone=milestone_label,
+            expected_semantic_sha256=str(expected["semantic_sha256"]),
+        )
+    receipt_ready = not require_promotion_receipt or bool(receipt_report and receipt_report["valid"])
+    source_ready = observed.get("semantic_sha256") == expected.get("semantic_sha256")
     requirement = {
         "schema": CHAIN_SOURCE_SCHEMA,
         "milestone": milestone_label,
@@ -73,22 +93,12 @@ def require_milestone_source_update(
         "installed_path": str(installed_path.resolve(strict=False)),
         "expected": expected,
         "observed_at_registration": observed,
-        "status": (
-            "ready_to_reconcile"
-            if observed.get("semantic_sha256") == expected.get("semantic_sha256")
-            else "pending_source_update"
-        ),
+        "status": "ready_to_reconcile" if source_ready and receipt_ready else "pending_source_update",
         "admission_boundary": "after_base_refresh_before_plan_init",
-        "admission_decision": (
-            "admit_after_reconcile"
-            if observed.get("semantic_sha256") == expected.get("semantic_sha256")
-            else "block"
-        ),
-        "block_code": (
-            ""
-            if observed.get("semantic_sha256") == expected.get("semantic_sha256")
-            else CHAIN_SOURCE_ERROR
-        ),
+        "admission_decision": "admit_after_reconcile" if source_ready and receipt_ready else "block",
+        "block_code": "" if source_ready and receipt_ready else CHAIN_SOURCE_ERROR,
+        "promotion_receipt_required": require_promotion_receipt,
+        "promotion_receipt": receipt_report,
     }
     metadata = dict(getattr(state, "metadata", {}) or {})
     requirements = metadata.setdefault("required_canonical_source_updates", {})
@@ -107,6 +117,7 @@ def require_milestone_source_update(
             "outcome": requirement["status"],
             "old_identity": observed,
             "new_identity": expected,
+            "promotion_receipt": receipt_report,
             "reason": reason,
         },
     )
@@ -172,7 +183,29 @@ def admit_milestone_source(
                 expected_sha = canonical_source_identity(old_path, project_dir=root).get("semantic_sha256", "")
     current_sha = str(observed.get("semantic_sha256") or "")
     checked_at = now_utc()
-    if not observed.get("exists") or observed.get("errors") or (expected_sha and current_sha != expected_sha):
+    receipt_report: dict[str, Any] | None = None
+    receipt_error = ""
+    if isinstance(requirement, Mapping) and requirement.get("promotion_receipt_required"):
+        receipt = requirement.get("promotion_receipt")
+        receipt_path = str(receipt.get("path") or "") if isinstance(receipt, Mapping) else ""
+        try:
+            from arnold_pipelines.megaplan.chain.promotion_receipt import (
+                verify_promotion_receipt,
+            )
+
+            receipt_report = verify_promotion_receipt(
+                Path(receipt_path),
+                expected_milestone=milestone.label,
+                expected_semantic_sha256=expected_sha,
+            )
+        except CliError as exc:
+            receipt_error = str(exc)
+    if (
+        not observed.get("exists")
+        or observed.get("errors")
+        or (expected_sha and current_sha != expected_sha)
+        or receipt_error
+    ):
         event = {
             "schema": CHAIN_SOURCE_SCHEMA,
             "checked_at": checked_at,
@@ -183,7 +216,8 @@ def admit_milestone_source(
             "old_identity": dict(old_asset or {}),
             "required_identity": dict(expected_identity or {}),
             "current_identity": observed,
-            "reason": "current canonical source does not satisfy the bound/required identity",
+            "promotion_receipt": receipt_report,
+            "reason": receipt_error or "current canonical source does not satisfy the bound/required identity",
         }
         _append_event(state, event)
         from arnold_pipelines.megaplan.chain.spec import save_chain_state
@@ -192,7 +226,8 @@ def admit_milestone_source(
         raise CliError(
             CHAIN_SOURCE_ERROR,
             f"Milestone {milestone.label} admission refused before materialization: "
-            f"required={expected_sha or 'bound file identity'} current={current_sha or 'missing'}.",
+            f"required={expected_sha or 'bound file identity'} current={current_sha or 'missing'}"
+            f" receipt={'invalid' if receipt_error else 'valid_or_not_required'}.",
             extra={"canonical_source_admission": event},
         )
 
@@ -215,6 +250,8 @@ def admit_milestone_source(
             requirement["block_code"] = ""
             requirement["reconciled_at"] = checked_at
             requirement["reconciled_identity"] = observed
+            if receipt_report is not None:
+                requirement["promotion_receipt"] = receipt_report
     event = {
         "schema": CHAIN_SOURCE_SCHEMA,
         "checked_at": checked_at,
@@ -225,6 +262,7 @@ def admit_milestone_source(
         "old_identity": dict(old_asset or {}),
         "required_identity": dict(expected_identity or {}),
         "current_identity": observed,
+        "promotion_receipt": receipt_report,
         "reason": "source identity verified before plan initialization",
     }
     _append_event(state, event)
