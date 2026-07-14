@@ -55,7 +55,10 @@ def _resolve_project_root(args: argparse.Namespace) -> Path:
        ``duplicate_plan`` error — the walk-up hits ``~/Documents/.megaplan/``
        and they all try to write into the same plans dir. See
        ``megaplan/bakeoff/orchestrator.py:_init_profile`` for the spawning side.
-    2. Otherwise fall back to ``_find_megaplan_root(Path.cwd())`` — the legacy
+    2. Creation commands that are valid before ``.megaplan/`` exists use the
+       current Git root (or CWD outside Git), so an unrelated ancestor
+       ``.megaplan/`` cannot hijack initialization.
+    3. Otherwise fall back to ``_find_megaplan_root(Path.cwd())`` — the legacy
        behavior that lets ``megaplan plan`` / ``status`` / etc. find the
        enclosing project without an explicit flag.
     """
@@ -72,6 +75,11 @@ def _resolve_project_root(args: argparse.Namespace) -> Path:
         return Path.cwd().resolve()
     import arnold_pipelines.megaplan.cli as cli_mod
 
+    if (
+        getattr(args, "command", None) == "strategy"
+        and getattr(args, "strategy_action", None) == "init"
+    ):
+        return cli_mod._find_git_root(Path.cwd().resolve()) or Path.cwd().resolve()
     return cli_mod._find_megaplan_root(Path.cwd())
 
 
