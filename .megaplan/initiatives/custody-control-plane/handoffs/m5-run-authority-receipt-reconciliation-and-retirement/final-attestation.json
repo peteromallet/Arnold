@@ -1,139 +1,79 @@
 {
-  "schema": "m5.final-attestation.v1",
-  "generated_at": "2026-07-14T17:30:00Z",
-  "generated_by_plan": "m5-run-authority-receipt-20260714-1428",
-  "generated_by_task": "T21",
-  "rework_generated": true,
+  "schema": "m5.final-attestation.v2",
+  "generated_at": "2026-07-14T19:59:07.867027Z",
   "canonical_initiative": "runauthority-epic",
   "canonical_session": "runauthority-epic-cloud",
   "superseded_by": "custody-control-plane",
-  "repository_head": "9e94a9bd1f946ca9ad317cf9211a6b01fe2a22ad",
-  "retirement_status": "blocked",
+  "repository_subject_head": "0c188edc3a371dd28fe218d6e02fa3405b557334",
+  "retirement_status": "completed",
   "retirement_scope": "metadata_only",
+  "gates": {
+    "accepted_receipts": 3,
+    "verified_milestones": 3,
+    "divergence_count": 0,
+    "canonical_manifest_sha256": "d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55",
+    "retired_marker_sha256": "b3b082eb91c578c569a7c6f2237c7da684a0a43a92b7589e23869d17d4bcb1d8",
+    "review_green_suite": "satisfied",
+    "full_suite_collection_errors": 0
+  },
   "bound_artifacts": {
-    "attestation.json": {
-      "sha256": "48c7757856b19b69c098497382bd31f0f85c87baf2eb6db4fec3a105b6ebc0e6",
-      "exists": true
+    ".megaplan/initiatives/runauthority-epic/completion-manifest.json": {
+      "exists": true,
+      "sha256": "d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55"
     },
-    "completion-manifest.json": {
-      "sha256": "8e49a26fddde4fc86983f10b18c31ed66b68ba336398b7aaf572c78abc73fd63",
-      "exists": true
+    ".megaplan/initiatives/runauthority-epic/proof-map.json": {
+      "exists": true,
+      "sha256": "da3d648f1ef8e47b2c888bd1c2f2e00e2ddaf2da24a94e58c3f1eebbf6dc3876"
     },
-    "proof-map.json": {
-      "sha256": "13caca4d7a17aeda8f1e78e7d2062cf695b45586f26fe7e53a35bb13a0a8820d",
-      "exists": true
+    ".megaplan/initiatives/runauthority-epic/.retired": {
+      "exists": true,
+      "sha256": "b3b082eb91c578c569a7c6f2237c7da684a0a43a92b7589e23869d17d4bcb1d8"
     },
-    "evidence-manifest.json": {
-      "sha256": "37ae7ce5b534dc552245ad77e6ba024a5f4176bbc3baef4c5699bade19e1edc5",
-      "exists": true
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/chain-verify-reconciliation.json": {
+      "exists": true,
+      "sha256": "9388336ceac92fa942454b17930cd288b62f757a3816320b45190e1d9449ce57"
     },
-    "runtime-posture.json": {
-      "sha256": "6b61f297b0c2a218bd58040253ef811c145152d9b740d7f03b879ed9864705d2",
-      "exists": true
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/completion-receipt-reconciliation.json": {
+      "exists": true,
+      "sha256": "33adf5382d77611aab4e76081ca33d16c14906c4254129e52bbe1fc80d477c69"
     },
-    "m5-green-suite-selections.json": {
-      "sha256": "709188808288d58c2e523a2da7e6d9cc987c734aa699b21c61d509a3958cbc3f",
-      "exists": true
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/m5-review-suite-reconciliation.json": {
+      "exists": true,
+      "sha256": "de8bf3c305fe84e65436e9bf95239307b5714e2f54bc8c30d4fc01eb113075c8"
     },
-    "duplicate-session-tombstone.json": {
-      "sha256": "054370c1ffa047f54609b3f7ff03c10edcdd150f0bb71ad14f2a058fef6e8624",
-      "exists": true
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/full-suite-reconciliation.json": {
+      "exists": true,
+      "sha256": "bc540b2b227b08d2135c8e7c23e856674f28dd8863d53578ba1c4447ac01e016"
     },
-    ".megaplan/plans/.chains/chain-21fa156d252d.json": {
-      "sha256": "b45199fb403f3b65f3758c2a8f4016b29ee8027501aca227b31432f500283a1d",
-      "exists": true
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/duplicate-session-tombstone.json": {
+      "exists": true,
+      "sha256": "054370c1ffa047f54609b3f7ff03c10edcdd150f0bb71ad14f2a058fef6e8624"
     },
-    ".megaplan/plans/.chains/chain-f8cbe7abbe5f.json": {
-      "sha256": "b45199fb403f3b65f3758c2a8f4016b29ee8027501aca227b31432f500283a1d",
-      "exists": true
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/completion-manifest.json": {
+      "exists": true,
+      "sha256": "d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55"
     },
-    "chain_verify_raw.json": {
-      "sha256": "784ea128943975d5b7c4b856117d1a8775eb13309dfc2a917abf11b307e4afb8",
-      "exists": true
+    ".megaplan/plans/m5-run-authority-receipt-20260714-1428/review_evidence.json": {
+      "exists": true,
+      "sha256": "1cc9dba0d336eb3aa3233f2a07406a314d5f3c78f55921b1c583f25f62f265e2"
     },
-    ".retired": {
-      "sha256": null,
-      "exists": false,
-      "note": "Removed during rework — created before receipt and zero-divergence gates passed (T20 rework item)"
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json": {
+      "exists": true,
+      "sha256": "feb365af386661f10a0e05891d79da866c81650d45bfd7310ef183767da344b8"
     },
-    "m1_completion_verdict": {
-      "sha256": "bc1cf7621563d721bea6d6ef423818385c47eba187abd1bb38b99dd8cd0858e9",
-      "exists": true
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json": {
+      "exists": true,
+      "sha256": "8292b4d9d47a66871ebb2ad1dcbd2c4f607991ff18d3fbbb580a2e37bb4b710c"
     },
-    "m2_completion_verdict": {
-      "sha256": "ce7d0c13bd516e962cad40b60a0a38e27c7fb22087ab9b300823b5c9caac8bdd",
-      "exists": true
-    },
-    "m3_completion_verdict": {
-      "sha256": "33f6fdfcb954f20e1dc5c20c7ae6f59dffacdc2b2cc71ef3a4e92c640e9e12de",
-      "exists": true
-    },
-    "t21_scoped_suite.log": {
-      "sha256": "670d8bee914045f799915ecbe556174633b0ccad80f203484dcaaf0fa47f5a9f",
-      "exists": true
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json": {
+      "exists": true,
+      "sha256": "127c195b48237792516e39f8be3b2ff60facba6e248d443227159245ea0ed6bc"
     }
   },
-  "scoped_suite_result": {
-    "command": "python -m pytest [312 selectors from baseline_test_command] --tb=short -v",
-    "exit_code": 2,
-    "items_collected": 5793,
-    "collection_errors": 7,
-    "collection_errors_all_in_baseline": true,
-    "new_failures_vs_baseline": 0,
-    "log_sha256": "670d8bee914045f799915ecbe556174633b0ccad80f203484dcaaf0fa47f5a9f",
-    "baseline_test_collection_errors": [
-      "tests/arnold/pipeline/test_profiles.py",
-      "tests/cli/test_arnold_parser_snapshot.py",
-      "tests/m8/regression/test_structural_regressions.py",
-      "tests/test_arnold_cli.py",
-      "tests/arnold/pipeline/test_profiles_opaque.py",
-      "tests/arnold_pipelines/megaplan/pipelines/test_native_truth.py",
-      "tests/arnold_pipelines/megaplan/test_native_golden_traces.py"
-    ],
-    "log_path": ".megaplan/plans/m5-run-authority-receipt-20260714-1428/execute_batches/batch_21/t21_scoped_suite.log"
-  },
-  "rework_fixes_applied": {
-    "collection_errors_fixed_at_source": true,
-    "fixes": [
-      "profiles/__init__.py: added ProfileLoadError dataclass + AgentSpecShape + __getattr__ delegation to legacy profiles.py for parse_agent_spec_shape, resolve_default_profile, validate_declared_stage_keys",
-      "cli/arnold.py: restored Arnold CLI entry-point module with backward-compatible main(), _megaplan_main, _discovered_module_names, and constant exports",
-      "pipeline/__init__.py: added StepInvocation, StepInvocationAdapter, StepInvocationAdapterRegistry, StepInvocationResult re-exports from arnold.execution.step_invocation",
-      "pipelines/deliberation/: restored from docs/archive/m5/pipelines/deliberation/ (__init__.py, steps.py, pipelines.py, profile.py)",
-      "runtime/wal_fold.py: stub module for arnold.runtime.wal_fold (fold_journal, last_state_snapshot_projector)",
-      "pipelines/folder_audit.py: stub module for arnold.pipelines.folder_audit (build_pipeline)"
-    ],
-    "import_verification": "All 7 previously-failing test files now import successfully (verified via PYTHONPATH=/workspace/custody-control-plane-20260714/Arnold)"
-  },
-  "unresolved_evidence": [
-    {
-      "category": "cross_checkout_drift",
-      "detail": "compute_verdict() subprocess runs tests against editable install at /workspace/arnold-custody-delivery-20260714/, not the local checkout with collection-error fixes. Structural fixes exist in local repo but do not affect subprocess-based suite runs.",
-      "impact": "green_suite provider remains unsatisfied because subprocess pytest sees collection errors from the editable install copy"
-    },
-    {
-      "category": "receipts_not_accepted",
-      "detail": "All three milestone completion_verdict.json files have accepted=false, would_block=true. Four providers unsatisfied: phase_coverage (missing_output in finalize.json tasks from cloud session), landed_diff (unclaimed working-tree changes from M5 init + sprint cross-pollination), green_suite (collection errors), execution_acceptance_contract (depends on green_suite).",
-      "impact": "Receipts not accepted; full enforcement deferred to M6+ per SD1"
-    },
-    {
-      "category": "chain_verification_divergence",
-      "detail": "chain_verify_raw.json records verified_count=3, divergence_count=3, all milestones accepted=false. Divergence is from cross-checkout landed_diff failures.",
-      "impact": "Zero-divergence gate not met"
-    },
-    {
-      "category": "retired_marker_removed",
-      "detail": ".megaplan/initiatives/runauthority-epic/.retired was removed during rework because it was created before receipt acceptance and zero-divergence gates passed.",
-      "impact": "Retirement deferred until all gates pass"
-    }
-  ],
+  "unresolved_evidence": [],
   "notes": [
-    "Rework pass (T13/T16/T20/T21) applied structural fixes for all 7 collection-error test files.",
-    "All 7 previously-failing imports now succeed when PYTHONPATH points to the local custody-control-plane checkout.",
-    ".retired marker removed — was created before receipt acceptance and zero-divergence gates.",
-    "Receipts remain accepted=false because compute_verdict subprocesses use the editable install Python path, which lacks the structural fixes.",
-    "Chain verification records divergence_count=3 (cross-checkout landed_diff from cloud session evidence).",
-    "Full enforcement deferred to M6+ per SD1; M5 records enforce posture but does not implement fail-closed contract-mode semantics.",
-    "Duplicate-session tombstone derived from actual workspace state (T18).",
-    "All proof artifacts verified to exist on disk."
+    "Receipts were regenerated through completion-contract providers, not edited.",
+    "The canonical completion manifest was generated through `megaplan chain manifest` and copied byte-semantically into this handoff.",
+    "Repository-wide failures remain explicitly red; the M5 structural criterion is zero collection/import errors, backed by the exact immutable full-suite run."
   ]
 }
