@@ -152,6 +152,17 @@ chmod +x /usr/local/bin/mp-refresh-megaplan
 
 mp_install_megaplan
 
+# Supervisors never execute from the mutable environment being refreshed
+# above. Build a versioned venv, verify its imports, then atomically swap the
+# stable `current` symlink before watchdog/repair/auditor sessions can start.
+export MEGAPLAN_SUPERVISOR_SOURCE="$${MEGAPLAN_SUPERVISOR_SOURCE:-${MEGAPLAN_SRC_PATH}}"
+if [[ ! -f "$$MEGAPLAN_SUPERVISOR_SOURCE/pyproject.toml" ]]; then
+  export MEGAPLAN_SUPERVISOR_SOURCE="$$WORKSPACE_PATH"
+fi
+/usr/local/bin/arnold-supervisor-runtime --prepare
+export MEGAPLAN_SUPERVISOR_PYTHON=/workspace/.megaplan/supervisor-python/current/bin/python3
+export MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED=1
+
 echo "Configuring arnold agent routing and execution defaults"
 ${AGENT_ROUTING_BLOCK}
 arnold config set execution.auto_approve true >/dev/null 2>&1 || true

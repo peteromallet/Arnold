@@ -9745,7 +9745,11 @@ def test_repair_trigger_path_unit_fires_immediate_error_queue_scan() -> None:
     assert "DirectoryNotEmpty=/workspace/.megaplan/repair-queue/requests" in path_unit
     assert "PathModified=/workspace/.megaplan/repair-queue/requests" in path_unit
     assert "Unit=megaplan-repair-trigger.service" in path_unit
-    assert "ExecStart=/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger" in service_unit
+    assert (
+        "ExecStart=/workspace/.megaplan/supervisor-python/current/bin/python3 "
+        "/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger"
+    ) in service_unit
+    assert "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED=1" in service_unit
     assert "ARNOLD_REPAIR_TRIGGER_ENABLED" in service_unit
 
 
@@ -9822,10 +9826,14 @@ SYNC_BRANCH=editible-install
     result = _run_watchdog_shell(script)
     assert result.returncode == 1, result.stderr
     lines = order_path.read_text(encoding="utf-8").splitlines()
-    assert "report:observation_runtime_invalid" in lines
     assert "report:observation_blind" in lines
+    assert "sync" not in lines
     error_payload = json.loads((status_dir / "cloud-status.write-error.json").read_text(encoding="utf-8"))
     assert "observation bootstrap failed" in error_payload["error"]
+    atomic_payload = json.loads(
+        (status_dir / "watchdog-observation-failure.json").read_text(encoding="utf-8")
+    )
+    assert atomic_payload["status"] == "failed"
 
 
 def test_watchdog_session_health_status_treats_live_worker_process_as_alive_without_tmux(tmp_path: Path) -> None:

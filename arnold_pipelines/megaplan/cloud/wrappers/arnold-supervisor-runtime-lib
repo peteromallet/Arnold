@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Shared fail-closed interpreter selection for cloud recovery supervisors.
+
+arnold_supervisor_failure_artifact() {
+  local component="${1:-unknown}"
+  local reason="${2:-runtime_not_ready}"
+  local status_dir="${MEGAPLAN_SUPERVISOR_STATUS_DIR:-${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}}"
+  local target="$status_dir/${component}.supervisor-runtime-failure.json"
+  local tmp stamp
+  mkdir -p "$status_dir" 2>/dev/null || return 1
+  tmp="$(mktemp "$status_dir/.${component}.runtime-failure.XXXXXX")" || return 1
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # Values are controlled tokens, not untrusted stderr. Keep this writer
+  # dependency-independent so it still works when Python imports do not.
+  printf '{"at":"%s","component":"%s","reason":"%s","schema_version":"arnold-supervisor-runtime-failure-v1","status":"failed"}\n' \
+    "$stamp" "$component" "$reason" > "$tmp"
+  mv -f "$tmp" "$target"
+}
+
+arnold_supervisor_stdlib_init() {
+  local component="${1:-unknown}"
+  local preferred="${MEGAPLAN_SUPERVISOR_PYTHON:-/workspace/.megaplan/supervisor-python/current/bin/python3}"
+  local resolved=""
+
+  if [[ -x "$preferred" ]]; then
+    resolved="$(readlink -f "$preferred" 2>/dev/null || printf '%s' "$preferred")"
+  else
+    resolved="$(command -v python3 2>/dev/null || true)"
+    resolved="$(readlink -f "$resolved" 2>/dev/null || printf '%s' "$resolved")"
+  fi
+  if [[ -z "$resolved" || ! -x "$resolved" ]]; then
+    arnold_supervisor_failure_artifact "$component" "stdlib_interpreter_unavailable"
+    printf '%s\n' "$component: stdlib interpreter unavailable" >&2
+    return 78
+  fi
+  export MEGAPLAN_SUPERVISOR_STDLIB_PYTHON="$resolved"
+}
+
+arnold_supervisor_runtime_init() {
+  local component="${1:-unknown}"
+  local source_root="${2:-/workspace/arnold}"
+  local preferred="${MEGAPLAN_SUPERVISOR_PYTHON:-/workspace/.megaplan/supervisor-python/current/bin/python3}"
+  local required="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED:-0}"
+  local resolved=""
+
+  if [[ -x "$preferred" ]]; then
+    resolved="$(readlink -f "$preferred" 2>/dev/null || printf '%s' "$preferred")"
+  elif [[ "$required" == "1" ]]; then
+    arnold_supervisor_failure_artifact "$component" "dedicated_interpreter_missing"
+    printf '%s\n' "$component: dedicated supervisor interpreter missing: $preferred" >&2
+    return 78
+  else
+    resolved="$(command -v python3 2>/dev/null || true)"
+    resolved="$(readlink -f "$resolved" 2>/dev/null || printf '%s' "$resolved")"
+  fi
+
+  if [[ -z "$resolved" || ! -x "$resolved" ]]; then
+    arnold_supervisor_failure_artifact "$component" "interpreter_unavailable"
+    printf '%s\n' "$component: supervisor interpreter unavailable" >&2
+    return 78
+  fi
+
+  if ! PYTHONSAFEPATH=1 PYTHONPATH="$source_root:${PYTHONPATH:-}" \
+    "$resolved" -P -c 'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
+    >/dev/null 2>&1; then
+    arnold_supervisor_failure_artifact "$component" "readiness_import_failed"
+    printf '%s\n' "$component: supervisor interpreter readiness import failed: $resolved" >&2
+    return 78
+  fi
+
+  export MEGAPLAN_SUPERVISOR_PYTHON="$resolved"
+  export MEGAPLAN_SUPERVISOR_SOURCE_ROOT="$source_root"
+  # Existing wrapper bodies deliberately keep the familiar python3 spelling;
+  # this function pins every call to the already-validated absolute path.
+  python3() {
+    "$MEGAPLAN_SUPERVISOR_PYTHON" "$@"
+  }
+  export -f python3
+  return 0
+}

@@ -9,6 +9,16 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
 fi
 
 WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+# shellcheck disable=SC1090
+. "$SUPERVISOR_RUNTIME_LIB"
+arnold_supervisor_runtime_init watchdog "${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}" || exit $?
 
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 if command -v readlink >/dev/null 2>&1; then
@@ -1669,20 +1679,16 @@ sync_cloud_runtime_wrappers() {
 }
 
 refresh_editable_install() {
-  if [[ -d "$SRC_DIR" && -f "$SRC_DIR/pyproject.toml" ]]; then
-    log "refreshing Arnold editable install from $SRC_DIR"
-    timeout "$INSTALL_REFRESH_TIMEOUT_SECS" python3 -m pip install --upgrade -e "$SRC_DIR[agent]" >> "$LOG" 2>&1 || return 1
-  elif [[ -x /usr/local/bin/mp-refresh-megaplan ]]; then
-    log "refreshing Arnold install with mp-refresh-megaplan fallback"
-    timeout "$INSTALL_REFRESH_TIMEOUT_SECS" env MEGAPLAN_REF="$SYNC_BRANCH" /usr/local/bin/mp-refresh-megaplan >> "$LOG" 2>&1 || return 1
-  else
-    log "mp-refresh-megaplan missing; skipping editable refresh"
-  fi
-
+  # The supervisor interpreter is immutable for its lifetime. Source updates
+  # are consumed through PYTHONPATH and atomically copied wrappers; never run an
+  # in-place pip reinstall from inside the process that is doing observation.
+  log "refreshing Arnold source-backed supervisor from $SRC_DIR without mutating interpreter"
   sync_cloud_runtime_wrappers >> "$LOG" 2>&1 || return 1
 
-  python3 - <<'PY' >> "$LOG" 2>&1
+  PYTHONSAFEPATH=1 PYTHONPATH="$SRC_DIR:${PYTHONPATH:-}" python3 -P - <<'PY' >> "$LOG" 2>&1
+import yaml  # noqa: F401
 import arnold_pipelines.megaplan.cloud.cli  # noqa: F401
+import arnold_pipelines.megaplan.cloud.repair_contract  # noqa: F401
 PY
 }
 
@@ -1943,23 +1949,32 @@ ensure_install_or_repair() {
 write_watchdog_observation_error() {
   local reason="$1"
   local status_dir="${2:-$STATUS_DIR}"
-  python3 - "$status_dir" "$reason" <<'PY' 2>/dev/null || true
-import datetime
-import json
-import pathlib
-import sys
-
-status_dir = pathlib.Path(sys.argv[1])
-reason = sys.argv[2]
-status_dir.mkdir(parents=True, exist_ok=True)
-path = status_dir / "cloud-status.write-error.json"
-payload = {
-    "error": "watchdog observation bootstrap failed; watchdog report may be stale",
-    "reason": reason,
-    "at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+  local stamp tmp target
+  mkdir -p "$status_dir" 2>/dev/null || return 1
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  target="$status_dir/watchdog-observation-failure.json"
+  tmp="$(mktemp "$status_dir/.watchdog-observation-failure.XXXXXX")" || return 1
+  printf '{"at":"%s","error":"watchdog observation bootstrap failed; watchdog report may be stale","reason":"observation_runtime_not_ready","schema_version":"arnold-watchdog-observation-failure-v1","status":"failed"}\n' \
+    "$stamp" > "$tmp"
+  mv -f "$tmp" "$target"
+  # Preserve the legacy consumer path with the same atomic payload.
+  tmp="$(mktemp "$status_dir/.cloud-status.write-error.XXXXXX")" || return 1
+  cp "$target" "$tmp"
+  mv -f "$tmp" "$status_dir/cloud-status.write-error.json"
+  log "watchdog observation failure persisted atomically: ${reason:-unknown}"
 }
-path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-PY
+
+write_watchdog_sweep_health() {
+  local phase="$1"
+  local status_dir="${2:-$STATUS_DIR}"
+  local target="$status_dir/watchdog-sweep.${phase}.json"
+  local tmp stamp
+  mkdir -p "$status_dir"
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  tmp="$(mktemp "$status_dir/.watchdog-sweep.${phase}.XXXXXX")" || return 1
+  printf '{"at":"%s","phase":"%s","schema_version":"arnold-watchdog-sweep-health-v1"}\n' \
+    "$stamp" "$phase" > "$tmp"
+  mv -f "$tmp" "$target"
 }
 
 watchdog_observation_runtime_check() {
@@ -1993,20 +2008,12 @@ bootstrap_watchdog_observation() {
   if reason="$(watchdog_observation_runtime_check 2>&1)"; then
     return 0
   fi
-  log "watchdog observation bootstrap invalid; attempting editable sync/refresh recovery"
-  report_item "$report_items" "watchdog" "observe" "observation_runtime_invalid" "watchdog observation runtime invalid; attempting editable sync/refresh recovery" "$SRC_DIR" "$SYNC_BRANCH"
-  if sync_editable_source_branch "$report_items"; then
-    WATCHDOG_BOOTSTRAP_RECOVERED=1
-    if reason="$(watchdog_observation_runtime_check 2>&1)"; then
-      log "watchdog observation bootstrap recovered after editable sync/refresh"
-      report_item "$report_items" "watchdog" "observe" "observation_runtime_recovered" "watchdog observation runtime recovered after editable sync/refresh" "$SRC_DIR" "$SYNC_BRANCH"
-      return 0
-    fi
-  fi
+  # Fail closed. Attempting pip/source repair from a blind observer caused the
+  # original boot/install race and could leave a live-but-sleeping watchdog.
   reason="$(printf '%s' "$reason" | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g' | sed 's/^ //; s/ $//')"
   [[ -n "$reason" ]] || reason="watchdog observation runtime check failed"
-  log "watchdog observation bootstrap failed after recovery: $reason"
-  report_item "$report_items" "watchdog" "observe" "observation_blind" "watchdog observation bootstrap failed after recovery: $reason" "$SRC_DIR" "$SYNC_BRANCH"
+  log "watchdog observation bootstrap failed closed: $reason"
+  report_item "$report_items" "watchdog" "observe" "observation_blind" "watchdog observation bootstrap failed closed: $reason" "$SRC_DIR" "$SYNC_BRANCH"
   write_watchdog_observation_error "$reason"
   return 1
 }
@@ -7637,12 +7644,14 @@ scan_once_unlocked() {
   # Validate the observation/runtime path before any repair-trigger or status
   # scan. If the watchdog cannot import its own cloud modules, never continue
   # silently on a stale report.
-  write_watchdog_heartbeat
   if ! bootstrap_watchdog_observation "$report_items"; then
     emit_report "$report_items" 0
     rm -f "$report_items"
     return 1
   fi
+  # A heartbeat means observation readiness succeeded, not merely that the
+  # shell process reached the beginning of a sweep.
+  write_watchdog_heartbeat
   # P2: heartbeat + an early snapshot write BEFORE the heavy/stall-prone work
   # (repair_trigger_scan, git sync, pip refresh). If anything below hangs, the
   # cache is at most ~one sweep stale instead of frozen indefinitely. The early
@@ -7736,8 +7745,14 @@ scan_once() {
     fi
   fi
 
+  write_watchdog_sweep_health started || return 74
   scan_once_unlocked
   scan_rc=$?
+  if [[ $scan_rc -eq 0 ]]; then
+    write_watchdog_sweep_health completed || scan_rc=74
+  else
+    write_watchdog_sweep_health failed || true
+  fi
   if [[ -n "${scan_lock_fd:-}" ]]; then
     flock -u "$scan_lock_fd" 2>/dev/null || true
     exec {scan_lock_fd}>&-
