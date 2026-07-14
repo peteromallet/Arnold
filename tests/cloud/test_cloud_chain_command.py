@@ -155,6 +155,25 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     assert marker["notification_context"]["reason"] == "pytest_environment"
 
 
+def test_tmux_chain_launch_command_is_valid_shell() -> None:
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        session_name="demo-chain",
+        identity_digest="abc123",
+    )
+
+    result = subprocess.run(
+        ["bash", "-n"],
+        input=command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
     result = _phase_model_by_label_from_preflight(
         {
