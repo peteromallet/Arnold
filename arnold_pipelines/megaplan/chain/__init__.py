@@ -4733,6 +4733,11 @@ def _recover_failed_plan_before_drive(root: Path, plan: str, *, writer) -> None:
             plan,
         ],
         writer=writer,
+        # ``resume`` may rerun a model-backed review/rework phase. The generic
+        # git/gh timeout (120s) is shorter than a healthy review and previously
+        # killed the recovery subprocess while leaving durable phase evidence
+        # in flight. Keep the recovery bounded, but give it plan-phase time.
+        timeout=1800,
         error_code="plan_resume_failed",
     )
 

@@ -5,6 +5,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.orchestration.completion_contract import (
     CompletionSubject,
     LandedDiffProvider,
@@ -105,3 +106,26 @@ def test_suite_runner_imports_subject_checkout_before_editable_engine(
     assert result.status == "passed"
     assert result.exit_code == 0
     assert result.failures == []
+
+
+def test_failed_plan_resume_uses_plan_phase_timeout(tmp_path: Path, monkeypatch) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        chain_module,
+        "_plan_current_state_from_payload",
+        lambda root, plan: "failed",
+    )
+
+    def fake_run_command(root, cmd, **kwargs):
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(chain_module, "_run_command", fake_run_command)
+
+    chain_module._recover_failed_plan_before_drive(
+        tmp_path,
+        "historical-plan",
+        writer=lambda message: None,
+    )
+
+    assert observed["timeout"] == 1800
