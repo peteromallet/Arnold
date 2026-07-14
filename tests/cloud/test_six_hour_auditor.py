@@ -294,7 +294,7 @@ def test_audit_model_pin_rejects_conflicting_inputs() -> None:
             validate_audit_model_inputs({name: "gpt-5.5"})
 
 
-def test_unhealthy_audit_routes_only_to_central_repair_request(tmp_path: Path) -> None:
+def test_ordinary_unhealthy_audit_remains_report_only(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     queue_root = workspace / ".megaplan" / "repair-queue"
     item = {
@@ -318,22 +318,10 @@ def test_unhealthy_audit_routes_only_to_central_repair_request(tmp_path: Path) -
 
     result = enqueue_audit_repair_request(item, queue_root=queue_root)
 
-    assert result is not None and result["status"] == "queued"
-    request = result["request"]
-    assert request["source"] == "six_hour_auditor"
-    assert request["queue_dir"] == str(queue_root)
-    assert request["problem_signature"]["event_signature"] == (
-        "six_hour_auditor:watchdog:watchdog_report_stale"
-    )
+    assert result is None
     assert not (workspace / ".git").exists()
     assert not (workspace / ".megaplan" / "plans").exists()
-    written = {path.relative_to(workspace).parts[:3] for path in workspace.rglob("*")}
-    assert written <= {
-        (".megaplan",),
-        (".megaplan", "repair-queue"),
-        (".megaplan", "repair-queue", "requests"),
-        (".megaplan", "repair-queue", "decisions"),
-    }
+    assert not queue_root.exists()
 
 
 def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspace(
@@ -363,6 +351,21 @@ def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspa
             "workspace": str(workspace),
             "session_header": {"kind": "chain"},
             "deterministic_superfixer_evidence": evidence,
+            "l3_escalation_gate": {
+                "eligible": True,
+                "decision": "true_stall",
+                "escalation_id": "l3-escalation:fixture",
+                "evidence_digest": "f" * 64,
+                "route": {
+                    "requested_difficulty": 9,
+                    "effective_difficulty": 9,
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "high",
+                    "child_difficulty_ceiling": 9,
+                },
+            },
+            "l3_repair_context_path": "/workspace/audit-reports/escalations/fixture/repair-context.json",
+            "l3_repair_context_digest": "c" * 64,
         },
         queue_root=queue_root,
     )
@@ -374,11 +377,15 @@ def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspa
     assert request["target"]["workspace"] == str(workspace)
     assert request["target"]["deterministic_superfixer_evidence"] == evidence
     assert request["problem_signature"]["failure_kind"] == "stale_l1_l2_cycle"
-    assert request["problem_signature"]["blocked_task_id"].startswith("audit:")
-    assert request["target"]["root_cause_identity"] == request["problem_signature"]["blocked_task_id"]
+    assert request["problem_signature"]["blocked_task_id"] == "l3-escalation:fixture:attempt:1"
+    assert request["target"]["root_cause_identity"] == "l3-escalation:fixture"
     assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["7473fa42"]
     assert request["target"]["retry_budget"] == evidence["retry_budget"]
-    assert request["target"]["retry_strategy"] == "meta_repair"
+    assert request["target"]["retry_strategy"] == "deep_superfixer_repair"
+    assert request["target"]["dispatch_intent"] == "deep_superfixer_repair"
+    assert request["target"]["retry_ordinal"] == 1
+    assert request["target"]["route"]["requested_difficulty"] == 9
+    assert request["target"]["repair_context_digest"] == "c" * 64
     assert not (workspace / ".megaplan" / "repair-queue").exists()
 
 

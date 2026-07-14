@@ -1,1 +1,1 @@
-/workspace/wbc-c1-root-corrective-20260711/arnold_pipelines/megaplan/data/observe_skill.md
+/workspace/arnold/arnold_pipelines/megaplan/data/observe_skill.md

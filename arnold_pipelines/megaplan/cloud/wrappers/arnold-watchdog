@@ -98,6 +98,7 @@ SCAN_LOCK_WAIT_SECS="${CLOUD_WATCHDOG_SCAN_LOCK_WAIT_SECS:-600}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
+CODEX_REPAIR_MODEL="${CLOUD_WATCHDOG_CODEX_REPAIR_MODEL:-gpt-5.6-sol}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
 REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
@@ -2066,7 +2067,7 @@ codex_repair_editable_install() {
     return 1
   fi
 
-  local prompt
+  local prompt reason_digest source_repair_id
   prompt="$(mktemp)"
   cat > "$prompt" <<EOF
 You are running inside an Arnold cloud worker. The editable Arnold install failed this watchdog check:
@@ -2084,11 +2085,33 @@ MEGAPLAN_REF or the active workflow checkout branch to choose the repair branch.
 Keep the patch narrowly scoped. Run the smallest relevant verification. Do not ask for input.
 EOF
   redact_file_in_place "$prompt"
+  reason_digest="$(printf '%s' "$reason" | sha256sum | awk '{print $1}')"
+  source_repair_id="watchdog-source-repair:${reason_digest}"
 
   log "starting Codex editable-install repair in $SRC_DIR"
   (
     cd "$SRC_DIR" &&
-    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$prompt"
+    python3 -m arnold_pipelines.megaplan.managed_agent run \
+      --run-kind automatic_watchdog_source_repair \
+      --identity-key "$source_repair_id" \
+      --project-dir "$SRC_DIR" \
+      --task-kind debugging \
+      --difficulty 8 \
+      --model "$CODEX_REPAIR_MODEL" \
+      --reasoning-effort high \
+      --route-class watchdog_editable_install_repair \
+      --backend codex \
+      --command-display "watchdog editable-install Codex repair" \
+      --origin-kind watchdog_source_repair \
+      --origin-id "$source_repair_id" \
+      --origin-component arnold-watchdog \
+      --trigger-id "$reason_digest" \
+      --lineage-key watchdog-source-repair \
+      --stdin-file "$prompt" \
+      --require-output \
+      --link phase=editable_install_repair \
+      -- timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access \
+        -c model="$CODEX_REPAIR_MODEL" -c model_reasoning_effort=high -
   ) >> "$LOG" 2>&1
   local rc=$?
   rm -f "$prompt"

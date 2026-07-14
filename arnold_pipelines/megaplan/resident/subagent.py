@@ -28,12 +28,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
+from agentbox.redaction import redact_text
 from arnold_pipelines.megaplan.managed_agent import (
     ACTIVE_STATUSES as SHARED_ACTIVE_STATUSES,
     MANAGED_AGENT_CUSTODIAN,
     MANAGED_AGENT_SCHEMA,
     is_managed_manifest,
     managed_run_roots,
+    validate_automatic_managed_manifest,
     observed_status as shared_observed_status,
 )
 
@@ -45,13 +47,6 @@ from .provenance import (
     normalize_delegation_provenance,
     provenance_from_environment,
     stable_identity,
-)
-from .request_summary import (
-    REQUEST_DESCRIPTION_MAX_CHARS,
-    canonical_request_description,
-    content_with_request_summary,
-    current_request_summary_line,
-    source_request_fallback_line,
 )
 from .query_relationship import relationship_from_environment_or_project
 
@@ -107,7 +102,7 @@ _MAX_COMPLETION_DELIVERY_CHARS = 7_600
 MAX_DELEGATED_TASK_CHARS = 32_000
 MAX_DELEGATED_PROMPT_CHARS = 40_000
 MAX_FOLLOWUP_MESSAGE_CHARS = 32_000
-MAX_AGENT_DESCRIPTION_CHARS = REQUEST_DESCRIPTION_MAX_CHARS
+MAX_AGENT_DESCRIPTION_CHARS = 180
 FOLLOWUP_SCHEMA = "arnold-resident-agent-followup-v1"
 AGGREGATION_SCHEMA = "arnold-resident-agent-aggregation-v1"
 AGGREGATION_ROLES = frozenset({"synthesis_delivery_owner", "internal_contributor"})
@@ -204,7 +199,6 @@ class ManagedCompletionTurnResult:
     verification_outcome: str
     turn_id: str | None = None
     outbound_message_id: str | None = None
-    request_summary_line: str | None = None
 
 
 class _ProviderAcceptanceEvidenceMissing(RuntimeError):
@@ -278,9 +272,14 @@ def concise_agent_description(description: object, task: str) -> str:
     manifest still has a useful description.
     """
 
-    supplied = canonical_request_description(description)
-    if supplied is not None:
-        return supplied
+    if isinstance(description, str):
+        supplied = " ".join(redact_text(description).split())
+        if len(supplied) > MAX_AGENT_DESCRIPTION_CHARS:
+            raise ValueError(
+                f"agent description exceeds {MAX_AGENT_DESCRIPTION_CHARS} characters"
+            )
+        if supplied:
+            return supplied.rstrip(".") + "."
     # Compatibility callers may predate semantic descriptions.  Never turn a
     # truncated raw task into a fake summary; use an explicit generic fallback.
     return "Handle the delegated resident request."
@@ -453,13 +452,11 @@ def _delivery_prompt(
     task: str,
     timezone_name: str = "UTC",
     *,
-    request_summary_line: str | None = None,
     context_directory: Mapping[str, Any] | None = None,
     query_relationship: Mapping[str, Any] | None = None,
     contributors: list[Mapping[str, Any]] | None = None,
 ) -> str:
     prompt = (
-        f"{request_summary_line or current_request_summary_line(None)}\n\n"
         f"{task.rstrip()}\n\n"
         "[Completion delivery contract]\n"
         "[User-time presentation rule]\n"
@@ -1699,11 +1696,9 @@ def launch_codex_subagent_detached(
         project_root=project_root,
         provenance=provenance,
     )
-    request_summary_line = current_request_summary_line(agent_description)
     prompt = _delivery_prompt(
         task,
         str(provenance.get("timezone_name") or "UTC"),
-        request_summary_line=request_summary_line,
         context_directory=context_directory,
         query_relationship=query_relationship,
         contributors=contributors,
@@ -1727,7 +1722,6 @@ def launch_codex_subagent_detached(
         "reasoning_effort": reasoning_effort,
         "task_kind": task_kind,
         "description": agent_description,
-        "request_summary_line": request_summary_line,
         "difficulty": difficulty,
         "route_class": route_class,
         "sandbox": "danger-full-access",
@@ -2653,71 +2647,11 @@ def _newer_delivery_run(
     return newest[1] if newest is not None else None
 
 
-def _authoritative_request_from_manifest(manifest: Mapping[str, Any]) -> str | None:
-    """Load the exact inbound source only for an explicitly labeled fallback."""
-
-    provenance = manifest.get("launch_provenance")
-    if not isinstance(provenance, Mapping):
-        return None
-    source_record_id = str(provenance.get("source_record_id") or "")
-    conversation_id = str(provenance.get("resident_conversation_id") or "")
-    discord_message_id = str(provenance.get("reply_to_message_id") or "")
-    if not _RESIDENT_MESSAGE_ID_RE.fullmatch(source_record_id):
-        return None
-    roots: list[Path] = []
-    configured_root = str(os.environ.get("MEGAPLAN_RESIDENT_STORE_ROOT") or "").strip()
-    if configured_root:
-        roots.append(Path(configured_root).expanduser().resolve())
-    project_dir = str(manifest.get("project_dir") or "").strip()
-    if project_dir:
-        roots.append(Path(project_dir).resolve() / ".megaplan" / "resident")
-    contents: set[str] = set()
-    for root in dict.fromkeys(roots):
-        try:
-            record = json.loads(
-                (root / "messages" / f"{source_record_id}.json").read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError, TypeError):
-            continue
-        if (
-            not isinstance(record, Mapping)
-            or str(record.get("id") or "") != source_record_id
-            or str(record.get("direction") or "") != "inbound"
-            or str(record.get("conversation_id") or "") != conversation_id
-            or str(record.get("discord_message_id") or "") != discord_message_id
-        ):
-            continue
-        content = record.get("content")
-        if isinstance(content, str):
-            contents.add(content)
-    return next(iter(contents)) if len(contents) == 1 else None
-
-
-def _completion_payload_with_request_summary(
+def _completion_payload(
     manifest: Mapping[str, Any],
     payload: Mapping[str, Any],
-    *,
-    summary_line: str | None = None,
 ) -> dict[str, Any]:
-    semantic_description = canonical_request_description(manifest.get("description"))
-    authority = "managed_manifest_semantic_description"
-    canonical_line = current_request_summary_line(semantic_description)
-    if semantic_description is None:
-        canonical_line = source_request_fallback_line(
-            _authoritative_request_from_manifest(manifest)
-        )
-        authority = "immutable_inbound_source_fallback"
-    stored_line = manifest.get("request_summary_line")
-    if isinstance(stored_line, str) and stored_line == canonical_line:
-        canonical_line = stored_line
-    if summary_line != canonical_line:
-        summary_line = canonical_line
-    rendered, line = content_with_request_summary(
-        payload.get("content"),
-        summary_line=summary_line,
-        max_chars=_MAX_COMPLETION_DELIVERY_CHARS,
-        trusted_summary_line=True,
-    )
+    rendered = str(payload.get("content") or "").strip()
     relationship = manifest.get("query_relationship")
     if (
         isinstance(relationship, Mapping)
@@ -2731,18 +2665,12 @@ def _completion_payload_with_request_summary(
             "current follow-up and delivery target "
             f"{current.get('discord_message_id') or current.get('source_record_id') or 'unknown'}."
         )
-        first, separator, rest = rendered.partition("\n")
-        rendered = (
-            f"{first}\n{reference_line}{separator}{rest}"
-            if separator
-            else f"{first}\n{reference_line}"
-        )[:_MAX_COMPLETION_DELIVERY_CHARS]
+        rendered = f"{reference_line}\n\n{rendered}" if rendered else reference_line
+    rendered = rendered[:_MAX_COMPLETION_DELIVERY_CHARS]
     return {
         **dict(payload),
         "content": rendered,
         "content_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
-        "request_summary_line": line,
-        "request_summary_authority": authority,
     }
 
 
@@ -2897,36 +2825,11 @@ def _delivery_claim(
                 content,
                 str(launch_provenance.get("timezone_name") or "UTC"),
             )
-            delivery["payload"] = _completion_payload_with_request_summary(manifest, {
+            delivery["payload"] = _completion_payload(manifest, {
                 "content": content,
                 "result_kind": result_kind,
                 "materialized_at": now.isoformat(),
             })
-        elif (
-            outbox_payload.get("request_summary_authority")
-            not in {
-                "managed_manifest_semantic_description",
-                "immutable_inbound_source_fallback",
-                "immutable_inbound_source_record",
-            }
-            or not isinstance(outbox_payload.get("request_summary_line"), str)
-            or str(outbox_payload.get("content") or "").partition("\n")[0]
-            != outbox_payload.get("request_summary_line")
-        ):
-            # Never mutate a previously frozen/retried payload into a different
-            # provider message. New materialization always writes this contract.
-            delivery.update(
-                {
-                    "status": "failed",
-                    "last_error": "Discord delivery failed: durable payload lacks request-summary first line",
-                    "last_error_class": "InvalidCompletionPayload",
-                    "last_error_category": "invalid_completion_payload",
-                    "updated_at": now.isoformat(),
-                }
-            )
-            manifest["completion_delivery"] = delivery
-            _atomic_json(manifest_path, manifest)
-            return None
 
         attempt = int(delivery.get("attempt_count") or 0) + 1
         if attempt > _DELIVERY_MAX_ATTEMPTS:
@@ -3051,7 +2954,7 @@ def _finish_completion_turn(
         )
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        payload = _completion_payload_with_request_summary(
+        payload = _completion_payload(
             manifest,
             {
                 "content": safe_text,
@@ -3060,7 +2963,6 @@ def _finish_completion_turn(
                 "resident_turn_id": result.turn_id,
                 "materialized_at": now.isoformat(),
             },
-            summary_line=result.request_summary_line,
         )
         safe_text = str(payload["content"])
         completion = dict(manifest.get("resident_completion_turn") or {})
@@ -3111,7 +3013,7 @@ def _retry_completion_turn(manifest_path: Path, *, now: datetime, exc: Exception
                 f"run {run_id} after bounded retries. The verification outcome is unknown, and the "
                 "delegated terminal result is not being treated as proof; operator inspection is required."
             )
-            payload = _completion_payload_with_request_summary(
+            payload = _completion_payload(
                 manifest,
                 {
                     "content": content,
@@ -3628,9 +3530,22 @@ def list_managed_resident_agents(
                 continue
             persisted_status = str(payload.get("status") or "unknown")
             pid = payload.get("pid")
+            run_kind = str(payload.get("run_kind") or MANAGED_RUN_KIND)
+            evidence_class = "canonical"
             if schema == MANAGED_RUN_SCHEMA:
                 observed_status, live = shared_observed_status(payload, manifest_path)
+                if run_kind.startswith("automatic_"):
+                    try:
+                        validate_automatic_managed_manifest(
+                            payload,
+                            manifest_path=manifest_path,
+                        )
+                    except (TypeError, ValueError):
+                        evidence_class = "legacy_noncanonical"
+                        observed_status = "noncanonical_legacy"
+                        live = False
             else:
+                evidence_class = "legacy_compatibility"
                 process_matches = isinstance(pid, int) and _pid_matches_manifest(pid, manifest_path)
                 live = persisted_status in _ACTIVE_STATUSES and process_matches
                 observed_status = persisted_status
@@ -3647,7 +3562,8 @@ def list_managed_resident_agents(
             rows.append(
                 {
                     "run_id": payload.get("run_id") or manifest_path.parent.name,
-                    "run_kind": payload.get("run_kind") or MANAGED_RUN_KIND,
+                    "run_kind": run_kind,
+                    "evidence_class": evidence_class,
                     "status": observed_status,
                     "persisted_status": persisted_status,
                     "live": live,
@@ -3657,7 +3573,6 @@ def list_managed_resident_agents(
                     "reasoning_effort": payload.get("reasoning_effort"),
                     "task_kind": payload.get("task_kind"),
                     "description": payload.get("description"),
-                    "request_summary_line": payload.get("request_summary_line"),
                     "difficulty": payload.get("difficulty"),
                     "route_class": payload.get("route_class"),
                     "request_id": payload.get("request_id"),

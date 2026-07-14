@@ -472,6 +472,8 @@ def write_dispatch_attempt(
     repair_layer: str,
     command: str,
     child_pid: int,
+    managed_run_id: str,
+    managed_manifest_path: str,
     created_at: str | None = None,
 ) -> dict[str, Any]:
     """Write immutable proof that a claimed request launched a managed child."""
@@ -488,6 +490,8 @@ def write_dispatch_attempt(
                 "repair_layer": repair_layer,
                 "command": command,
                 "child_pid": child_pid,
+                "managed_run_id": managed_run_id,
+                "managed_manifest_path": managed_manifest_path,
                 "created_at": when,
             }
         ),
@@ -497,10 +501,20 @@ def write_dispatch_attempt(
         "repair_layer": str(repair_layer or "").strip(),
         "command": str(command or "").strip(),
         "child_pid": int(child_pid),
+        "managed_run_id": str(managed_run_id or "").strip(),
+        "managed_manifest_path": str(managed_manifest_path or "").strip(),
         "status": "launched",
         "created_at": when,
     }
-    for field in ("request_id", "blocker_id", "actor", "repair_layer", "command"):
+    for field in (
+        "request_id",
+        "blocker_id",
+        "actor",
+        "repair_layer",
+        "command",
+        "managed_run_id",
+        "managed_manifest_path",
+    ):
         if not record[field]:
             raise ValueError(f"{field} is required")
     if record["child_pid"] <= 0:

@@ -89,10 +89,10 @@ class TestM1Defaults:
             assert escalation_ledger_enabled() is False
             assert escalation_ledger_on() is False
 
-    def test_autonomy_defaults_on(self) -> None:
+    def test_autonomy_defaults_off(self) -> None:
         with _clear_env():
-            assert autonomy_enabled() is True
-            assert autonomy_on() is True
+            assert autonomy_enabled() is False
+            assert autonomy_on() is False
 
     def test_redaction_defaults_on(self) -> None:
         with _clear_env():
@@ -160,6 +160,7 @@ class TestExplicitOptIn:
         [
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
+            ("ARNOLD_AUTONOMY", autonomy_enabled),
         ],
     )
     def test_flag_off_by_default(self, env_var: str, flag_func) -> None:
@@ -170,9 +171,9 @@ class TestExplicitOptIn:
         with _clear_env():
             assert repair_trigger_enabled() is True
 
-    def test_autonomy_on_by_default(self) -> None:
+    def test_autonomy_off_by_default(self) -> None:
         with _clear_env():
-            assert autonomy_enabled() is True
+            assert autonomy_enabled() is False
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
@@ -239,7 +240,7 @@ class TestExplicitOptIn:
     def test_flag_off_when_env_empty(self, env_var: str, flag_func) -> None:
         with _set_env(**{env_var: ""}):
             # Empty string falls through to the flag's default.
-            expected = env_var in {"ARNOLD_AUTONOMY", "ARNOLD_REPAIR_TRIGGER_ENABLED"}
+            expected = env_var == "ARNOLD_REPAIR_TRIGGER_ENABLED"
             assert flag_func() is expected
 
 
@@ -298,7 +299,7 @@ class TestFlagIndependence:
 
     def test_autonomy_independent_of_enforcement(self) -> None:
         with _set_env(ARNOLD_RESOLVER_ENFORCEMENT="1"):
-            assert autonomy_enabled() is True
+            assert autonomy_enabled() is False
 
     def test_redaction_independent_of_other_flags(self) -> None:
         with _set_env(

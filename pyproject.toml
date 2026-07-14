@@ -24,6 +24,10 @@ dependencies = [
     "pydantic>=2.0",
     "python-ulid>=3.0",
     "psutil>=5.9",
+    # Resident/subagent workers validate source edits with this repository's
+    # supported `python -m pytest` workflow.  They run in the same editable
+    # Arnold interpreter, so the base install must include its test runner.
+    "pytest>=8.0",
     # --- Hermes/agent backend (core) ---------------------------------------
     # The hermes/agent runtime backs prep research, critique, fanout, and the
     # agentic phases. It is NOT optional: the canonical prep models route to

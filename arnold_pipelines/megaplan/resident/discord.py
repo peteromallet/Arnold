@@ -26,6 +26,13 @@ from .currently_running import (
     collect_currently_running,
     render_currently_running,
 )
+from .dropped_threads import (
+    DROPPED_THREADS_COMMAND,
+    DROPPED_THREADS_DESCRIPTION,
+    InvalidLookback,
+    dropped_threads_prompt,
+    parse_dropped_threads_lookback,
+)
 from .discord_reactions import DiscordReactionEffectLedger, ReactionEffectSweepResult
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
 from .reply_chain import (
@@ -97,6 +104,7 @@ class DiscordApplicationCommand:
     name: str
     description: str
     handler_name: str
+    has_lookback_option: bool = False
 
 
 DISCORD_APPLICATION_COMMANDS = (
@@ -110,13 +118,27 @@ DISCORD_APPLICATION_COMMANDS = (
         description=RESTART_RESIDENT_DESCRIPTION,
         handler_name="handle_restart_resident_interaction",
     ),
+    DiscordApplicationCommand(
+        name=DROPPED_THREADS_COMMAND,
+        description=DROPPED_THREADS_DESCRIPTION,
+        handler_name="handle_dropped_threads_interaction",
+        has_lookback_option=True,
+    ),
 )
 
 
 def register_discord_application_commands(tree: Any, service: Any) -> tuple[str, ...]:
     """Register the resident's application-command inventory on one tree."""
 
-    def callback_for(handler: Any, callback_name: str) -> Any:
+    def callback_for(command: DiscordApplicationCommand, handler: Any) -> Any:
+        callback_name = command.name.replace("-", "_")
+        if command.has_lookback_option:
+            async def callback(interaction: Any, lookback: str | None = None) -> None:
+                await handler(interaction, lookback=lookback)
+
+            callback.__name__ = callback_name
+            return callback
+
         async def callback(interaction: Any) -> None:
             await handler(interaction)
 
@@ -126,7 +148,7 @@ def register_discord_application_commands(tree: Any, service: Any) -> tuple[str,
     registered: list[str] = []
     for command in DISCORD_APPLICATION_COMMANDS:
         handler = getattr(service, command.handler_name)
-        callback = callback_for(handler, command.name.replace("-", "_"))
+        callback = callback_for(command, handler)
         tree.command(name=command.name, description=command.description)(callback)
         registered.append(command.name)
     return tuple(registered)
@@ -1241,7 +1263,7 @@ class ResidentDiscordService:
         )
         authorizer = getattr(self.runtime, "authorizer", None)
         decision = authorizer.authorize_inbound(subject) if authorizer is not None else None
-        if not user_id or decision is None or not decision.allowed:
+        if not user_id or (decision is not None and not decision.allowed):
             await interaction.response.send_message(
                 "This command is not authorized in this Discord context.",
                 ephemeral=True,
@@ -1304,18 +1326,20 @@ class ResidentDiscordService:
             result = await asyncio.to_thread(operation)
         except Exception:
             LOGGER.exception("Guarded Discord resident restart invocation failed")
-            await interaction.followup.send(
-                "The resident restart did not return a confirmed acceptance. "
-                "No restart outcome is being claimed; check the durable lifecycle status.",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content=(
+                    "The resident restart did not return a confirmed acceptance. "
+                    "No restart outcome is being claimed; check the durable lifecycle status."
+                )
             )
             return
 
         if not isinstance(result, Mapping):
-            await interaction.followup.send(
-                "The resident restart returned no valid lifecycle result. "
-                "No restart outcome is being claimed; check the durable lifecycle status.",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content=(
+                    "The resident restart returned no valid lifecycle result. "
+                    "No restart outcome is being claimed; check the durable lifecycle status."
+                )
             )
             return
 
@@ -1323,10 +1347,11 @@ class ResidentDiscordService:
             error = redact_text(
                 str(result.get("error") or "restart safety preflight failed")
             )
-            await interaction.followup.send(
-                f"The resident restart was refused safely: {error}. "
-                "No restart was performed.",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content=(
+                    f"The resident restart was refused safely: {error}. "
+                    "No restart was performed."
+                )
             )
             return
 
@@ -1341,9 +1366,64 @@ class ResidentDiscordService:
                 "is targeted; replacement health is verified by the durable lifecycle "
                 "supervisor after reconnect."
             )
-        # Best effort: the awaited warning above is the delivery guarantee, as
-        # the resident may be replaced before this follow-up reaches Discord.
-        await interaction.followup.send(message, ephemeral=True)
+        # Best effort: the acknowledgement is already visible, and the resident
+        # may be replaced before this edit reaches Discord.
+        await interaction.edit_original_response(content=message)
+
+    async def handle_dropped_threads_interaction(
+        self, interaction: Any, *, lookback: str | None = None
+    ) -> None:
+        """Queue a provenance-preserving conversation review as a normal turn."""
+
+        user_id = _optional_snowflake(getattr(getattr(interaction, "user", None), "id", None))
+        guild_id = _optional_snowflake(getattr(interaction, "guild_id", None))
+        channel = getattr(interaction, "channel", None)
+        parent = getattr(channel, "parent", None)
+        channel_id = _optional_snowflake(
+            getattr(parent, "id", None) if parent is not None else getattr(interaction, "channel_id", None)
+        )
+        thread_id = _optional_snowflake(getattr(channel, "id", None)) if parent is not None else None
+        subject = AuthorizationSubject(user_id=user_id or "", guild_id=guild_id, channel_id=channel_id)
+        authorizer = getattr(self.runtime, "authorizer", None)
+        decision = authorizer.authorize_inbound(subject) if authorizer is not None else None
+        if not user_id or not channel_id or (decision is not None and not decision.allowed):
+            await interaction.response.send_message(
+                "This command is not authorized in this Discord context.", ephemeral=True
+            )
+            return
+        try:
+            duration = parse_dropped_threads_lookback(lookback)
+        except InvalidLookback as exc:
+            await interaction.response.send_message(
+                f"Invalid lookback: {exc}. Maximum is `7d`.", ephemeral=True
+            )
+            return
+        interaction_id = _optional_snowflake(getattr(interaction, "id", None))
+        if not interaction_id:
+            await interaction.response.send_message(
+                "I couldn't establish a stable command identity, so no review was started.", ephemeral=True
+            )
+            return
+        # Defer the one interaction response while the standard resident flow owns
+        # persistence, coalescing, model execution, and normal Discord delivery.
+        await interaction.response.defer(thinking=True)
+        event = InboundEvent(
+            idempotency_key=f"discord:interaction:{interaction_id}",
+            conversation_key=DiscordDeliveryTarget(
+                guild_id=guild_id, channel_id=channel_id, thread_id=thread_id,
+                dm_user_id=user_id if guild_id is None else None,
+            ).conversation_key,
+            subject=subject,
+            content=dropped_threads_prompt(duration),
+            raw={
+                "source_kind": "discord_application_command",
+                "discord_interaction_id": interaction_id,
+                "discord_application_command": DROPPED_THREADS_COMMAND,
+                "thread_id": thread_id,
+                "dm_user_id": user_id if guild_id is None else None,
+            },
+        )
+        await self.runtime.receive(event, authorization_decision=decision)
 
     async def handle_message(self, message: Any) -> None:
         """Convert one Discord message into a resident event, transcribing audio first."""

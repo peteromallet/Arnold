@@ -95,3 +95,21 @@ def test_add_and_coerce_preserve_when(tmp_path) -> None:
     # default when is empty string
     other = vp_todo.add_item(path, "no condition")
     assert other["when"] == ""
+
+
+def test_delegate_transfers_pending_item_to_canonical_run(tmp_path) -> None:
+    path = tmp_path / "todo.json"
+    item = vp_todo.add_item(path, "execute durable work")
+
+    delegated = vp_todo.delegate_item(
+        path,
+        item["id"],
+        canonical_run_id="run-123",
+        evidence="/runs/run-123/manifest.json",
+    )
+
+    assert delegated is not None
+    assert delegated["status"] == vp_todo.DELEGATED
+    assert delegated["canonical_run_id"] == "run-123"
+    assert vp_todo.pending_items(path) == []
+    assert delegated["transition_history"][-1]["from"] == vp_todo.PENDING

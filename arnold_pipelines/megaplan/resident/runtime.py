@@ -32,7 +32,6 @@ from .query_relationship import (
     relationship_store_root,
 )
 from .reply_chain import build_reply_provenance, render_reply_context
-from .request_summary import content_with_request_summary, current_request_summary_line
 from .timezone import TimezoneService, localize_text_timestamps, timezone_prompt_instruction
 
 
@@ -552,11 +551,8 @@ class ResidentRuntime:
             raise RuntimeError("managed completion provenance does not match the inbound reply target")
 
         hot_context = await self.profile.load_hot_context(conversation.id)
-        request_summary_line = current_request_summary_line(manifest.get("description"))
         hot_context["current_request"] = {
-            "summary_line": request_summary_line,
-            "description": manifest.get("description"),
-            "authority": "managed manifest semantic description",
+            "authority": "persisted inbound record triggering the delegated run",
             "source_record_ids": [source_message.id],
             "query_relationship": (
                 dict(manifest["query_relationship"])
@@ -572,12 +568,17 @@ class ResidentRuntime:
             if callable(prompt_for)
             else self.profile.system_prompt()
         )
-        system_prompt, _ = content_with_request_summary(
-            profile_prompt,
-            summary_line=request_summary_line,
-        )
         system_prompt = (
-            system_prompt
+            profile_prompt
+            + "\n\n"
+            + _authoritative_current_request_records_prompt(
+                [
+                    {
+                        "source_record_id": source_message.id,
+                        "content": source_message.content,
+                    }
+                ]
+            )
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
             + "\n\n"
@@ -678,11 +679,6 @@ class ResidentRuntime:
             turn_status = "failed"
             warnings = [f"completion verifier {exc.__class__.__name__}"]
 
-        safe_text, request_summary_line = content_with_request_summary(
-            safe_text,
-            summary_line=request_summary_line,
-        )
-
         outbound = self.store.create_message(
             epic_id=conversation.active_epic_id,
             conversation_id=conversation.id,
@@ -709,7 +705,6 @@ class ResidentRuntime:
             verification_outcome=outcome,
             turn_id=turn_id,
             outbound_message_id=outbound.id,
-            request_summary_line=request_summary_line,
         )
 
     def _persist_inbound_event(self, event: InboundEvent) -> PersistedInboundEvent:
@@ -799,13 +794,7 @@ class ResidentRuntime:
             )
             is not None
         ]
-        # A semantic line does not exist until the resident has judged the
-        # request and supplied the managed-launch description. Raw inbound text
-        # remains present in the authoritative user messages, never disguised
-        # here as a summary.
-        request_summary_line = current_request_summary_line(None)
         hot_context["current_request"] = {
-            "summary_line": request_summary_line,
             "authority": "persisted inbound records triggering this turn",
             "source_record_ids": [item.message.id for item in items],
             "query_relationships": query_relationships,
@@ -820,12 +809,10 @@ class ResidentRuntime:
         profile_prompt = (
             prompt_for(request_text) if callable(prompt_for) else self.profile.system_prompt()
         )
-        system_prompt, _ = content_with_request_summary(
-            profile_prompt,
-            summary_line=request_summary_line,
-        )
         system_prompt = (
-            system_prompt
+            profile_prompt
+            + "\n\n"
+            + _authoritative_current_request_prompt(items)
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
         )
@@ -1105,6 +1092,15 @@ class ResidentRuntime:
             if _optional_string(item.event.raw.get("discord_message_id"))
             and item.conversation.conversation_key.startswith("discord:")
         ]
+        if discord_items and len(discord_items) != len(items):
+            # A scheduler event coalesced with a Discord inbound must never
+            # borrow the coincident user's immutable reply envelope.
+            return {
+                "transport": "discord",
+                "applicability": "ambiguous",
+                "source_kind": "mixed_scheduler_discord_burst",
+                "resident_turn_id": turn_id,
+            }
         if len(discord_items) > 1:
             # A burst can contain independent user requests.  The resident may
             # answer the burst conversationally, but delegated side effects
@@ -1116,10 +1112,16 @@ class ResidentRuntime:
                 "resident_turn_id": turn_id,
             }
         if not discord_items:
+            scheduled_turn = any(
+                item.event.raw.get("source_kind") == "scheduled_turn"
+                for item in items
+            )
             return {
                 "transport": "non_discord",
                 "applicability": "not_applicable",
-                "source_kind": "scheduler_or_internal_turn",
+                "source_kind": (
+                    "scheduled_turn" if scheduled_turn else "scheduler_or_internal_turn"
+                ),
             }
         item = discord_items[0]
         message_id = _optional_string(item.event.raw.get("discord_message_id"))
@@ -1414,6 +1416,46 @@ def _localize_user_text(text: str, hot_context: Mapping[str, Any]) -> str:
     )
 
 
+def _authoritative_current_request_prompt(
+    items: Sequence[PersistedInboundEvent],
+) -> str:
+    """Render the exact turn-triggering records as prompt authority, without summarizing."""
+
+    return _authoritative_current_request_records_prompt(
+        [
+            {
+                "source_record_id": item.message.id,
+                "content": item.message.content,
+            }
+            for item in items
+        ]
+    )
+
+
+def _authoritative_current_request_records_prompt(
+    records: Sequence[Mapping[str, str]],
+) -> str:
+    """Render exact persisted inbound records as the system-prompt request authority."""
+
+    has_content = any(record.get("content") for record in records)
+    absence = (
+        "Every authoritative content value is empty. There is no substantive current request "
+        "to infer; represent that absence honestly and do not fabricate one."
+        if not has_content
+        else "Answer the authoritative message or messages below as the current request."
+    )
+    return (
+        "Authoritative current inbound request for this turn:\n"
+        "The persisted inbound record(s) in the JSON block below are the sole current request. "
+        "Bounded conversation history, reply ancestry, hot context, and retrieved context are "
+        "context only: do not infer or substitute a different current request from them. "
+        f"{absence} Respond naturally without adding a synthetic request header.\n"
+        "<authoritative_current_request_json>\n"
+        + json.dumps(records, ensure_ascii=False, sort_keys=True)
+        + "\n</authoritative_current_request_json>"
+    )
+
+
 _COMPLETION_VERIFIER_SYSTEM_PROMPT = """
 You are handling a resident-managed delegated-run completion as a fresh normal
 resident turn. Independently verify the original task and the delegated run's
@@ -1462,7 +1504,7 @@ def _managed_completion_verification_prompt(
         f"Delegated final claim: {resolved_path('result_path', 'result.md')}\n"
         f"Full delegated log: {resolved_path('full_log_path', str(manifest.get('log_path') or 'run.log'))}\n\n"
         f"{relationship_context}"
-        "Original user request (context only; preserve its requirements):\n"
+        "Authoritative original user request (preserve its requirements):\n"
         f"{source_message[:12000]}"
     )
 

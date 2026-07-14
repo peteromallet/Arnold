@@ -88,6 +88,7 @@ def collect_ci_health(
     repo_root: Path | str,
     *,
     base_branch: str = "main",
+    pr_number: int | str | None = None,
     runner: Runner = subprocess.run,
 ) -> dict[str, Any]:
     """Collect read-only CI health evidence via gh CLI."""
@@ -133,7 +134,8 @@ def collect_ci_health(
         }
 
     try:
-        checks_proc = _run(["gh", "pr", "checks", base_branch], cwd=root, runner=runner)
+        checks_target = str(pr_number or base_branch)
+        checks_proc = _run(["gh", "pr", "checks", checks_target], cwd=root, runner=runner)
     except FileNotFoundError:
         checks_proc = None
 
@@ -157,6 +159,7 @@ def collect_ci_health(
         "status": status,
         "available": True,
         "base_branch": base_branch,
+        "pr_number": pr_number,
         "failing_run_count": len(failing_runs),
         "failed_checks": failed_checks,
         "recent_runs": recent_runs,

@@ -327,7 +327,7 @@ def _format_token_count(value: int) -> str:
 def _agent_description(row: Mapping[str, Any]) -> str | None:
     """Prefer a purpose-built label, rejecting known opaque launch defaults."""
 
-    for field in ("display_description", "description", "request_summary_line"):
+    for field in ("display_description", "description"):
         candidate = _optional_label(row.get(field))
         if candidate and candidate.casefold().startswith("current request:"):
             candidate = candidate.split(":", 1)[1].strip()
