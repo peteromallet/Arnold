@@ -1,0 +1,51 @@
+{
+  "schema": "m5.canonical-session-reconciliation.v1",
+  "generated_at": "2026-07-14T21:56:00Z",
+  "generated_by_plan": "m5-run-authority-receipt-20260714-1428",
+  "generated_by_task": "T1",
+  "generated_by_batch": "batch_1",
+  "canonical_initiative": "runauthority-epic",
+  "canonical_session": "runauthority-epic-cloud",
+  "reconciliation_status": "already_canonical_no_update_required",
+  "rationale": "The canonical cloud.yaml at .megaplan/initiatives/runauthority-epic/cloud.yaml already binds chain_session: runauthority-epic-cloud. No runauthority-epic-all-codex mismatch exists in the canonical cloud.yaml. The duplicate workspace cloud.yaml at /workspace/runauthority-epic-all-codex/Arnold/.megaplan/initiatives/runauthority-epic/cloud.yaml also registers chain_session: runauthority-epic-cloud, confirming cross-workspace identity consensus. No update to cloud.yaml was required.",
+  "identity_check": {
+    "canonical_cloud_yaml": {
+      "path": ".megaplan/initiatives/runauthority-epic/cloud.yaml",
+      "chain_session": "runauthority-epic-cloud",
+      "sha256": "bfb32097d78b5039f8c75f4e570d7d0645707f7ba0466aed29f7cbc883110ff8",
+      "byte_count": 579
+    },
+    "canonical_chain_yaml": {
+      "path": ".megaplan/initiatives/runauthority-epic/chain.yaml",
+      "sha256": "48c4f43649046893ad90e76a78ec9f65a3d0c5faf23358c8e9b10e296bf87d28",
+      "milestone_labels": ["m1-foundation", "m2-enforcement", "m3-consumers"]
+    },
+    "source_chain_state_duplicate_workspace": {
+      "path": "/workspace/runauthority-epic-all-codex/Arnold/.megaplan/initiatives/runauthority-epic/cloud.yaml",
+      "chain_session": "runauthority-epic-cloud",
+      "sha256": "82035f8f2cda785074952009dfd0bb984f705cffb13f8732246ef66dd045174f",
+      "note": "Duplicate workspace cloud.yaml also delegates to canonical session; no distinct all-codex session marker exists"
+    }
+  },
+  "mismatch_analysis": {
+    "chain_session_mismatch_found": false,
+    "other_identity_mismatches_found": false,
+    "verdict": "Identity is already reconciled. Both canonical and duplicate workspace cloud.yaml files bind chain_session: runauthority-epic-cloud. No runauthority-epic-all-codex chain_session exists in any cloud.yaml."
+  },
+  "quarantine_action": {
+    "pregate_retired_marker_found": true,
+    "quarantined_path": ".megaplan/initiatives/runauthority-epic/.retired.pregate-quarantine",
+    "quarantined_sha256": "b3b082eb91c578c569a7c6f2237c7da684a0a43a92b7589e23869d17d4bcb1d8",
+    "original_content": {
+      "schema": "megaplan-initiative-retirement-v1",
+      "initiative": "runauthority-epic",
+      "retired_at": "2026-07-14T19:27:16Z",
+      "reason": "Exact landed milestone receipts accepted and canonical chain verification reported zero divergences."
+    },
+    "note": "The .retired marker was created at 2026-07-14T19:27:16Z, before M5 plan execution completed. Plan assumption states: 'No .retired marker may be pre-created; retirement happens only after receipt and verification gates pass.' The marker has been renamed to .retired.pregate-quarantine to preserve evidence while preventing premature retirement claims."
+  },
+  "before_bytes_hex": "70726f76696465723a207373680a0a7265706f3a0a202075726c3a2068747470733a2f2f6769746875622e636f6d2f70657465726f6d616c6c65742f41726e6f6c642e6769740a20206272616e63683a206d61696e0a0a6167656e74733a0a202064656661756c743a20636f6465780a0a636f6465783a0a20206d6f64656c3a206770742d352e350a2020726561736f6e696e673a20686967680a0a636861696e5f73657373696f6e3a2072756e617574686f726974792d657069632d636c6f75640a6d6f64653a2069646c650a0a6d656761706c616e3a0a20207265663a206564697469626c652d696e7374616c6c0a2020636f6465785f617574683a20636861746770740a20207265706f3a2068747470733a2f2f6769746875622e636f6d2f70657465726f6d616c6c65742f41726e6f6c642e6769740a20207372635f706174683a202f776f726b73706163652f61726e6f6c640a0a7265736f75726365733a0a2020766f6c756d653a206167656e742d766f6c756d650a2020706f72743a20383038300a0a7373683a0a2020686f73743a203135392e36392e35312e3231360a2020757365723a20726f6f740a2020706f72743a2032320a202072656d6f74655f6469723a202f6f70742f6d656761706c616e2d636c6f75642f6465706c6f790a2020776f726b73706163655f6469723a202f6f70742f6d656761706c616e2d636c6f75642f776f726b73706163650a2020636f6e7461696e65723a206d656761706c616e2d636c6f75642d6167656e740a0a736563726574733a205b5d0a",
+  "after_bytes_hex": "70726f76696465723a207373680a0a7265706f3a0a202075726c3a2068747470733a2f2f6769746875622e636f6d2f70657465726f6d616c6c65742f41726e6f6c642e6769740a20206272616e63683a206d61696e0a0a6167656e74733a0a202064656661756c743a20636f6465780a0a636f6465783a0a20206d6f64656c3a206770742d352e350a2020726561736f6e696e673a20686967680a0a636861696e5f73657373696f6e3a2072756e617574686f726974792d657069632d636c6f75640a6d6f64653a2069646c650a0a6d656761706c616e3a0a20207265663a206564697469626c652d696e7374616c6c0a2020636f6465785f617574683a20636861746770740a20207265706f3a2068747470733a2f2f6769746875622e636f6d2f70657465726f6d616c6c65742f41726e6f6c642e6769740a20207372635f706174683a202f776f726b73706163652f61726e6f6c640a0a7265736f75726365733a0a2020766f6c756d653a206167656e742d766f6c756d650a2020706f72743a20383038300a0a7373683a0a2020686f73743a203135392e36392e35312e3231360a2020757365723a20726f6f740a2020706f72743a2032320a202072656d6f74655f6469723a202f6f70742f6d656761706c616e2d636c6f75642f6465706c6f790a2020776f726b73706163655f6469723a202f6f70742f6d656761706c616e2d636c6f75642f776f726b73706163650a2020636f6e7461696e65723a206d656761706c616e2d636c6f75642d6167656e740a0a736563726574733a205b5d0a",
+  "before_after_bytes_identical": true,
+  "note": "Before and after bytes are identical because no update was needed — chain_session was already runauthority-epic-cloud."
+}
