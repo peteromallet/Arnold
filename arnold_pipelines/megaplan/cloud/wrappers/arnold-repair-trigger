@@ -251,6 +251,29 @@ def _scan_under_lock(
             }
         )
         if dispatch_candidate is None and disposition["decision"] == "actionable":
+            # A legacy or incomplete request can still classify as actionable
+            # from runner truth while lacking the canonical blocker identity
+            # required at the claim boundary.  Do not let that malformed queue
+            # head starve every valid request behind it for an entire watchdog
+            # interval.  Preserve the bounded negative-custody evidence and
+            # continue scanning; _dispatch retains the same defense in depth.
+            if not str(disposition.get("blocker_id") or "").strip():
+                if authorized:
+                    retry = repair_requests.record_unclaimed_request_failure(
+                        queue_dir,
+                        request_id=request_id,
+                        reason="canonical blocker_id missing",
+                    )
+                    _emit(
+                        {
+                            "event": "repair_trigger_claim",
+                            "status": "missing_blocker_id",
+                            "request_id": request_id,
+                            "session": str(record.get("session") or ""),
+                            "custody_retry": retry,
+                        }
+                    )
+                continue
             dispatch_candidate = {**record, **disposition, "_resolved_target": target}
         elif authorized and disposition["dispatch_decision"] == "repairing" and disposition.get("blocker_id"):
             _emit(
