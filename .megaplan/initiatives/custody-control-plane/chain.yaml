@@ -277,7 +277,7 @@ driver:
   robustness: thorough
   vendor: codex
   execution_binding: required
-  intended_initiative_revision: 1c7f4c5b4a306b43297a57498f485be043edcc6d
+  intended_initiative_revision: b3539e803f0bfac8bffd907028c67b0c08cdc7bc
   initiative_path: .megaplan/initiatives/custody-control-plane
   require_editable_runtime_match: true
   phase_timeout: 10800
