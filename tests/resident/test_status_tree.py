@@ -80,6 +80,7 @@ def test_hot_context_root_excludes_raw_repair_evidence() -> None:
 
 def test_root_exposes_recency_sorted_canonical_completed_sessions_beyond_legacy_preview() -> None:
     snapshot = {
+        "generated_at": "2026-07-14T18:00:00Z",
         "sessions": [
             {
                 "session": f"older-{index}",
@@ -109,13 +110,26 @@ def test_root_exposes_recency_sorted_canonical_completed_sessions_beyond_legacy_
     assert root["completed_session_count"] == 4
     assert [row["session"] for row in root["recently_completed"]] == [
         "repository-strategy-roadmap",
-        "older-2",
-        "older-1",
-        "older-0",
     ]
     strategy = root["recently_completed"][0]
     assert strategy["progress"]["completed_count"] == 5
     assert strategy["progress"]["milestone_count"] == 5
+
+
+def test_root_only_includes_completed_sessions_within_rolling_twelve_hours() -> None:
+    snapshot = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {"session": "inside", "status": "complete", "completed_at": "2026-07-14T06:00:01Z"},
+            {"session": "boundary", "status": "complete", "latest_activity": "2026-07-14T06:00:00Z"},
+            {"session": "outside", "status": "complete", "latest_activity": "2026-07-14T05:59:59Z"},
+        ],
+    }
+
+    root = compact_cloud_status_snapshot(snapshot)
+
+    assert [row["session"] for row in root["recently_completed"]] == ["inside", "boundary"]
+    assert root["recently_completed_omitted_count"] == 0
 
 
 def test_status_tree_navigates_to_bounded_repair_evidence() -> None:
