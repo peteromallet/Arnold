@@ -7,6 +7,16 @@ schema_version: megaplan-strategy-v1
 > Copy this file to `.megaplan/STRATEGY.md` and fill in the sections below.
 > The frontmatter `schema_version` MUST remain `megaplan-strategy-v1`.
 > Roadmap entries use the narrow bullet grammar described in CONTRACT.md.
+>
+> **Important rules:**
+> - The Markdown file is authoritative. Generated JSON (`.megaplan/strategy.projection.json`)
+>   is a disposable projection — never edit it directly. Delete it and rebuild with
+>   `megaplan strategy project --write`.
+> - Strategy entries are **pointers** to artifacts, not containers. Never copy ticket/epic
+>   body text, lifecycle status, plan details, or completion evidence into strategy entries.
+> - Roadmap visibility is **opt-in**. Tickets are backlog artifacts that only appear in the
+>   strategy when explicitly added via `ticket new --roadmap-horizon`, `strategy add`, or
+>   a direct Markdown edit. Not every open ticket belongs in the roadmap.
 
 ## Mission
 
