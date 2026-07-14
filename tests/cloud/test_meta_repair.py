@@ -2778,7 +2778,8 @@ class TestCanCommitChanges:
     def test_commit_allowed_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes()
-        assert result.allowed is True
+        assert result.allowed is False
+        assert "master" in result.reason.lower()
         assert result.flag_name == "ARNOLD_META_REPAIR_COMMIT_ENABLED"
 
     def test_commit_allowed_when_flag_on(self) -> None:
@@ -2824,7 +2825,7 @@ class TestCanCommitChanges:
     def test_commit_allowed_with_unset_env(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes(session="")
-        assert result.allowed is True
+        assert result.allowed is False
 
 
 class TestCanPushChanges:
@@ -2833,7 +2834,8 @@ class TestCanPushChanges:
     def test_push_allowed_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_push_changes()
-        assert result.allowed is True
+        assert result.allowed is False
+        assert "master" in result.reason.lower()
         assert "push" in result.reason.lower()
 
     def test_push_allowed_when_flag_on(self) -> None:
@@ -2943,7 +2945,8 @@ class TestPolicyEndToEnd:
         """Commit gate default is independent of recursion state."""
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes()
-        assert result.allowed is True
+        assert result.allowed is False
+        assert "master" in result.reason.lower()
 
 
 def test_repair_evidence_superseded_terminal_blocker_does_not_crash(tmp_path):
