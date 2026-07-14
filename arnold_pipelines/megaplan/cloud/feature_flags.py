@@ -64,6 +64,7 @@ _DISABLE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
 MUTATION_PATH_L1 = "l1"
 MUTATION_PATH_L2 = "l2"
 MUTATION_PATH_L3 = "l3"
+MUTATION_PATH_PROGRESS_ESCALATION = "progress_escalation"
 
 
 def _is_enabled(env_name: str, default: bool) -> bool:
@@ -198,6 +199,19 @@ def audit_autofix_enabled() -> bool:
     return _is_enabled("ARNOLD_AUDIT_AUTOFIX_ENABLED", True)
 
 
+def progress_auditor_escalation_enabled() -> bool:
+    """Return whether the separate six-hour durable escalation stage is enabled.
+
+    This gate is intentionally default-off.  ``audit_autofix_enabled`` controls
+    optional auditor review, while this flag controls the distinct effect stage
+    that may enqueue a root-cause/execution owner through canonical repair
+    custody.  Keeping the two gates separate preserves the auditor's report-only
+    contract even on installations that enable model-assisted review.
+    """
+
+    return _is_enabled("ARNOLD_PROGRESS_AUDITOR_ESCALATION_ENABLED", False)
+
+
 def meta_repair_commit_enabled() -> bool:
     """Return ``True`` when meta-repair is allowed to commit changes.
 
@@ -241,6 +255,7 @@ def mutation_authorized(path: str) -> bool:
         MUTATION_PATH_L1: repair_trigger_enabled,
         MUTATION_PATH_L2: meta_repair_enabled,
         MUTATION_PATH_L3: audit_autofix_enabled,
+        MUTATION_PATH_PROGRESS_ESCALATION: progress_auditor_escalation_enabled,
     }.get(path)
     return autonomy_enabled() and path_gate is not None and path_gate()
 
@@ -248,6 +263,12 @@ def mutation_authorized(path: str) -> bool:
 def audit_autofix_mutation_authorized() -> bool:
     """Shell-friendly L3 authorization adapter for wrapper dispatch seams."""
     return mutation_authorized(MUTATION_PATH_L3)
+
+
+def progress_auditor_escalation_mutation_authorized() -> bool:
+    """Shell-friendly authorization adapter for the separate L3 effect stage."""
+
+    return mutation_authorized(MUTATION_PATH_PROGRESS_ESCALATION)
 
 
 def meta_repair_mutation_authorized() -> bool:
@@ -305,6 +326,12 @@ def audit_autofix_on() -> bool:
     return audit_autofix_enabled()
 
 
+def progress_auditor_escalation_on() -> bool:
+    """Alias for :func:`progress_auditor_escalation_enabled`."""
+
+    return progress_auditor_escalation_enabled()
+
+
 def meta_repair_commit_on() -> bool:
     """Alias for :func:`meta_repair_commit_enabled`."""
     return meta_repair_commit_enabled()
@@ -321,6 +348,9 @@ __all__ = [
     "audit_autofix_enabled",
     "audit_autofix_mutation_authorized",
     "audit_autofix_on",
+    "progress_auditor_escalation_enabled",
+    "progress_auditor_escalation_mutation_authorized",
+    "progress_auditor_escalation_on",
     "autonomy_enabled",
     "autonomy_on",
     "escalation_ledger_enabled",
@@ -333,6 +363,7 @@ __all__ = [
     "MUTATION_PATH_L1",
     "MUTATION_PATH_L2",
     "MUTATION_PATH_L3",
+    "MUTATION_PATH_PROGRESS_ESCALATION",
     "mutation_authorized",
     "redaction_enabled",
     "redaction_on",

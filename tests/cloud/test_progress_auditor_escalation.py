@@ -15,6 +15,7 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     plan_dispatch,
     record_reverification,
     validate_managed_launch,
+    validate_owner_topology,
     verify_recovery,
 )
 
@@ -69,12 +70,19 @@ def _true_stall() -> dict:
         "chain_state_summary": {
             "current": {
                 "path": "/workspace/stuck/Arnold/.megaplan/plans/.chains/demo.json",
+                "state_digest": "1" * 64,
+                "spec_path": "/workspace/stuck/Arnold/.megaplan/initiatives/demo/chain.yaml",
+                "spec_digest": "2" * 64,
+                "execution_id": "chain-execution-demo",
                 "last_state": "blocked",
                 "chain_complete": False,
                 "current_plan_name": "m2-repair-contract",
+                "current_milestone_index": 1,
                 "completed_count": 1,
                 "total_milestones": 4,
                 "pr_state": "",
+                "merge_policy": "auto",
+                "auto_approve": True,
             }
         },
         "chain_log": {
@@ -136,6 +144,11 @@ def _true_stall() -> dict:
             },
         },
         "user_action_context": {"unresolved_user_actions": []},
+        "state_digest": "3" * 64,
+        "accepted_event_seq": 10,
+        "accepted_event_digest": "4" * 64,
+        "accepted_artifact_digest": "5" * 64,
+        "active_event_phase": "execute",
         "source_refs": {
             "watchdog_report_paths": ["/workspace/watchdog-reports/one.json"],
             "attempt_paths": ["/workspace/.megaplan/repair-queue/attempts/one.json"],
@@ -153,6 +166,8 @@ def test_true_stall_gate_requires_all_six_sources_and_walks_l1_l2_l3() -> None:
 
     assert gate["eligible"] is True
     assert gate["decision"] == "true_stall"
+    assert gate["idempotency_key"] == gate["escalation_id"]
+    assert gate["recurrence"] == {"observations": 4, "threshold": 2, "satisfied": True}
     assert set(gate["evidence_sources"]) == {
         "live_process",
         "session_marker",
@@ -174,7 +189,7 @@ def test_true_stall_gate_requires_all_six_sources_and_walks_l1_l2_l3() -> None:
     assert gate["quarantine"]["state"] == "not_applied"
 
 
-def test_live_slow_chain_with_fresh_heartbeat_is_a_hard_noop() -> None:
+def test_live_heartbeat_is_not_progress_and_does_not_hide_true_stall() -> None:
     finding = _true_stall()
     finding["events_mtime_age_min"] = 2
     finding["chain_log"]["mtime_age_min"] = 3
@@ -188,12 +203,17 @@ def test_live_slow_chain_with_fresh_heartbeat_is_a_hard_noop() -> None:
         "worker_pid_alive": True,
         "token_heartbeat_age_min": 1,
     }
+    finding["acceptance_progress"] = {
+        "advanced": False,
+        "sources": [],
+        "no_advance_age_min": 150,
+    }
 
     gate = classify_true_stall(finding)
 
-    assert gate["eligible"] is False
-    assert "fresh_progress_or_heartbeat" in gate["blocks"]
-    assert gate["progress"]["fresh_sources"] == [
+    assert gate["eligible"] is True
+    assert gate["progress"]["fresh_sources"] == []
+    assert gate["progress"]["liveness_sources"] == [
         "events",
         "chain_log",
         "token_heartbeat",
@@ -252,6 +272,9 @@ def test_open_pr_or_pending_external_state_is_an_intentional_wait() -> None:
         {"last_state": "awaiting_pr_merge", "pr_number": 42, "pr_state": "open"}
     )
     finding["current_target"]["ci_health"] = {"status": "pending", "available": True}
+    finding["chain_state_summary"]["current"].update(
+        {"merge_policy": "review", "auto_approve": False}
+    )
 
     gate = classify_true_stall(finding)
 
@@ -308,8 +331,65 @@ def test_retry_exhaustion_opens_durable_circuit_breaker() -> None:
         authorized=True,
         now=NOW + timedelta(minutes=20),
     )
-    assert decision["decision"] == "circuit_open"
+    assert decision["decision"] == "terminal_escalation"
     assert decision["dispatch"] is False
+
+
+def _owner_topology(*, active: bool = False) -> dict:
+    return {
+        "root_cause_owner": {
+            "run_id": "managed-root-cause-owner",
+            "manifest_path": "/workspace/root-owner/manifest.json",
+            "status": "completed",
+        },
+        "investigators": [
+            {
+                "run_id": "managed-investigator-a",
+                "manifest_path": "/workspace/investigator-a/manifest.json",
+                "status": "completed",
+                "read_only": True,
+                "result_digest": "a" * 64,
+            },
+            {
+                "run_id": "managed-investigator-b",
+                "manifest_path": "/workspace/investigator-b/manifest.json",
+                "status": "completed",
+                "read_only": True,
+                "result_digest": "b" * 64,
+            },
+        ],
+        "execution_owners": [
+            {
+                "run_id": "managed-execution-owner",
+                "manifest_path": "/workspace/execution-owner/manifest.json",
+                "status": "running" if active else "completed",
+                "observed_live": active,
+            }
+        ],
+        "active_controller_count": 1 if active else 0,
+    }
+
+
+def test_nested_investigation_is_bounded_and_retains_one_execution_owner() -> None:
+    valid = validate_owner_topology({"owner_topology": _owner_topology(active=True)})
+    overlapping = _owner_topology(active=True)
+    overlapping["execution_owners"].append(
+        {
+            "run_id": "managed-execution-owner-duplicate",
+            "manifest_path": "/workspace/execution-owner-duplicate/manifest.json",
+            "status": "running",
+            "observed_live": True,
+        }
+    )
+    overlapping["active_controller_count"] = 2
+    invalid = validate_owner_topology({"owner_topology": overlapping})
+
+    assert valid["valid"] is True
+    assert valid["investigator_count"] == 2
+    assert valid["execution_owner_count"] == 1
+    assert invalid["valid"] is False
+    assert "execution_owner_count_not_one" in invalid["errors"]
+    assert "active_controller_count_not_unique" in invalid["errors"]
 
 
 def test_reverification_closes_attempt_and_blocks_repeat_dispatch() -> None:
@@ -403,11 +483,16 @@ def test_recovery_requires_fixer_and_backstop_then_normal_retrigger_and_original
     recovered["chain_state_summary"]["current"].update(
         {
             "current_plan_name": "m3-next",
+            "current_milestone_index": 2,
             "completed_count": 2,
             "last_state": "running",
+            "state_digest": "8" * 64,
         }
     )
-    recovered["events_size"] = 8192
+    recovered["accepted_event_seq"] = 11
+    recovered["accepted_event_digest"] = "6" * 64
+    recovered["accepted_artifact_digest"] = "7" * 64
+    recovered["active_event_phase"] = "review"
     recovered["current_target"]["tmux_process"] = {
         "pid_live": True,
         "session_live": True,
@@ -419,6 +504,7 @@ def test_recovery_requires_fixer_and_backstop_then_normal_retrigger_and_original
         "ordinary_retrigger_run_id": "managed-retrigger",
         "ordinary_retrigger_manifest_path": "/workspace/retrigger/manifest.json",
         "guard_changes": [],
+        "owner_topology": _owner_topology(),
     }
 
     result = verify_recovery(
@@ -430,6 +516,85 @@ def test_recovery_requires_fixer_and_backstop_then_normal_retrigger_and_original
     assert result["verified"] is True
     assert result["original_run_advanced"] is True
     assert result["ordinary_retriggered"] is True
+    assert result["same_authoritative_chain"] is True
+    assert result["fresh_event_evidence"] is True
+
+
+def test_new_validated_approach_active_is_accepted_but_not_closed() -> None:
+    finding = _true_stall()
+    baseline = classify_true_stall(finding)["baseline_cursor"]
+    active = _true_stall()
+    active["accepted_event_seq"] = 11
+    active["accepted_event_digest"] = "8" * 64
+    outcome = {
+        "fixer_fixed": False,
+        "backstop_fixed": False,
+        "guard_weakened": False,
+        "owner_topology": _owner_topology(active=True),
+        "approach_receipt": {
+            "validated": True,
+            "approach_digest": "9" * 64,
+            "prior_approach_digests": ["0" * 64],
+            "fresh_evidence_refs": ["/workspace/approach/validation.json"],
+        },
+    }
+
+    result = verify_recovery(
+        baseline=baseline,
+        current_finding=active,
+        repair_outcome=outcome,
+    )
+
+    assert result["verified"] is False
+    assert result["accepted"] is True
+    assert result["outcome"] == "validated_approach_active"
+    assert result["approach_active"] is True
+
+
+def test_validated_approach_without_live_unique_execution_owner_keeps_escalating() -> None:
+    baseline = classify_true_stall(_true_stall())["baseline_cursor"]
+    outcome = {
+        "owner_topology": _owner_topology(active=False),
+        "approach_receipt": {
+            "validated": True,
+            "approach_digest": "9" * 64,
+            "prior_approach_digests": [],
+            "fresh_evidence_refs": ["/workspace/approach/validation.json"],
+        },
+    }
+
+    result = verify_recovery(
+        baseline=baseline,
+        current_finding=_true_stall(),
+        repair_outcome=outcome,
+    )
+
+    assert result["accepted"] is False
+    assert result["outcome"] == "recovery_not_verified"
+    assert result["approach_artifact_fresh"] is True
+    assert result["owner_topology"]["active_execution_owner_count"] == 0
+
+
+def test_liveness_and_agent_launch_without_durable_receipt_do_not_close() -> None:
+    finding = _true_stall()
+    baseline = classify_true_stall(finding)["baseline_cursor"]
+    noisy = _true_stall()
+    noisy["events_size"] = 999999
+    noisy["current_target"]["tmux_process"] = {
+        "pid_live": True,
+        "session_live": True,
+        "live_status": "alive",
+    }
+
+    result = verify_recovery(
+        baseline=baseline,
+        current_finding=noisy,
+        repair_outcome={"agent_status": "running"},
+    )
+
+    assert result["verified"] is False
+    assert result["accepted"] is False
+    assert "fresh_event_or_artifact_receipt_missing" in result["reasons"]
 
 
 def test_agent_completion_or_guard_weakening_cannot_manufacture_recovery() -> None:

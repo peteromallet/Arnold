@@ -295,6 +295,28 @@ def _automatic_managed_reexec() -> int | None:
             if isinstance(item, dict)
         ):
             raise ValueError("parent managed run never reached running")
+        if os.environ.get("ARNOLD_L3_DEEP_REPAIR") == "1":
+            raw_limit = str(os.environ.get("ARNOLD_L3_MAX_INVESTIGATORS") or "3")
+            try:
+                investigator_limit = int(raw_limit)
+            except ValueError as exc:
+                raise ValueError("L3 investigator limit is invalid") from exc
+            if investigator_limit < 0 or investigator_limit > 3:
+                raise ValueError("L3 investigator limit must be between 0 and 3")
+            sibling_root = parent_manifest_path.parent.parent
+            existing_investigators = 0
+            for candidate in sibling_root.glob("*/manifest.json"):
+                try:
+                    sibling = json.loads(candidate.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    continue
+                if (
+                    sibling.get("parent_run_id") == parent_run_id
+                    and sibling.get("run_kind") == "automatic_research_subagent"
+                ):
+                    existing_investigators += 1
+            if existing_investigators >= investigator_limit:
+                raise RuntimeError("L3 bounded investigator budget is exhausted")
     except (OSError, TypeError, ValueError) as exc:
         raise RuntimeError("automatic nested launcher inherited invalid managed custody") from exc
 
@@ -314,6 +336,11 @@ def _automatic_managed_reexec() -> int | None:
             continue
         elif argument.startswith("--query="):
             raise RuntimeError("automatic nested agent requires sealed --query-file input")
+        if os.environ.get("ARNOLD_L3_DEEP_REPAIR") == "1" and argument.startswith("--toolsets="):
+            # Deep-repair investigators are evidence contributors only.  The
+            # retained root owner is the single execution owner.
+            child_args.append("--toolsets=file,web")
+            continue
         child_args.append(argument)
     if not query_file:
         raise RuntimeError("automatic nested agent requires --query-file")
@@ -368,6 +395,10 @@ def _automatic_managed_reexec() -> int | None:
         f"parent_manifest={parent_manifest}",
         "--link",
         "phase=nested_research",
+        "--link",
+        "owner_role=investigator",
+        "--link",
+        "read_only=true",
         "--",
         sys.executable,
         str(Path(__file__).resolve()),

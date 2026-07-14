@@ -589,6 +589,7 @@ def _dispatch(
         env["ARNOLD_L3_REPAIR_CONTEXT_PATH"] = context_path
         env["ARNOLD_L3_REPAIR_CONTEXT_DIGEST"] = context_digest
         env["ARNOLD_L3_REPAIR_OUTCOME_PATH"] = outcome_path
+        env["ARNOLD_L3_MAX_INVESTIGATORS"] = "3"
         env["ARNOLD_META_REPAIR_DIFFICULTY"] = "9"
         env["ARNOLD_META_REPAIR_CHILD_DIFFICULTY_CEILING"] = "9"
     run_kind = (

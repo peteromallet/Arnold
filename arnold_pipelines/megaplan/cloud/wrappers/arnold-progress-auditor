@@ -38,6 +38,7 @@ if [[ ! -d /workspace/arnold ]]; then
     -e ARNOLD_AUTONOMY="${ARNOLD_AUTONOMY:-}" \
     -e ARNOLD_AUDIT_AUTOFIX_ENABLED="${ARNOLD_AUDIT_AUTOFIX_ENABLED:-}" \
     -e ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="${ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED:-}" \
+    -e ARNOLD_PROGRESS_AUDITOR_ESCALATION_ENABLED="${ARNOLD_PROGRESS_AUDITOR_ESCALATION_ENABLED:-}" \
     -e ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}" \
     -e MEGAPLAN_AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-}" \
     "$CONTAINER" bash -lc '/usr/local/bin/arnold-progress-auditor "$@"' _ "$@"
@@ -209,6 +210,7 @@ EOF
 AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"
 AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"
 AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"
+ESCALATION_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled progress_auditor_escalation_mutation_authorized)"
 AUDIT_LAUNCH_ATTEMPTED=0
 export ARNOLD_META_REPAIR_ENABLED="${ARNOLD_META_REPAIR_ENABLED:-1}"
 export ARNOLD_META_REPAIR_COMMIT_ENABLED="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
@@ -248,10 +250,12 @@ assemble_recovery_evidence() {
     "$before_path" "$after_path" "$WATCHDOG_REPORT" "$RECOVERY_EVIDENCE" \
     "$watchdog_rc" "$enabled" "$AUDIT_CODEX_MODEL" <<'PY'
 import datetime as dt
+import hashlib
 import json
 import pathlib
 import re
 import sys
+import yaml
 
 before_path, after_path, report_path, output_path, watchdog_rc, enabled, codex_model = sys.argv[1:]
 
@@ -610,12 +614,15 @@ fi
 MEGAPLAN_SUPERVISOR_GAP_EVIDENCE="$SUPERVISOR_GAP_EVIDENCE" \
 python3 - "$WORKLIST" "$GATHER_DIR" "$AUDIT_WINDOW_HOURS" "$ARNOLD_SRC" "$stall_summary" <<'PY'
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
+
+import yaml
 
 worklist, gather_dir, window_h, arnold_src, stall_summary = sys.argv[1:6]
 supervisor_gap_path = os.environ.get("MEGAPLAN_SUPERVISOR_GAP_EVIDENCE", "")
@@ -1069,6 +1076,21 @@ def _meta_record_is_launch_failure(path):
     if not isinstance(payload, dict):
         return False
     outcome = str(payload.get("outcome") or "")
+    diagnosis = str(payload.get("diagnosis") or "")
+    verification = payload.get("post_retrigger_verification")
+    verification = verification if isinstance(verification, dict) else {}
+    if (
+        outcome in {"commit_custody_failed", "model_tool_launch_failure"}
+        or "mutation is not authorized" in diagnosis.lower()
+        or (
+            outcome in {"NO_FIX", "UNKNOWN"}
+            and verification.get("accepted") is not True
+            and not payload.get("changes")
+            and not payload.get("tests")
+            and not payload.get("retrigger_command")
+        )
+    ):
+        return True
     if outcome and outcome not in {"UNKNOWN", "NO_FIX"} and not outcome.startswith("Codex meta-repair orchestrator returned no output"):
         return False
     haystacks = [
@@ -1730,6 +1752,9 @@ def _chain_state_summary(workspace, plan):
             "reason": data.get("reason") or data.get("error") or "",
             "events": data.get("events")[-8:] if isinstance(data.get("events"), list) else [],
             "completed": [],
+            "state_digest": hashlib.sha256(
+                json.dumps(data, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+            ).hexdigest(),
         }
         milestones = data.get("milestones")
         if isinstance(milestones, list):
@@ -1752,6 +1777,78 @@ def _chain_state_summary(workspace, plan):
     if current is None:
         current = summaries[0] if summaries else {}
     return {"current": current, "all": summaries}
+
+def _chain_policy_summary(remote_spec):
+    if not str(remote_spec or "").strip():
+        return {
+            "present": False,
+            "spec_path": "",
+            "spec_digest": "",
+            "merge_policy": "",
+            "auto_approve": None,
+        }
+    path = pathlib.Path(str(remote_spec or ""))
+    try:
+        raw = path.read_bytes()
+        payload = yaml.safe_load(raw.decode("utf-8")) or {}
+    except (OSError, UnicodeError, yaml.YAMLError, TypeError):
+        return {
+            "present": False,
+            "spec_path": str(path) if str(remote_spec or "") else "",
+            "spec_digest": "",
+            "merge_policy": "",
+            "auto_approve": None,
+        }
+    driver = payload.get("driver") if isinstance(payload.get("driver"), dict) else {}
+    return {
+        "present": True,
+        "spec_path": str(path),
+        "spec_digest": hashlib.sha256(raw).hexdigest(),
+        "merge_policy": str(payload.get("merge_policy") or "").strip().lower(),
+        "auto_approve": driver.get("auto_approve") if isinstance(driver.get("auto_approve"), bool) else None,
+        "automatic_pr_progression": bool(
+            str(payload.get("merge_policy") or "").strip().lower() == "auto"
+            and driver.get("auto_approve") is True
+        ),
+    }
+
+def _accepted_event_receipt(events_path):
+    events = _load_events(events_path)
+    accepted = None
+    accepted_index = None
+    recent_kind_counts = {}
+    for index, event in enumerate(events, start=1):
+        kind = str(event.get("kind") or event.get("event_type") or "").strip().lower()
+        when = _event_timestamp(event)
+        if when is not None and when >= cutoff:
+            recent_kind_counts[kind or "unknown"] = recent_kind_counts.get(kind or "unknown", 0) + 1
+        if kind == "plan_finished" or (kind == "phase_end" and _successful_event(event)):
+            accepted = event
+            accepted_index = index
+    if not isinstance(accepted, dict):
+        return {
+            "present": False,
+            "seq": None,
+            "digest": "",
+            "event": {},
+            "age_min": None,
+            "recent_kind_counts": recent_kind_counts,
+        }
+    seq = _event_seq(accepted)
+    if seq is None:
+        seq = accepted_index
+    excerpt = _event_excerpt(accepted)
+    accepted_at = _event_timestamp(accepted)
+    return {
+        "present": True,
+        "seq": seq,
+        "digest": hashlib.sha256(
+            json.dumps(accepted, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest(),
+        "event": excerpt,
+        "age_min": int((now - accepted_at).total_seconds() // 60) if accepted_at else None,
+        "recent_kind_counts": recent_kind_counts,
+    }
 
 def _metadata_excerpt(metadata):
     if not isinstance(metadata, dict):
@@ -3323,6 +3420,70 @@ def _green_with_recent_repair_churn_reason(ev):
         )
     return ""
 
+def _liveness_without_acceptance_progress_reason(ev):
+    counts = ev.get("recent_event_kind_counts") if isinstance(ev, dict) else {}
+    counts = counts if isinstance(counts, dict) else {}
+    liveness_writes = sum(
+        int(counts.get(kind) or 0)
+        for kind in ("llm_token_heartbeat", "state_written", "cost_recorded", "heartbeat")
+    )
+    acceptance = ev.get("acceptance_progress") if isinstance(ev, dict) else {}
+    acceptance = acceptance if isinstance(acceptance, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    repair = ev.get("repair_data_summary") if isinstance(ev.get("repair_data_summary"), dict) else {}
+    health = ev.get("chain_health_progress") if isinstance(ev.get("chain_health_progress"), dict) else {}
+    repeated_no_advance = bool(
+        int(health.get("no_advance_ticks") or 0) >= 2
+        or int(health.get("stuck_ticks") or 0) >= 2
+        or int(repair.get("iteration_count") or 0) >= 1
+    )
+    accepted_age = acceptance.get("accepted_event_age_min")
+    accepted_stale = accepted_age is None or int(accepted_age) >= 60
+    if (
+        liveness_writes >= 3
+        and repeated_no_advance
+        and accepted_stale
+        and _chain_state_looks_nonterminal(chain_current)
+    ):
+        return (
+            "liveness_without_acceptance_progress: fresh heartbeat/state/cost artifacts "
+            f"({liveness_writes}) coexist with no accepted phase/milestone receipt; "
+            f"completed={chain_current.get('completed_count') or 0} "
+            f"milestone_index={chain_current.get('current_milestone_index')} "
+            f"no_advance_ticks={health.get('no_advance_ticks')} stuck_ticks={health.get('stuck_ticks')}"
+        )
+    return ""
+
+def _auto_policy_external_evidence_gap_reason(ev):
+    policy = ev.get("chain_policy_summary") if isinstance(ev, dict) else {}
+    policy = policy if isinstance(policy, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    ci = ev.get("ci_health") if isinstance(ev.get("ci_health"), dict) else {}
+    if (
+        policy.get("merge_policy") == "auto"
+        and policy.get("auto_approve") is True
+        and str(chain_current.get("pr_state") or "").strip().lower() in {"open", "draft", "pending"}
+        and ci.get("available") is not True
+    ):
+        return (
+            "auto_policy_external_evidence_gap: chain policy authorizes automatic progression "
+            f"but exact PR/CI evidence is unavailable for pr={chain_current.get('pr_number') or 'unknown'}; "
+            "fail closed without misclassifying this as a human wait"
+        )
+    return ""
+
+def _human_gate_evidence_disagreement_reason(ev):
+    target = ev.get("current_target") if isinstance(ev, dict) else {}
+    target = target if isinstance(target, dict) else {}
+    needs_human = target.get("needs_human") if isinstance(target.get("needs_human"), dict) else {}
+    resolver = ev.get("resolver_state") if isinstance(ev.get("resolver_state"), dict) else {}
+    if needs_human.get("present") is True and str(resolver.get("canonical_state") or "").upper() != "HUMAN_ACTION_REQUIRED":
+        return (
+            "human_gate_evidence_disagreement: needs-human artifact is present but resolver "
+            f"state={resolver.get('canonical_state') or 'UNKNOWN'}; no automatic dispatch permitted"
+        )
+    return ""
+
 def _active_step_liveness(active):
     if not isinstance(active, dict) or not active:
         return {"present": False}
@@ -3799,6 +3960,28 @@ def _resolve_resolver_state_payload(current_target):
         resolved = resolved.to_dict()
     return dict(resolved) if isinstance(resolved, dict) else {}
 
+def _chain_health_progress_summary(session):
+    marker_dir = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_MARKER_DIR", "/workspace/.megaplan/cloud-sessions"))
+    path = marker_dir / f"{session}.chain-health.progress.json"
+    payload = _load_json(path)
+    if not isinstance(payload, dict) or not payload:
+        return {"present": False, "path": str(path)}
+    return {
+        "present": True,
+        "path": str(path),
+        "updated_at": payload.get("updated_at"),
+        "last_state": payload.get("last_state"),
+        "current_plan_name": payload.get("current_plan_name"),
+        "current_milestone_index": payload.get("current_milestone_index"),
+        "completed_count": payload.get("completed_count"),
+        "milestone_count": payload.get("milestone_count"),
+        "no_advance_ticks": payload.get("no_advance_ticks"),
+        "stuck_ticks": payload.get("stuck_ticks"),
+        "plan_has_live_activity": payload.get("plan_has_live_activity"),
+        "plan_signal_liveness": payload.get("plan_signal_liveness"),
+        "plan_signal_reason": payload.get("plan_signal_reason"),
+    }
+
 def _plan_evidence(entry):
     workspace = entry["workspace"]
     plan = entry["plan"]
@@ -3851,6 +4034,20 @@ def _plan_evidence(entry):
     }
     chain_log = _chain_log_summary(workspace_path, session, entry)
     chain_state = _chain_state_summary(workspace_path, plan)
+    chain_policy = _chain_policy_summary(session_header.get("remote_spec"))
+    for chain_item in chain_state.get("all", []):
+        if isinstance(chain_item, dict):
+            chain_item.update(
+                {
+                    "spec_path": chain_policy.get("spec_path"),
+                    "spec_digest": chain_policy.get("spec_digest"),
+                    "merge_policy": chain_policy.get("merge_policy"),
+                    "auto_approve": chain_policy.get("auto_approve"),
+                    "automatic_pr_progression": chain_policy.get("automatic_pr_progression"),
+                }
+            )
+    accepted_event = _accepted_event_receipt(events_path)
+    chain_health_progress = _chain_health_progress_summary(session)
     repair_data = _repair_data_summary(session)
     cross_refs = _collect_related_artifact_refs(workspace_path, plan, session, repair_data)
     active = state.get("active_step") or {}
@@ -3968,8 +4165,6 @@ def _plan_evidence(entry):
         "resolver_state": resolver_state,
         "ci_health": ci_health,
         "engine_tree": engine_tree,
-        "ci_health": ci_health,
-        "engine_tree": engine_tree,
     }
     incident_audit = {}
     if incident_brief.get("found"):
@@ -4034,6 +4229,8 @@ def _plan_evidence(entry):
         "session_header": session_header,
         "chain_log": chain_log,
         "chain_state_summary": chain_state,
+        "chain_policy_summary": chain_policy,
+        "chain_health_progress": chain_health_progress,
         "repair_data_summary": repair_data,
         "repair_custody_summary": repair_custody,
         "plan_latest_failure": plan_latest_failure,
@@ -4053,6 +4250,34 @@ def _plan_evidence(entry):
         "plan_v_sizes": sizes,
         "events_size": events_size,
         "events_mtime_age_min": int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
+        "state_digest": hashlib.sha256(state_path.read_bytes()).hexdigest(),
+        "accepted_event_seq": accepted_event.get("seq"),
+        "accepted_event_digest": accepted_event.get("digest"),
+        "accepted_event": accepted_event.get("event"),
+        "recent_event_kind_counts": accepted_event.get("recent_kind_counts") or {},
+        "acceptance_progress": {
+            "advanced": bool(
+                accepted_event.get("present")
+                and isinstance(accepted_event.get("age_min"), int)
+                and accepted_event.get("age_min") < 60
+                and str(state.get("current_state") or "").strip().lower()
+                not in {"blocked", "failed", "awaiting_human", "awaiting_human_verify"}
+            ),
+            "sources": ["accepted_event"] if accepted_event.get("present") else [],
+            "accepted_event_age_min": accepted_event.get("age_min"),
+            "no_advance_age_min": (
+                max(
+                    int(accepted_event.get("age_min") or 0),
+                    int(chain_current.get("mtime_age_min") or 0),
+                    int(chain_log.get("mtime_age_min") or 0),
+                )
+                if (
+                    int(chain_health_progress.get("no_advance_ticks") or 0) >= 2
+                    or int(chain_health_progress.get("stuck_ticks") or 0) >= 2
+                )
+                else None
+            ),
+        },
         "deterministic_retry_evidence": deterministic_retry,
         "last_gate_recommendation": last_gate.get("recommendation"),
         "last_gate_score": scores[-1] if scores else None,
@@ -4070,6 +4295,8 @@ def _plan_evidence(entry):
         "incident_audit": incident_audit,
         "current_target": current_target,
         "resolver_state": resolver_state,
+        "ci_health": ci_health,
+        "engine_tree": engine_tree,
         "incident_handoff_gap_count": len(expired_claims),
         "incident_handoff_gap_refs": incident_handoff_gap_refs,
         "incident_dead_worker_count": dead_worker_count,
@@ -4113,6 +4340,37 @@ for entry in plans:
     if ev is None:
         continue
     stage_metric_entries.append(ev)
+    chain_current_for_shadow = (
+        (ev.get("chain_state_summary") or {}).get("current")
+        if isinstance(ev.get("chain_state_summary"), dict)
+        else {}
+    )
+    authoritative_plan_for_shadow = str(
+        (chain_current_for_shadow or {}).get("current_plan_name") or ""
+    ).strip()
+    finding_state_for_shadow = str(ev.get("current_state") or "").strip().lower()
+    completed_shadow = bool(
+        finding_state_for_shadow in {"done", "complete", "completed", "finalized"}
+        and authoritative_plan_for_shadow
+        and authoritative_plan_for_shadow != str(ev.get("plan") or "").strip()
+    )
+    if completed_shadow:
+        green_checks.append({
+            "plan": ev["plan"],
+            "workspace": ev["workspace"],
+            "session": ev["session"],
+            "sources": ev.get("sources") or [],
+            "current_state": ev.get("current_state"),
+            "iteration": ev.get("iteration"),
+            "suppression": {
+                "reason": "completed_plan_shadow_suppressed",
+                "authoritative_plan": authoritative_plan_for_shadow,
+                "authoritative_chain_path": (chain_current_for_shadow or {}).get("path"),
+                "authoritative_chain_state": (chain_current_for_shadow or {}).get("last_state"),
+            },
+            "source_refs": ev.get("source_refs"),
+        })
+        continue
     incident_brief = ev.get("incident_brief") if isinstance(ev.get("incident_brief"), dict) else {}
     incident_projection = ev.get("incident_projection") if isinstance(ev.get("incident_projection"), dict) else {}
     incident_audit = ev.get("incident_audit") if isinstance(ev.get("incident_audit"), dict) else {}
@@ -4187,6 +4445,9 @@ for entry in plans:
         _deterministic_retry_exhaustion_reason(ev),
         _workflow_cursor_mismatch_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
+        _liveness_without_acceptance_progress_reason(ev),
+        _auto_policy_external_evidence_gap_reason(ev),
+        _human_gate_evidence_disagreement_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
         _marker_present_stopped_without_chain_state_reason(ev),
         _dependency_independent_launch_gap_reason(ev),
@@ -5101,16 +5362,16 @@ fi
 
 record_incident_audits "$GATHER_DIR/findings.json"
 
-# Explicit effect phase. Deterministic gather/report above never creates repair
-# custody. This controller is pure when authority is absent; when authorized it
-# can enqueue only a coherent true-stall receipt and delegates launch/claiming
-# to the canonical central trigger.
+# Explicit, separately configured effect phase. Deterministic gather/report
+# above never creates repair custody. This controller is pure unless both the
+# default-off progress-escalation gate and the autonomy master gate authorize
+# it; auditor review/autofix authorization alone is deliberately insufficient.
 L3_ESCALATION_RESULT="$(
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
     "$GATHER_DIR/findings.json" \
     "$ESCALATION_STATE_ROOT" \
     "$REPAIR_QUEUE_ROOT" \
-    "$AUDIT_MUTATION_AUTHORIZED_FLAG" \
+    "$ESCALATION_MUTATION_AUTHORIZED_FLAG" \
     "$REPAIR_TRIGGER_BIN" <<'PY'
 import json
 import sys
@@ -5140,9 +5401,11 @@ log "l3_escalation=$L3_ESCALATION_RESULT"
 python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" "$AUDIT_MUTATION_AUTHORIZED_FLAG" "$AUDIT_LAUNCH_ATTEMPTED" "$RECOVERY_EVIDENCE" "$AUDIT_CODEX_MODEL" <<'PY'
 import datetime as dt
 import glob
+import hashlib
 import json
 import os
 import pathlib
+import subprocess
 import sys
 
 try:
@@ -5257,7 +5520,10 @@ green_checks = [
             "plan_v_count",
             "last_gate_recommendation",
             "last_gate_score",
+            "suppression",
+            "source_refs",
         )
+        if key in item
     }
     for item in green_checks
     if isinstance(item, dict)
@@ -5415,6 +5681,45 @@ dispatch_summary = {
     ),
 }
 
+def _file_digest(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+source_root = pathlib.Path(
+    os.environ.get("MEGAPLAN_AUDIT_ARNOLD_SRC")
+    or os.environ.get("CLOUD_WATCHDOG_ARNOLD_SRC")
+    or "/workspace/arnold"
+)
+source_wrapper = source_root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor"
+installed_wrapper = pathlib.Path("/usr/local/bin/arnold-progress-auditor")
+try:
+    source_commit = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip()
+except (OSError, subprocess.TimeoutExpired):
+    source_commit = ""
+auditor_runtime_receipt = {
+    "schema_version": "arnold-progress-auditor-runtime-receipt-v1",
+    "audit_started_at": dt.datetime.strptime(ts, "%Y%m%dT%H%M%SZ").replace(tzinfo=dt.timezone.utc).isoformat(),
+    "audit_finished_at": now_iso,
+    "source_root": str(source_root),
+    "source_commit": source_commit,
+    "source_wrapper_path": str(source_wrapper),
+    "source_wrapper_sha256": _file_digest(source_wrapper),
+    "installed_wrapper_path": str(installed_wrapper),
+    "installed_wrapper_sha256": _file_digest(installed_wrapper),
+    "installed_matches_source": bool(
+        _file_digest(source_wrapper)
+        and _file_digest(source_wrapper) == _file_digest(installed_wrapper)
+    ),
+}
+
 payload = {
     "schema_version": 1,
     "timestamp_utc": now_iso,
@@ -5432,6 +5737,7 @@ payload = {
     "coverage": coverage,
     "data_quality": data_quality,
     "dispatch_summary": dispatch_summary,
+    "auditor_runtime_receipt": auditor_runtime_receipt,
     "l3_escalation_summary": l3_escalation_summary,
     "dispatch_receipts": dispatch_receipts,
     "root_cause_patterns": data.get("root_cause_patterns") or {

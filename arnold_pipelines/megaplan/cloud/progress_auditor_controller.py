@@ -22,6 +22,7 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     EscalationPolicy,
     bounded_repair_context,
     classify_true_stall,
+    evidence_digest,
     next_attempt_state,
     plan_dispatch,
     record_reverification,
@@ -31,6 +32,7 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     enqueue_audit_repair_request,
 )
+from arnold_pipelines.megaplan.managed_agent import observed_status
 
 
 CONTROLLER_SCHEMA = "arnold-progress-auditor-escalation-controller-v1"
@@ -56,6 +58,34 @@ def _load_json(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _refresh_owner_topology(outcome: Mapping[str, Any]) -> dict[str, Any]:
+    """Refresh execution-owner liveness from canonical manifests before acceptance."""
+
+    refreshed = dict(outcome)
+    topology = (
+        dict(outcome.get("owner_topology"))
+        if isinstance(outcome.get("owner_topology"), Mapping)
+        else {}
+    )
+    execution: list[dict[str, Any]] = []
+    active_count = 0
+    for raw in topology.get("execution_owners") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        receipt = dict(raw)
+        raw_path = str(receipt.get("manifest_path") or "")
+        manifest_path = Path(raw_path)
+        manifest = _load_json(manifest_path) if raw_path else {}
+        observed, live = observed_status(manifest, manifest_path) if manifest else ("unknown", False)
+        receipt.update({"status": observed, "observed_live": live})
+        active_count += int(live)
+        execution.append(receipt)
+    topology["execution_owners"] = execution
+    topology["active_controller_count"] = active_count
+    refreshed["owner_topology"] = topology
+    return refreshed
 
 
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -123,12 +153,8 @@ def _active_counts(state_root: Path) -> tuple[int, dict[str, int]]:
                 continue
             manifest_path = Path(str(attempt.get("managed_manifest_path") or ""))
             manifest = _load_json(manifest_path) if str(manifest_path) else {}
-            if str(manifest.get("status") or "") not in {
-                "reserved",
-                "launching",
-                "running",
-                "adopting",
-            }:
+            _status, live = observed_status(manifest, manifest_path) if manifest else ("unknown", False)
+            if not live:
                 continue
             global_count += 1
             session = str(state.get("session") or "")
@@ -156,12 +182,8 @@ def _terminal_reverification(
     if not str(attempt.get("managed_manifest_path") or ""):
         return dict(state), None
     manifest = _load_json(manifest_path)
-    if str(manifest.get("status") or "") in {
-        "reserved",
-        "launching",
-        "running",
-        "adopting",
-    }:
+    _observed, live = observed_status(manifest, manifest_path) if manifest else ("unknown", False)
+    if live:
         return dict(state), None
     links = manifest.get("links") if isinstance(manifest.get("links"), Mapping) else {}
     outcome_path_raw = str(
@@ -170,6 +192,8 @@ def _terminal_reverification(
         or ""
     )
     outcome = _load_json(Path(outcome_path_raw)) if outcome_path_raw else {}
+    if outcome:
+        outcome = _refresh_owner_topology(outcome)
     if not outcome:
         outcome = {
             "managed_status": manifest.get("status"),
@@ -290,10 +314,28 @@ def run_escalation_controller(
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         active_global, active_by_session = _active_counts(state_root)
+        seen_escalations: set[str] = set()
         for finding in findings:
             gate = classify_true_stall(finding, policy=selected)
             finding["l3_escalation_gate"] = gate
-            path = _state_path(state_root, str(gate["escalation_id"]))
+            escalation_id = str(gate["escalation_id"])
+            if escalation_id in seen_escalations:
+                record = {
+                    "escalation_id": escalation_id,
+                    "session": gate.get("session"),
+                    "plan": gate.get("plan"),
+                    "gate": gate.get("decision"),
+                    "decision": "duplicate_target_observation",
+                    "reason": "another finding in this cycle already owns the authoritative target",
+                    "repair_dispatched": False,
+                    "managed_run_id": "",
+                    "managed_manifest_path": "",
+                }
+                finding["l3_escalation"] = record
+                summary.append(record)
+                continue
+            seen_escalations.add(escalation_id)
+            path = _state_path(state_root, escalation_id)
             state = _load_json(path)
             state, verification = _terminal_reverification(
                 state,
@@ -326,16 +368,45 @@ def run_escalation_controller(
             if verification is not None:
                 record["reverification"] = verification
             if not dispatch["dispatch"]:
+                if dispatch["decision"] == "terminal_escalation":
+                    state.update(
+                        {
+                            "schema_version": CONTROLLER_SCHEMA,
+                            "policy_version": gate.get("policy_version"),
+                            "escalation_id": gate.get("escalation_id"),
+                            "session": gate.get("session"),
+                            "plan": gate.get("plan"),
+                            "outcome": "exhausted_terminal",
+                            "terminal_state": "human_approval_required",
+                            "terminal_reason": dispatch["reason"],
+                            "updated_at": (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
+                        }
+                    )
+                    _atomic_json(path, state)
                 finding["l3_escalation"] = record
                 summary.append(record)
                 continue
 
             context_path = _context_path(state_root, str(gate["escalation_id"]))
-            context = bounded_repair_context(finding)
-            _atomic_json(context_path, context)
             attempts = [
                 item for item in state.get("attempts") or [] if isinstance(item, Mapping)
             ]
+            prior_approach_digests = [
+                str(verification.get("approach_digest"))
+                for item in attempts
+                for verification in [
+                    item.get("verification")
+                    if isinstance(item.get("verification"), Mapping)
+                    else {}
+                ]
+                if verification.get("approach_digest")
+            ]
+            context = bounded_repair_context(finding)
+            context["prior_approach_digests"] = sorted(set(prior_approach_digests))
+            context["context_digest"] = evidence_digest(
+                {key: value for key, value in context.items() if key != "context_digest"}
+            )
+            _atomic_json(context_path, context)
             queued = enqueue_audit_repair_request(
                 {
                     **finding,

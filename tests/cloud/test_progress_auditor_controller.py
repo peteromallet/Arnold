@@ -5,9 +5,33 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.progress_auditor_controller import (
     TriggerResult,
+    _refresh_owner_topology,
     run_escalation_controller,
 )
-from tests.cloud.test_progress_auditor_escalation import _true_stall, _valid_manifest
+from tests.cloud.test_progress_auditor_escalation import (
+    _owner_topology,
+    _true_stall,
+    _valid_manifest,
+)
+
+
+def test_prior_active_execution_receipt_is_refreshed_from_manifest_liveness(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "execution-owner" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps({"status": "running", "pid": 99999999, "worker_pid": 99999998}),
+        encoding="utf-8",
+    )
+    topology = _owner_topology(active=True)
+    topology["execution_owners"][0]["manifest_path"] = str(manifest)
+
+    refreshed = _refresh_owner_topology({"owner_topology": topology})
+
+    assert refreshed["owner_topology"]["active_controller_count"] == 0
+    assert refreshed["owner_topology"]["execution_owners"][0]["status"] == "interrupted"
+    assert refreshed["owner_topology"]["execution_owners"][0]["observed_live"] is False
 
 
 def test_report_only_and_ordinary_findings_never_create_repair_custody(tmp_path: Path) -> None:
@@ -169,6 +193,7 @@ def test_terminal_managed_run_is_reverified_before_any_retry(tmp_path: Path) -> 
                     "ordinary_retrigger_manifest_path": "/tmp/ordinary-manifest.json",
                     "guard_weakened": False,
                     "guard_changes": [],
+                    "owner_topology": _owner_topology(),
                 }
             ),
             encoding="utf-8",
@@ -216,7 +241,10 @@ def test_terminal_managed_run_is_reverified_before_any_retry(tmp_path: Path) -> 
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     advanced = _true_stall()
     advanced["chain_state_summary"]["current"]["completed_count"] = 2
-    advanced["events_size"] = 8192
+    advanced["chain_state_summary"]["current"]["current_milestone_index"] = 2
+    advanced["chain_state_summary"]["current"]["state_digest"] = "8" * 64
+    advanced["accepted_event_seq"] = 11
+    advanced["accepted_event_digest"] = "6" * 64
 
     second = run_escalation_controller(
         {"findings": [advanced], "green_checks": []},
@@ -231,3 +259,49 @@ def test_terminal_managed_run_is_reverified_before_any_retry(tmp_path: Path) -> 
     assert item["decision"] == "recovery_verified"
     assert item["reverification"]["verified"] is True
     assert item["repair_dispatched"] is False
+
+
+def test_duplicate_plan_shadows_share_one_target_controller(tmp_path: Path) -> None:
+    current = _true_stall()
+    shadow = _true_stall()
+    shadow["plan"] = "m1-completed-shadow"
+    shadow["current_state"] = "done"
+    calls = 0
+
+    def runner(argv):
+        nonlocal calls
+        calls += 1
+        request_id = argv[-1]
+        from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import classify_true_stall
+
+        gate = classify_true_stall(current)
+        manifest_path = tmp_path / "managed" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest = _valid_manifest(gate)
+        manifest.update({"run_id": "managed-root", "manifest_path": str(manifest_path), "status": "running"})
+        manifest["links"]["repair_request_id"] = request_id
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return TriggerResult(
+            returncode=0,
+            stdout=json.dumps({
+                "event": "repair_trigger_dispatch",
+                "status": "dispatched",
+                "request_id": request_id,
+                "managed_run_id": "managed-root",
+                "managed_manifest_path": str(manifest_path),
+            }),
+            stderr="",
+        )
+
+    result = run_escalation_controller(
+        {"findings": [current, shadow], "green_checks": []},
+        state_root=tmp_path / "state",
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
+        authorized=True,
+        trigger_argv=["repair-trigger"],
+        trigger_runner=runner,
+    )
+
+    assert calls == 1
+    assert result["l3_escalation_summary"]["dispatched"] == 1
+    assert result["l3_escalation_summary"]["items"][1]["decision"] == "duplicate_target_observation"

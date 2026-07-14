@@ -33,7 +33,10 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     MUTATION_PATH_L1,
     MUTATION_PATH_L2,
     MUTATION_PATH_L3,
+    MUTATION_PATH_PROGRESS_ESCALATION,
     mutation_authorized,
+    progress_auditor_escalation_enabled,
+    progress_auditor_escalation_mutation_authorized,
     redaction_enabled,
     redaction_on,
     repair_request_queue_enabled,
@@ -320,6 +323,7 @@ _MUTATION_PATHS = (
     (MUTATION_PATH_L1, "ARNOLD_REPAIR_TRIGGER_ENABLED"),
     (MUTATION_PATH_L2, "ARNOLD_META_REPAIR_ENABLED"),
     (MUTATION_PATH_L3, "ARNOLD_AUDIT_AUTOFIX_ENABLED"),
+    (MUTATION_PATH_PROGRESS_ESCALATION, "ARNOLD_PROGRESS_AUDITOR_ESCALATION_ENABLED"),
 )
 _MUTATION_CLASSES = ("state", "source", "commit", "push", "subprocess")
 
@@ -356,6 +360,17 @@ class TestMutationAuthorization:
     def test_unknown_mutation_path_fails_closed(self) -> None:
         with _set_env(ARNOLD_AUTONOMY="1"):
             assert mutation_authorized("unknown") is False
+
+    def test_progress_escalation_is_separate_and_default_off(self) -> None:
+        with _set_env(ARNOLD_AUTONOMY="1", ARNOLD_AUDIT_AUTOFIX_ENABLED="1"):
+            assert progress_auditor_escalation_enabled() is False
+            assert progress_auditor_escalation_mutation_authorized() is False
+        with _set_env(
+            ARNOLD_AUTONOMY="1",
+            ARNOLD_AUDIT_AUTOFIX_ENABLED="0",
+            ARNOLD_PROGRESS_AUDITOR_ESCALATION_ENABLED="1",
+        ):
+            assert progress_auditor_escalation_mutation_authorized() is True
 
 
 # ---------------------------------------------------------------------------

@@ -391,11 +391,12 @@ if len(encoded.encode("utf-8")) > 65536:
 print("\n## Six-hour L3 escalation contract\n")
 print(f"Read and follow `{skill_path}` fully before changing anything.")
 print("Walk L1/L2/L3 with TRACKED/FIXED/INTENT/CONTEXT. Fix the first broken fixer/backstop first, then hunt sibling instances of the failure class, then re-trigger the ordinary canonical recovery path. Never alter chain/plan state directly, weaken completion or safety guards, or treat a pause/human gate as a fault.")
+print("You are the retained root-cause owner and the only execution owner. You may fan out at most three bounded read-only investigators through the canonical nested launcher; contributors must not edit. Synthesize their receipts yourself before making any change. Never launch or retain a second mutating owner.")
 print("The concrete auditor artifact below is authoritative bounded launch context; inspect its cited raw artifacts for full stderr, exit codes, exceptions, commands, token drift, stale projections, false success, missing launch evidence, and spinning fixers.")
 print("```json")
 print(encoded)
 print("```")
-print("Your response must include exact lines `FIXER_FIXED=true|false`, `BACKSTOP_FIXED=true|false`, and `GUARD_WEAKENED=true|false`, followed by evidence paths/tests. A FIXED verdict without those receipts is false success.")
+print("Your response must include exact lines `FIXER_FIXED=true|false`, `BACKSTOP_FIXED=true|false`, `GUARD_WEAKENED=true|false`, and `APPROACH=<one concise validated approach>`, followed by investigator run IDs, evidence paths, and tests. A FIXED verdict without those receipts is false success.")
 PY
 }
 {
@@ -920,7 +921,7 @@ fi
 # ---- persist meta-repair record ---------------------------------------------
 persist_record() {
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" "$META_WORKER_MANIFEST" <<'PY'
-import json, os, sys, uuid
+import hashlib, json, os, sys, uuid
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.meta_repair import (
@@ -931,6 +932,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     persist_meta_repair_record,
 )
 from arnold_pipelines.megaplan.cloud.redact import redact_text
+from arnold_pipelines.megaplan.managed_agent import observed_status
 
 session, trigger_raw, verdict, resp_path, brief_path, repair_data_dir, worker_run_id, worker_manifest = sys.argv[1:9]
 
@@ -1039,6 +1041,72 @@ if outcome_path:
         for line in resp_text.splitlines()
     )
     accepted = verification_info.get("accepted") is True
+    def load_manifest(path_value):
+        try:
+            payload = json.loads(Path(str(path_value)).read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def manifest_receipt(path_value, *, read_only=False):
+        payload = load_manifest(path_value)
+        manifest_path = Path(str(path_value or ""))
+        observed, live = observed_status(payload, manifest_path) if payload else ("unknown", False)
+        result_path = Path(str(payload.get("result_path") or ""))
+        try:
+            result_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+        except OSError:
+            result_digest = ""
+        return {
+            "run_id": str(payload.get("run_id") or ""),
+            "manifest_path": str(path_value or ""),
+            "status": observed,
+            "raw_status": str(payload.get("status") or "unknown"),
+            "observed_live": live,
+            "parent_run_id": str(payload.get("parent_run_id") or ""),
+            "run_kind": str(payload.get("run_kind") or ""),
+            "result_digest": result_digest,
+            "read_only": read_only,
+        }
+
+    managed_root = Path(worker_manifest).parent.parent if worker_manifest else Path()
+    investigator_receipts = []
+    if worker_run_id and str(managed_root):
+        for candidate in sorted(managed_root.glob("*/manifest.json")):
+            payload = load_manifest(candidate)
+            if (
+                payload.get("parent_run_id") == worker_run_id
+                and payload.get("run_kind") == "automatic_research_subagent"
+            ):
+                links = payload.get("links") if isinstance(payload.get("links"), dict) else {}
+                investigator_receipts.append(
+                    manifest_receipt(
+                        candidate,
+                        read_only=(
+                            links.get("owner_role") == "investigator"
+                            and links.get("read_only") == "true"
+                        ),
+                    )
+                )
+    retrigger_manifest = str(verification_info.get("ordinary_retrigger_manifest_path") or "")
+    execution_manifest = retrigger_manifest or worker_manifest
+    execution_receipt = manifest_receipt(execution_manifest)
+    active_controller_count = int(execution_receipt.get("observed_live") is True)
+    approach_line = next(
+        (
+            line.split("=", 1)[1].strip()
+            for line in resp_text.splitlines()
+            if line.strip().lower().startswith("approach=") and "=" in line
+        ),
+        "",
+    )
+    approach_digest = hashlib.sha256(approach_line.encode("utf-8")).hexdigest() if approach_line else ""
+    l3_context = load_manifest(os.environ.get("ARNOLD_L3_REPAIR_CONTEXT_PATH") or "")
+    prior_approach_digests = [
+        str(value)
+        for value in (l3_context.get("prior_approach_digests") or [])
+        if isinstance(value, str) and value
+    ]
     outcome = {
         "schema_version": "arnold-l3-repair-outcome-v1",
         "audit_escalation_id": str(os.environ.get("ARNOLD_L3_ESCALATION_ID") or ""),
@@ -1054,6 +1122,28 @@ if outcome_path:
         "ordinary_retrigger_run_id": str(verification_info.get("ordinary_retrigger_run_id") or ""),
         "ordinary_retrigger_manifest_path": str(verification_info.get("ordinary_retrigger_manifest_path") or ""),
         "ordinary_retrigger_verification": verification_info,
+        "owner_topology": {
+            "root_cause_owner": manifest_receipt(worker_manifest),
+            "investigators": investigator_receipts[:3],
+            "execution_owners": [execution_receipt] if execution_receipt.get("run_id") else [],
+            "active_controller_count": active_controller_count,
+            "controller_limit": 1,
+            "investigator_limit": 3,
+        },
+        "approach_receipt": {
+            "validated": bool(approach_line and verdict.startswith("FIXED")),
+            "approach_digest": approach_digest,
+            "prior_approach_digests": sorted(set(prior_approach_digests)),
+            "fresh_evidence_refs": [
+                value
+                for value in (
+                    verification_info.get("verification_event_id"),
+                    verification_info.get("ordinary_retrigger_manifest_path"),
+                    str(record_path),
+                )
+                if value
+            ],
+        },
         "verdict": verdict,
     }
     destination = Path(outcome_path)

@@ -498,6 +498,174 @@ def test_gather_detects_deterministic_llm_retry_when_latest_failure_is_empty(
     assert patterns[0]["affected_plans"] == ["gate-loop"]
 
 
+def test_gather_flags_green_churn_and_liveness_without_acceptance_receipt(
+    tmp_path: Path,
+) -> None:
+    """Heartbeat-heavy exact artifacts cannot turn a blocked chain green."""
+    workspace = tmp_path / "workspace"
+    session = "custody-control-plane-20260714"
+    plan = "m5-custody"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_dir = marker_dir / "repair-data"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    repair_dir.mkdir(parents=True)
+    now = datetime.now(timezone.utc).isoformat()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "blocked", "iteration": 7}),
+        encoding="utf-8",
+    )
+    events = [
+        {"kind": kind, "phase": "execute", "ts_utc": now, "seq": index}
+        for index, kind in enumerate(
+            ["llm_token_heartbeat", "state_written", "cost_recorded", "llm_token_heartbeat"],
+            start=101,
+        )
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    (chain_dir / "chain-custody.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 0,
+                "current_plan_name": plan,
+                "last_state": "blocked",
+                "chain_complete": False,
+                "milestones": [{"label": "m5"}, {"label": "m6"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (marker_dir / f"{session}.chain-health.progress.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "current_plan_name": plan,
+                "current_milestone_index": 0,
+                "completed_count": 0,
+                "milestone_count": 2,
+                "no_advance_ticks": 4,
+                "stuck_ticks": 3,
+                "updated_at": now,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "outcome": "running",
+                "iterations": [{"iteration": 1}, {"iteration": 2}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": session, "kind": "chain", "sources": ["fixture"]}],
+        tmp_path,
+    )
+
+    assert len(payload["findings"]) == 1
+    finding = payload["findings"][0]
+    assert finding["accepted_event_digest"] == ""
+    assert finding["chain_health_progress"]["no_advance_ticks"] == 4
+    assert any(reason.startswith("green_with_recent_repair_churn:") for reason in finding["reasons"])
+    assert any(reason.startswith("liveness_without_acceptance_progress:") for reason in finding["reasons"])
+
+
+def test_gather_suppresses_completed_shadow_against_authoritative_current_chain(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "agent-edit-verifiable-transaction-spine"
+    shadow = "m1-completed-shadow"
+    current = "m2-current"
+    plan_dir = workspace / ".megaplan" / "plans" / shadow
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": shadow, "current_state": "done", "iteration": 3}), encoding="utf-8"
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    chain_path = chain_dir / "chain-agent-edit.json"
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 1,
+                "current_plan_name": current,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}, {"label": "m2"}],
+                "completed": [{"label": "m1", "plan": shadow, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": shadow, "session": session, "kind": "chain", "sources": ["fixture"]}],
+        tmp_path,
+    )
+
+    assert payload["findings"] == []
+    assert payload["green_checks"][0]["suppression"] == {
+        "reason": "completed_plan_shadow_suppressed",
+        "authoritative_plan": current,
+        "authoritative_chain_path": str(chain_path),
+        "authoritative_chain_state": "executing",
+    }
+
+
+def test_gather_records_auto_policy_external_evidence_gap_without_human_wait(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "agent-edit-verifiable-transaction-spine"
+    plan = "m2-review"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "review", "iteration": 2}), encoding="utf-8"
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    (chain_dir / "chain-agent-edit.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 1,
+                "current_plan_name": plan,
+                "last_state": "review",
+                "chain_complete": False,
+                "pr_number": 143,
+                "pr_state": "open",
+                "milestones": [{"label": "m1"}, {"label": "m2"}],
+                "completed": [{"label": "m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec = tmp_path / "chain.yaml"
+    spec.write_text("merge_policy: auto\ndriver:\n  auto_approve: true\n", encoding="utf-8")
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": session, "kind": "chain", "remote_spec": str(spec), "sources": ["fixture"]}],
+        tmp_path,
+    )
+
+    finding = payload["findings"][0]
+    assert finding["chain_policy_summary"]["automatic_pr_progression"] is True
+    assert finding["ci_health"]["available"] is False
+    assert any(reason.startswith("auto_policy_external_evidence_gap:") for reason in finding["reasons"])
+
+
 def _run_report_assembler(
     findings_data: dict,
     tmp_path: Path,
@@ -1574,6 +1742,14 @@ class TestAuditorWrapperSyntax:
         program = _extract_report_assembler()
         assert "green_checks" in program
         assert "green_checks_count" in program
+
+    def test_escalation_effect_stage_has_separate_default_off_authority(self) -> None:
+        text = _wrapper("arnold-progress-auditor")
+        assert '-e ARNOLD_PROGRESS_AUDITOR_ESCALATION_ENABLED=' in text
+        assert "audit_flag_enabled progress_auditor_escalation_mutation_authorized" in text
+        assert '"$ESCALATION_MUTATION_AUTHORIZED_FLAG"' in text
+        assert "run_file_controller" in text
+        assert "auditor_runtime_receipt" in _extract_report_assembler()
 
 
 class TestAuditorAutofixPromptGates:
