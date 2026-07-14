@@ -2122,7 +2122,7 @@ def test_detailed_renders_epic_deltas(fx, tmp_path):
     )
     snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
-    assert "(+26%/1h)" in detailed  # 50 now - 24 an hour ago
+    assert "(+26 pp/1h)" in detailed  # 50 now - 24 an hour ago
 
 
 def test_compute_progress_deltas_stage_changes(tmp_path):
