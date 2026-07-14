@@ -60,6 +60,11 @@ from arnold_pipelines.megaplan.strategy.contract import (
     StrategyDiagnostic,
     StrategyIdentity,
 )
+from arnold_pipelines.megaplan.strategy.migration import (
+    MigrationReport,
+    inspect_strategy_migration,
+)
+from arnold_pipelines.megaplan.strategy.apply_migration import apply_strategy_migration
 from arnold_pipelines.megaplan.types import CliError, StepResponse
 
 
@@ -871,6 +876,234 @@ def _roadmap_unchanged(
 
 
 # ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+def handle_strategy_doctor(
+    repo_root: Path,
+    args: argparse.Namespace,
+) -> StepResponse:
+    """Inspect the repository and return structured migration diagnostics.
+
+    Tolerates absent ``.megaplan/STRATEGY.md`` — reports ``status='ok'``
+    and ``safe_to_apply=False`` without raising an error.
+
+    Parameters
+    ----------
+    repo_root:
+        Repository root directory.
+    args:
+        Parsed CLI arguments.  ``--json`` (optional) returns the full
+        machine-readable :class:`MigrationReport` dictionary including
+        findings, blockers, proposed actions, and ``safe_to_apply``.
+
+    Returns
+    -------
+    StepResponse
+        A structured response.  When ``--json`` is passed the response is
+        the full serialized report dictionary; otherwise a compact summary
+        with status, version_status, counts, and safe_to_apply.
+    """
+    json_flag = bool(getattr(args, "json", False))
+
+    report = inspect_strategy_migration(repo_root)
+
+    if json_flag:
+        return _migration_report_to_dict(report)
+
+    error_count = sum(1 for f in report.findings if f.severity == "error")
+    warning_count = sum(1 for f in report.findings if f.severity == "warning")
+    info_count = sum(1 for f in report.findings if f.severity == "info")
+
+    return {
+        "success": True,
+        "step": "strategy",
+        "action": "doctor",
+        "status": report.status,
+        "version_status": report.version_status,
+        "schema_version": report.schema_version,
+        "current_version": report.current_version,
+        "safe_to_apply": report.safe_to_apply,
+        "blockers": report.blockers,
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "info_count": info_count,
+        "proposed_action_count": len(report.proposed_actions),
+        "tickets_dir_exists": report.tickets_dir_exists,
+        "strategy_file_path": report.strategy_file_path,
+    }
+
+
+# ---------------------------------------------------------------------------
+# migrate (dry-run by default)
+# ---------------------------------------------------------------------------
+
+
+def handle_strategy_migrate(
+    repo_root: Path,
+    args: argparse.Namespace,
+) -> StepResponse:
+    """Dry-run strategy migration — inspect and report without mutating.
+
+    By default this is a dry-run: it calls
+    :func:`inspect_strategy_migration` and returns machine-readable
+    diagnostics, proposed actions, blockers, backup paths that would be
+    used, and ``safe_to_apply``.  No files are written.
+
+    The ``--apply`` flag performs the supported reversible rewrites (eligible
+    strategy version upgrade and ticket epics normalisation) with byte-for-byte
+    backups, a SHA-256 manifest, and atomic writes — never renaming ticket
+    files or inventing IDs.  Without ``--apply`` the command stays read-only.
+
+    Parameters
+    ----------
+    repo_root:
+        Repository root directory.
+    args:
+        Parsed CLI arguments.  ``args.apply`` (``--apply``) enables writes.
+
+    Returns
+    -------
+    StepResponse
+        With ``--apply``: the :func:`apply_strategy_migration` result
+        describing what was applied and where backups were written.
+        Without ``--apply``: a full machine-readable report as a dictionary
+        with findings, blockers, proposed actions, backup paths, and
+        ``safe_to_apply``.
+    """
+    if getattr(args, "apply", False):
+        return apply_strategy_migration(repo_root)
+
+    report = inspect_strategy_migration(repo_root)
+
+    # Compute backup paths that would be used for each action.
+    backup_paths = _compute_backup_paths(report, repo_root)
+
+    return _migration_report_to_dict(report, backup_paths=backup_paths, action="migrate")
+
+
+# ---------------------------------------------------------------------------
+# Serialization helpers
+# ---------------------------------------------------------------------------
+
+
+def _migration_report_to_dict(
+    report: MigrationReport,
+    backup_paths: list[str] | None = None,
+    action: str = "doctor",
+) -> dict[str, Any]:
+    """Serialize a :class:`MigrationReport` to a stable JSON-serializable dict.
+
+    Parameters
+    ----------
+    report:
+        The migration report to serialize.
+    backup_paths:
+        Optional list of backup file paths that would be created if the
+        proposed actions were applied.  Used by the ``migrate`` handler.
+    action:
+        Label for the ``action`` field in the output (``"doctor"`` or
+        ``"migrate"``).
+
+    Returns
+    -------
+    dict
+        A stable dictionary with all report fields and serialized findings,
+        blockers, proposed actions, and optional backup paths.
+    """
+    serialized_findings: list[dict[str, Any]] = []
+    for f in report.findings:
+        d: dict[str, Any] = {
+            "kind": f.kind,
+            "severity": f.severity,
+            "message": f.message,
+        }
+        if f.source is not None:
+            d["source"] = f.source
+        serialized_findings.append(d)
+
+    serialized_actions: list[dict[str, Any]] = []
+    for a in report.proposed_actions:
+        ad: dict[str, Any] = {
+            "action_id": a.action_id,
+            "kind": a.kind,
+            "description": a.description,
+            "safe": a.safe,
+        }
+        if a.target is not None:
+            ad["target"] = a.target
+        serialized_actions.append(ad)
+
+    # Serialize ticket inventory summary (avoid full entry detail).
+    inventory_summary: dict[str, Any] | None = None
+    if report.ticket_inventory is not None:
+        inv = report.ticket_inventory
+        inventory_summary = {
+            "total_files": inv.total_files,
+            "total_with_id": inv.total_with_id,
+            "total_valid_ulid": inv.total_valid_ulid,
+            "total_roadmap_eligible": inv.total_roadmap_eligible,
+            "total_parse_errors": inv.total_parse_errors,
+            "total_duplicate_ids": len(inv.duplicate_ids),
+        }
+
+    result: dict[str, Any] = {
+        "success": True,
+        "step": "strategy",
+        "action": action,
+        "status": report.status,
+        "version_status": report.version_status,
+        "schema_version": report.schema_version,
+        "current_version": report.current_version,
+        "safe_to_apply": report.safe_to_apply,
+        "findings": serialized_findings,
+        "blockers": report.blockers,
+        "proposed_actions": serialized_actions,
+        "tickets_dir_exists": report.tickets_dir_exists,
+        "strategy_file_path": report.strategy_file_path,
+        "ticket_inventory_summary": inventory_summary,
+    }
+
+    if backup_paths is not None:
+        result["backup_paths"] = backup_paths
+
+    return result
+
+
+def _compute_backup_paths(
+    report: MigrationReport,
+    repo_root: Path,
+) -> list[str]:
+    """Compute backup file paths that would be created for each proposed action.
+
+    For each file-targeted action, we derive a ``.bak`` sibling path.
+    For repo-level actions (no target), no backup path is generated.
+    """
+    backup_paths: list[str] = []
+    seen: set[str] = set()
+
+    for action in report.proposed_actions:
+        if action.target is None:
+            continue
+        target_path = Path(action.target)
+        bak = str(target_path.with_suffix(target_path.suffix + ".bak"))
+        if bak not in seen:
+            seen.add(bak)
+            backup_paths.append(bak)
+
+    # Always include strategy backup if strategy exists.
+    strategy_path = Path(report.strategy_file_path)
+    if strategy_path.is_file():
+        strategy_bak = str(strategy_path.with_suffix(strategy_path.suffix + ".bak"))
+        if strategy_bak not in seen:
+            seen.add(strategy_bak)
+            backup_paths.append(strategy_bak)
+
+    return backup_paths
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher (for CLI wiring convenience)
 # ---------------------------------------------------------------------------
 
@@ -883,6 +1116,8 @@ _STRATEGY_HANDLERS: dict[str, Any] = {
     "add": handle_strategy_add,
     "remove": handle_strategy_remove,
     "move": handle_strategy_move,
+    "doctor": handle_strategy_doctor,
+    "migrate": handle_strategy_migrate,
 }
 
 
@@ -899,7 +1134,8 @@ def handle_strategy(
     args:
         Parsed CLI arguments.  Must carry a ``strategy_action`` attribute
         set to one of ``init``, ``validate``, ``show``, ``list``,
-        ``project``, ``add``, ``remove``, or ``move``.
+        ``project``, ``add``, ``remove``, ``move``, ``doctor``, or
+        ``migrate``.
 
     Returns
     -------
