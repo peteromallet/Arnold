@@ -22,11 +22,19 @@ import pytest
 import arnold_pipelines.megaplan.cloud.meta_repair as meta_repair_module
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     META_REPAIR_BUDGET_SECS,
+    META_REPAIR_VERDICT_ESCALATED,
+    META_REPAIR_VERDICT_FIXED,
+    META_REPAIR_VERDICT_KINDS,
+    META_REPAIR_VERDICT_NO_FIX,
+    META_REPAIR_VERDICT_NO_VERDICT,
+    META_REPAIR_VERDICT_STALE,
     MetaRepairClassification,
     MetaRepairRecord,
     MetaRepairTrigger,
+    MetaRepairVerdict,
     RetriggerExecutionResult,
     build_meta_repair_prompt,
+    build_meta_repair_verdict,
     classify_repair_system_failure,
     compute_meta_deadline,
     evaluate_meta_repair_triggers,
@@ -37,7 +45,9 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     persist_meta_repair_record,
     remaining_meta_budget_secs,
     retrigger_ordinary_repair,
+    save_meta_repair_verdict,
     trigger_priority,
+    validate_meta_repair_verdict_payload,
     verify_retrigger_success,
 )
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
@@ -2489,3 +2499,291 @@ def test_repair_evidence_superseded_terminal_blocker_does_not_crash(tmp_path):
     )
 
     assert isinstance(reason, str)
+
+
+# ---------------------------------------------------------------------------
+# T18: MetaRepairVerdict — completion records, retrigger evidence,
+#      failure reasons, stale/no-verdict detection, and save discipline
+# ---------------------------------------------------------------------------
+
+
+class TestMetaRepairVerdictConstruction:
+    """MetaRepairVerdict construction, defaults, and immutability."""
+
+    def test_construction_with_all_fields(self) -> None:
+        verdict = MetaRepairVerdict(
+            verdict_kind=META_REPAIR_VERDICT_FIXED,
+            blocker_id="blocker-1",
+            attempted_actions=("retrigger_ordinary_repair", "install_sync"),
+            before_evidence_refs=("refs/before/state.json",),
+            after_evidence_refs=("refs/after/state.json",),
+            durable_refs=("meta/mr-1.json",),
+            evidence_timestamp="2026-07-13T10:00:00Z",
+            session="sess-meta-1",
+            request_id="req-1",
+            outcome="fixed",
+            retrigger_command_evidence="arnold-repair-loop --session sess-meta-1",
+            failure_reasons=("repair loop timeout",),
+            original_finding_linkage="meta-repair:repair_timeout:sess-meta-1",
+        )
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_FIXED
+        assert verdict.blocker_id == "blocker-1"
+        assert verdict.retrigger_command_evidence == "arnold-repair-loop --session sess-meta-1"
+        assert verdict.failure_reasons == ("repair loop timeout",)
+        assert verdict.original_finding_linkage == "meta-repair:repair_timeout:sess-meta-1"
+        assert verdict.contract_id == "repair.meta_complete.1"
+        assert verdict.boundary_id == "meta_repair_completion"
+
+    def test_default_contract_id(self) -> None:
+        verdict = MetaRepairVerdict(
+            verdict_kind=META_REPAIR_VERDICT_NO_VERDICT,
+            blocker_id="b",
+        )
+        assert verdict.contract_id == "repair.meta_complete.1"
+        assert verdict.boundary_id == "meta_repair_completion"
+
+    def test_default_empty_tuples(self) -> None:
+        verdict = MetaRepairVerdict(
+            verdict_kind=META_REPAIR_VERDICT_NO_VERDICT,
+            blocker_id="b",
+        )
+        assert verdict.attempted_actions == ()
+        assert verdict.before_evidence_refs == ()
+        assert verdict.after_evidence_refs == ()
+        assert verdict.durable_refs == ()
+        assert verdict.failure_reasons == ()
+
+    def test_stale_and_no_verdict_flags_default_false(self) -> None:
+        verdict = MetaRepairVerdict(
+            verdict_kind=META_REPAIR_VERDICT_FIXED,
+            blocker_id="b",
+        )
+        assert verdict.stale_detected is False
+        assert verdict.no_verdict_detected is False
+
+    def test_frozen_immutability(self) -> None:
+        verdict = MetaRepairVerdict(
+            verdict_kind=META_REPAIR_VERDICT_FIXED,
+            blocker_id="b",
+        )
+        with pytest.raises(Exception):
+            verdict.blocker_id = "changed"  # type: ignore[misc]
+
+
+class TestMetaRepairVerdictRoundTrip:
+    """to_dict / from_dict round-trip preserves all fields."""
+
+    def test_round_trip_preserves_all_fields(self) -> None:
+        original = MetaRepairVerdict(
+            verdict_kind=META_REPAIR_VERDICT_ESCALATED,
+            blocker_id="blocker-2",
+            attempted_actions=("act-1", "act-2"),
+            before_evidence_refs=("before/1",),
+            after_evidence_refs=("after/1", "after/2"),
+            durable_refs=("dur/1",),
+            evidence_timestamp="2026-07-13T11:00:00Z",
+            session="sess-roundtrip",
+            request_id="req-rt",
+            outcome="escalated",
+            stale_detected=True,
+            no_verdict_detected=False,
+            stale_reason="record too old",
+            no_verdict_reason="",
+            retrigger_command_evidence="cmd evidence",
+            failure_reasons=("reason-1", "reason-2"),
+            original_finding_linkage="linkage",
+        )
+        reloaded = MetaRepairVerdict.from_dict(original.to_dict())
+        assert reloaded == original
+
+    def test_from_dict_preserves_verdict_kind(self) -> None:
+        for kind in META_REPAIR_VERDICT_KINDS:
+            payload = {"verdict_kind": kind, "blocker_id": "b"}
+            verdict = MetaRepairVerdict.from_dict(payload)
+            assert verdict.verdict_kind == kind
+
+    def test_from_dict_unknown_verdict_kind_defaults_to_no_verdict(self) -> None:
+        payload = {"verdict_kind": "bogus", "blocker_id": "b"}
+        verdict = MetaRepairVerdict.from_dict(payload)
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_NO_VERDICT
+
+    def test_from_dict_empty_payload(self) -> None:
+        verdict = MetaRepairVerdict.from_dict({})
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_NO_VERDICT
+        assert verdict.blocker_id == ""
+        assert verdict.contract_id == "repair.meta_complete.1"
+
+
+class TestBuildMetaRepairVerdict:
+    """build_meta_repair_verdict derives correct kind, stale, no-verdict flags."""
+
+    def test_build_fixed_from_verdict_string(self) -> None:
+        verdict = build_meta_repair_verdict(
+            verdict="FIXED",
+            session="sess-build",
+            blocker_id="blk-1",
+        )
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_FIXED
+
+    def test_build_escalated_from_verdict_string(self) -> None:
+        verdict = build_meta_repair_verdict(
+            verdict="ESCALATE:needs human review",
+            session="sess-build",
+            blocker_id="blk-2",
+        )
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_ESCALATED
+
+    def test_build_no_fix_from_verdict_string(self) -> None:
+        verdict = build_meta_repair_verdict(
+            verdict="NO_FIX:verifier rejected",
+            session="sess-build",
+            blocker_id="blk-3",
+        )
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_NO_FIX
+
+    def test_build_from_record_outcome_fixed(self) -> None:
+        record = MetaRepairRecord(
+            meta_repair_id="mr-build-1",
+            session="sess-build",
+            trigger=MetaRepairTrigger.REPAIR_TIMEOUT,
+            outcome="fixed",
+            diagnosis="diagnosis text",
+            retrigger_command="retrigger cmd",
+            created_at="2026-07-13T08:00:00Z",
+        )
+        verdict = build_meta_repair_verdict(record=record)
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_FIXED
+        assert verdict.retrigger_command_evidence == "retrigger cmd"
+        assert verdict.failure_reasons == ("diagnosis text",)
+        assert "sess-build" in verdict.original_finding_linkage
+
+    def test_build_from_record_outcome_escalated(self) -> None:
+        record = MetaRepairRecord(
+            meta_repair_id="mr-build-2",
+            session="sess-build",
+            trigger=MetaRepairTrigger.DISCORD_DELIVERY_FAILURE,
+            outcome="escalated",
+            created_at="2026-07-13T09:00:00Z",
+        )
+        verdict = build_meta_repair_verdict(record=record)
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_ESCALATED
+
+    def test_build_from_record_outcome_no_fix(self) -> None:
+        record = MetaRepairRecord(
+            meta_repair_id="mr-build-3",
+            session="sess-build",
+            trigger=MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE,
+            outcome="no_fix",
+            created_at="2026-07-13T10:00:00Z",
+        )
+        verdict = build_meta_repair_verdict(record=record)
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_NO_FIX
+
+    def test_build_no_verdict_when_no_verdict_string_and_no_record(self) -> None:
+        verdict = build_meta_repair_verdict(
+            session="sess-no-verd",
+            blocker_id="blk-no",
+        )
+        assert verdict.verdict_kind == META_REPAIR_VERDICT_NO_VERDICT
+        assert verdict.no_verdict_detected is True
+        assert len(verdict.no_verdict_reason) > 0
+
+    def test_build_with_explicit_retrigger_and_failure_reasons(self) -> None:
+        verdict = build_meta_repair_verdict(
+            verdict="FIXED",
+            session="sess-expl",
+            blocker_id="blk-expl",
+            retrigger_command_evidence="explicit retrigger",
+            failure_reasons=("fail-a", "fail-b"),
+            original_finding_linkage="explicit-linkage",
+        )
+        assert verdict.retrigger_command_evidence == "explicit retrigger"
+        assert verdict.failure_reasons == ("fail-a", "fail-b")
+        assert verdict.original_finding_linkage == "explicit-linkage"
+
+    def test_build_stale_detection_old_record(self) -> None:
+        record = MetaRepairRecord(
+            meta_repair_id="mr-stale",
+            session="sess-stale",
+            trigger=MetaRepairTrigger.REPAIR_TIMEOUT,
+            outcome="fixed",
+            created_at="2020-01-01T00:00:00Z",
+        )
+        verdict = build_meta_repair_verdict(record=record)
+        assert verdict.stale_detected is True
+        assert "stale" in verdict.stale_reason.lower()
+
+
+class TestValidateMetaRepairVerdictPayload:
+    """validate_meta_repair_verdict_payload enforces required fields."""
+
+    def test_valid_payload_passes(self) -> None:
+        payload = {"verdict_kind": "fixed", "blocker_id": "b"}
+        result = validate_meta_repair_verdict_payload(payload)
+        assert result["verdict_kind"] == "fixed"
+
+    def test_missing_verdict_kind_raises(self) -> None:
+        with pytest.raises(ValueError, match="verdict_kind"):
+            validate_meta_repair_verdict_payload({})
+
+    def test_unknown_verdict_kind_raises(self) -> None:
+        with pytest.raises(ValueError, match="unknown meta-repair verdict kind"):
+            validate_meta_repair_verdict_payload({"verdict_kind": "bogus"})
+
+    def test_non_mapping_raises(self) -> None:
+        with pytest.raises(ValueError, match="JSON object"):
+            validate_meta_repair_verdict_payload("not-a-dict")  # type: ignore[arg-type]
+
+
+class TestSaveMetaRepairVerdict:
+    """save_meta_repair_verdict persists and returns JSON payload."""
+
+    def test_save_and_reload_round_trip(self, tmp_path: Path) -> None:
+        verdict = MetaRepairVerdict(
+            verdict_kind=META_REPAIR_VERDICT_FIXED,
+            blocker_id="blk-save",
+            session="sess-save",
+            outcome="fixed",
+            retrigger_command_evidence="cmd-save",
+            failure_reasons=("fr-save",),
+            original_finding_linkage="link-save",
+        )
+        dest = tmp_path / "verdicts" / "meta-verdict.json"
+        saved = save_meta_repair_verdict(dest, verdict)
+        assert dest.exists()
+        assert saved["verdict_kind"] == "fixed"
+        assert saved["blocker_id"] == "blk-save"
+
+        reloaded = MetaRepairVerdict.from_dict(json.loads(dest.read_text(encoding="utf-8")))
+        assert reloaded == verdict
+
+    def test_save_with_redactor(self, tmp_path: Path) -> None:
+        verdict = MetaRepairVerdict(
+            verdict_kind=META_REPAIR_VERDICT_FIXED,
+            blocker_id="blk-redact",
+            session="secret-session",
+            retrigger_command_evidence="secret-command",
+        )
+        dest = tmp_path / "verdicts" / "redacted-verdict.json"
+
+        def _redact(value: str) -> str:
+            return "[REDACTED]"
+
+        saved = save_meta_repair_verdict(dest, verdict, redactor=_redact)
+        assert saved["session"] == "[REDACTED]"
+
+
+class TestMetaRepairVerdictKindConstants:
+    """Verdict kind constants and KINDS frozenset are consistent."""
+
+    def test_all_five_kinds_in_frozenset(self) -> None:
+        assert META_REPAIR_VERDICT_KINDS == frozenset({
+            "fixed", "escalated", "no_fix", "stale", "no_verdict",
+        })
+
+    def test_sentinel_constants_match(self) -> None:
+        assert META_REPAIR_VERDICT_FIXED == "fixed"
+        assert META_REPAIR_VERDICT_ESCALATED == "escalated"
+        assert META_REPAIR_VERDICT_NO_FIX == "no_fix"
+        assert META_REPAIR_VERDICT_STALE == "stale"
+        assert META_REPAIR_VERDICT_NO_VERDICT == "no_verdict"
