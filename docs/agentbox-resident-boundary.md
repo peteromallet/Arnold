@@ -125,15 +125,12 @@ only when provenance, task digest, canonical description, relationship,
 aggregation role, and synthesis group all match; an intentional retry must name
 `retry_of_run_id`.
 
-### Semantic request descriptions and synthesis groups
+### Request relationships and synthesis groups
 
 Every resident-managed launch supplies one purpose-built semantic `description`.
-The normalized, redacted value is persisted with `request_summary_line` and is
-reused in the delegated prompt, resident-agent hot context, launch
-acknowledgement, completion verification, and terminal delivery header. Raw
-inbound content remains in its immutable message record and digest; legacy
-manifests without a description may use only the explicitly labeled
-`immutable_inbound_source_fallback` path.
+The bounded, redacted value is internal launch and status metadata; it is not a
+required user-visible response header. Raw inbound content remains in its
+immutable message record and digest.
 
 Immutable Discord reply ancestry establishes a follow-up directly. The
 resident may also submit a high-confidence semantic judgment naming an exact

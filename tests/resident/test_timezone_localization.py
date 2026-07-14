@@ -190,12 +190,9 @@ def test_hot_context_prompt_output_and_delegation_share_resolved_timezone(tmp_pa
         await runtime.coalescer.flush_all()
 
         assert runner.request.hot_context["user_timezone"]["timezone_name"] == "America/New_York"
-        assert runner.request.hot_context["current_request"]["summary_line"] == (
-            "Current request: unavailable from the authoritative inbound request"
-        )
-        assert runner.request.system_prompt.splitlines()[0] == (
-            "Current request: unavailable from the authoritative inbound request"
-        )
+        assert "summary_line" not in runner.request.hot_context["current_request"]
+        assert "sole current request" in runner.request.system_prompt
+        assert '"content": "status?"' in runner.request.system_prompt
         assert "render every absolute user-visible time in America/New_York" in runner.request.system_prompt
         assert runner.request.launch_origin["timezone_name"] == "America/New_York"
         assert outbound.sent[-1].content == "Snapshot: 2026-07-13 08:00:00 EDT (UTC-04:00)"
@@ -283,9 +280,6 @@ def test_terminal_discord_delivery_localizes_with_manifest_timezone(tmp_path) ->
     )
 
     assert result.delivered == 1
-    assert outbound.sent[0].content == (
-        "Current request: original request\n\n"
-        "Finished at 2026-07-13 08:00:00 EDT (UTC-04:00)"
-    )
+    assert outbound.sent[0].content == "Finished at 2026-07-13 08:00:00 EDT (UTC-04:00)"
     persisted = json.loads(manifest_path.read_text())
     assert persisted["created_at"] == "2026-07-13T14:50:32+00:00"

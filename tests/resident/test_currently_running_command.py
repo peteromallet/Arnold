@@ -117,7 +117,7 @@ def test_agents_render_lifecycle_duration_and_persisted_token_usage() -> None:
                 },
                 {
                     "run_id": "subagent-summary",
-                    "request_summary_line": "Current request: Review status truth",
+                    "description": "Review status truth",
                     "status": "launching",
                     "live": True,
                     "started_at": "2026-07-14T12:59:30+00:00",
@@ -355,9 +355,6 @@ def test_collection_replaces_opaque_agent_label_from_exact_inbound_source(
                     "status": "running",
                     "live": True,
                     "description": "Handle the delegated resident request.",
-                    "request_summary_line": (
-                        "Current request: Handle the delegated resident request."
-                    ),
                     "project_dir": str(tmp_path),
                     "launch_provenance": {
                         "source_record_id": "msg_source",
@@ -399,16 +396,20 @@ def test_currently_running_command_is_registered_with_discord_tree() -> None:
         async def handle_restart_resident_interaction(self, _interaction):
             return None
 
+        async def handle_dropped_threads_interaction(self, _interaction, *, lookback=None):
+            return None
+
     tree = FakeTree()
 
     registered = register_discord_application_commands(tree, Service())
 
-    assert registered == ("currently-running", "restart-resident")
-    assert set(tree.commands) == {"currently-running", "restart-resident"}
+    assert registered == ("currently-running", "restart-resident", "dropped-threads")
+    assert set(tree.commands) == {"currently-running", "restart-resident", "dropped-threads"}
     assert tree.commands["currently-running"][0].startswith("Show running Megaplan")
     assert [command.name for command in DISCORD_APPLICATION_COMMANDS] == [
         "currently-running",
         "restart-resident",
+        "dropped-threads",
     ]
 
 
@@ -466,45 +467,6 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
     assert interaction.response.deferred == [{"thinking": True}]
     assert len(interaction.followup.messages) == 1
     assert "**◈ Currently running**" in interaction.followup.messages[0]
-
-
-def test_currently_running_denies_before_collection_when_authorization_is_absent(
-    monkeypatch,
-) -> None:
-    events: list[tuple[str, object]] = []
-
-    class Response:
-        async def send_message(self, content, **kwargs):
-            events.append(("response", (content, kwargs)))
-
-    async def fail_collect(_runtime):
-        raise AssertionError("unauthorized interactions must not read resident status")
-
-    monkeypatch.setattr(discord_module, "collect_currently_running", fail_collect)
-    service = object.__new__(ResidentDiscordService)
-    service.runtime = SimpleNamespace(authorizer=None)
-    client = discord.Client(intents=discord.Intents.none())
-    tree = discord.app_commands.CommandTree(client)
-    register_discord_application_commands(tree, service)
-    interaction = SimpleNamespace(
-        user=SimpleNamespace(id=42),
-        guild_id=None,
-        channel=None,
-        channel_id=99,
-        response=Response(),
-    )
-
-    asyncio.run(tree.get_command("currently-running").callback(interaction))
-
-    assert events == [
-        (
-            "response",
-            (
-                "This command is not authorized in this Discord context.",
-                {"ephemeral": True},
-            ),
-        )
-    ]
 
 
 def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:

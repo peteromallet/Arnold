@@ -13,6 +13,31 @@ ideas coexist with legacy writers/readers, independently refreshed snapshots,
 process-based liveness, repair sidecars and delivery outboxes that are not one
 causal history.
 
+## 2026-07-13 ownership reconciliation
+
+Run Authority's implementation is landed through three merged milestones, but
+its current proof is not accepted: all three completion receipts are false and
+canonical verification reports three divergences. The receipts cite stale or
+missing phase evidence, landed-diff/content-address mismatches, and structural
+collection/import failures. M3's reducer suite now passes 12/12, but that result
+is not yet bound into its canonical phase/suite/completion evidence. M5 owns
+this reconciliation and canonical retirement proof before adoption proceeds.
+
+WBC owns and is implementing the broad boundary/attempt/effect ledger and
+supported-runtime conformance portions of the original migration design. Its
+authoritative resident session is still in flight, while the current checkout
+has no WBC completion manifest. M5 does not depend on WBC; M6 validates WBC's
+current completion/support proof and treats proven rows as satisfied prerequisite
+evidence. M7-M11 remain blocked until M5 and M6 handoffs plus the human approval
+record pass. No WBC-owned ledger, contract, finding, payload policy, or producer
+migration may be recreated here.
+
+The residual gap is integration and retirement: controlled authoritative
+writers, exact-version adoption outside or around the WBC-proven set,
+rebuildable projections and pure observers, effect-safe retry/recovery with
+independent verification, cross-system conformance, and legacy deletion only
+after parity/proof.
+
 ## Delivered substrate
 
 - Native runtime work established compiled workflow/manifest identities,
@@ -79,5 +104,5 @@ remain unresolved.
 Repository evidence uses `pc` for the native program counter; portfolio language
 also plausibly abbreviates Parity Corrective or control plane. No distinct
 canonical “PC” initiative was found. This ambiguity is material because a
-separate PC workstream could own cursor/checkpoint or parity surfaces. M5
+separate PC workstream could own cursor/checkpoint or parity surfaces. M6
 therefore requires a human `PC_SCOPE_DECISION` before enforcement.

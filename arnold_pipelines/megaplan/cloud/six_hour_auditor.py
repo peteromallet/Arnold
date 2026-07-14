@@ -122,23 +122,30 @@ def enqueue_audit_repair_request(
         if isinstance(audit_item.get("incident_audit"), dict)
         else {}
     )
-    findings = [
-        finding
-        for finding in incident_audit.get("findings") or []
-        if isinstance(finding, dict) and finding.get("status") != "ok"
-    ]
     deterministic = (
         audit_item.get("deterministic_superfixer_evidence")
         if isinstance(audit_item.get("deterministic_superfixer_evidence"), dict)
         else {}
     )
-    deterministic_actionable = deterministic.get("actionable") is True
-    if not findings and not deterministic_actionable:
+    escalation_gate = (
+        audit_item.get("l3_escalation_gate")
+        if isinstance(audit_item.get("l3_escalation_gate"), dict)
+        else {}
+    )
+    deterministic_actionable = (
+        deterministic.get("actionable") is True
+        and escalation_gate.get("eligible") is True
+        and escalation_gate.get("decision") == "true_stall"
+    )
+    # Ordinary reconciler/report findings are not repair authority.  The
+    # separately authorized controller is the only caller that supplies this
+    # coherent true-stall receipt.
+    if not deterministic_actionable:
         return None
-    primary = findings[0] if findings else {
+    primary = {
         "code": "stale_l1_l2_cycle",
         "layer": "superfixer_custody",
-        "recommendation": "meta_repair.repair_attempt",
+        "recommendation": "deep_superfixer_repair",
         "message": (
             "Accepted-unclaimed/exhausted L1 custody, a dead runner, an incomplete "
             "chain, and absent or stale L2 evidence require control-plane repair."
@@ -161,7 +168,13 @@ def enqueue_audit_repair_request(
             if str(value).strip()
         }
     )
-    root_cause_identity = "audit:" + sha256(
+    escalation_id = str(escalation_gate.get("escalation_id") or "").strip()
+    if not escalation_id:
+        raise ValueError("six-hour audit repair request requires an escalation identity")
+    root_cause_identity = escalation_id
+    retry_ordinal = max(1, int(audit_item.get("l3_retry_ordinal") or 1))
+    retry_identity = f"{root_cause_identity}:attempt:{retry_ordinal}"
+    legacy_root_cause_identity = "audit:" + sha256(
         json.dumps(
             {
                 "session": session,
@@ -182,6 +195,9 @@ def enqueue_audit_repair_request(
         "accepted_request_ids": accepted_request_ids,
         "layer": layer,
         "code": code,
+        "audit_escalation_id": escalation_id,
+        "finding_evidence_digest": escalation_gate.get("evidence_digest"),
+        "legacy_root_cause_identity": legacy_root_cause_identity,
     }
     retry_budget = (
         dict(deterministic.get("retry_budget") or {})
@@ -199,8 +215,8 @@ def enqueue_audit_repair_request(
         "phase_or_step": layer,
         "milestone_or_plan": plan,
         "gate_recommendation": "",
-        "blocked_task_id": root_cause_identity,
-        "event_signature": f"six_hour_auditor:{layer}:{code}",
+        "blocked_task_id": retry_identity,
+        "event_signature": f"six_hour_auditor:{layer}:{code}:attempt:{retry_ordinal}",
     }
     diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
     return enqueue_repair_request(
@@ -220,10 +236,17 @@ def enqueue_audit_repair_request(
             "problem_id": problem_id,
             "workspace": workspace,
             "root_cause_identity": root_cause_identity,
+            "retry_ordinal": retry_ordinal,
+            "retry_of_run_id": str(audit_item.get("l3_retry_of_run_id") or ""),
             "evidence_cursor": evidence_cursor,
             "retry_budget": retry_budget,
-            "retry_strategy": "meta_repair",
-            "deterministic_superfixer_evidence": deterministic if deterministic_actionable else {},
+            "retry_strategy": "deep_superfixer_repair",
+            "dispatch_intent": "deep_superfixer_repair",
+            "deterministic_superfixer_evidence": deterministic,
+            "l3_escalation_gate": escalation_gate,
+            "repair_context_path": str(audit_item.get("l3_repair_context_path") or ""),
+            "repair_context_digest": str(audit_item.get("l3_repair_context_digest") or ""),
+            "route": escalation_gate.get("route") or {},
         },
         workspace=workspace,
         run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),

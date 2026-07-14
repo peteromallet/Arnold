@@ -3131,6 +3131,17 @@ def durable_repair_active(custody: Mapping[str, Any] | None) -> bool:
     }
     if active_request_ids & active_claim_ids:
         return True
+    terminal_by_request: dict[str, datetime] = {}
+    for value in _as_list(payload.get("attempts")):
+        attempt = _as_mapping(value)
+        request_id = _as_text(attempt.get("request_id"))
+        if not request_id or attempt.get("terminal") is not True:
+            continue
+        recorded_at = _verification_timestamp(attempt.get("recorded_at"))
+        if recorded_at is not None and recorded_at > terminal_by_request.get(
+            request_id, datetime.min.replace(tzinfo=timezone.utc)
+        ):
+            terminal_by_request[request_id] = recorded_at
     for value in _as_list(payload.get("attempts")):
         attempt = _as_mapping(value)
         if attempt.get("terminal") is not False:
@@ -3138,6 +3149,13 @@ def durable_repair_active(custody: Mapping[str, Any] | None) -> bool:
         if not _as_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
             continue
         request_id = _as_text(attempt.get("request_id"))
+        recorded_at = _verification_timestamp(attempt.get("recorded_at"))
+        if (
+            request_id in terminal_by_request
+            and recorded_at is not None
+            and terminal_by_request[request_id] >= recorded_at
+        ):
+            continue
         if request_id and request_id in active_request_ids:
             return True
         if (
@@ -3413,12 +3431,17 @@ def _problem_signature_matches_fingerprint(
         ("milestone_or_plan", "milestone_or_plan"),
         ("blocked_task_id", "blocked_task_id"),
     )
+    matched_identity = False
     for sig_key, current_key in comparable:
         sig_value = _as_text(signature.get(sig_key))
         current_value = _as_text(current.get(current_key))
         if sig_value and current_value and sig_value != current_value:
             return False
-    return True
+        if sig_value and current_value:
+            matched_identity = True
+    # A structurally present but identity-free legacy sidecar cannot own a
+    # newer blocker merely because every comparison was skipped.
+    return matched_identity
 
 
 def _attempt_state_from_snapshot(
@@ -3528,10 +3551,7 @@ def _has_active_repair(
     process_evidence: Mapping[str, Any] | None,
     custody: Mapping[str, Any],
 ) -> bool:
-    attempts = _as_list(custody.get("attempts"))
-    if any(not bool(_as_mapping(item).get("terminal")) for item in attempts if isinstance(item, Mapping)):
-        return True
-    if _as_text(custody.get("custody_bucket")) == CUSTODY_BUCKET_REPAIRING:
+    if durable_repair_active(custody):
         return True
 
     lock_status = _as_text(getattr(lock_evidence, "status", ""))
@@ -3602,7 +3622,10 @@ def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
     """Return true for states that must reopen custody despite a success label."""
     target = _as_mapping(current_target)
     active_step = _as_mapping(target.get("active_step_heartbeat"))
-    if bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")):
+    if (
+        (bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")))
+        and active_step.get("pid_live") is not True
+    ):
         return _has_current_target_evidence(target)
     stale_kinds = {
         _as_text(_as_mapping(item).get("kind"))
