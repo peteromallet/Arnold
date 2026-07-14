@@ -120,10 +120,15 @@ def test_non_active_attention_stays_on_attention_surface_not_running_list() -> N
         "status": "attention",
         "process": False,
         "should_run": True,
+        "latest_activity": "2026-07-14T17:59:59Z",
         "operator_next": "workspace missing or unreadable",
         "progress": {"display_state": "blocked", "plan_state": "blocked"},
     }
-    status_node = {"sessions": [attention_session], "session_count": 1}
+    status_node = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [attention_session],
+        "session_count": 1,
+    }
 
     assert discover_running_sessions(status_node) == []
     context_root = build_context_root(
@@ -138,31 +143,80 @@ def test_non_active_attention_stays_on_attention_surface_not_running_list() -> N
         {
             "session": "stopped-chain",
             "status": "attention",
+            "latest_activity": "2026-07-14T17:59:59Z",
             "operator_next": "workspace missing or unreadable",
             "progress": {"display_state": "blocked", "plan_state": "blocked"},
         }
     ]
 
 
-def test_installed_custom_control_plane_remains_visible_as_attention() -> None:
+def test_needs_attention_only_shows_authoritative_activity_in_preceding_twelve_hours() -> None:
     status_node = {
+        "generated_at": "2026-07-14T18:00:00Z",
         "sessions": [
             {
-                "session": "custody-control-plane-20260714",
-                "display_name": "Custody control plane",
+                "session": "just-inside",
                 "status": "attention",
                 "process": False,
                 "repairing": False,
-                "operator_next": "workspace missing or unreadable",
-                "progress": {"display_state": "executed", "percent": 0},
-            }
+                "latest_activity": "2026-07-14T06:00:01Z",
+            },
+            {
+                "session": "exact-boundary",
+                "status": "blocked",
+                "process": False,
+                "latest_activity": "2026-07-14T06:00:00Z",
+            },
+            {
+                "session": "just-outside",
+                "status": "attention",
+                "process": False,
+                "latest_activity": "2026-07-14T05:59:59Z",
+            },
+            {"session": "missing-activity", "status": "attention", "process": False},
+            {
+                "session": "invalid-activity",
+                "status": "blocked",
+                "process": False,
+                "latest_activity": "not-a-timestamp",
+            },
         ]
     }
 
     assert discover_running_sessions(status_node) == []
     assert [row["session"] for row in discover_attention_sessions(status_node)] == [
-        "custody-control-plane-20260714"
+        "just-inside",
+        "exact-boundary",
     ]
+    rendered = render_currently_running(
+        CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
+    )
+
+    assert "## ⚠️ Needs attention · 2 —" in rendered
+    assert "**just-inside**" in rendered
+    assert "**exact-boundary**" in rendered
+    for session in ("just-outside", "missing-activity", "invalid-activity"):
+        assert f"**{session}**" not in rendered
+
+
+def test_recently_active_installed_session_remains_visible_as_attention() -> None:
+    status_node = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {
+                "session": "custody-control-plane-20260714",
+                "display_name": "Custody control plane",
+                "run_kind": "installed",
+                "status": "attention",
+                "process": False,
+                "repairing": False,
+                "latest_activity": "2026-07-14T17:31:31Z",
+                "operator_next": "workspace missing or unreadable",
+                "progress": {"display_state": "executed", "percent": 0},
+            }
+        ],
+    }
+
     rendered = render_currently_running(
         CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
     )
