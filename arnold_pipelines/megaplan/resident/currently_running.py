@@ -28,6 +28,7 @@ _TERMINAL_AGENT_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
 )
 _MAX_LABEL_CHARS = 140
+_MAX_RECENT_COMPLETED = 5
 _EPICS_SECTION_ICON = "⛓️"
 _AGENTS_SECTION_ICON = "🤖"
 _OPAQUE_AGENT_LABELS = frozenset(
@@ -151,6 +152,32 @@ def discover_live_managed_agents(
     return [row for row in rows if isinstance(row, Mapping) and row.get("live") is True]
 
 
+def discover_recently_completed_sessions(
+    status_node: Mapping[str, Any] | None,
+) -> list[Mapping[str, Any]]:
+    """Return bounded terminal-success rows from the canonical status root.
+
+    The root's ``recently_completed`` list is a recency-sorted projection of
+    all canonical completed sessions.  The legacy three-row preview is only a
+    compatibility fallback, never a source of completion inference.
+    """
+
+    if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
+        return []
+    rows = status_node.get("recently_completed")
+    if not isinstance(rows, list):
+        rows = status_node.get("completed_sessions_preview")
+    if not isinstance(rows, list):
+        return []
+    return [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and str(row.get("status") or "").casefold()
+        in {"complete", "completed", "finished", "success", "succeeded"}
+    ]
+
+
 def render_currently_running(
     report: CurrentlyRunningReport, *, now: datetime | None = None
 ) -> str:
@@ -192,6 +219,24 @@ def render_currently_running(
             lines.append("_No active epics or chains._")
 
     lines.append("")
+    completed = discover_recently_completed_sessions(status_node)
+    displayed_completed = completed[:_MAX_RECENT_COMPLETED]
+    lines.append(_recently_completed_heading(len(displayed_completed)))
+    if displayed_completed:
+        lines.extend(_render_completed_session(row) for row in displayed_completed)
+        omitted = max(
+            0,
+            len(completed) - len(displayed_completed),
+            int(status_node.get("recently_completed_omitted_count") or 0)
+            if isinstance(status_node, Mapping)
+            else 0,
+        )
+        if omitted:
+            lines.append(f"_…{omitted} older completed chains omitted._")
+    else:
+        lines.append("_No recently completed chains._")
+
+    lines.append("")
     if report.managed_agents_error:
         lines.extend(
             (
@@ -221,6 +266,10 @@ def _agents_heading(summary: str | None = None) -> str:
     """Return the consistent visual heading for resident-managed work."""
 
     return _section_heading(_AGENTS_SECTION_ICON, "Managed agents", summary)
+
+
+def _recently_completed_heading(count: int) -> str:
+    return f"## Recently completed · {count} shown —"
 
 
 def _section_heading(icon: str, title: str, summary: str | None = None) -> str:
@@ -266,6 +315,31 @@ def _render_session(row: Mapping[str, Any]) -> str:
     elif session_status and session_status.casefold() != status.casefold():
         details.append(f"chain {session_status}")
     return f"• **{_safe_label(name)}**\n  `{_safe_label(status)}` · {' · '.join(details)}"
+
+
+def _render_completed_session(row: Mapping[str, Any]) -> str:
+    """Render a terminal-success chain using only canonical status evidence."""
+
+    progress = row.get("progress") if isinstance(row.get("progress"), Mapping) else {}
+    name = _first_label(row.get("display_name"), row.get("session"), "unnamed session")
+    details = ["completed"]
+    completed_count = progress.get("completed_count", row.get("completed_count"))
+    milestone_count = progress.get("milestone_count", row.get("milestone_count"))
+    if (
+        isinstance(completed_count, int)
+        and not isinstance(completed_count, bool)
+        and isinstance(milestone_count, int)
+        and not isinstance(milestone_count, bool)
+        and milestone_count >= 0
+    ):
+        details.append(f"{completed_count}/{milestone_count} milestones")
+    elif (percent := _percent(progress.get("percent"))) is not None:
+        details.append(f"{percent}% overall")
+    latest_activity = _parse_utc_timestamp(row.get("completed_at") or row.get("latest_activity"))
+    if latest_activity is not None:
+        details.append(f"completed {format_timestamp(latest_activity, 'UTC')}")
+    suffix = f" · {' · '.join(details[1:])}" if len(details) > 1 else ""
+    return f"• **{_safe_label(name)}**\n  `{details[0]}`{suffix}"
 
 
 def _render_agent(row: Mapping[str, Any], *, now: datetime | None = None) -> str:
@@ -556,6 +630,7 @@ __all__ = [
     "CurrentlyRunningReport",
     "collect_currently_running",
     "discover_live_managed_agents",
+    "discover_recently_completed_sessions",
     "discover_running_sessions",
     "render_currently_running",
 ]

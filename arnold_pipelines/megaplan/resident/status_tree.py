@@ -19,6 +19,7 @@ STATUS_TREE_SCHEMA = "megaplan-resident-status-tree-v1"
 DEFAULT_NODE_LIMIT = 10
 MAX_NODE_LIMIT = 25
 MAX_TEXT_CHARS = 600
+_RECENT_COMPLETED_LIMIT = MAX_NODE_LIMIT
 
 
 def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -32,7 +33,15 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
         if isinstance(item, Mapping)
     ]
     active = [item for item in sessions if _root_session_needs_detail(item)]
-    completed = [item for item in sessions if not _root_session_needs_detail(item)]
+    completed = [item for item in sessions if _is_completed_session(item)]
+    # Completion is a terminal canonical status, not an inference from an idle
+    # process.  Sort by durable activity so a newly completed chain is eligible
+    # for the bounded resident card even when older history is long.
+    recent_completed = sorted(
+        completed,
+        key=_completion_sort_key,
+        reverse=True,
+    )[:_RECENT_COMPLETED_LIMIT]
     return {
         "schema_version": STATUS_TREE_SCHEMA,
         "node_id": "root",
@@ -48,13 +57,17 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
         # sessions are represented by a tiny preview and remain navigable.
         "sessions": active,
         "completed_session_count": len(completed),
+        "recently_completed": recent_completed,
+        "recently_completed_omitted_count": max(0, len(completed) - len(recent_completed)),
+        # Kept for compatibility with existing hot-context consumers. New
+        # callers must use ``recently_completed`` rather than this tiny preview.
         "completed_sessions_preview": [
             {
                 key: item.get(key)
                 for key in ("node_id", "session", "display_name", "status", "latest_activity")
                 if item.get(key) is not None
             }
-            for item in completed[:3]
+            for item in recent_completed[:3]
         ],
         "navigation": {
             "cli": (
@@ -78,6 +91,25 @@ def _root_session_needs_detail(session: Mapping[str, Any]) -> bool:
         or session.get("process")
         or status not in {"complete", "completed", "finished", "success", "succeeded"}
     )
+
+
+def _is_completed_session(session: Mapping[str, Any]) -> bool:
+    """Return only canonical terminal-success session classifications."""
+
+    return str(session.get("status") or "").casefold() in {
+        "complete",
+        "completed",
+        "finished",
+        "success",
+        "succeeded",
+    }
+
+
+def _completion_sort_key(session: Mapping[str, Any]) -> str:
+    """Sort ISO-like durable activity timestamps newest first without guessing."""
+
+    latest = session.get("latest_activity")
+    return str(latest).strip() if latest is not None else ""
 
 
 def read_cloud_status_node(

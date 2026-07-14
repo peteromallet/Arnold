@@ -217,10 +217,73 @@ def test_render_uses_h1_title_and_h2_section_heading_hierarchy() -> None:
         "• **status-refresh**\n"
         "  `executing` · 25% overall · chain running\n"
         "\n"
+        "## Recently completed · 0 shown —\n"
+        "_No recently completed chains._\n"
+        "\n"
         "## 🤖 Managed agents · 1 live —\n"
         "• **Refresh resident status**\n"
         "  `running` · agent `status-agent`"
     )
+
+
+def test_render_includes_recent_completed_strategy_chain_with_terminal_evidence() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [{"session": "live-work", "status": "running"}],
+                "recently_completed": [
+                    {
+                        "session": "repository-strategy-roadmap",
+                        "display_name": "Repository strategy roadmap",
+                        "status": "complete",
+                        "latest_activity": "2026-07-14T17:18:48Z",
+                        "progress": {"completed_count": 5, "milestone_count": 5},
+                    }
+                ],
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "## Recently completed · 1 shown —" in rendered
+    assert "**Repository strategy roadmap**" in rendered
+    assert "`completed` · 5/5 milestones" in rendered
+    assert "2026-07-14 17:18:48 UTC (UTC+00:00)" in rendered
+    assert "## ⛓️ Epics & chains · 1 active —" in rendered
+    assert "## 🤖 Managed agents · 0 live —" in rendered
+
+
+def test_recent_completed_is_bounded_and_rejects_nonterminal_rows() -> None:
+    rows = [
+        {
+            "session": f"completed-{index}",
+            "status": "complete",
+            "latest_activity": f"2026-07-14T17:{index:02}:00Z",
+        }
+        for index in range(7)
+    ] + [
+        {"session": "paused", "status": "paused"},
+        {"session": "blocked", "status": "blocked"},
+        {"session": "failed", "status": "failed"},
+        {"session": "inactive", "status": "attention"},
+    ]
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [],
+                "recently_completed": rows,
+                "recently_completed_omitted_count": 2,
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "## Recently completed · 5 shown —" in rendered
+    assert "**completed-4**" in rendered
+    assert "completed-5" not in rendered
+    assert "…2 older completed chains omitted" in rendered
+    for name in ("paused", "blocked", "failed", "inactive"):
+        assert f"**{name}**" not in rendered
 
 
 def test_agents_render_lifecycle_duration_and_persisted_token_usage() -> None:
