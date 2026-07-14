@@ -167,8 +167,13 @@ def _discover_nested_git_repos(project_dir: Path, claimed_paths: set[str]) -> li
     return sorted(repos, key=lambda path: path.as_posix())
 
 
-def _collect_committed_range_paths(repo_dir: Path, *, base_ref: str | None = None) -> set[str]:
-    """Paths changed in the committed milestone range ``base..HEAD``."""
+def _collect_committed_range_paths(
+    repo_dir: Path,
+    *,
+    base_ref: str | None = None,
+    head_ref: str | None = None,
+) -> set[str]:
+    """Paths changed in the committed milestone range ``base..head``."""
     if base_ref is None:
         from arnold_pipelines.megaplan._core.io import _branch_diff_base
 
@@ -177,7 +182,7 @@ def _collect_committed_range_paths(repo_dir: Path, *, base_ref: str | None = Non
         return set()
     try:
         proc = subprocess.run(
-            ["git", "diff", "--name-only", f"{base_ref}..HEAD"],
+            ["git", "diff", "--name-only", f"{base_ref}..{head_ref or 'HEAD'}"],
             cwd=str(repo_dir),
             text=True,
             capture_output=True,
@@ -206,6 +211,7 @@ def _collect_git_status_paths_with_nested_repos(
     untracked_mode: str = "normal",
     include_committed: bool = False,
     committed_base_ref: str | None = None,
+    committed_head_ref: str | None = None,
 ) -> tuple[set[str], str | None]:
     paths, error = _run_git_status_paths(project_dir, untracked_mode=untracked_mode)
     if error is not None:
@@ -225,5 +231,11 @@ def _collect_git_status_paths_with_nested_repos(
             continue
         paths.update(f"{prefix}/{path}" for path in nested_paths)
     if include_committed:
-        paths.update(_collect_committed_range_paths(project_dir, base_ref=committed_base_ref))
+        paths.update(
+            _collect_committed_range_paths(
+                project_dir,
+                base_ref=committed_base_ref,
+                head_ref=committed_head_ref,
+            )
+        )
     return paths, None

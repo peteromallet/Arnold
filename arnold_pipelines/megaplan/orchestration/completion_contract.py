@@ -337,6 +337,7 @@ class CompletionContext:
     state: dict[str, Any]
     subject: CompletionSubject
     git_base_ref: str | None = None
+    git_head_ref: str | None = None
 
 
 @runtime_checkable
@@ -639,6 +640,7 @@ class LandedDiffProvider:
                 artifact_prefix="execution_audit_completion_contract",
                 state=ctx.state,
                 base_ref=ctx.git_base_ref,
+                head_ref=ctx.git_head_ref,
             )
         except Exception as exc:
             return _provider_evidence_ref(
@@ -1917,6 +1919,7 @@ def compute_verdict(
     mode: str = DEFAULT_CONTRACT_MODE,
     providers: tuple[EvidenceProvider, ...] = DEFAULT_PROVIDERS,
     git_base_ref: str | None = None,
+    git_head_ref: str | None = None,
 ) -> CompletionVerdict:
     """Compute a :class:`CompletionVerdict` from objective evidence.
 
@@ -1937,6 +1940,7 @@ def compute_verdict(
         state=state,
         subject=subject,
         git_base_ref=git_base_ref,
+        git_head_ref=git_head_ref,
     )
     for provider in providers:
         kind = getattr(provider, "kind", "unknown")

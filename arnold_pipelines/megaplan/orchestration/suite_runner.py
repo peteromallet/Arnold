@@ -343,6 +343,19 @@ def _spawn_to_log(project_dir: Path, argv: list[str], raw_log_path: Path) -> tup
     # real progress*.
     env = dict(os.environ)
     env.setdefault("PYTHONUNBUFFERED", "1")
+    # The suite verifies ``project_dir``. Cloud runners commonly import the
+    # Megaplan engine from a separate editable checkout via PYTHONPATH; leaving
+    # that engine root first silently tests the engine checkout instead of the
+    # milestone branch. Keep the engine available after the subject checkout.
+    project_root = str(project_dir.resolve())
+    inherited_pythonpath = env.get("PYTHONPATH", "")
+    pythonpath_parts = [project_root]
+    pythonpath_parts.extend(
+        part
+        for part in inherited_pythonpath.split(os.pathsep)
+        if part and str(Path(part).resolve()) != project_root
+    )
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
     try:
         return spawn(
             argv,

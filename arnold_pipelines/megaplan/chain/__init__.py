@@ -635,6 +635,113 @@ def _project_dir_from_plan_state(root: Path, state: dict[str, Any]) -> Path:
     return root
 
 
+def _git_commit_sha(root: Path, ref: Any) -> str | None:
+    if not isinstance(ref, str) or not ref.strip():
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--verify", f"{ref.strip()}^{{commit}}"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _local_pr_merge_commit(root: Path, pr_number: Any) -> str | None:
+    """Resolve one locally present squash/merge commit for ``(#<pr>)``.
+
+    This is a deterministic offline fallback for legacy chain records that
+    persisted a PR number but not its landed commit. Ambiguity fails closed.
+    """
+    try:
+        number = int(pr_number)
+    except (TypeError, ValueError):
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "log",
+                "--all",
+                "--format=%H%x00%s",
+                "--fixed-strings",
+                f"--grep=(#{number})",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    matches = {
+        line.split("\x00", 1)[0].strip()
+        for line in completed.stdout.splitlines()
+        if "\x00" in line and line.split("\x00", 1)[1].rstrip().endswith(f"(#{number})")
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _completed_milestone_head(
+    root: Path,
+    spec: ChainSpec,
+    milestone_index: int,
+    record: dict[str, Any],
+    completed_records: dict[str, dict[str, Any]],
+) -> tuple[str | None, str]:
+    """Resolve the exact landed head without adopting the caller's ``HEAD``."""
+
+    candidates: list[tuple[Any, str]] = [
+        (record.get("landed_head_sha"), "completed_record.landed_head_sha"),
+        (record.get("merge_commit_sha"), "completed_record.merge_commit_sha"),
+        (record.get("pr_head"), "completed_record.pr_head"),
+        (record.get("branch_head"), "completed_record.branch_head"),
+    ]
+    if milestone_index + 1 < len(spec.milestones):
+        next_milestone = spec.milestones[milestone_index + 1]
+        next_record = completed_records.get(next_milestone.label)
+        if isinstance(next_record, dict):
+            next_plan_dir = _plan_dir_for_completed_record(root, next_record)
+            next_state = _read_plan_state_payload_from_dir(next_plan_dir)
+            next_meta = (
+                next_state.get("meta")
+                if isinstance(next_state.get("meta"), dict)
+                else {}
+            )
+            next_policy = (
+                next_meta.get("chain_policy")
+                if isinstance(next_meta.get("chain_policy"), dict)
+                else {}
+            )
+            candidates.append(
+                (
+                    next_policy.get("milestone_base_sha"),
+                    "next_milestone.milestone_base_sha",
+                )
+            )
+    candidates.append(
+        (
+            _local_pr_merge_commit(root, record.get("pr_number")),
+            "local_pr_merge_commit",
+        )
+    )
+
+    for candidate, source in candidates:
+        sha = _git_commit_sha(root, candidate)
+        if sha is None:
+            continue
+        return sha, source
+    return None, "unresolved"
+
+
 def _verify_completed_chain(
     root: Path,
     spec_path: Path,
@@ -653,7 +760,7 @@ def _verify_completed_chain(
     milestones_payload: list[dict[str, Any]] = []
     divergence_count = 0
 
-    for milestone in spec.milestones:
+    for milestone_index, milestone in enumerate(spec.milestones):
         record = completed_records.get(milestone.label)
         if not isinstance(record, dict):
             continue
@@ -673,6 +780,47 @@ def _verify_completed_chain(
             else {}
         )
         milestone_base_sha = policy.get("milestone_base_sha")
+        base_sha = _git_commit_sha(project_dir, milestone_base_sha)
+        milestone_head_sha, milestone_head_source = _completed_milestone_head(
+            project_dir,
+            spec,
+            milestone_index,
+            record,
+            completed_records,
+        )
+        landed_parent_sha = _git_commit_sha(
+            project_dir,
+            f"{milestone_head_sha}^" if milestone_head_sha else None,
+        )
+        if base_sha is None or milestone_head_sha is None or landed_parent_sha is None:
+            divergence_count += 1
+            milestones_payload.append(
+                {
+                    "label": milestone.label,
+                    "plan": plan_name,
+                    "status": status,
+                    "accepted": False,
+                    "would_block": True,
+                    "failures": [
+                        "landed_diff: exact milestone base, landed head, and landed parent "
+                        "could not all be resolved; current checkout HEAD is not admissible "
+                        "historical evidence"
+                    ],
+                    "files_claimed": [],
+                    "files_in_diff": [],
+                    "files_in_committed_range": [],
+                    "evidence_window": {
+                        "source": "declared",
+                        "base_ref": milestone_base_sha,
+                        "base_sha": base_sha,
+                        "head_ref": None,
+                        "head_sha": None,
+                    },
+                    "diff_source": "declared_unresolved",
+                    "head_source": milestone_head_source,
+                }
+            )
+            continue
         verdict = compute_verdict(
             plan_dir=plan_dir or (root / ".megaplan" / "plans" / plan_name),
             project_dir=project_dir,
@@ -686,9 +834,11 @@ def _verify_completed_chain(
             ),
             mode=verify_mode,
             providers=(LandedDiffProvider(),),
-            git_base_ref=(
-                milestone_base_sha if isinstance(milestone_base_sha, str) else None
-            ),
+            # The chain base proves lineage. The landed commit's first parent
+            # bounds the PR patch itself and excludes unrelated commits merged
+            # to the target branch while the milestone was in flight.
+            git_base_ref=landed_parent_sha,
+            git_head_ref=milestone_head_sha,
         )
         landed_diff = next(
             (ref for ref in verdict.evidence if ref.kind == "landed_diff"), None
@@ -711,6 +861,9 @@ def _verify_completed_chain(
                 ),
                 "evidence_window": dict(details.get("evidence_window") or {}),
                 "diff_source": details.get("diff_source"),
+                "head_source": milestone_head_source,
+                "chain_milestone_base_sha": base_sha,
+                "landed_parent_sha": landed_parent_sha,
             }
         )
 

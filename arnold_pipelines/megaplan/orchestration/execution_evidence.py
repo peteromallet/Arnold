@@ -242,6 +242,7 @@ def validate_execution_evidence(
     plan_dir: Path | None = None,
     artifact_prefix: str = "execution_audit",
     base_ref: str | None = None,
+    head_ref: str | None = None,
 ) -> dict[str, Any]:
     finalize_data = apply_authoritative_execute_overrides(
         finalize_data,
@@ -255,11 +256,16 @@ def validate_execution_evidence(
         plan_dir=plan_dir,
         artifact_prefix=artifact_prefix,
         base_ref=base_ref,
+        head_ref=head_ref,
         state=state,
     )
 
 
-def _evidence_window(project_dir: Path, base_ref: str | None = None) -> dict[str, Any]:
+def _evidence_window(
+    project_dir: Path,
+    base_ref: str | None = None,
+    head_ref: str | None = None,
+) -> dict[str, Any]:
     def _rev_parse(ref: str) -> str | None:
         try:
             completed = subprocess.run(
@@ -279,7 +285,8 @@ def _evidence_window(project_dir: Path, base_ref: str | None = None) -> dict[str
         "source": "declared" if base_ref else "heuristic_merge_base",
         "base_ref": base_ref,
         "base_sha": _rev_parse(base_ref) if base_ref else None,
-        "head_sha": _rev_parse("HEAD"),
+        "head_ref": head_ref or "HEAD",
+        "head_sha": _rev_parse(head_ref or "HEAD"),
     }
 
 
@@ -305,10 +312,14 @@ def _git_rev_parse_head(project_dir: Path) -> str | None:
     return _resolve_ref_sha(project_dir, "HEAD")
 
 
-def _collect_declared_committed_paths(project_dir: Path, base_sha: str) -> set[str]:
+def _collect_declared_committed_paths(
+    project_dir: Path,
+    base_sha: str,
+    head_sha: str,
+) -> set[str]:
     try:
         completed = subprocess.run(
-            ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+            ["git", "diff", "--name-only", f"{base_sha}..{head_sha}"],
             cwd=project_dir,
             text=True,
             capture_output=True,
@@ -427,6 +438,7 @@ def _validate_execution_evidence_code(
     plan_dir: Path | None = None,
     artifact_prefix: str = "execution_audit",
     base_ref: str | None = None,
+    head_ref: str | None = None,
     state: PlanState | None = None,
 ) -> dict[str, Any]:
     authoritative_overrides = _authoritative_execute_task_overrides(plan_dir)
@@ -463,37 +475,50 @@ def _validate_execution_evidence_code(
             "files_claimed": files_claimed,
             "skipped": True,
             "reason": "Project directory is not a git repository.",
-            "evidence_window": _evidence_window(project_dir, base_ref),
+            "evidence_window": _evidence_window(project_dir, base_ref, head_ref),
         }
 
-    head_sha = _git_rev_parse_head(project_dir)
+    active_head_sha = _git_rev_parse_head(project_dir)
+    head_sha = _resolve_ref_sha(project_dir, head_ref or "HEAD")
     base_sha = _resolve_ref_sha(project_dir, base_ref) if base_ref is not None else None
     evidence_window: dict[str, Any] = {
         "base_sha": base_sha,
+        "head_ref": head_ref or "HEAD",
         "head_sha": head_sha,
         "source": "declared" if base_ref is not None else "heuristic_merge_base",
     }
 
-    declared_authoritative = base_ref is not None and base_sha is not None
+    declared_authoritative = (
+        base_ref is not None and base_sha is not None and head_sha is not None
+    )
     committed_paths = (
         {
             path
-            for path in _collect_declared_committed_paths(project_dir, base_sha)
+            for path in _collect_declared_committed_paths(project_dir, base_sha, head_sha)
             if not _is_runtime_artifact_path(path)
         }
         if declared_authoritative
         else set()
     )
-    files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
-        project_dir,
-        claimed_paths=set(files_claimed),
-        # Chain milestones commit their work before review, leaving a clean
-        # working tree; a status-only check would falsely report every committed
-        # file as a phantom claim ("implementation not present in the diff").
-        # Include the committed milestone range so committed work counts.
-        include_committed=True,
-        committed_base_ref=base_sha if declared_authoritative else None,
+    historical_window = bool(
+        declared_authoritative and head_ref and head_sha != active_head_sha
     )
+    if historical_window:
+        # Historical receipts bind the immutable base..landed-head range. The
+        # caller's later checkout and working tree are not evidence for it.
+        files_in_diff_set, status_error = set(committed_paths), None
+    else:
+        files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
+            project_dir,
+            claimed_paths=set(files_claimed),
+            # Chain milestones commit their work before review, leaving a clean
+            # working tree; a status-only check would falsely report every committed
+            # file as a phantom claim ("implementation not present in the diff").
+            # Include the committed milestone range so committed work counts.
+            include_committed=True,
+            committed_base_ref=base_sha if declared_authoritative else None,
+            committed_head_ref=head_sha if declared_authoritative else None,
+        )
     if status_error is not None:
         return {
             "findings": findings,
@@ -501,7 +526,7 @@ def _validate_execution_evidence_code(
             "files_claimed": files_claimed,
             "skipped": True,
             "reason": status_error,
-            "evidence_window": _evidence_window(project_dir, base_ref),
+            "evidence_window": _evidence_window(project_dir, base_ref, head_ref),
         }
 
     files_in_diff = sorted(
@@ -627,5 +652,5 @@ def _validate_execution_evidence_code(
         "files_claimed": files_claimed,
         "skipped": False,
         "reason": "",
-        "evidence_window": _evidence_window(project_dir, base_ref),
+        "evidence_window": _evidence_window(project_dir, base_ref, head_ref),
     }
