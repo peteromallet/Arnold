@@ -19,7 +19,7 @@ chain:
   spec: /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml
 
 megaplan:
-  ref: PIN_AFTER_CONTENT_COMMIT
+  ref: 1c7f4c5b4a306b43297a57498f485be043edcc6d
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
   src_path: /workspace/arnold-custody-delivery-20260714
