@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 
@@ -61,6 +63,111 @@ def _atomic_write(path: pathlib.Path, payload: dict[str, object]) -> None:
             pass
 
 
+def _binding_gap(
+    *,
+    session: str,
+    marker_path: pathlib.Path,
+    marker: dict[str, object],
+    chain_paths: list[pathlib.Path],
+) -> dict[str, object] | None:
+    """Detect immutable spec/binding disagreement without importing Megaplan."""
+
+    if not chain_paths:
+        return None
+    states = [(path, _load(path)) for path in chain_paths]
+    bound_states: list[tuple[pathlib.Path, dict[str, object], dict[str, object]]] = []
+    for path, state in states:
+        metadata = state.get("metadata") if isinstance(state.get("metadata"), dict) else {}
+        binding = (
+            metadata.get("execution_binding")
+            if isinstance(metadata.get("execution_binding"), dict)
+            else {}
+        )
+        identity = (
+            binding.get("launched_identity")
+            if isinstance(binding.get("launched_identity"), dict)
+            else {}
+        )
+        if identity:
+            bound_states.append((path, state, identity))
+
+    remote_spec = pathlib.Path(str(marker.get("remote_spec") or ""))
+    if len(bound_states) > 1:
+        identities = {
+            str(identity.get("bundle_sha256") or "")
+            for _, _, identity in bound_states
+        }
+        if len(identities) > 1:
+            return {
+                "chain_state_paths": [str(path) for path, _, _ in bound_states],
+                "marker_path": str(marker_path),
+                "reason": "chain_execution_binding_ambiguous",
+                "remote_spec": str(remote_spec),
+                "session": session,
+                "unhealthy": True,
+            }
+    if bound_states:
+        state_path, _, identity = max(
+            bound_states,
+            key=lambda item: item[0].stat().st_mtime if item[0].exists() else 0,
+        )
+        expected_spec_sha256 = str(identity.get("chain_spec_sha256") or "")
+        active_spec_sha256 = (
+            hashlib.sha256(remote_spec.read_bytes()).hexdigest()
+            if remote_spec.is_file()
+            else ""
+        )
+        if not expected_spec_sha256 or expected_spec_sha256 != active_spec_sha256:
+            sequence = (
+                identity.get("milestone_sequence")
+                if isinstance(identity.get("milestone_sequence"), list)
+                else []
+            )
+            return {
+                "active_chain_spec_sha256": active_spec_sha256,
+                "chain_state_path": str(state_path),
+                "expected_bundle_sha256": str(identity.get("bundle_sha256") or ""),
+                "expected_chain_spec_sha256": expected_spec_sha256,
+                "expected_milestone_count": len(sequence),
+                "marker_path": str(marker_path),
+                "reason": "chain_execution_binding_drift",
+                "remote_spec": str(remote_spec),
+                "session": session,
+                "unhealthy": True,
+            }
+        return None
+
+    progressed = False
+    for _, state in states:
+        try:
+            current_index = int(state.get("current_milestone_index", -1))
+        except (TypeError, ValueError):
+            current_index = -1
+        progressed = progressed or bool(
+            state.get("current_plan_name")
+            or state.get("completed")
+            or state.get("last_state") is not None
+            or current_index >= 0
+        )
+    try:
+        spec_text = remote_spec.read_text(encoding="utf-8")
+    except OSError:
+        spec_text = ""
+    binding_required = bool(
+        re.search(r"(?m)^\s*execution_binding\s*:\s*['\"]?required['\"]?\s*(?:#.*)?$", spec_text)
+    )
+    if progressed and binding_required:
+        return {
+            "chain_state_paths": [str(path) for path, _ in states],
+            "marker_path": str(marker_path),
+            "reason": "chain_execution_binding_missing",
+            "remote_spec": str(remote_spec),
+            "session": session,
+            "unhealthy": True,
+        }
+    return None
+
+
 def scan(marker_dir: pathlib.Path, session_filter: str = "") -> dict[str, object]:
     findings: list[dict[str, object]] = []
     checked = 0
@@ -86,6 +193,15 @@ def scan(marker_dir: pathlib.Path, session_filter: str = "") -> dict[str, object
             _dispatch_has_custody(marker_dir / f"{session}.{kind}-dispatch")
             for kind in ("kimi", "meta")
         )
+        binding_gap = _binding_gap(
+            session=session,
+            marker_path=marker_path,
+            marker=marker,
+            chain_paths=chain_paths,
+        )
+        if binding_gap is not None:
+            findings.append(binding_gap)
+            continue
         if live or chain_paths or repair_present:
             continue
         outcome = marker.get("launch_outcome") if isinstance(marker.get("launch_outcome"), dict) else {}
