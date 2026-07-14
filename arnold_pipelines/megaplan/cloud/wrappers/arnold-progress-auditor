@@ -647,6 +647,66 @@ from arnold_pipelines.megaplan.cloud.current_target import resolve_current_targe
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 try:
+    from arnold_pipelines.megaplan.cloud.repair_recurrence import (
+        classify_fixer_infrastructure_failure,
+    )
+except ImportError:
+    # Partial source overlays used for evidence collection may predate the
+    # central classifier. Preserve the fail-closed causal distinction until
+    # the overlay is reconciled instead of dropping the launch failure.
+    def classify_fixer_infrastructure_failure(attempt):
+        item = attempt if isinstance(attempt, dict) else {}
+        for phase, prefix in (("dev", "dev"), ("kimi", "kimi")):
+            evidence = item.get(f"{prefix}_launch_evidence")
+            evidence = evidence if isinstance(evidence, dict) else {}
+            raw_rc = evidence.get("returncode", item.get(f"{prefix}_turn_rc"))
+            try:
+                returncode = int(raw_rc)
+            except (TypeError, ValueError):
+                returncode = None
+            run_id = str(
+                evidence.get("managed_run_id")
+                or item.get(
+                    "managed_agent_run_id"
+                    if phase == "dev"
+                    else "kimi_managed_agent_run_id"
+                )
+                or ""
+            ).strip()
+            kind = str(evidence.get("kind") or "").strip()
+            error_class = str(evidence.get("error_class") or "").strip()
+            stderr_tail = str(evidence.get("stderr_tail") or "").strip()
+            haystack = " ".join((kind, error_class, stderr_tail)).lower()
+            contract_signal = any(
+                token in haystack
+                for token in (
+                    "launch_contract",
+                    "managedagentnooutput",
+                    "machine launch provenance",
+                    "required arguments",
+                    "unrecognized arguments",
+                    "invalid choice",
+                )
+            )
+            if not (contract_signal or (returncode in {2, 64} and not run_id)):
+                continue
+            try:
+                attempt_id = int(item.get("attempt_id"))
+            except (TypeError, ValueError):
+                attempt_id = None
+            return {
+                "detected": True,
+                "phase": phase,
+                "kind": kind or "managed_launch_contract_failure",
+                "returncode": returncode,
+                "managed_run_id": run_id,
+                "error_class": error_class,
+                "stderr_tail": stderr_tail[-1200:],
+                "attempt_id": attempt_id,
+                "classifier_source": "auditor_overlay_fallback",
+            }
+        return {"detected": False, "classifier_source": "auditor_overlay_fallback"}
+try:
     from arnold_pipelines.megaplan.managed_agent import (
         is_managed_manifest,
         normalize_machine_origin_provenance,
@@ -1803,6 +1863,20 @@ def _repair_data_summary(session):
     iterations = payload.get("iterations") if isinstance(payload, dict) else []
     if not isinstance(iterations, list):
         iterations = []
+    fixer_infrastructure_failures = [
+        classify_fixer_infrastructure_failure(item)
+        for item in attempts[-8:]
+        if isinstance(item, dict)
+    ]
+    fixer_infrastructure_failures = [
+        item for item in fixer_infrastructure_failures if item.get("detected")
+    ]
+    latest_attempt = attempts[-1] if attempts and isinstance(attempts[-1], dict) else {}
+    latest_fixer_infrastructure_failure = classify_fixer_infrastructure_failure(
+        latest_attempt
+    )
+    if not latest_fixer_infrastructure_failure.get("detected"):
+        latest_fixer_infrastructure_failure = {}
     summarized_iterations = []
     failure_signatures = {}
     for item in iterations[-8:]:
@@ -1869,6 +1943,8 @@ def _repair_data_summary(session):
         "managed_agent_run_id": payload.get("managed_agent_run_id") if isinstance(payload, dict) else "",
         "managed_agent_manifest_path": payload.get("managed_agent_manifest_path") if isinstance(payload, dict) else "",
         "managed_agent_runs": payload.get("managed_agent_runs") if isinstance(payload, dict) and isinstance(payload.get("managed_agent_runs"), list) else [],
+        "fixer_infrastructure_failures": fixer_infrastructure_failures,
+        "latest_fixer_infrastructure_failure": latest_fixer_infrastructure_failure,
         "iteration_count": len(iterations),
         "iterations": summarized_iterations,
         "repeated_failure_signatures": repeated[:6],
@@ -3342,6 +3418,11 @@ def _superfixer_cycle_evidence(ev):
     accepted_unclaimed = accepted_unclaimed if isinstance(accepted_unclaimed, list) else []
     retry_budget = custody.get("retry_budget") if isinstance(custody.get("retry_budget"), dict) else {}
     repair_outcome = str(repair.get("outcome") or "").strip().lower()
+    fixer_infrastructure_failure = (
+        repair.get("latest_fixer_infrastructure_failure")
+        if isinstance(repair.get("latest_fixer_infrastructure_failure"), dict)
+        else {}
+    )
     repair_age = repair.get("mtime_age_min")
     stale_l1 = (
         repair_outcome in {"repair_timeout", "repair_exhausted"}
@@ -3356,7 +3437,9 @@ def _superfixer_cycle_evidence(ev):
         custody.get("malformed_decision_count") or 0
     )
     unknown_evidence = bool(custody.get("projection_error") or malformed_count)
-    l1_failed = bool(accepted_unclaimed or stale_l1)
+    l1_failed = bool(
+        accepted_unclaimed or stale_l1 or fixer_infrastructure_failure.get("detected")
+    )
 
     active = ev.get("active_step_liveness") if isinstance(ev, dict) else {}
     active = active if isinstance(active, dict) else {}
@@ -3416,6 +3499,12 @@ def _superfixer_cycle_evidence(ev):
         "retry_budget": retry_budget,
         "repair_outcome": repair_outcome,
         "repair_age_min": repair_age,
+        "fixer_infrastructure_failure": fixer_infrastructure_failure,
+        "failure_domain": (
+            "fixer_infrastructure"
+            if fixer_infrastructure_failure.get("detected")
+            else "chain_or_custody"
+        ),
         "runner_dead": runner_dead,
         "dead_active_step": dead_active_step,
         "tmux_live_status": tmux_process.get("live_status"),
@@ -3447,6 +3536,15 @@ def _stale_l1_l2_cycle_reason(ev):
         )
     if not evidence.get("actionable"):
         return ""
+    infrastructure = evidence.get("fixer_infrastructure_failure")
+    if isinstance(infrastructure, dict) and infrastructure.get("detected"):
+        return (
+            "stale_l1_l2_cycle: fixer infrastructure failed before target repair; "
+            f"kind={infrastructure.get('kind')} phase={infrastructure.get('phase')} "
+            f"returncode={infrastructure.get('returncode')} "
+            f"managed_run_id={infrastructure.get('managed_run_id') or 'missing'}; "
+            "the unchanged chain blocker is context, not the deterministic-breaker cause"
+        )
     return (
         "stale_l1_l2_cycle: incomplete chain has a stopped/dead runner and "
         "accepted-unclaimed, exhausted, stale, or malformed L1 custody with no current L2 evidence; "

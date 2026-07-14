@@ -4318,7 +4318,7 @@ repair_data_record_dev() {
   local turn_rc="$7"
   local before_sha="$8"
   local after_sha="$9"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" "$repair_workdir" "$LOG" <<'PY'
 import json
 import os
 import pathlib
@@ -4337,6 +4337,8 @@ from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repa
     turn_rc,
     before_sha,
     after_sha,
+    project_dir_raw,
+    repair_log_raw,
 ) = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
@@ -4382,6 +4384,42 @@ entry["dev_report"] = report
 managed_agent_run_id = str(
     os.environ.get("CURRENT_MANAGED_REPAIR_WORKER_RUN_ID") or ""
 )
+manifest = {}
+manifest_path = (
+    pathlib.Path(project_dir_raw)
+    / ".megaplan"
+    / "plans"
+    / "resident-subagents"
+    / managed_agent_run_id
+    / "manifest.json"
+    if managed_agent_run_id
+    else None
+)
+if manifest_path is not None and manifest_path.exists():
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        manifest = {}
+log_path = pathlib.Path(str(manifest.get("log_path") or repair_log_raw))
+try:
+    stderr_tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-40:])
+except Exception:
+    stderr_tail = ""
+dev_launch_evidence = {
+    "kind": (
+        "managed_launch_contract_failure"
+        if int(turn_rc) in {2, 64} and not managed_agent_run_id
+        else "managed_worker_failure" if int(turn_rc) else "managed_worker_completed"
+    ),
+    "returncode": int(turn_rc),
+    "managed_run_id": managed_agent_run_id,
+    "manifest_path": str(manifest_path or ""),
+    "status": str(manifest.get("status") or ""),
+    "error_class": str(manifest.get("error_class") or ""),
+    "error": str(manifest.get("error") or ""),
+    "stderr_tail": stderr_tail[-4000:],
+}
+entry["dev_launch_evidence"] = dev_launch_evidence
 if managed_agent_run_id:
     entry["managed_agent_run_id"] = managed_agent_run_id
 entry["structural_pattern"] = report.get("structural_pattern") or ""
@@ -4441,6 +4479,7 @@ attempt["dev_hypothesis"] = entry["dev_hypothesis"]
 attempt["dev_summary"] = entry["dev_summary"]
 attempt["dev_validation"] = entry["dev_validation"]
 attempt["dev_report"] = report
+attempt["dev_launch_evidence"] = dev_launch_evidence
 if managed_agent_run_id:
     attempt["managed_agent_run_id"] = managed_agent_run_id
 attempt["structural_pattern"] = entry["structural_pattern"]
@@ -4628,7 +4667,7 @@ repair_data_record_kimi() {
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   failure_context_file="$(mktemp)"
   printf '%s' "$failure_context" > "$failure_context_file"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context_file" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context_file" "$ARNOLD_SRC" "$LOG" <<'PY'
 import json
 import os
 import pathlib
@@ -4636,7 +4675,7 @@ import sys
 
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
-path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context_path = sys.argv[1:]
+path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context_path, project_dir_raw, repair_log_raw = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
 payload = load_json(pathlib.Path(path), default={})
@@ -4692,6 +4731,42 @@ entry["kimi_report"] = report
 managed_agent_run_id = str(
     os.environ.get("CURRENT_MANAGED_REPAIR_WORKER_RUN_ID") or ""
 )
+manifest = {}
+manifest_path = (
+    pathlib.Path(project_dir_raw)
+    / ".megaplan"
+    / "plans"
+    / "resident-subagents"
+    / managed_agent_run_id
+    / "manifest.json"
+    if managed_agent_run_id
+    else None
+)
+if manifest_path is not None and manifest_path.exists():
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        manifest = {}
+log_path = pathlib.Path(str(manifest.get("log_path") or repair_log_raw))
+try:
+    stderr_tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-40:])
+except Exception:
+    stderr_tail = ""
+kimi_launch_evidence = {
+    "kind": (
+        "managed_launch_contract_failure"
+        if int(turn_rc) in {2, 64} and not managed_agent_run_id
+        else "managed_worker_failure" if int(turn_rc) else "managed_worker_completed"
+    ),
+    "returncode": int(turn_rc),
+    "managed_run_id": managed_agent_run_id,
+    "manifest_path": str(manifest_path or ""),
+    "status": str(manifest.get("status") or ""),
+    "error_class": str(manifest.get("error_class") or ""),
+    "error": str(manifest.get("error") or ""),
+    "stderr_tail": stderr_tail[-4000:],
+}
+entry["kimi_launch_evidence"] = kimi_launch_evidence
 if managed_agent_run_id:
     entry["managed_agent_run_id"] = managed_agent_run_id
 attempts = payload.setdefault("attempts", [])
@@ -4706,6 +4781,7 @@ for item in attempts:
     item["post_kimi_failure_context"] = failure_context_payload
     item["resolver_output"] = failure_context_payload.get("resolver_output", {})
     item["kimi_report"] = report
+    item["kimi_launch_evidence"] = kimi_launch_evidence
     if managed_agent_run_id:
         item["kimi_managed_agent_run_id"] = managed_agent_run_id
     break
@@ -4715,6 +4791,38 @@ PY
   rc=$?
   rm -f "$failure_context_file"
   return "$rc"
+}
+
+repair_current_attempt_has_fixer_infrastructure_failure() {
+  require_repair_lock_held
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$CURRENT_ATTEMPT_ID" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json
+from arnold_pipelines.megaplan.cloud.repair_recurrence import (
+    classify_fixer_infrastructure_failure,
+)
+
+payload = load_json(pathlib.Path(sys.argv[1]), default={})
+attempt_id = int(sys.argv[2])
+attempt = next(
+    (
+        item
+        for item in payload.get("attempts", [])
+        if isinstance(item, dict) and int(item.get("attempt_id") or 0) == attempt_id
+    ),
+    {},
+)
+evidence = classify_fixer_infrastructure_failure(attempt)
+if evidence.get("detected"):
+    print(
+        f"{evidence.get('kind')}:{evidence.get('phase')}:"
+        f"rc={evidence.get('returncode')}"
+    )
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
 }
 
 repair_data_set_outcome() {
@@ -6861,6 +6969,12 @@ for iteration in 1 2 3; do
     break
   fi
   run_dev_fix_turn "$iteration" "$CURRENT_ATTEMPT_ID" "${CURRENT_RECURRING:-0}" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
+  if infrastructure_failure="$(repair_current_attempt_has_fixer_infrastructure_failure 2>/dev/null)"; then
+    repair_data_set_outcome "fixer_infrastructure_failure"
+    FIXER_INFRASTRUCTURE_FAILURE="$infrastructure_failure"
+    log "fixer infrastructure failure detected before chain retry iteration=$iteration evidence=$infrastructure_failure"
+    break
+  fi
   exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
   recover_blocked_after_dev_fix_if_possible "$iteration" "$CURRENT_ATTEMPT_ID" || true
 
@@ -6898,6 +7012,15 @@ if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
     write_needs_human_marker "$discord_status" "deterministic_failure - breaker tripped before another iteration (same unresolved signature)"
   fi
   log "deterministic-failure breaker session=$SESSION discord=$discord_status data=$DATA_FILE"
+  exit 1
+fi
+
+if [[ -n "${FIXER_INFRASTRUCTURE_FAILURE:-}" ]]; then
+  discord_status="$(send_discord_escalation)"
+  if [[ "$discord_status" == "delivered" ]]; then
+    write_needs_human_marker "$discord_status" "fixer_infrastructure_failure - route to L2 without charging the chain blocker breaker"
+  fi
+  log "fixer infrastructure failure routed to backstop session=$SESSION evidence=$FIXER_INFRASTRUCTURE_FAILURE discord=$discord_status data=$DATA_FILE"
   exit 1
 fi
 

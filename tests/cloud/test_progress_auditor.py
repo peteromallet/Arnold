@@ -174,6 +174,34 @@ def test_superfixer_cycle_fails_closed_on_unknown_custody_evidence() -> None:
     assert projected["unknown_evidence"] is True
 
 
+def test_superfixer_cycle_retroactively_preserves_launch_contract_cause() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["repair_custody_summary"]["accepted_unclaimed_request_ids"] = []
+    evidence["repair_data_summary"] = {
+        "exists": True,
+        "outcome": "fixer_infrastructure_failure",
+        "mtime_age_min": 90,
+        "latest_fixer_infrastructure_failure": {
+            "detected": True,
+            "kind": "managed_launch_contract_failure",
+            "phase": "dev",
+            "returncode": 2,
+            "managed_run_id": "",
+            "stderr_tail": "error: the following arguments are required: --trigger-type",
+        },
+    }
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle: fixer infrastructure failed")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["actionable"] is True
+    assert projected["failure_domain"] == "fixer_infrastructure"
+    assert projected["fixer_infrastructure_failure"]["returncode"] == 2
+    assert "unchanged chain blocker is context" in reason
+
+
 def test_marker_launch_failure_without_chain_state_reason() -> None:
     namespace = _load_superfixer_cycle_functions()
     evidence = {

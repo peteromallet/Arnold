@@ -320,6 +320,70 @@ def test_layer3_breaker_trips_on_consecutive_same_signature() -> None:
     assert result["layer3"]["breaker_signature"] == result["problem_signature"]
 
 
+def test_layer3_breaker_excludes_managed_launch_contract_failure() -> None:
+    """Regression for custody attempt 1: argparse rc=2 was not chain recurrence."""
+
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    attempts = [
+        {
+            "attempt_id": 1,
+            "problem_signature": signature,
+            "dev_turn_rc": 2,
+            "dev_fix_sha": "",
+            "dev_report": {},
+            "dev_launch_evidence": {
+                "kind": "managed_launch_contract_failure",
+                "returncode": 2,
+                "managed_run_id": "",
+                "stderr_tail": (
+                    "the following arguments are required: --origin-kind, "
+                    "--origin-id, --origin-component, --trigger-id"
+                ),
+            },
+        }
+    ]
+
+    result = repair_recurrence.evaluate_recurrence(signature, attempts, {})
+
+    assert result["deterministic_failure_breaker"] is False
+    assert result["layer1"]["detected"] is False
+    assert result["layer3"]["excluded_fixer_infrastructure_attempt_ids"] == [1]
+    assert result["breaker_suppressed_for_fixer_infrastructure"] is True
+    assert result["fixer_infrastructure_failures"] == [
+        {
+            "detected": True,
+            "phase": "dev",
+            "kind": "managed_launch_contract_failure",
+            "returncode": 2,
+            "managed_run_id": "",
+            "error_class": "",
+            "stderr_tail": (
+                "the following arguments are required: --origin-kind, "
+                "--origin-id, --origin-component, --trigger-id"
+            ),
+            "attempt_id": 1,
+        }
+    ]
+
+
+def test_layer3_breaker_still_trips_after_real_chain_attempt() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    attempts = [
+        {
+            "attempt_id": 1,
+            "problem_signature": signature,
+            "dev_turn_rc": 0,
+            "dev_fix_sha": "abc123",
+            "dev_report": {"classification": "target_fix"},
+        }
+    ]
+
+    result = repair_recurrence.evaluate_recurrence(signature, attempts, {})
+
+    assert result["deterministic_failure_breaker"] is True
+    assert result["fixer_infrastructure_failures"] == []
+
+
 def test_layer3_breaker_ignores_same_signature_before_advancement_epoch() -> None:
     signature = repair_recurrence.build_problem_signature(_failure_context())
     attempts = [

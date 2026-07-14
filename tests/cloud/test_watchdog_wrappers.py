@@ -1751,7 +1751,7 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
 
     dev_program = _extract_repair_program(
         "repair_data_record_dev",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$requested_model\" \"$dispatch_model\" \"$fallback_reason\" \"$report_path\" \"$turn_rc\" \"$before_sha\" \"$after_sha\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$requested_model\" \"$dispatch_model\" \"$fallback_reason\" \"$report_path\" \"$turn_rc\" \"$before_sha\" \"$after_sha\" \"$repair_workdir\" \"$LOG\" <<'PY'",
     )
     dev_result = _run_embedded_python(
         dev_program,
@@ -1765,6 +1765,8 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
         "17",
         "deadbeef",
         "abc1234",
+        str(tmp_path),
+        str(tmp_path / "repair.log"),
     )
     assert dev_result.returncode == 0, dev_result.stderr
 
@@ -1804,6 +1806,16 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
             "dev_summary": "removed unsupported flag",
             "dev_validation": ["pytest tests/cloud/test_watchdog_wrappers.py"],
             "dev_report": report,
+            "dev_launch_evidence": {
+                "kind": "managed_worker_failure",
+                "returncode": 17,
+                "managed_run_id": "",
+                "manifest_path": "",
+                "status": "",
+                "error_class": "",
+                "error": "",
+                "stderr_tail": "",
+            },
             "structural_pattern": "flag drift",
             "other_instantiations": ["other wrapper"],
             "human_review_recommendation": "audit caller defaults",
@@ -1867,6 +1879,16 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
             "dev_summary": "removed unsupported flag",
             "dev_validation": ["pytest tests/cloud/test_watchdog_wrappers.py"],
             "dev_report": report,
+            "dev_launch_evidence": {
+                "kind": "managed_worker_failure",
+                "returncode": 17,
+                "managed_run_id": "",
+                "manifest_path": "",
+                "status": "",
+                "error_class": "",
+                "error": "",
+                "stderr_tail": "",
+            },
             "structural_pattern": "flag drift",
             "other_instantiations": ["other wrapper"],
             "human_review_recommendation": "audit caller defaults",
@@ -1924,7 +1946,7 @@ def test_repair_data_kimi_and_outcome_writers_preserve_legacy_shapes(tmp_path: P
 
     kimi_program = _extract_repair_program(
         "repair_data_record_kimi",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$status\" \"$report_path\" \"$turn_rc\" \"$failure_context_file\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$status\" \"$report_path\" \"$turn_rc\" \"$failure_context_file\" \"$ARNOLD_SRC\" \"$LOG\" <<'PY'",
     )
     kimi_failure_context_path = data_path.parent / "kimi-failure-context.json"
     kimi_failure_context_path.write_text(json.dumps(failure_context), encoding="utf-8")
@@ -1937,6 +1959,8 @@ def test_repair_data_kimi_and_outcome_writers_preserve_legacy_shapes(tmp_path: P
         str(report_path),
         "23",
         str(kimi_failure_context_path),
+        str(tmp_path),
+        str(tmp_path / "repair.log"),
     )
     assert kimi_result.returncode == 0, kimi_result.stderr
 
@@ -1978,6 +2002,16 @@ def test_repair_data_kimi_and_outcome_writers_preserve_legacy_shapes(tmp_path: P
             "execute_attempt_context": {"execution_batch": {"blocked_or_deferred_tasks": []}},
             "resolver_output": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
             "kimi_report": report,
+            "kimi_launch_evidence": {
+                "kind": "managed_worker_failure",
+                "returncode": 23,
+                "managed_run_id": "",
+                "manifest_path": "",
+                "status": "",
+                "error_class": "",
+                "error": "",
+                "stderr_tail": "",
+            },
         }
     ]
     assert payload["attempts"] == [
@@ -1993,6 +2027,16 @@ def test_repair_data_kimi_and_outcome_writers_preserve_legacy_shapes(tmp_path: P
             "resolver_output": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
             "post_kimi_failure_context": failure_context,
             "kimi_report": report,
+            "kimi_launch_evidence": {
+                "kind": "managed_worker_failure",
+                "returncode": 23,
+                "managed_run_id": "",
+                "manifest_path": "",
+                "status": "",
+                "error_class": "",
+                "error": "",
+                "stderr_tail": "",
+            },
         }
     ]
 
@@ -13185,6 +13229,19 @@ def test_repair_loop_managed_workers_have_machine_provenance() -> None:
     assert text.count("--origin-component arnold-repair-loop") == 2
     assert '--trigger-id "$attempt_id:$iteration:dev"' in text
     assert '--trigger-id "$CURRENT_ATTEMPT_ID:$iteration:kimi"' in text
+    assert text.count("--require-output") >= 2
+    assert text.count('--stdin-file "$prompt_path"') == 2
+    assert text.count("--query_file=@managed-stdin@") == 2
+
+
+def test_repair_loop_routes_launch_contract_failure_above_chain_breaker() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    classify_at = text.index("repair_current_attempt_has_fixer_infrastructure_failure")
+    breaker_at = text.index('repair_data_set_outcome "deterministic_failure"')
+    assert classify_at < breaker_at
+    assert 'repair_data_set_outcome "fixer_infrastructure_failure"' in text
+    assert "route to L2 without charging the chain blocker breaker" in text
 
 
 def test_meta_repair_wrapper_has_deepseek_hermes_subagent_instructions() -> None:

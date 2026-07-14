@@ -704,6 +704,65 @@ def _attempt_is_after_epoch(
     return when > epoch
 
 
+def classify_fixer_infrastructure_failure(
+    attempt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Classify a repair-worker launch failure separately from its target blocker.
+
+    The chain problem signature intentionally describes the target plan.  It
+    therefore cannot, by itself, distinguish an unchanged target blocker from
+    an L1 child that never crossed the managed-agent launch boundary.  Keep
+    that causal axis explicit so the deterministic breaker does not charge a
+    parser/provenance/stdio contract failure to the chain's retry budget.
+    """
+
+    item = _as_dict(attempt)
+    for phase, prefix in (("dev", "dev"), ("kimi", "kimi")):
+        evidence = _as_dict(item.get(f"{prefix}_launch_evidence"))
+        returncode = _as_int(
+            evidence.get("returncode")
+            if evidence.get("returncode") not in (None, "")
+            else item.get(f"{prefix}_turn_rc")
+        )
+        run_id = _as_text(
+            evidence.get("managed_run_id")
+            or item.get(
+                "managed_agent_run_id"
+                if phase == "dev"
+                else "kimi_managed_agent_run_id"
+            )
+        )
+        error_class = _as_text(evidence.get("error_class"))
+        kind = _as_text(evidence.get("kind"))
+        stderr_tail = _as_text(evidence.get("stderr_tail"))
+        contract_text = " ".join((kind, error_class, stderr_tail)).lower()
+        contract_signal = any(
+            token in contract_text
+            for token in (
+                "launch_contract",
+                "managedagentnooutput",
+                "machine launch provenance",
+                "required arguments",
+                "unrecognized arguments",
+                "invalid choice",
+            )
+        )
+        missing_managed_launch = returncode in {2, 64} and not run_id
+        if not (contract_signal or missing_managed_launch):
+            continue
+        return {
+            "detected": True,
+            "phase": phase,
+            "kind": kind or "managed_launch_contract_failure",
+            "returncode": returncode,
+            "managed_run_id": run_id,
+            "error_class": error_class,
+            "stderr_tail": stderr_tail[-1200:],
+            "attempt_id": _as_int(item.get("attempt_id")),
+        }
+    return {"detected": False}
+
+
 def evaluate_recurrence(
     current_signature: Mapping[str, Any],
     attempts: list[Mapping[str, Any]] | None,
@@ -722,8 +781,24 @@ def evaluate_recurrence(
         if isinstance(attempt, Mapping)
         and _attempt_is_after_epoch(attempt, advancement_epoch)
     ]
+    infrastructure_failures = [
+        classify_fixer_infrastructure_failure(attempt) for attempt in prior_attempts
+    ]
+    infrastructure_failures = [
+        failure for failure in infrastructure_failures if failure.get("detected")
+    ]
+    infrastructure_attempt_ids = {
+        int(failure["attempt_id"])
+        for failure in infrastructure_failures
+        if failure.get("attempt_id") is not None
+    }
+    chain_attempts = [
+        attempt
+        for attempt in prior_attempts
+        if (_as_int(attempt.get("attempt_id")) not in infrastructure_attempt_ids)
+    ]
     matching_attempt_ids: list[int] = []
-    for attempt in prior_attempts:
+    for attempt in chain_attempts:
         prior_signature = _as_dict(attempt.get("problem_signature"))
         if signature_tuple(prior_signature) != current_key:
             continue
@@ -743,7 +818,7 @@ def evaluate_recurrence(
     # on a non-empty signature so the breaker never trips on bootstrap/garbage.
     prior_by_id = sorted(
         (
-            attempt for attempt in prior_attempts if _as_int(attempt.get("attempt_id")) is not None
+            attempt for attempt in chain_attempts if _as_int(attempt.get("attempt_id")) is not None
         ),
         key=lambda a: _as_int(a["attempt_id"]),  # type: ignore[index]
     )
@@ -778,6 +853,10 @@ def evaluate_recurrence(
     return {
         "detected": layer1_detected or layer2_detected,
         "deterministic_failure_breaker": layer3_detected,
+        "fixer_infrastructure_failures": infrastructure_failures,
+        "breaker_suppressed_for_fixer_infrastructure": bool(
+            infrastructure_failures and not layer3_detected
+        ),
         "attempt_number": attempt_number,
         "problem_signature": normalized_signature,
         "layer1": {
@@ -803,5 +882,8 @@ def evaluate_recurrence(
                 ],
             },
             "breaker_signature": normalized_signature if layer3_detected else {},
+            "excluded_fixer_infrastructure_attempt_ids": sorted(
+                infrastructure_attempt_ids
+            ),
         },
     }

@@ -389,6 +389,55 @@ def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspa
     assert not (workspace / ".megaplan" / "repair-queue").exists()
 
 
+def test_retroactive_auditor_routes_launch_contract_failure_as_fixer_infrastructure(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "target-workspace"
+    workspace.mkdir()
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    infrastructure = {
+        "detected": True,
+        "kind": "managed_launch_contract_failure",
+        "phase": "dev",
+        "returncode": 2,
+        "managed_run_id": "",
+        "stderr_tail": "required: --trigger-type --trigger-reason",
+    }
+    evidence = {
+        "actionable": True,
+        "failure_domain": "fixer_infrastructure",
+        "fixer_infrastructure_failure": infrastructure,
+        "accepted_unclaimed_request_ids": [],
+        "retry_budget": {},
+    }
+
+    result = enqueue_audit_repair_request(
+        {
+            "plan": "m5-run-authority",
+            "session": "custody-control-plane-20260714",
+            "workspace": str(workspace),
+            "session_header": {"kind": "chain"},
+            "deterministic_superfixer_evidence": evidence,
+            "l3_escalation_gate": {
+                "eligible": True,
+                "decision": "true_stall",
+                "escalation_id": "l3-escalation:launch-contract",
+                "evidence_digest": "f" * 64,
+                "route": {"requested_difficulty": 9, "effective_difficulty": 9},
+            },
+            "l3_repair_context_path": "/workspace/audit-reports/escalations/launch/repair-context.json",
+            "l3_repair_context_digest": "c" * 64,
+        },
+        queue_root=queue_root,
+    )
+
+    assert result is not None and result["status"] == "queued"
+    request = result["request"]
+    assert request["problem_signature"]["failure_kind"] == "fixer_infrastructure_failure"
+    assert request["target"]["deterministic_superfixer_evidence"]["fixer_infrastructure_failure"] == infrastructure
+    assert request["target"]["root_cause_identity"] == "l3-escalation:launch-contract"
+
+
 def test_audit_incident_emits_layer_findings_without_mutating_state() -> None:
     brief = {
         "found": True,

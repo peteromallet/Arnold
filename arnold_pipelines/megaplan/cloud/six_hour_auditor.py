@@ -142,13 +142,29 @@ def enqueue_audit_repair_request(
     # coherent true-stall receipt.
     if not deterministic_actionable:
         return None
+    infrastructure_failure = (
+        deterministic.get("fixer_infrastructure_failure")
+        if isinstance(deterministic.get("fixer_infrastructure_failure"), dict)
+        else {}
+    )
     primary = {
-        "code": "stale_l1_l2_cycle",
+        "code": (
+            "fixer_infrastructure_failure"
+            if infrastructure_failure.get("detected")
+            else "stale_l1_l2_cycle"
+        ),
         "layer": "superfixer_custody",
         "recommendation": "deep_superfixer_repair",
         "message": (
-            "Accepted-unclaimed/exhausted L1 custody, a dead runner, an incomplete "
-            "chain, and absent or stale L2 evidence require control-plane repair."
+            (
+                "Managed L1 child launch failed its provenance/stdio/output contract; "
+                "repair the fixer before retrying the unchanged target blocker."
+            )
+            if infrastructure_failure.get("detected")
+            else (
+                "Accepted-unclaimed/exhausted L1 custody, a dead runner, an incomplete "
+                "chain, and absent or stale L2 evidence require control-plane repair."
+            )
         ),
     }
     session = str(audit_item.get("session") or "").strip()

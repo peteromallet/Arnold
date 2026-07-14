@@ -13,6 +13,7 @@ import re
 import pytest
 
 from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan import managed_agent as managed_agent_module
 from arnold_pipelines.megaplan.incident.projection import rebuild_projections
 from arnold_pipelines.megaplan.managed_agent import (
     MANAGED_AGENT_CUSTODIAN,
@@ -603,3 +604,43 @@ def test_real_dispatch_seams_use_shared_supervisor() -> None:
             assert "arnold_pipelines.megaplan.managed_agent run" in local_launch_block, (
                 f"direct ad-hoc Codex launch escaped the managed seam in {name}:{index + 1}"
             )
+
+
+def test_every_shell_managed_launch_tracks_current_required_cli_contract() -> None:
+    """New required CLI fields must fail tests at every shell call site."""
+
+    root = Path(__file__).resolve().parents[1]
+    wrappers = root / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+    parser = managed_agent_module._build_parser()
+    subparsers = next(
+        action for action in parser._actions if isinstance(action, __import__("argparse")._SubParsersAction)
+    )
+    run_parser = subparsers.choices["run"]
+    required_flags = {
+        flag
+        for action in run_parser._actions
+        if action.required
+        for flag in action.option_strings
+        if flag.startswith("--")
+    }
+    assert required_flags >= {
+        "--origin-kind",
+        "--origin-id",
+        "--origin-component",
+        "--trigger-id",
+    }
+
+    inventoried = 0
+    for path in sorted(wrappers.iterdir()):
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            if "arnold_pipelines.megaplan.managed_agent run" not in line:
+                continue
+            inventoried += 1
+            block = "\n".join(lines[index : index + 55])
+            missing = sorted(flag for flag in required_flags if flag not in block)
+            assert not missing, f"{path.name}:{index + 1} missing required managed CLI flags {missing}"
+
+    assert inventoried >= 8
