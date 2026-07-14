@@ -1,6 +1,24 @@
 {
   "integrity": [
     {
+      "actual": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
+      "code": "index_divergence",
+      "expected": "sha256:db6b83f5dc37fee2e81c15a00fb2ca38b98133a8f1e85dceb3b1b53ca4eb063a",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343' != 'sha256:db6b83f5dc37fee2e81c15a00fb2ca38b98133a8f1e85dceb3b1b53ca4eb063a'",
+      "projection": "incidents",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
+      "actual": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
+      "code": "index_divergence",
+      "expected": "sha256:db6b83f5dc37fee2e81c15a00fb2ca38b98133a8f1e85dceb3b1b53ca4eb063a",
+      "message": "problems projection source metadata diverged for digest: 'sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343' != 'sha256:db6b83f5dc37fee2e81c15a00fb2ca38b98133a8f1e85dceb3b1b53ca4eb063a'",
+      "projection": "problems",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -98,16 +116,16 @@
       "first_seen_seq": 202,
       "first_seen_ts": "2026-07-07T01:45:04.474384+00:00",
       "fix_commits": [],
-      "last_seen_seq": 362,
-      "last_seen_ts": "2026-07-14T05:14:01.379484+00:00",
+      "last_seen_seq": 364,
+      "last_seen_ts": "2026-07-14T07:53:13.236834+00:00",
       "linked_incident_ids": [
         "inc-repository-strategy-roadmap",
         "inc-superfixer-alive-but-failed-recovery"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome partial liveness kind chain workspace transient path",
-      "occurrence_count": 7,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 9,
+      "owner_actor": "six_hour_auditor",
       "problem_id": "problem-72f87afd3954",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -196,10 +214,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
-    "event_count": 362,
-    "journal_line_count": 362,
-    "last_seq": 362,
+    "digest": "sha256:db6b83f5dc37fee2e81c15a00fb2ca38b98133a8f1e85dceb3b1b53ca4eb063a",
+    "event_count": 364,
+    "journal_line_count": 364,
+    "last_seq": 364,
     "malformed_line_count": 0
   }
 }

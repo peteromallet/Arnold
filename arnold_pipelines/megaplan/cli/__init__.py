@@ -465,6 +465,14 @@ def build_parser() -> argparse.ArgumentParser:
     strategy_move.add_argument("type", choices=["ticket", "epic"])
     strategy_move.add_argument("ref")
     strategy_move.add_argument("--to", required=True, choices=["Now", "Next", "Later"], dest="horizon")
+    strategy_doctor = strategy_sub.add_parser("doctor")
+    strategy_doctor.add_argument("--json", action="store_true")
+    strategy_migrate = strategy_sub.add_parser("migrate")
+    strategy_migrate.add_argument(
+        "--apply",
+        action="store_true",
+        help="Perform supported reversible rewrites (default: dry-run).",
+    )
 
     # `status` is defined above with its dedicated flags; only add the
     # lightweight observability siblings here.
