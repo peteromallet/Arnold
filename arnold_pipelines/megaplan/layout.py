@@ -87,25 +87,26 @@ def strategy_file_path(
     if initiative_slug is not None:
         return base / slugify_initiative(initiative_slug) / STRATEGY_FILENAME
 
-    if base.is_dir():
-        adopted = sorted(
+    legacy = root / LEGACY_STRATEGY_PATH
+    adopted = (
+        sorted(
             path / STRATEGY_FILENAME
             for path in base.iterdir()
             if path.is_dir() and (path / STRATEGY_FILENAME).is_file()
         )
-        if len(adopted) == 1:
-            return adopted[0]
-        if len(adopted) > 1:
-            exact = base / DEFAULT_STRATEGY_INITIATIVE_SLUG / STRATEGY_FILENAME
-            if exact in adopted:
-                return exact
-            raise ValueError(
-                "multiple initiative strategy documents found; keep one "
-                "canonical repository strategy or specify an initiative"
-            )
-
-    legacy = root / LEGACY_STRATEGY_PATH
-    if legacy.is_file():
+        if base.is_dir()
+        else []
+    )
+    authorities = [*adopted, *([legacy] if legacy.is_file() else [])]
+    if len(authorities) > 1:
+        paths = ", ".join(str(path.relative_to(root)) for path in authorities)
+        raise ValueError(
+            "multiple strategy documents found; keep one canonical repository "
+            f"strategy or specify an initiative for initialization: {paths}"
+        )
+    if adopted:
+        return adopted[0]
+    if authorities:
         return legacy
 
     matching = _matching_strategy_initiative(root)
