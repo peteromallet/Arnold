@@ -1714,6 +1714,10 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
                 check.pop("guidance", None)
                 check.pop("prior_findings", None)
 
+    # Fill in missing required fields with safe defaults before validation.
+    # Models often omit empty arrays/strings that megaplan requires.
+    _fill_schema_defaults(payload, schema)
+
     # Normalize field aliases in nested arrays (e.g. critique flags use
     # "summary" instead of "concern", "detail" instead of "evidence").
     _normalize_nested_aliases(payload, schema)
@@ -2417,6 +2421,8 @@ def run_hermes_step(
                 reconstructed: dict | None = None
                 if step == "execute":
                     reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
+                elif step == "gate":
+                    reconstructed = _reconstruct_gate_payload(plan_dir, current_payload)
                 if reconstructed is not None:
                     try:
                         capture_outcome = capture_step_output(
@@ -2906,6 +2912,84 @@ def _reconstruct_execute_payload(
         "task_updates": task_updates,
         "sense_check_acknowledgments": sense_check_acknowledgments,
     }
+
+
+def _reconstruct_gate_payload(plan_dir: Path, current_payload: dict) -> dict | None:
+    """Reconstruct a valid gate payload when the model leaves the scratch file empty.
+
+    The Hermes/DeepSeek gate worker occasionally reads the scratch template but
+    never writes the filled JSON back. When that happens the promoted payload has
+    empty required fields and fails structural audit. This helper infers a safe,
+    conservative recommendation from the gate signals already computed by the
+    handler, builds a schema-valid payload, and returns it so the handler's own
+    normalization can refine it further.
+    """
+    import json as _json
+
+    signals_files = sorted(plan_dir.glob("gate_signals_v*.json"), reverse=True)
+    signals: dict = {}
+    for path in signals_files:
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "signals" in data:
+                signals = data
+                break
+        except Exception:
+            continue
+
+    signals_inner = signals.get("signals", {}) if isinstance(signals, dict) else {}
+    preflight = signals.get("preflight_results", {}) if isinstance(signals, dict) else {}
+    preflight_passed = isinstance(preflight, dict) and all(preflight.values())
+    unresolved = signals.get("unresolved_flags", []) if isinstance(signals, dict) else []
+    has_significant = bool(
+        isinstance(unresolved, list)
+        and any(
+            isinstance(f, dict)
+            and f.get("severity") in ("significant", "likely-significant")
+            for f in unresolved
+        )
+    )
+
+    if has_significant:
+        recommendation = "ITERATE"
+        reason = "significant unresolved flags remain"
+    elif not preflight_passed:
+        recommendation = "ESCALATE"
+        reason = "preflight checks are still failing"
+    else:
+        recommendation = "PROCEED"
+        reason = "no significant unresolved flags and preflight passed"
+
+    reconstructed = dict(current_payload) if isinstance(current_payload, dict) else {}
+    reconstructed["recommendation"] = recommendation
+    if not str(reconstructed.get("rationale", "")).strip():
+        reconstructed["rationale"] = (
+            f"Auto-inferred {recommendation} because the gate worker returned an "
+            f"invalid/empty recommendation and {reason}."
+        )
+    if not str(reconstructed.get("signals_assessment", "")).strip():
+        reconstructed["signals_assessment"] = (
+            "No significant flags were raised by critique; proceeding to execution."
+            if recommendation == "PROCEED"
+            else "Critique signals require further attention before proceeding."
+        )
+    reconstructed.setdefault("warnings", [])
+    reconstructed.setdefault("settled_decisions", [])
+    reconstructed.setdefault("flag_resolutions", [])
+    reconstructed.setdefault("accepted_tradeoffs", [])
+    reconstructed.setdefault("north_star_actions", [])
+    # Strip placeholder/empty tradeoff objects.
+    reconstructed["accepted_tradeoffs"] = [
+        item
+        for item in reconstructed["accepted_tradeoffs"]
+        if isinstance(item, dict)
+        and any(
+            str(value).strip()
+            for key, value in item.items()
+            if key in {"flag_id", "concern", "subsystem", "rationale"}
+        )
+    ]
+    return reconstructed
 
 
 def _fill_schema_defaults(payload: dict, schema: dict) -> None:
