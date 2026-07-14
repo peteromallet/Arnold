@@ -368,13 +368,13 @@ class EventWriter:
                 else:
                     event["store_method"] = "record_epic_event"
                 _store_event(self._store, self._plan_dir.name, event)
-                from arnold_pipelines.megaplan.observability.events_projection import write_projection
+                from arnold_pipelines.megaplan.observability.events_projection import append_projection_event
 
-                write_projection(
+                append_projection_event(
                     self._plan_dir,
                     self._store,
+                    event,
                     plan_id=self._plan_dir.name,
-                    force=True,
                 )
 
                 # (3) Release flock AFTER Store write + projection complete.
