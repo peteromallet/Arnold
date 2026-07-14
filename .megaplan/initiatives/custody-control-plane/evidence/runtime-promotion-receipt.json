@@ -1,0 +1,64 @@
+{
+  "schema": "arnold.megaplan.runtime_promotion_receipt.v1",
+  "created_at": "2026-07-14T17:23:42Z",
+  "promoted_at": "2026-07-14T17:22:20Z",
+  "source": {
+    "branch": "custody-control-plane-delivery-20260714",
+    "revision": "3315a3a621854292242d54104fb0c0c668270f55",
+    "approved_stack_base": "616d5bb839779d20ea8d2bc9ebdd24de31d0234c",
+    "commits": [
+      "cf3739fce5",
+      "dcea0d2a25",
+      "3315a3a621854292242d54104fb0c0c668270f55"
+    ]
+  },
+  "target": {
+    "branch": "editible-install",
+    "revision": "8e2d1c15dade63b3e2863aa6d5229e7150bbe0e5",
+    "remote_ref": "refs/heads/editible-install",
+    "integration_method": "fast-forward approved stack plus receipt-bound admission commit"
+  },
+  "runtime": {
+    "expected_root": "/workspace/arnold-custody-runtime",
+    "import_root": "/workspace/arnold-custody-runtime",
+    "source_revision": "8e2d1c15dade63b3e2863aa6d5229e7150bbe0e5",
+    "attested_at": "2026-07-14T17:22:46Z",
+    "runner_pid": 2531282,
+    "runner_started_at": "2026-07-14T17:22:20Z",
+    "launch_runtime_source": "/workspace/arnold-custody-runtime",
+    "provenance_ok": true,
+    "imports": {
+      "arnold": "/workspace/arnold-custody-runtime/arnold/__init__.py",
+      "arnold_pipelines": "/workspace/arnold-custody-runtime/arnold_pipelines/__init__.py",
+      "megaplan": "/workspace/arnold-custody-runtime/arnold_pipelines/megaplan/__init__.py"
+    }
+  },
+  "tests": {
+    "command": "PYTHONPATH=/workspace/arnold-custody-runtime /root/.pyenv/versions/3.11.11/bin/python -P -m pytest -q tests/arnold_pipelines/megaplan/test_canonical_source_admission.py tests/arnold_pipelines/megaplan/test_chain_execution_binding.py",
+    "result": "passed",
+    "exit_code": 0,
+    "summary": "13 passed in 1.83s",
+    "completed_at": "2026-07-14T17:22:46Z",
+    "negative_case": {
+      "command": "PYTHONPATH=/workspace/arnold-custody-runtime /root/.pyenv/versions/3.11.11/bin/python -P -m pytest -vv tests/arnold_pipelines/megaplan/test_canonical_source_admission.py::test_future_milestone_receipt_requirement_fails_closed_and_revalidates",
+      "result": "passed",
+      "summary": "1 passed in 0.42s",
+      "completed_at": "2026-07-14T17:27:24Z",
+      "proves": [
+        "missing required promotion receipt is rejected",
+        "tampered receipt content hash is rejected before milestone materialization"
+      ]
+    },
+    "source_files_sha256": {
+      "arnold_pipelines/megaplan/chain/source_admission.py": "0bb3142f8a6acf3a4331ccc1791d35c9fe938c35ed4c163557d6dcd49c0a0658",
+      "arnold_pipelines/megaplan/chain/promotion_receipt.py": "47517afe6854b27e07a9032cc58e50657ba8c4ac371e68ff1c4d5dd6e7edb70f",
+      "tests/arnold_pipelines/megaplan/test_canonical_source_admission.py": "86563ab4a9baa070bec09d1efbf63c7f5db0c1302d7a7391f5986e59f2bbe525"
+    }
+  },
+  "milestone": {
+    "label": "m9-rebuildable-projections-and-liveness",
+    "semantic_sha256": "a4eb62a63f714eb95e6beb50800e405a00f5f2d92d52be832333d33657487f0f",
+    "file_sha256": "bb6f32f0ab25a64774e721e8b390a411c6a75ef3c21d3c03b462a185b1d0fe7f"
+  },
+  "content_sha256": "aa975aa6e03d09383f5d54f5d6e599dc48fe909969289bcc3a91510778c9cecb"
+}
