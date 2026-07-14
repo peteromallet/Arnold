@@ -2,8 +2,9 @@
 
 ## Authority
 
-**Typed Markdown is authoritative.** `.megaplan/STRATEGY.md` is the single
-source of truth for the repository's stable direction and roadmap. JSON and
+**Typed Markdown is authoritative.** The initiative-root
+`.megaplan/initiatives/<slug>/STRATEGY.md` is the single source of truth for
+the repository's stable direction and roadmap. JSON and
 other indexes are deterministic, disposable projections — they are never
 independently editable, and a consumer MUST NOT treat generated JSON as an
 authority source.

@@ -335,6 +335,14 @@ def build_parser() -> argparse.ArgumentParser:
     description_group.add_argument("--description-file")
     initiative_new.add_argument("--north-star")
     initiative_new.add_argument("--north-star-file")
+    initiative_new.add_argument(
+        "--strategy",
+        action="store_true",
+        help=(
+            "Create the canonical initiative-root STRATEGY.md without "
+            "overwriting existing content."
+        ),
+    )
     initiative_new.add_argument("--chain", action="store_true")
     initiative_new.add_argument(
         "--doc",
@@ -440,6 +448,14 @@ def build_parser() -> argparse.ArgumentParser:
     strategy_parser = subparsers.add_parser("strategy")
     strategy_sub = strategy_parser.add_subparsers(dest="strategy_action", required=True)
     strategy_init = strategy_sub.add_parser("init")
+    strategy_init.add_argument(
+        "--initiative",
+        metavar="SLUG",
+        help=(
+            "Use or create this canonical initiative. By default, reuse a matching "
+            "repository-strategy initiative or create 'repository-strategy'."
+        ),
+    )
     strategy_init.add_argument("--force", action="store_true")
     strategy_validate = strategy_sub.add_parser("validate")
     strategy_validate.add_argument("--json", action="store_true")
@@ -1628,6 +1644,17 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             north_star_path = initiative / "NORTHSTAR.md"
             if args.force or not north_star_path.exists():
                 north_star_path.write_text(north_star.rstrip() + "\n", encoding="utf-8")
+        strategy_path: Path | None = None
+        if bool(getattr(args, "strategy", False)):
+            strategy_result = handle_strategy(
+                root,
+                argparse.Namespace(
+                    strategy_action="init",
+                    initiative=slug,
+                    force=bool(args.force),
+                ),
+            )
+            strategy_path = Path(str(strategy_result["path"]))
         chain_path: Path | None = None
         milestone_paths: list[Path] = []
         milestones = list(getattr(args, "milestone", []) or [])
@@ -1682,6 +1709,7 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             "initiative": initiative_metadata(root, slug),
             "chain": str(chain_path) if chain_path else None,
             "cloud_yaml": str(cloud_path) if cloud_path else None,
+            "strategy": str(strategy_path) if strategy_path else None,
             "milestones": [str(path) for path in milestone_paths],
             "docs": [str(path) for path in copied_docs],
             "next": {

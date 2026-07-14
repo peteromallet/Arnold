@@ -10,8 +10,8 @@ work lives in the shared strategy package.
 Handlers
 --------
 
-* :func:`handle_strategy_init` — scaffold ``.megaplan/STRATEGY.md`` from the
-  v1 template.
+* :func:`handle_strategy_init` — scaffold initiative-root ``STRATEGY.md``
+  from the v1 template.
 * :func:`handle_strategy_validate` — load, parse, validate, and resolve a
   strategy file; return diagnostics and a ``clean`` verdict.
 * :func:`handle_strategy_show` — load a strategy and return its full
@@ -35,6 +35,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.layout import ALLOWED_INITIATIVE_SUBDIRS
 from arnold_pipelines.megaplan.strategy import (
     REQUIRED_ROADMAP_SECTIONS,
     StrategyConflictError,
@@ -102,7 +103,7 @@ def handle_strategy_init(
     repo_root: Path,
     args: argparse.Namespace,
 ) -> StepResponse:
-    """Scaffold ``.megaplan/STRATEGY.md`` from the v1 template.
+    """Scaffold a canonical initiative-root ``STRATEGY.md`` from the template.
 
     Parameters
     ----------
@@ -123,7 +124,11 @@ def handle_strategy_init(
         If the strategy file already exists and ``--force`` was not passed,
         or if the template cannot be read.
     """
-    target = strategy_file_path(repo_root)
+    initiative_slug = getattr(args, "initiative", None)
+    try:
+        target = strategy_file_path(repo_root, initiative_slug=initiative_slug)
+    except ValueError as exc:
+        raise CliError("strategy_ambiguous", str(exc)) from exc
     force = bool(getattr(args, "force", False))
 
     if target.exists() and not force:
@@ -136,7 +141,22 @@ def handle_strategy_init(
 
     template = _read_template()
 
-    target.parent.mkdir(parents=True, exist_ok=True)
+    initiative = target.parent
+    initiative_layout = (
+        initiative.parent == Path(repo_root) / ".megaplan" / "initiatives"
+    )
+    if initiative_layout:
+        for name in ALLOWED_INITIATIVE_SUBDIRS:
+            (initiative / name).mkdir(parents=True, exist_ok=True)
+        readme = initiative / "README.md"
+        if not readme.exists():
+            title = initiative.name.replace("-", " ").title()
+            readme.write_text(
+                f"# {title}\n\nCanonical repository strategy initiative.\n",
+                encoding="utf-8",
+            )
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(template, encoding="utf-8")
 
     return {
@@ -144,6 +164,8 @@ def handle_strategy_init(
         "step": "strategy",
         "action": "init",
         "path": str(target),
+        "initiative": initiative.name if initiative_layout else None,
+        "layout_policy_version": "megaplan-initiatives-v1",
         "summary": f"Strategy scaffold written to {target}",
     }
 
@@ -1258,4 +1280,9 @@ def handle_strategy(
             f"Unknown strategy action: {action}. "
             f"Expected one of: {', '.join(sorted(_STRATEGY_HANDLERS))}",
         )
-    return _STRATEGY_HANDLERS[action](repo_root, args)
+    try:
+        return _STRATEGY_HANDLERS[action](repo_root, args)
+    except ValueError as exc:
+        if "strategy" not in str(exc):
+            raise
+        raise CliError("strategy_ambiguous", str(exc)) from exc

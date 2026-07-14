@@ -8,7 +8,7 @@
         "source": {
           "column": 1,
           "line": 47,
-          "path": ".megaplan/STRATEGY.md"
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
         },
         "title": "Add compact megaplan monitor command for plan and chain health",
         "type": "ticket"
@@ -21,7 +21,7 @@
         "source": {
           "column": 1,
           "line": 43,
-          "path": ".megaplan/STRATEGY.md"
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
         },
         "title": "Prevent stale git pre-commit hook rot",
         "type": "ticket"
@@ -34,7 +34,7 @@
         "source": {
           "column": 1,
           "line": 39,
-          "path": ".megaplan/STRATEGY.md"
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
         },
         "title": "Repository Strategy Roadmap",
         "type": "epic"
@@ -49,7 +49,7 @@
       "source": {
         "column": 1,
         "line": 7,
-        "path": ".megaplan/STRATEGY.md"
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
       },
       "title": "Mission"
     },
@@ -58,7 +58,7 @@
       "source": {
         "column": 1,
         "line": 11,
-        "path": ".megaplan/STRATEGY.md"
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
       },
       "title": "Principles"
     },
@@ -67,7 +67,7 @@
       "source": {
         "column": 1,
         "line": 18,
-        "path": ".megaplan/STRATEGY.md"
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
       },
       "title": "Architecture Direction"
     },
@@ -76,7 +76,7 @@
       "source": {
         "column": 1,
         "line": 25,
-        "path": ".megaplan/STRATEGY.md"
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
       },
       "title": "Constraints"
     },
@@ -85,7 +85,7 @@
       "source": {
         "column": 1,
         "line": 31,
-        "path": ".megaplan/STRATEGY.md"
+        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
       },
       "title": "Non-Goals"
     }

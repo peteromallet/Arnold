@@ -1,6 +1,6 @@
 """Adoption tests for the live Arnold strategy contract.
 
-These tests prove that the live ``.megaplan/STRATEGY.md``:
+These tests prove that the live initiative-root ``STRATEGY.md``:
 
 * Loads cleanly through the canonical ``load_strategy()`` entry point.
 * Produces no hard diagnostics except known external-reference gaps
@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.strategy.contract import (
 from arnold_pipelines.megaplan.strategy.io import (
     load_strategy,
     project_to_dict,
+    strategy_file_path,
 )
 from arnold_pipelines.megaplan.strategy.parser import (
     parse_strategy,
@@ -354,7 +355,7 @@ class TestMarkdownHorizonEdit:
         horizon to another via direct Markdown manipulation, re-parse,
         and verify the move took effect."""
         # Read the live strategy source.
-        live_path = _PROJECT_ROOT / ".megaplan" / "STRATEGY.md"
+        live_path = strategy_file_path(_PROJECT_ROOT)
         source = live_path.read_text(encoding="utf-8")
 
         # Write a temp copy.
@@ -422,7 +423,7 @@ class TestMarkdownHorizonEdit:
         """After moving an entry via Markdown serialization and re-parsing,
         the projection reflects the move, proving Markdown is authoritative."""
         # Read the live strategy source.
-        live_path = _PROJECT_ROOT / ".megaplan" / "STRATEGY.md"
+        live_path = strategy_file_path(_PROJECT_ROOT)
         source = live_path.read_text(encoding="utf-8")
 
         doc = parse_strategy(source, "STRATEGY.md")
@@ -474,7 +475,7 @@ class TestMarkdownHorizonEdit:
         """Editing the generated projection JSON must never change the
         parsed meaning of the authoritative Markdown source."""
         # Read the live strategy source.
-        live_path = _PROJECT_ROOT / ".megaplan" / "STRATEGY.md"
+        live_path = strategy_file_path(_PROJECT_ROOT)
         source = live_path.read_text(encoding="utf-8")
 
         # Parse the authoritative Markdown.
