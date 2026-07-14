@@ -189,7 +189,7 @@ def test_status_exposes_expected_and_active_identity_during_drift(tmp_path: Path
     assert "assets" in binding["drift_fields"]
 
 
-def test_runtime_revision_drift_is_part_of_the_binding(tmp_path: Path, monkeypatch) -> None:
+def test_runtime_revision_is_evidence_but_not_canonical_source_drift(tmp_path: Path, monkeypatch) -> None:
     spec_path = _pinned_chain(tmp_path)
     _bound_state(spec_path)
     original = active_execution_identity(spec_path)["runtime"]
@@ -205,10 +205,9 @@ def test_runtime_revision_drift_is_part_of_the_binding(tmp_path: Path, monkeypat
 
     state = load_chain_state(spec_path, verify_execution_binding=False)
     report = execution_binding_report(spec_path, state)
-    assert report["status"] == "drift"
-    assert "runtime" in report["drift_fields"]
-    with pytest.raises(CliError, match="chain state load/resume refused"):
-        load_chain_state(spec_path)
+    assert report["status"] == "match"
+    assert report["active"]["runtime"]["source_revision"] == "f" * 40
+    assert load_chain_state(spec_path).metadata["execution_binding"]
 
 
 def test_state_save_never_rewrites_immutable_launch_identity(tmp_path: Path) -> None:

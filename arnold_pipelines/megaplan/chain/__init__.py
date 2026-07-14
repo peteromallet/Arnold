@@ -6407,6 +6407,18 @@ def run_chain(
                         root, spec_path, branch=milestone.branch, pr_number=None
                     )
                     state = chain_spec.load_chain_state(spec_path)
+                from arnold_pipelines.megaplan.chain.source_admission import (
+                    admit_milestone_source,
+                )
+
+                admit_milestone_source(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=state,
+                    milestone=milestone,
+                    milestone_index=idx,
+                )
                 eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
                 eff_robustness = (
                     state.robustness_bumps.get(milestone.label)
@@ -7291,6 +7303,16 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Read chain state from this project directory instead of discovering from CWD.",
     )
 
+    reconcile_source_parser = chain_sub.add_parser(
+        "reconcile-source",
+        help="Register a content-addressed canonical source update for a future milestone",
+    )
+    reconcile_source_parser.add_argument("--spec", required=True)
+    reconcile_source_parser.add_argument("--project-dir", required=False)
+    reconcile_source_parser.add_argument("--milestone", required=True)
+    reconcile_source_parser.add_argument("--authoritative-source", required=True)
+    reconcile_source_parser.add_argument("--reason", required=True)
+
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
     )
@@ -7481,6 +7503,42 @@ def run_chain_cli(
             return _emit_error(exc)
         sys.stdout.write(
             json.dumps({"success": True, "spec": str(spec_path), **payload}, indent=2) + "\n"
+        )
+        return 0
+
+    if action == "reconcile-source":
+        try:
+            spec = chain_spec.load_spec(spec_path)
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            from arnold_pipelines.megaplan.chain.source_admission import (
+                require_milestone_source_update,
+            )
+
+            requirement = require_milestone_source_update(
+                spec_path=spec_path,
+                state=chain_state,
+                spec=spec,
+                milestone_label=args.milestone,
+                authoritative_source=Path(args.authoritative_source).expanduser().resolve(),
+                reason=args.reason,
+            )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "reconcile-source",
+                    "requirement": requirement,
+                },
+                indent=2,
+            )
+            + "\n"
         )
         return 0
 

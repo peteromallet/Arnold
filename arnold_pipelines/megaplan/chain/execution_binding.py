@@ -113,13 +113,23 @@ def _asset_entry(
     project_root: Path,
 ) -> dict[str, Any]:
     path = _resolve_asset(path_value, spec_path=spec_path, project_root=project_root)
-    return {
+    entry = {
         "kind": kind,
         "declared_path": path_value,
         "resolved_path": str(path),
         "sha256": _sha256_file(path) if path.is_file() else "",
         "exists": path.is_file(),
     }
+    if path.is_file() and (kind == "north_star" or kind.startswith("milestone_brief:")):
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            canonical_source_identity,
+        )
+
+        entry["semantic_sha256"] = canonical_source_identity(
+            path,
+            project_dir=project_root,
+        )["semantic_sha256"]
+    return entry
 
 
 def _bundle_assets(
@@ -340,16 +350,78 @@ def _state_has_progress(state: Any) -> bool:
     )
 
 
+def _comparable_assets(identity: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            key: item.get(key)
+            for key in ("kind", "declared_path", "resolved_path", "sha256", "exists")
+        }
+        for item in identity.get("assets") or []
+        if isinstance(item, Mapping)
+    ]
+
+
 def _comparable(identity: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "bundle_sha256": identity.get("bundle_sha256"),
         "chain_spec_sha256": identity.get("chain_spec_sha256"),
         "milestone_sequence": identity.get("milestone_sequence"),
-        "assets": identity.get("assets"),
+        "assets": _comparable_assets(identity),
         "intended_initiative_revision": identity.get("intended_initiative_revision"),
         "initiative_path": identity.get("initiative_path"),
-        "runtime": identity.get("runtime"),
     }
+
+
+def _future_source_reconciliation_is_safe(
+    *,
+    state: Any,
+    expected: Mapping[str, Any],
+    active: Mapping[str, Any],
+    drift_fields: list[str],
+) -> tuple[bool, list[str]]:
+    allowed_fields = {"bundle_sha256", "chain_spec_sha256", "assets", "intended_initiative_revision"}
+    if not set(drift_fields).issubset(allowed_fields):
+        return False, []
+    if expected.get("milestone_sequence") != active.get("milestone_sequence"):
+        return False, []
+    if expected.get("initiative_path") != active.get("initiative_path"):
+        return False, []
+    expected_assets = {
+        str(item.get("kind")): item
+        for item in _comparable_assets(expected)
+        if isinstance(item, Mapping)
+    }
+    active_assets = {
+        str(item.get("kind")): item
+        for item in _comparable_assets(active)
+        if isinstance(item, Mapping)
+    }
+    changed_kinds = sorted(
+        kind
+        for kind in set(expected_assets) | set(active_assets)
+        if expected_assets.get(kind) != active_assets.get(kind)
+    )
+    if not changed_kinds:
+        return False, []
+    cutoff = int(getattr(state, "current_milestone_index", -1))
+    if not getattr(state, "current_plan_name", None):
+        cutoff -= 1
+    for kind in changed_kinds:
+        if not kind.startswith("milestone_brief:"):
+            return False, changed_kinds
+        try:
+            index = int(kind.split(":", 1)[1])
+        except ValueError:
+            return False, changed_kinds
+        if index <= cutoff:
+            return False, changed_kinds
+    revision = active.get("revision_verification")
+    if not isinstance(revision, Mapping) or not revision.get("ok"):
+        requirements = (getattr(state, "metadata", {}) or {}).get(
+            "required_canonical_source_updates"
+        )
+        if not isinstance(requirements, Mapping):
+            return False, changed_kinds
+    return True, changed_kinds
 
 
 def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
@@ -379,12 +451,22 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
             for key in expected_comparable
             if expected_comparable.get(key) != active_comparable.get(key)
         ]
-        status = "drift" if drift_fields or not active.get("ready") else "match"
+        safe_future, changed_asset_kinds = _future_source_reconciliation_is_safe(
+            state=state,
+            expected=expected,
+            active=active,
+            drift_fields=drift_fields,
+        )
+        if safe_future:
+            status = "reconcile_required"
+        else:
+            status = "drift" if drift_fields or not active.get("ready") else "match"
     return {
         "schema": BINDING_SCHEMA,
         "required": policy["required"],
         "status": status,
         "drift_fields": drift_fields,
+        "changed_asset_kinds": changed_asset_kinds if expected is not None else [],
         "expected": dict(expected) if expected is not None else None,
         "active": active,
     }
@@ -402,7 +484,7 @@ def assert_execution_binding(
         return report
     if report["status"] == "missing" and allow_unbound_new and not _state_has_progress(state):
         return report
-    if report["status"] != "match":
+    if report["status"] not in {"match", "reconcile_required"}:
         active = report["active"]
         raise CliError(
             DRIFT_ERROR,
