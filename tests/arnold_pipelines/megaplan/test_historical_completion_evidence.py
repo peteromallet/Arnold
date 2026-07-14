@@ -7,6 +7,7 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, MilestoneSpec
+from arnold_pipelines.megaplan._core.io import atomic_write_json, execute_batch_artifact_path
 from arnold_pipelines.megaplan.orchestration.completion_contract import (
     CompletionContext,
     CompletionSubject,
@@ -230,6 +231,82 @@ def test_chain_verify_uses_landed_parent_when_target_advanced(tmp_path: Path) ->
     assert milestone["diff_base_source"] == "landed_parent_after_milestone_base"
     assert milestone["files_in_committed_range"] == ["milestone.py"]
     assert "unrelated-main.py" not in milestone["files_in_diff"]
+
+
+def test_exact_head_batch_supersedes_stale_finalize_task_evidence(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+    (root / "base.txt").write_text("base\n", encoding="utf-8")
+    base = _commit(root, "base")
+    (root / "milestone.py").write_text("MILESTONE = True\n", encoding="utf-8")
+    stale_head = _commit(root, "execution head")
+    (root / "milestone.py").write_text("MILESTONE = 'landed'\n", encoding="utf-8")
+    landed_head = _commit(root, "landed head")
+
+    plan_dir = root / ".megaplan" / "plans" / "historical"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "config": {"mode": "code", "project_dir": str(root)},
+                "meta": {"chain_policy": {"milestone_base_sha": base}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "commands_run": ["python stale_check.py"],
+                        "executor_notes": "Original evidence at the execution head.",
+                        "head_sha": stale_head,
+                    }
+                ],
+                "sense_checks": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifact = execute_batch_artifact_path(plan_dir, 1, ["T1"])
+    atomic_write_json(
+        artifact,
+        {
+            "output": "Exact landed-head reconciliation passed.",
+            "files_changed": [],
+            "commands_run": ["python landed_check.py"],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "commands_run": ["python landed_check.py"],
+                    "files_changed": [],
+                    "executor_notes": "Reconciled at the landed head.",
+                    "head_sha": landed_head,
+                }
+            ],
+            "sense_check_acknowledgments": [],
+            "head_sha": landed_head,
+        },
+        _plan_dir=plan_dir,
+    )
+
+    done, reason = chain_module._latest_execution_batch_all_tasks_done(
+        plan_dir,
+        project_dir_override=root,
+        authoritative_head=landed_head,
+    )
+
+    assert done is True, reason
 
 
 def test_suite_runner_imports_subject_checkout_before_editable_engine(

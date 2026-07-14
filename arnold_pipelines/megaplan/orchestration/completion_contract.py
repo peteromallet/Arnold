@@ -541,7 +541,11 @@ class PhaseCoverageProvider:
             details["exit_kind"] = phase_result.exit_kind
 
         try:
-            all_done, reason = _latest_execution_batch_all_tasks_done(ctx.plan_dir)
+            all_done, reason = _latest_execution_batch_all_tasks_done(
+                ctx.plan_dir,
+                project_dir_override=ctx.project_dir,
+                authoritative_head=ctx.git_head_ref,
+            )
         except Exception as exc:  # fail-soft → unknown, never crash
             return _provider_evidence_ref(
                 kind=self.kind,

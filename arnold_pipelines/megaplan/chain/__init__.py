@@ -1927,6 +1927,8 @@ def _latest_execution_batch_all_tasks_done(
     *,
     chain_state: ChainState | None = None,
     completion_record: Mapping[str, Any] | None = None,
+    project_dir_override: Path | None = None,
+    authoritative_head: str | None = None,
 ) -> tuple[bool, str]:
     try:
         state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
@@ -1935,14 +1937,24 @@ def _latest_execution_batch_all_tasks_done(
     config = state_payload.get("config") if isinstance(state_payload, dict) else {}
     meta = state_payload.get("meta") if isinstance(state_payload, dict) else {}
     raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
-    project_dir = Path(raw_project_dir) if isinstance(raw_project_dir, str) and raw_project_dir else None
+    project_dir = (
+        project_dir_override
+        if project_dir_override is not None
+        else Path(raw_project_dir)
+        if isinstance(raw_project_dir, str) and raw_project_dir
+        else None
+    )
     execution_baseline = (
         meta.get("execution_baseline")
         if isinstance(meta, dict) and isinstance(meta.get("execution_baseline"), dict)
         else {}
     )
     baseline_head = execution_baseline.get("head")
-    current_head = _resolve_authority_current_head(
+    current_head = (
+        _git_commit_sha(project_dir, authoritative_head)
+        if project_dir is not None and authoritative_head
+        else None
+    ) or _resolve_authority_current_head(
         plan_dir,
         project_dir=project_dir,
         baseline_head=baseline_head if isinstance(baseline_head, str) and baseline_head.strip() else None,
@@ -2056,24 +2068,33 @@ def _latest_execution_batch_all_tasks_done(
                         from arnold_pipelines.megaplan.orchestration.authority_readers import (
                             has_durable_terminal_task_evidence,
                         )
-                        if has_durable_terminal_task_evidence(task):
-                            # A replayed/partial batch may omit outputs already
-                            # reconciled into finalize.json. Never let that erase
-                            # terminal corroboration at chain completion.
-                            overlaid_finalize_records.append(task)
-                            continue
                         merged = dict(task)
-                        for field in (
-                            "files_changed",
-                            "commands_run",
-                            "evidence_files",
-                            "sections_written",
-                            "evidence",
-                        ):
-                            if field not in override:
-                                merged.pop(field, None)
+                        preserve_existing_outputs = has_durable_terminal_task_evidence(task)
+                        if not preserve_existing_outputs:
+                            for field in (
+                                "files_changed",
+                                "commands_run",
+                                "evidence_files",
+                                "sections_written",
+                                "evidence",
+                            ):
+                                if field not in override:
+                                    merged.pop(field, None)
                         for key, value in override.items():
                             if key == "task_id":
+                                continue
+                            if key in {
+                                "files_changed",
+                                "commands_run",
+                                "evidence_files",
+                                "sections_written",
+                                "evidence",
+                            } and not value:
+                                # A replayed/partial batch may omit outputs
+                                # already reconciled into finalize.json.  Do
+                                # not erase them, but do allow a newer fully
+                                # corroborated task record to replace stale
+                                # commands/head evidence.
                                 continue
                             merged[key] = value
                         overlaid_finalize_records.append(merged)
@@ -2096,7 +2117,11 @@ def _latest_execution_batch_all_tasks_done(
                 from arnold_pipelines.megaplan.orchestration.authority_readers import (
                     _evidence_from_task_record,
                 )
-                committed_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
+                committed_paths = _collect_committed_range_paths(
+                    project_dir,
+                    base_ref=base_ref,
+                    head_ref=current_head,
+                )
                 reanchored_refs = []
                 reanchored_records: list[dict[str, Any]] = []
                 for task in authoritative_finalize_records:
