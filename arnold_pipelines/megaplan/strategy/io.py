@@ -60,6 +60,7 @@ from arnold_pipelines.megaplan.strategy.contract import (
     StrategyDocument,
 )
 from arnold_pipelines.megaplan.strategy.parser import (
+    extract_schema_version,
     parse_strategy,
 )
 from arnold_pipelines.megaplan.strategy.projection import (
@@ -67,30 +68,21 @@ from arnold_pipelines.megaplan.strategy.projection import (
     serialize_strategy_projection,
     write_strategy_projection,
 )
-from arnold_pipelines.megaplan.strategy.resolver import (
-    resolve_strategy,
-)
+# NOTE: ``strategy.resolver`` is imported lazily inside ``load_strategy`` and
+# ``load_strategy_for_write`` to break an import cycle
+# (strategy.__init__ -> resolver -> tickets.__init__ -> tickets.core ->
+# strategy.io -> resolver).  ``resolve_strategy`` is only needed at runtime,
+# never at import time, so deferring the import keeps both entry points working
+# from a fresh process without changing behavior.
 from arnold_pipelines.megaplan.strategy.validation import (
     validate_strategy,
 )
-
-# Re-export path helpers for convenience.
-__all__ = [
-    "StrategyConflictError",
-    "StrategyFileState",
-    "format_diagnostic",
-    "format_diagnostics",
-    "load_strategy",
-    "load_strategy_for_write",
-    "load_strategy_projection",
-    "project_to_dict",
-    "project_to_json",
-    "strategy_file_path",
-    "strategy_projection_file_path",
-    "write_projection",
-    "write_strategy",
-]
-
+from arnold_pipelines.megaplan.strategy.versions import (
+    CURRENT_SCHEMA_VERSION,
+    StrategyVersionStatus,
+    classify_version,
+    inspect_strategy_file,
+)
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -182,6 +174,8 @@ def load_strategy(
 
     document = parse_strategy(source, repo_rel)
     document = validate_strategy(document)
+    from arnold_pipelines.megaplan.strategy.resolver import resolve_strategy
+
     document = resolve_strategy(document, repo_root, store=store)
 
     return document
@@ -235,6 +229,8 @@ def load_strategy_for_write(
 
     document = parse_strategy(source, repo_rel)
     document = validate_strategy(document)
+    from arnold_pipelines.megaplan.strategy.resolver import resolve_strategy
+
     document = resolve_strategy(document, repo_root, store=store)
 
     return document, file_state
@@ -265,6 +261,81 @@ def load_strategy_projection(
     document = load_strategy(repo_root, store=store)
     return project_to_dict(document)
 
+
+def inspect_strategy(
+    repo_root: str | Path,
+) -> dict[str, object]:
+    """Inspect the strategy file and return its version classification.
+
+    This is an **inspection-only** path for doctor/migrate tooling.  It
+    classifies the version state of ``.megaplan/STRATEGY.md`` without
+    performing full parsing, validation, or resolution.  An absent file
+    is reported as ``"absent"`` — a valid unadopted state, not an error.
+
+    This function never treats an absent, legacy, unsupported, or
+    malformed file as a valid authority source.  Normal strict commands
+    must continue to use :func:`load_strategy`.
+
+    Parameters
+    ----------
+    repo_root:
+        Repository root path.
+
+    Returns
+    -------
+    dict
+        A dictionary with keys:
+
+        * ``status`` (:class:`StrategyVersionStatus`) — the classified
+          version status.
+        * ``schema_version`` (``str | None``) — the raw schema_version
+          value from the frontmatter, or ``None`` if the file is absent
+          or unreadable.
+        * ``current_version`` (``str``) — the canonical current schema
+          version.
+        * ``file_path`` (``str``) — absolute path to the strategy file.
+    """
+    status = inspect_strategy_file(repo_root)
+    path = strategy_file_path(repo_root)
+
+    schema_version: str | None = None
+    if status not in ("absent", "malformed"):
+        try:
+            source = path.read_text(encoding="utf-8")
+            schema_version = extract_schema_version(source)
+        except Exception:
+            schema_version = None
+
+    return {
+        "status": status,
+        "schema_version": schema_version,
+        "current_version": CURRENT_SCHEMA_VERSION,
+        "file_path": str(path),
+    }
+
+
+# Re-export inspect helpers for convenience.
+__all__ = [
+    "CURRENT_SCHEMA_VERSION",
+    "StrategyConflictError",
+    "StrategyFileState",
+    "StrategyVersionStatus",
+    "classify_version",
+    "extract_schema_version",
+    "format_diagnostic",
+    "format_diagnostics",
+    "inspect_strategy",
+    "inspect_strategy_file",
+    "load_strategy",
+    "load_strategy_for_write",
+    "load_strategy_projection",
+    "project_to_dict",
+    "project_to_json",
+    "strategy_file_path",
+    "strategy_projection_file_path",
+    "write_projection",
+    "write_strategy",
+]
 
 # ---------------------------------------------------------------------------
 # Lossless write

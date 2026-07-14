@@ -6,7 +6,7 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-14T12:59:25.880281+00:00",
+  "generated_at": "2026-07-14T13:45:50.918163+00:00",
   "incident_id": "inc-custody-control-plane",
   "kind": "incident_summary",
   "latest_actor": "repair_system",
@@ -22,7 +22,7 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:a796d20dd4710cbf0c5e43ebd8bf945c123e355f3e9c9ccc5c989140742c206f",
+    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
     "last_seq": 345,
     "projection": "incidents"
   },

@@ -118,6 +118,33 @@ def parse_strategy(source: str, path: str) -> StrategyDocument:
     )
 
 
+def extract_schema_version(source: str) -> str | None:
+    """Extract the ``schema_version`` from YAML frontmatter without full parsing.
+
+    This is a lightweight inspection-only path for doctor/migrate tooling.
+    It returns the raw version string on success, ``""`` when the
+    ``schema_version`` key is missing from the frontmatter, or ``None``
+    when the frontmatter itself is missing, unclosed, or contains invalid
+    YAML.
+
+    Parameters
+    ----------
+    source:
+        The raw text of ``.megaplan/STRATEGY.md``.
+
+    Returns
+    -------
+    str | None
+        The version string, ``""`` for missing key, or ``None`` for
+        unreadable frontmatter.
+    """
+    lines = source.split("\n")
+    schema_version, _body_start, diags = _parse_frontmatter(lines, "<inspect>")
+    if diags:
+        return None
+    return schema_version
+
+
 def serialize_strategy(document: StrategyDocument) -> str:
     """Serialize *document* back to canonical v1 Markdown.
 

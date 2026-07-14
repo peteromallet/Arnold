@@ -1,6 +1,22 @@
 {
   "integrity": [
     {
+      "code": "index_divergence",
+      "error": "Expecting property name enclosed in double quotes: line 10717 column 1 (char 366136)",
+      "message": "incidents projection is not valid JSON",
+      "projection": "incidents",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
+      "code": "index_divergence",
+      "error": "Expecting property name enclosed in double quotes: line 233 column 1 (char 9511)",
+      "message": "problems projection is not valid JSON",
+      "projection": "problems",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -22,7 +38,7 @@
       "first_seen_seq": 350,
       "first_seen_ts": "2026-07-11T22:46:01.923651+00:00",
       "fix_commits": [],
-      "last_seen_seq": 513,
+      "last_seen_seq": 515,
       "last_seen_ts": "2026-07-14T07:53:13.249387+00:00",
       "linked_incident_ids": [
         "inc-workflow-boundary-contracts-corrective-20260710"
@@ -155,14 +171,14 @@
       "first_seen_seq": 5,
       "first_seen_ts": "2026-07-03T21:24:24.562997+00:00",
       "fix_commits": [],
-      "last_seen_seq": 500,
-      "last_seen_ts": "2026-07-14T01:52:57.559557+00:00",
+      "last_seen_seq": 516,
+      "last_seen_ts": "2026-07-14T07:53:38.338638+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind chain workspace transient path",
-      "occurrence_count": 237,
+      "occurrence_count": 238,
       "owner_actor": "github_sync",
       "problem_id": "problem-6e386e382223",
       "recurred_after_fix": false,
@@ -212,8 +228,8 @@
       "first_seen_seq": 202,
       "first_seen_ts": "2026-07-07T01:45:04.474384+00:00",
       "fix_commits": [],
-      "last_seen_seq": 511,
-      "last_seen_ts": "2026-07-14T05:14:01.379484+00:00",
+      "last_seen_seq": 517,
+      "last_seen_ts": "2026-07-14T07:53:39.561955+00:00",
       "linked_incident_ids": [
         "inc-megaplan-north-star-sense-checks-revise-design",
         "inc-repository-strategy-roadmap",
@@ -223,8 +239,8 @@
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome partial liveness kind chain workspace transient path",
-      "occurrence_count": 12,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 15,
+      "owner_actor": "github_sync",
       "problem_id": "problem-72f87afd3954",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -427,10 +443,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:a796d20dd4710cbf0c5e43ebd8bf945c123e355f3e9c9ccc5c989140742c206f",
-    "event_count": 513,
-    "journal_line_count": 513,
-    "last_seq": 513,
+    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
+    "event_count": 517,
+    "journal_line_count": 517,
+    "last_seq": 517,
     "malformed_line_count": 0
   }
 }
