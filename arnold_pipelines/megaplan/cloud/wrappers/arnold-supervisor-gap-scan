@@ -176,7 +176,11 @@ def scan(marker_dir: pathlib.Path, session_filter: str = "") -> dict[str, object
         session = str(marker.get("session") or marker_path.stem).strip()
         if session_filter and session != session_filter:
             continue
-        if not session or str(marker.get("run_kind") or "chain").strip().lower() != "chain":
+        # The marker directory also contains progress/evidence JSON carrying the
+        # same session field.  Only an explicit launch marker owns execution
+        # custody; treating auxiliary JSON as a chain marker creates a false
+        # binding drift against an empty workspace/spec.
+        if not session or str(marker.get("run_kind") or "").strip().lower() != "chain":
             continue
         if marker.get("should_run") is False:
             continue

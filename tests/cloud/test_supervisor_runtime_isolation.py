@@ -208,6 +208,10 @@ def test_dependency_independent_gap_scan_flags_stopped_marker_without_custody(
         ),
         encoding="utf-8",
     )
+    (marker_dir / "demo.chain-health.progress.json").write_text(
+        json.dumps({"session": "demo", "status": "progress"}),
+        encoding="utf-8",
+    )
     # Legacy timestamp-only dispatch markers are not repair custody.
     (marker_dir / "demo.kimi-dispatch").write_text("2026-07-13T22:44:39Z\n", encoding="utf-8")
     output = tmp_path / "gaps.json"
@@ -222,6 +226,7 @@ def test_dependency_independent_gap_scan_flags_stopped_marker_without_custody(
     result = subprocess.run(command, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     payload = json.loads(output.read_text())
+    assert payload["checked_sessions"] == 1
     assert payload["status"] == "unhealthy"
     assert payload["findings"][0]["reason"] == "stopped_marker_without_chain_or_repair_state"
 
