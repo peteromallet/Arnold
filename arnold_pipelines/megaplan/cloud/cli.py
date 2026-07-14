@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import hashlib
 import io
@@ -50,6 +51,7 @@ cloud_substrate: str = "subprocess_isolated"
 _TEMPLATE_PLACEHOLDER_RE = re.compile(
     r"\bTODO(?:_[A-Z0-9]+)+\b|<box-ip>|TODO_SSH_HOST|TODO_REPO_URL"
 )
+_RAW_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
 def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
@@ -1821,6 +1823,7 @@ def _cloud_chain_launch_provenance(
     repo_head: dict[str, str | None],
     tmux_result,
     editable_install_sync: dict[str, Any] | None = None,
+    engine_ref_check: dict[str, Any] | None = None,
     verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current_milestone = chain_spec.milestones[0].label if chain_spec.milestones else None
@@ -1850,6 +1853,7 @@ def _cloud_chain_launch_provenance(
             "ref": spec.megaplan.ref,
             "install_source": "cloud_image_runtime",
             "editable_install_sync": editable_install_sync or {"status": "skipped"},
+            "engine_ref_check": engine_ref_check or {"status": "unknown"},
         },
         "uploaded_idea_count": uploaded_idea_count,
         "tmux": {
@@ -2315,6 +2319,347 @@ def _tail_text(text: str, *, max_lines: int = 20, max_chars: int = 4000) -> str:
     return tail
 
 
+def _git_ref_probe_env(url: str) -> dict[str, str]:
+    env = dict(os.environ)
+    token = os.environ.get("GITHUB_TOKEN")
+    if (
+        token
+        and url.startswith("https://github.com/")
+        and "@github.com/" not in url
+    ):
+        try:
+            count = int(env.get("GIT_CONFIG_COUNT", "0"))
+        except ValueError:
+            count = 0
+        credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env[f"GIT_CONFIG_KEY_{count}"] = "http.https://github.com/.extraheader"
+        env[f"GIT_CONFIG_VALUE_{count}"] = f"Authorization: Basic {credentials}"
+        env["GIT_CONFIG_COUNT"] = str(count + 1)
+    return env
+
+
+def _ls_remote_refs(repo: str, refs: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "ls-remote", "--refs", repo, *refs],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+        env=_git_ref_probe_env(repo),
+    )
+
+
+def _probe_remote_commit(repo: str, commit: str) -> subprocess.CompletedProcess[str]:
+    """Prove that a raw configured commit is fetchable from the source remote."""
+    with TemporaryDirectory(prefix="megaplan-engine-ref-") as raw_dir:
+        worktree = Path(raw_dir)
+        initialized = subprocess.run(
+            ["git", "init", "--quiet", str(worktree)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if initialized.returncode != 0:
+            return initialized
+        return subprocess.run(
+            [
+                "git",
+                "-C",
+                str(worktree),
+                "fetch",
+                "--quiet",
+                "--depth=1",
+                repo,
+                commit,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=180,
+            env=_git_ref_probe_env(repo),
+        )
+
+
+def _verify_configured_megaplan_ref_advertised(spec: CloudSpec) -> dict[str, Any]:
+    repo = (spec.megaplan.repo or "").strip()
+    ref = spec.megaplan.ref.strip()
+    if not repo:
+        return {
+            "status": "skipped",
+            "reason": "megaplan.repo not configured",
+            "repo": "",
+            "requested_ref": ref,
+        }
+    if not ref:
+        raise CliError("engine_ref_invalid", "cloud megaplan.ref must not be empty")
+    if _RAW_GIT_SHA_RE.fullmatch(ref):
+        result = _probe_remote_commit(repo, ref)
+        if result.returncode != 0:
+            message = redact(
+                _tail_text(result.stderr or result.stdout),
+                ("GITHUB_TOKEN",),
+                env=os.environ,
+            )
+            raise CliError(
+                "engine_commit_unfetchable",
+                (
+                    f"Configured cloud megaplan.ref commit {ref!r} cannot be fetched "
+                    f"from {repo}: {message or 'git fetch failed'}"
+                ),
+                extra={
+                    "engine_ref_check": {
+                        "status": "failed",
+                        "repo": repo,
+                        "requested_ref": ref,
+                        "reason": "raw_sha_unfetchable",
+                        "stderr_tail": message,
+                    }
+                },
+            )
+        return {
+            "status": "ok",
+            "repo": repo,
+            "requested_ref": ref,
+            "commit": ref,
+            "ref_kind": "commit",
+            "verification": "fetch",
+        }
+
+    exact_refs = [ref] if ref.startswith("refs/") else [f"refs/heads/{ref}", f"refs/tags/{ref}"]
+    result = _ls_remote_refs(repo, exact_refs)
+    lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    if result.returncode != 0 and not lines:
+        message = redact(
+            _tail_text(result.stderr or result.stdout),
+            ("GITHUB_TOKEN",),
+            env=os.environ,
+        )
+        raise CliError(
+            "engine_ref_probe_failed",
+            (
+                f"Could not verify cloud megaplan.ref {ref!r} against {repo}: "
+                f"{message or 'git ls-remote failed'}"
+            ),
+            extra={
+                "engine_ref_check": {
+                    "status": "failed",
+                    "repo": repo,
+                    "requested_ref": ref,
+                    "reason": "ls_remote_failed",
+                    "stderr_tail": message,
+                }
+            },
+        )
+
+    advertised: dict[str, str] = {}
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2:
+            advertised[parts[1]] = parts[0]
+    matches = [(name, sha) for name, sha in advertised.items() if name in exact_refs]
+    if ref.startswith("refs/"):
+        if not matches:
+            raise CliError(
+                "engine_ref_not_advertised",
+                (
+                    f"Configured cloud megaplan.ref {ref!r} is not advertised by "
+                    f"{repo}. Use an existing branch, tag, or exact full ref."
+                ),
+                extra={
+                    "engine_ref_check": {
+                        "status": "failed",
+                        "repo": repo,
+                        "requested_ref": ref,
+                        "reason": "full_ref_missing",
+                        "checked_refs": exact_refs,
+                    }
+                },
+            )
+        advertised_ref, sha = matches[0]
+        return {
+            "status": "ok",
+            "repo": repo,
+            "requested_ref": ref,
+            "advertised_ref": advertised_ref,
+            "commit": sha,
+            "ref_kind": "full_ref",
+        }
+
+    if len(matches) > 1:
+        raise CliError(
+            "engine_ref_ambiguous",
+            (
+                f"Configured cloud megaplan.ref {ref!r} matches multiple advertised refs "
+                f"on {repo}: {', '.join(name for name, _sha in matches)}. "
+                "Use a full refs/heads/* or refs/tags/* name."
+            ),
+            extra={
+                "engine_ref_check": {
+                    "status": "failed",
+                    "repo": repo,
+                    "requested_ref": ref,
+                    "reason": "ambiguous_short_ref",
+                    "matches": [{"ref": name, "commit": sha} for name, sha in matches],
+                }
+            },
+        )
+    if not matches:
+        raise CliError(
+            "engine_ref_not_advertised",
+            (
+                f"Configured cloud megaplan.ref {ref!r} is not advertised by {repo}. "
+                "Use an existing branch, tag, or exact full ref."
+            ),
+            extra={
+                "engine_ref_check": {
+                    "status": "failed",
+                    "repo": repo,
+                    "requested_ref": ref,
+                    "reason": "short_ref_missing",
+                    "checked_refs": exact_refs,
+                }
+            },
+        )
+    advertised_ref, sha = matches[0]
+    return {
+        "status": "ok",
+        "repo": repo,
+        "requested_ref": ref,
+        "advertised_ref": advertised_ref,
+        "commit": sha,
+        "ref_kind": "branch" if advertised_ref.startswith("refs/heads/") else "tag",
+    }
+
+
+def _launch_outcome_payload(
+    *,
+    status: str,
+    code: str,
+    detail: str | None = None,
+    verification: Mapping[str, Any] | None = None,
+    stderr_tail: str | None = None,
+    log_tail: list[str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": status,
+        "code": code,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if detail:
+        payload["detail"] = detail
+    if verification is not None:
+        payload["verification"] = dict(verification)
+    if stderr_tail:
+        payload["stderr_tail"] = stderr_tail
+    if log_tail:
+        payload["log_tail"] = log_tail
+    return payload
+
+
+def _atomic_marker_write_command(marker_path: str, marker_payload: dict[str, Any]) -> str:
+    payload_json = json.dumps(marker_payload, sort_keys=True)
+    script = f"""
+import json, os, pathlib, tempfile
+
+path = pathlib.Path({marker_path!r})
+payload = json.loads({payload_json!r})
+current = {{}}
+if path.exists():
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        loaded = {{}}
+    if isinstance(loaded, dict):
+        current.update(loaded)
+current.update(payload)
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(current, indent=2, sort_keys=True) + "\\n")
+os.replace(tmp_name, path)
+"""
+    return f"python3 - <<'MEGAPLAN_MARKER_WRITE'\n{script.strip()}\nMEGAPLAN_MARKER_WRITE"
+
+
+def _prelaunch_marker_guard_command(ctx: "ChainLaunchContext") -> str:
+    script = f"""
+import json, pathlib, subprocess
+
+marker_path = pathlib.Path({ctx.marker_path!r})
+session = {ctx.session_name!r}
+identity_digest = {ctx.digest!r}
+session_alive = subprocess.run(
+    ["tmux", "has-session", "-t", session],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+).returncode == 0
+marker = {{}}
+marker_present = marker_path.is_file()
+marker_read_error = ""
+if marker_present:
+    try:
+        loaded = json.loads(marker_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        marker_read_error = str(exc)
+        loaded = {{}}
+    if isinstance(loaded, dict):
+        marker = loaded
+identity_matches = marker.get("identity_digest") == identity_digest if marker else False
+print(json.dumps({{
+    "session_alive": session_alive,
+    "marker_present": marker_present,
+    "identity_matches": identity_matches,
+    "marker_read_error": marker_read_error,
+}}, sort_keys=True))
+"""
+    return f"python3 - <<'MEGAPLAN_PRELAUNCH_MARKER_GUARD'\n{script.strip()}\nMEGAPLAN_PRELAUNCH_MARKER_GUARD"
+
+
+def _run_prelaunch_marker_guard(provider, ctx: "ChainLaunchContext") -> dict[str, Any]:
+    result = provider.ssh_exec(_prelaunch_marker_guard_command(ctx))
+    raw = (result.stdout or "").strip().splitlines()
+    try:
+        payload = json.loads(raw[-1] if raw else "{}")
+    except json.JSONDecodeError as exc:
+        payload = {
+            "session_alive": False,
+            "marker_present": False,
+            "identity_matches": False,
+            "marker_read_error": f"guard output was not JSON: {exc}",
+        }
+    return payload
+
+
+def _persist_remote_launch_outcome(
+    provider,
+    *,
+    ctx: "ChainLaunchContext",
+    marker_payload: dict[str, Any],
+    launch_outcome: dict[str, Any],
+    allow_live_session: bool = True,
+) -> None:
+    if not allow_live_session:
+        guard = _run_prelaunch_marker_guard(provider, ctx)
+        if guard.get("session_alive"):
+            return
+        if guard.get("marker_present") and not guard.get("identity_matches"):
+            return
+    payload = dict(marker_payload)
+    payload["launch_outcome"] = launch_outcome
+    payload["updated_at"] = launch_outcome.get("observed_at")
+    result = provider.ssh_exec(_atomic_marker_write_command(ctx.marker_path, payload))
+    if result.returncode != 0:
+        raise CliError(
+            "launch_marker_write_failed",
+            (result.stderr or result.stdout or f"failed to update session marker {ctx.marker_path}").strip(),
+            extra={
+                "marker_path": ctx.marker_path,
+                "launch_outcome": launch_outcome,
+            },
+        )
+
+
 def _step_payload(
     step: DeployStepReport,
     *,
@@ -2452,8 +2797,7 @@ def _chain_start_command(
 
 
 def _write_session_marker_command(marker_path: str, marker_payload: dict[str, Any]) -> str:
-    marker_json = json.dumps(marker_payload, sort_keys=True)
-    return f"printf %s {shlex.quote(marker_json)} > {shlex.quote(marker_path)}"
+    return _atomic_marker_write_command(marker_path, marker_payload)
 
 
 def _plan_auto_command(
@@ -2531,8 +2875,8 @@ def _megaplan_refresh_command(
         '      MIRROR_REMOTE="$UPSTREAM_URL"',
         '      if [ -z "$MIRROR_REMOTE" ]; then MIRROR_REMOTE="$(git -C "$SRC" remote get-url origin)"; fi',
         '      git -C "$RUNTIME_SRC" remote set-url origin "$MIRROR_REMOTE"',
-        '      git -C "$RUNTIME_SRC" fetch origin "$REF"',
-        '      git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"',
+        '      git -C "$RUNTIME_SRC" fetch origin "+refs/heads/$REF:refs/remotes/origin/$REF"',
+        '      git -C "$RUNTIME_SRC" checkout --detach "refs/remotes/origin/$REF"',
         '      export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"',
         "    else",
         '      echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
@@ -3269,6 +3613,16 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
     missing_env = _missing_configured_secrets(spec, os.environ)
     remote: dict[str, Any] = {"skipped": bool(getattr(args, "skip_remote", False))}
     if not remote["skipped"]:
+        try:
+            engine_ref_check = _verify_configured_megaplan_ref_advertised(spec)
+        except CliError as exc:
+            engine_ref_check = dict(exc.extra.get("engine_ref_check") or {})
+            engine_ref_check.setdefault("status", "failed")
+            remote["engine_ref_check"] = engine_ref_check
+            errors = [exc.message]
+        else:
+            remote["engine_ref_check"] = engine_ref_check
+            errors = []
         import_check = _run_remote_megaplan_import_check(provider)
         missing_commands = _run_remote_dependency_check(
             provider,
@@ -3280,7 +3634,8 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
                 "missing_commands": missing_commands,
             }
         )
-    errors: list[str] = []
+    else:
+        errors = []
     if placeholder_findings and not bool(getattr(args, "allow_template_placeholders", False)):
         errors.append(
             "template placeholders remain; edit them or pass --allow-template-placeholders"
@@ -3717,6 +4072,70 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
+    launch_session = launch_ctx.session_name
+    session_name = launch_ctx.session_name
+    launch_started_at = datetime.now(timezone.utc).isoformat()
+    marker_payload = {
+        "session": launch_ctx.session_name,
+        "workspace": launch_ctx.workspace,
+        "remote_spec": launch_ctx.remote_spec_path,
+        "identity_digest": launch_ctx.digest,
+        "chain_slug": launch_ctx.slug,
+        "run_kind": "chain",
+        "allow_human_gates": bool(getattr(args, "allow_human_gates", False)),
+        "relaunch_command": _refresh_then_chain_start_command(
+            remote_spec_path,
+            spec=launch_spec,
+            project_dir=launch_ctx.workspace,
+            log_relative=launch_ctx.log_relative,
+            no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
+            force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
+        ),
+        "editable_source_branch": launch_spec.megaplan.ref,
+        "editable_source_head": (
+            editable_install_sync.get("editable_head")
+            or editable_install_sync.get("launch_head")
+        ),
+        "editable_install_sync": editable_install_sync,
+        "started_at": launch_started_at,
+        "launch_outcome": _launch_outcome_payload(
+            status="starting",
+            code="launch_in_progress",
+            detail="cloud chain launch is preparing the remote session",
+        ),
+    }
+    try:
+        engine_ref_check = _verify_configured_megaplan_ref_advertised(launch_spec)
+    except CliError as exc:
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code=exc.code,
+            detail=exc.message,
+            verification={
+                "status": "pre_tmux_ref_check_failed",
+                **(exc.extra.get("engine_ref_check") or {}),
+            },
+            stderr_tail=str((exc.extra.get("engine_ref_check") or {}).get("stderr_tail") or ""),
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+            allow_live_session=False,
+        )
+        exc.extra.setdefault("launch_outcome", launch_outcome)
+        exc.extra.setdefault(
+            "launch_custody",
+            {
+                "workspace": launch_ctx.workspace,
+                "remote_spec": remote_spec_path,
+                "marker_path": launch_ctx.marker_path,
+                "chain_session": launch_ctx.session_name,
+            },
+        )
+        raise
+    marker_payload["engine_ref_check"] = engine_ref_check
     if bool(getattr(args, "fresh", False)):
         stop_result = provider.ssh_exec(
             _tmux_chain_stop_for_fresh_command(
@@ -3747,32 +4166,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             f"remote chain state reset check failed (exit {reset_result.returncode})",
         )
 
-    launch_session = launch_ctx.session_name
-    session_name = launch_ctx.session_name
-    marker_payload = {
-        "session": launch_ctx.session_name,
-        "workspace": launch_ctx.workspace,
-        "remote_spec": launch_ctx.remote_spec_path,
-        "identity_digest": launch_ctx.digest,
-        "chain_slug": launch_ctx.slug,
-        "run_kind": "chain",
-        "allow_human_gates": bool(getattr(args, "allow_human_gates", False)),
-        "relaunch_command": _refresh_then_chain_start_command(
-            remote_spec_path,
-            spec=launch_spec,
-            project_dir=launch_ctx.workspace,
-            log_relative=launch_ctx.log_relative,
-            no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
-            force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
-        ),
-        "editable_source_branch": launch_spec.megaplan.ref,
-        "editable_source_head": (
-            editable_install_sync.get("editable_head")
-            or editable_install_sync.get("launch_head")
-        ),
-        "editable_install_sync": editable_install_sync,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
     result = provider.ssh_exec(
         _tmux_chain_launch_command(
             launch_ctx.workspace,
@@ -3795,13 +4188,66 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         )
     tracking = _run_watchdog_tracking_verification(provider, launch_ctx)
     if not tracking.get("tracked"):
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code="watchdog_tracking_failed",
+            detail="cloud chain launch completed but watchdog could not prove session custody",
+            verification=tracking,
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+        )
         raise CliError(
             "watchdog_tracking_failed",
             "cloud launch completed but watchdog tracking verification failed: "
             + "; ".join(str(item) for item in tracking.get("errors", []) or ["unknown error"]),
-            extra={"watchdog_tracking": tracking},
+            extra={"watchdog_tracking": tracking, "launch_outcome": launch_outcome},
         )
     verification = _run_chain_launch_verification(provider, launch_ctx)
+    if verification.get("status") != "ok":
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code=str(verification.get("failure_code") or "launch_not_advanced"),
+            detail=str(
+                verification.get("likely_cause")
+                or "cloud chain launch did not advance past init"
+            ),
+            verification={**verification, "watchdog_tracking": tracking},
+            log_tail=verification.get("log_tail") if isinstance(verification.get("log_tail"), list) else None,
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+        )
+        raise CliError(
+            "launch_not_advanced",
+            (
+                "cloud chain launch did not advance past init; "
+                + str(verification.get("likely_cause") or "inspect the remote chain log")
+            ),
+            extra={
+                "verification": {**verification, "watchdog_tracking": tracking},
+                "launch_outcome": launch_outcome,
+            },
+        )
+    success_outcome = _launch_outcome_payload(
+        status="running",
+        code="success",
+        detail="cloud chain launch verified session liveness and state advancement",
+        verification={**verification, "watchdog_tracking": tracking},
+        log_tail=verification.get("log_tail") if isinstance(verification.get("log_tail"), list) else None,
+    )
+    _persist_remote_launch_outcome(
+        provider,
+        ctx=launch_ctx,
+        marker_payload=marker_payload,
+        launch_outcome=success_outcome,
+    )
     provenance = _cloud_chain_launch_provenance(
         spec=spec,
         ctx=launch_ctx,
@@ -3811,6 +4257,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         repo_head=repo_head,
         tmux_result=result,
         editable_install_sync=editable_install_sync,
+        engine_ref_check=engine_ref_check,
         verification={**verification, "watchdog_tracking": tracking},
     )
     sys.stderr.write(
@@ -3833,6 +4280,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "base_branch": chain_spec.base_branch,
                 "provenance": provenance,
                 "editable_install_sync": editable_install_sync,
+                "engine_ref_check": engine_ref_check,
                 "workspace": launch_ctx.workspace,
                 "chain_session": launch_session,
                 "chain_log": launch_ctx.log_path,
@@ -3951,7 +4399,7 @@ def _epic_chain_launch_verification_command(
     sleep_seconds: int = _CHAIN_VERIFY_SLEEP_SECONDS,
 ) -> str:
     script = f"""
-import json, pathlib, re, subprocess, time
+import json, pathlib, subprocess, time
 workspace = pathlib.Path({workspace!r})
 session = {session_name!r}
 remote_spec = pathlib.Path({remote_spec_path!r})
@@ -3997,6 +4445,30 @@ for idx in range(max(1, attempts)):
         break
     if idx + 1 < attempts:
         time.sleep(sleep_seconds)
+log_tail = []
+if log_path.exists():
+    try:
+        log_tail = log_path.read_text(errors="replace").splitlines()[-80:]
+    except Exception as exc:
+        log_tail = [f"<unable to read epic-chain log: {{exc}}>"]
+tail_text = "\\n".join(log_tail)
+likely = None
+failure_code = None
+if not last.get("session_alive"):
+    likely = "driver exited before epic-chain state advanced; inspect epic-chain log"
+elif not last.get("advanced_past_init"):
+    likely = "epic-chain stayed at init; inspect epic-chain log for engine refresh or startup failures"
+if "[megaplan-refresh] refusing editable install refresh" in tail_text:
+    likely = "editable install refresh failed before epic-chain start"
+    if "tracked changes in source checkout" in tail_text:
+        failure_code = "editable_install_refresh_dirty"
+    elif "local commits not contained" in tail_text:
+        failure_code = "editable_install_refresh_diverged"
+    else:
+        failure_code = "editable_install_refresh_failed"
+last["likely_cause"] = likely
+last["failure_code"] = failure_code
+last["log_tail"] = log_tail
 last["status"] = "ok" if last.get("session_alive") and last.get("spec_present") and last.get("marker_present") and last.get("advanced_past_init") else "warning"
 print(json.dumps(last, sort_keys=True))
 """
@@ -4087,19 +4559,6 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         if archive_path is not None:
             archive_path.unlink(missing_ok=True)
 
-    reset_result = provider.ssh_exec(
-        _epic_chain_state_reset_command(
-            state_path=launch_ctx.state_path,
-            force=bool(getattr(args, "fresh", False)),
-        )
-    )
-    if reset_result.returncode != 0:
-        _relay_output(reset_result, secret_names=spec.secrets, env=os.environ)
-        raise CliError(
-            "provider_failed",
-            f"remote epic-chain state reset failed (exit {reset_result.returncode})",
-        )
-
     relaunch_command = _refresh_then_epic_chain_start_command(
         launch_ctx.remote_spec_path,
         spec=launch_spec,
@@ -4122,7 +4581,58 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         ),
         "editable_install_sync": editable_install_sync,
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "launch_outcome": _launch_outcome_payload(
+            status="starting",
+            code="launch_in_progress",
+            detail="cloud epic-chain launch is preparing the remote session",
+        ),
     }
+    try:
+        engine_ref_check = _verify_configured_megaplan_ref_advertised(launch_spec)
+    except CliError as exc:
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code=exc.code,
+            detail=exc.message,
+            verification={
+                "status": "pre_tmux_ref_check_failed",
+                **(exc.extra.get("engine_ref_check") or {}),
+            },
+            stderr_tail=str((exc.extra.get("engine_ref_check") or {}).get("stderr_tail") or ""),
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+            allow_live_session=False,
+        )
+        exc.extra.setdefault("launch_outcome", launch_outcome)
+        exc.extra.setdefault(
+            "launch_custody",
+            {
+                "workspace": launch_ctx.workspace,
+                "remote_spec": launch_ctx.remote_spec_path,
+                "marker_path": launch_ctx.marker_path,
+                "chain_session": launch_ctx.session_name,
+            },
+        )
+        raise
+    marker_payload["engine_ref_check"] = engine_ref_check
+
+    reset_result = provider.ssh_exec(
+        _epic_chain_state_reset_command(
+            state_path=launch_ctx.state_path,
+            force=bool(getattr(args, "fresh", False)),
+        )
+    )
+    if reset_result.returncode != 0:
+        _relay_output(reset_result, secret_names=spec.secrets, env=os.environ)
+        raise CliError(
+            "provider_failed",
+            f"remote epic-chain state reset failed (exit {reset_result.returncode})",
+        )
+
     result = provider.ssh_exec(
         _tmux_epic_chain_launch_command(
             launch_ctx.workspace,
@@ -4144,13 +4654,66 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         )
     tracking = _run_watchdog_tracking_verification(provider, launch_ctx)
     if not tracking.get("tracked"):
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code="watchdog_tracking_failed",
+            detail="cloud epic-chain launch completed but watchdog could not prove session custody",
+            verification=tracking,
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+        )
         raise CliError(
             "watchdog_tracking_failed",
             "cloud epic-chain launch completed but watchdog tracking verification failed: "
             + "; ".join(str(item) for item in tracking.get("errors", []) or ["unknown error"]),
-            extra={"watchdog_tracking": tracking},
+            extra={"watchdog_tracking": tracking, "launch_outcome": launch_outcome},
         )
     verification = _run_epic_chain_launch_verification(provider, launch_ctx)
+    if verification.get("status") != "ok":
+        launch_outcome = _launch_outcome_payload(
+            status="failed",
+            code=str(verification.get("failure_code") or "launch_not_advanced"),
+            detail=str(
+                verification.get("likely_cause")
+                or "cloud epic-chain launch did not advance past init"
+            ),
+            verification={**verification, "watchdog_tracking": tracking},
+            log_tail=verification.get("log_tail") if isinstance(verification.get("log_tail"), list) else None,
+        )
+        _persist_remote_launch_outcome(
+            provider,
+            ctx=launch_ctx,
+            marker_payload=marker_payload,
+            launch_outcome=launch_outcome,
+        )
+        raise CliError(
+            "launch_not_advanced",
+            (
+                "cloud epic-chain launch did not advance past init; "
+                + str(verification.get("likely_cause") or "inspect the remote epic-chain log")
+            ),
+            extra={
+                "verification": {**verification, "watchdog_tracking": tracking},
+                "launch_outcome": launch_outcome,
+            },
+        )
+    success_outcome = _launch_outcome_payload(
+        status="running",
+        code="success",
+        detail="cloud epic-chain launch verified session liveness and state advancement",
+        verification={**verification, "watchdog_tracking": tracking},
+        log_tail=verification.get("log_tail") if isinstance(verification.get("log_tail"), list) else None,
+    )
+    _persist_remote_launch_outcome(
+        provider,
+        ctx=launch_ctx,
+        marker_payload=marker_payload,
+        launch_outcome=success_outcome,
+    )
     sys.stderr.write(
         "cloud epic-chain launch: "
         f"session={launch_ctx.session_name} "
@@ -4169,6 +4732,7 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
         "uploaded_roots": list(_DURABLE_MEGAPLAN_DIRS),
         "verification": {**verification, "watchdog_tracking": tracking},
         "editable_install_sync": editable_install_sync,
+        "engine_ref_check": engine_ref_check,
     }
     from arnold_pipelines.megaplan.resident.provenance import safe_provenance_projection
 
@@ -4186,6 +4750,7 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
                 "base_branch": epic_chain_spec.base_branch,
                 "provenance": payload,
                 "editable_install_sync": editable_install_sync,
+                "engine_ref_check": engine_ref_check,
                 "workspace": launch_ctx.workspace,
                 "chain_session": launch_ctx.session_name,
                 "chain_log": launch_ctx.log_path,

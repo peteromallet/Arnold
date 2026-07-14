@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# Caller-provided supervisor runtime controls are an explicit invocation
+# contract (and are used by readiness probes).  The shared hot-env supplies
+# defaults for resident service launches, but must not overwrite those explicit
+# values when the wrapper is invoked with a constrained runtime.
+WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET="${MEGAPLAN_SUPERVISOR_PYTHON+x}"
+WATCHDOG_CALLER_SUPERVISOR_PYTHON="${MEGAPLAN_SUPERVISOR_PYTHON-}"
+WATCHDOG_CALLER_RUNTIME_REQUIRED_SET="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED+x}"
+WATCHDOG_CALLER_RUNTIME_REQUIRED="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED-}"
+
 if [[ -f /workspace/.cloud-hot-env ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -8,7 +17,28 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
+if [[ -n "$WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET" ]]; then
+  MEGAPLAN_SUPERVISOR_PYTHON="$WATCHDOG_CALLER_SUPERVISOR_PYTHON"
+  export MEGAPLAN_SUPERVISOR_PYTHON
+fi
+if [[ -n "$WATCHDOG_CALLER_RUNTIME_REQUIRED_SET" ]]; then
+  MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED="$WATCHDOG_CALLER_RUNTIME_REQUIRED"
+  export MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED
+fi
+unset WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET WATCHDOG_CALLER_SUPERVISOR_PYTHON
+unset WATCHDOG_CALLER_RUNTIME_REQUIRED_SET WATCHDOG_CALLER_RUNTIME_REQUIRED
+
 WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+# shellcheck disable=SC1090
+. "$SUPERVISOR_RUNTIME_LIB"
+arnold_supervisor_runtime_init watchdog "${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}" || exit $?
 
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 if command -v readlink >/dev/null 2>&1; then
@@ -1848,20 +1878,16 @@ sync_cloud_runtime_wrappers() {
 }
 
 refresh_editable_install() {
-  if [[ -d "$SRC_DIR" && -f "$SRC_DIR/pyproject.toml" ]]; then
-    log "refreshing Arnold editable install from $SRC_DIR"
-    timeout "$INSTALL_REFRESH_TIMEOUT_SECS" python3 -m pip install --upgrade -e "$SRC_DIR[agent]" >> "$LOG" 2>&1 || return 1
-  elif [[ -x /usr/local/bin/mp-refresh-megaplan ]]; then
-    log "refreshing Arnold install with mp-refresh-megaplan fallback"
-    timeout "$INSTALL_REFRESH_TIMEOUT_SECS" env MEGAPLAN_REF="$SYNC_BRANCH" /usr/local/bin/mp-refresh-megaplan >> "$LOG" 2>&1 || return 1
-  else
-    log "mp-refresh-megaplan missing; skipping editable refresh"
-  fi
-
+  # The supervisor interpreter is immutable for its lifetime. Source updates
+  # are consumed through PYTHONPATH and atomically copied wrappers; never run an
+  # in-place pip reinstall from inside the process that is doing observation.
+  log "refreshing Arnold source-backed supervisor from $SRC_DIR without mutating interpreter"
   sync_cloud_runtime_wrappers >> "$LOG" 2>&1 || return 1
 
-  python3 - <<'PY' >> "$LOG" 2>&1
+  PYTHONSAFEPATH=1 PYTHONPATH="$SRC_DIR:${PYTHONPATH:-}" python3 -P - <<'PY' >> "$LOG" 2>&1
+import yaml  # noqa: F401
 import arnold_pipelines.megaplan.cloud.cli  # noqa: F401
+import arnold_pipelines.megaplan.cloud.repair_contract  # noqa: F401
 PY
 }
 
@@ -2119,6 +2145,78 @@ ensure_install_or_repair() {
   codex_repair_editable_install "$reason"
 }
 
+write_watchdog_observation_error() {
+  local reason="$1"
+  local status_dir="${2:-$STATUS_DIR}"
+  local stamp tmp target
+  mkdir -p "$status_dir" 2>/dev/null || return 1
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  target="$status_dir/watchdog-observation-failure.json"
+  tmp="$(mktemp "$status_dir/.watchdog-observation-failure.XXXXXX")" || return 1
+  printf '{"at":"%s","error":"watchdog observation bootstrap failed; watchdog report may be stale","reason":"observation_runtime_not_ready","schema_version":"arnold-watchdog-observation-failure-v1","status":"failed"}\n' \
+    "$stamp" > "$tmp"
+  mv -f "$tmp" "$target"
+  # Preserve the legacy consumer path with the same atomic payload.
+  tmp="$(mktemp "$status_dir/.cloud-status.write-error.XXXXXX")" || return 1
+  cp "$target" "$tmp"
+  mv -f "$tmp" "$status_dir/cloud-status.write-error.json"
+  log "watchdog observation failure persisted atomically: ${reason:-unknown}"
+}
+
+write_watchdog_sweep_health() {
+  local phase="$1"
+  local status_dir="${2:-$STATUS_DIR}"
+  local target="$status_dir/watchdog-sweep.${phase}.json"
+  local tmp stamp
+  mkdir -p "$status_dir"
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  tmp="$(mktemp "$status_dir/.watchdog-sweep.${phase}.XXXXXX")" || return 1
+  printf '{"at":"%s","phase":"%s","schema_version":"arnold-watchdog-sweep-health-v1"}\n' \
+    "$stamp" "$phase" > "$tmp"
+  mv -f "$tmp" "$target"
+}
+
+watchdog_observation_runtime_check() {
+  local trigger_bin="${REPAIR_TRIGGER_BIN:-}"
+  local output rc
+  output="$(mktemp)"
+  if ! PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - <<'PY' >"$output" 2>&1; then
+import yaml  # noqa: F401
+import arnold_pipelines.megaplan.cloud.cli  # noqa: F401
+import arnold_pipelines.megaplan.cloud.status_snapshot  # noqa: F401
+PY
+    cat "$output"
+    rm -f "$output"
+    return 1
+  fi
+  if [[ -n "$trigger_bin" && -x "$trigger_bin" ]]; then
+    if ! PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$trigger_bin" --help > /dev/null 2>"$output"; then
+      cat "$output"
+      rm -f "$output"
+      return 1
+    fi
+  fi
+  rm -f "$output"
+  return 0
+}
+
+bootstrap_watchdog_observation() {
+  local report_items="$1"
+  local reason=""
+  WATCHDOG_BOOTSTRAP_RECOVERED=0
+  if reason="$(watchdog_observation_runtime_check 2>&1)"; then
+    return 0
+  fi
+  # Fail closed. Attempting pip/source repair from a blind observer caused the
+  # original boot/install race and could leave a live-but-sleeping watchdog.
+  reason="$(printf '%s' "$reason" | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g' | sed 's/^ //; s/ $//')"
+  [[ -n "$reason" ]] || reason="watchdog observation runtime check failed"
+  log "watchdog observation bootstrap failed closed: $reason"
+  report_item "$report_items" "watchdog" "observe" "observation_blind" "watchdog observation bootstrap failed closed: $reason" "$SRC_DIR" "$SYNC_BRANCH"
+  write_watchdog_observation_error "$reason"
+  return 1
+}
+
 matching_runner_process_alive() {
   local workspace="$1"
   local remote_spec="$2"
@@ -2373,9 +2471,36 @@ session_health_status() {
   echo "stopped"
 }
 
+verify_relaunch_health() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local attempts="${6:-15}"
+  local health="stopped"
+  local attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+    case "$health" in
+      alive|awaiting_pr_merge)
+        printf '%s\n' "$health"
+        return 0
+        ;;
+      chain_log_failure|retrying_failure)
+        printf '%s\n' "$health"
+        return 1
+        ;;
+    esac
+    sleep 1
+  done
+  printf '%s\n' "$health"
+  return 1
+}
+
 repair_trigger_scan() {
   local trigger_bin="${REPAIR_TRIGGER_BIN:-}"
-  local output rc
+  local output rc attempt
   if [[ -z "$trigger_bin" ]]; then
     return 0
   fi
@@ -2383,13 +2508,19 @@ repair_trigger_scan() {
     log "repair-trigger unavailable path=$trigger_bin"
     return 0
   fi
-  output="$(
-    PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
-      "$trigger_bin" \
-      --marker-dir "$MARKER_DIR" \
-      --repair-data-dir "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" 2>&1
-  )"
-  rc=$?
+  rc=1
+  for attempt in 1 2 3; do
+    output="$(
+      PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+        "$trigger_bin" \
+        --marker-dir "$MARKER_DIR" \
+        --repair-data-dir "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" 2>&1
+    )"
+    rc=$?
+    [[ $rc -eq 0 ]] && break
+    log "repair-trigger bootstrap attempt=$attempt rc=$rc; retrying before watchdog interval sleep"
+    [[ $attempt -lt 3 ]] && sleep 1
+  done
   if [[ -n "$output" ]]; then
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
@@ -2397,7 +2528,7 @@ repair_trigger_scan() {
     done <<< "$output"
   fi
   if [[ $rc -ne 0 ]]; then
-    log "repair-trigger exited rc=$rc; continuing watchdog scan"
+    log "repair-trigger exited rc=$rc after bounded bootstrap retries; continuing watchdog scan"
   fi
   return 0
 }
@@ -4356,6 +4487,7 @@ dispatch_kimi_repair() {
   local workspace="$2"
   local remote_spec="$3"
   local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
+  local run_id_path managed_run_id managed_manifest child_pid confirm_attempt
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
   request_id=""
@@ -4401,12 +4533,14 @@ dispatch_kimi_repair() {
       ;;
   esac
   pgid_path="$(kimi_pgid_path "$session")"
+  run_id_path="${pgid_path}.managed-run-id"
+  rm -f "$run_id_path"
   kimi_dispatch_marker_set "$session"
   managed_identity="${request_id:-watchdog-${session}-$(date +%s%N)}"
   incident_id="$(json_field "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json" incident_id 2>/dev/null || true)"
   incident_id="${incident_id:-inc-$session}"
   managed_cmd=(
-    python3 -m arnold_pipelines.megaplan.managed_agent run
+    python3 -P -m arnold_pipelines.megaplan.managed_agent run
     --run-kind automatic_repair
     --identity-key "$managed_identity"
     --project-dir "$workspace"
@@ -4417,6 +4551,7 @@ dispatch_kimi_repair() {
     --route-class watchdog_authorized_l1
     --backend repair-loop
     --command-display "arnold-repair-loop $session"
+    --run-id-file "$run_id_path"
     --lineage-key "repair-request:${request_id:-$session}"
     --link "repair_request_id=$request_id"
     --link "blocker_id=$blocker_id"
@@ -4430,6 +4565,7 @@ dispatch_kimi_repair() {
     "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec"
   )
   if command -v setsid >/dev/null 2>&1; then
+    PYTHONSAFEPATH=1 \
     PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
@@ -4437,6 +4573,7 @@ dispatch_kimi_repair() {
     setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
+    PYTHONSAFEPATH=1 \
     PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
@@ -4444,11 +4581,127 @@ dispatch_kimi_repair() {
     "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
-  printf '%s\n' "$!" > "$pgid_path"
-  log "repair loop background-dispatched session=$session pid=$!"
-  REPAIR_DISPATCH_RESULT="dispatched"
-  emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop background-dispatched" "dispatched" "immediate_repair"
-  return 0
+  child_pid="$!"
+  printf '%s\n' "$child_pid" > "$pgid_path"
+  managed_run_id=""
+  managed_manifest=""
+  for confirm_attempt in 1 2 3 4 5; do
+    managed_run_id="$(cat "$run_id_path" 2>/dev/null || true)"
+    if [[ -n "$managed_run_id" ]]; then
+      managed_manifest="$workspace/.megaplan/plans/resident-subagents/$managed_run_id/manifest.json"
+      if PYTHONSAFEPATH=1 python3 -P - "$managed_manifest" "$managed_run_id" "$session" "$request_id" "$blocker_id" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path, run_id, session, request_id, blocker_id = sys.argv[1:]
+try:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    raise SystemExit(1)
+links = payload.get("links") if isinstance(payload.get("links"), dict) else {}
+history = payload.get("status_history") if isinstance(payload.get("status_history"), list) else []
+running_seen = any(isinstance(item, dict) and item.get("status") == "running" for item in history)
+valid = (
+    payload.get("run_id") == run_id
+    and payload.get("run_kind") == "automatic_repair"
+    and payload.get("status") == "running"
+    and running_seen
+    and links.get("cloud_session") == session
+    and (not request_id or links.get("repair_request_id") == request_id)
+    and (not blocker_id or links.get("blocker_id") == blocker_id)
+)
+raise SystemExit(0 if valid else 1)
+PY
+      then
+        log "repair loop managed launch confirmed session=$session run_id=$managed_run_id manifest=$managed_manifest"
+        REPAIR_DISPATCH_RESULT="dispatched"
+        emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop managed launch confirmed run_id=$managed_run_id" "dispatched" "immediate_repair"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  kimi_dispatch_marker_clear "$session"
+  rm -f "$pgid_path"
+  log "repair loop launch failed confirmation session=$session pid=$child_pid run_id=${managed_run_id:-missing} manifest=${managed_manifest:-missing}"
+  if declare -F release_failed_repair_launch_claim >/dev/null 2>&1; then
+    if release_failed_repair_launch_claim \
+      "$session" "$request_id" "$blocker_id" "$child_pid" "$$"; then
+      log "released exact unbound repair claim after confirmed launch failure session=$session request=${request_id:-unknown}"
+    else
+      log "retained repair claim after launch failure because custody could not be disproven session=$session request=${request_id:-unknown}"
+    fi
+  fi
+  REPAIR_DISPATCH_RESULT="launch_failed"
+  emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop managed launch confirmation failed" "unavailable" "immediate_repair"
+  return 1
+}
+
+release_failed_repair_launch_claim() {
+  local session="$1"
+  local request_id="$2"
+  local blocker_id="$3"
+  local child_pid="$4"
+  local watchdog_pid="$5"
+  if [[ -z "$request_id" || -z "$blocker_id" ]]; then
+    return 0
+  fi
+  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 -P - \
+    "$MARKER_DIR" "$session" "$request_id" "$blocker_id" "$child_pid" "$watchdog_pid" <<'PY'
+import os
+import sys
+
+from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan.cloud.repair_lock import inspect_repair_lock
+
+marker_dir, session, request_id, blocker_id, child_text, watchdog_text = sys.argv[1:]
+try:
+    child_pid = int(child_text)
+    watchdog_pid = int(watchdog_text)
+except ValueError:
+    raise SystemExit(1)
+
+
+def _pid_is_live(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+queue_dir = repair_requests.repair_queue_dir(marker_dir)
+lock_dir = repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
+inspected = inspect_repair_lock(lock_dir, is_pid_live=_pid_is_live)
+if inspected.status == "missing":
+    raise SystemExit(0)
+owner = inspected.owner if isinstance(inspected.owner, dict) else {}
+owner_pid = owner.get("pid")
+identity_matches = (
+    owner.get("actor") == "arnold-watchdog"
+    and owner.get("session") == session
+    and owner.get("request_id") == request_id
+    and owner.get("blocker_id") == blocker_id
+    and owner_pid == watchdog_pid
+)
+managed_binding_absent = not owner.get("managed_agent_run_id") and not owner.get(
+    "managed_manifest_path"
+)
+# The confirmation loop is not authority to steal a live or bound repair. Only
+# unwind this watchdog's exact claim after its launched child has really exited.
+if not identity_matches or not managed_binding_absent or _pid_is_live(child_pid):
+    raise SystemExit(1)
+released = repair_requests.release_active_repair_request_claim(
+    queue_dir,
+    blocker_id=blocker_id,
+    owner=owner,
+    expected_pid=watchdog_pid,
+)
+raise SystemExit(0 if released else 1)
+PY
 }
 
 claim_active_repair_launch() {
@@ -4923,7 +5176,7 @@ dispatch_meta_repair() {
   incident_id="${incident_id:-inc-$session}"
   parent_run_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" managed_agent_run_id 2>/dev/null || true)"
   managed_cmd=(
-    python3 -m arnold_pipelines.megaplan.managed_agent run
+    python3 -P -m arnold_pipelines.megaplan.managed_agent run
     --run-kind automatic_meta_repair
     --identity-key "meta-repair:${session}:${trigger_label}"
     --project-dir "$SRC_DIR"
@@ -4949,12 +5202,14 @@ dispatch_meta_repair() {
 
   # Background-dispatch meta-repair so it never blocks the watchdog tick
   if command -v setsid >/dev/null 2>&1; then
+    PYTHONSAFEPATH=1 \
     PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
+    PYTHONSAFEPATH=1 \
     PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
@@ -4969,6 +5224,27 @@ dispatch_meta_repair() {
     report_item "$report_items" "$session" "meta_repair" "dispatched" "meta-repair background-dispatched" "$workspace" "$remote_spec"
   fi
   return 0
+}
+
+route_l1_launch_failure_to_meta_repair() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local report_items="$4"
+  local meta_dispatch_result
+  [[ "${REPAIR_DISPATCH_RESULT:-}" == "launch_failed" ]] || return 1
+  if dispatch_meta_repair \
+    "$session" "$workspace" "$remote_spec" "$report_items" "l1_launch_failed"; then
+    meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+    if [[ "$meta_dispatch_result" == "dispatched" || "$meta_dispatch_result" == "busy" ]]; then
+      log "ordinary repair launch failed; L2 now has custody session=$session result=$meta_dispatch_result"
+      report_item "$report_items" "$session" "meta_repair" "$meta_dispatch_result" \
+        "L2 took custody after confirmed L1 launch failure" "$workspace" "$remote_spec"
+      return 0
+    fi
+  fi
+  log "ordinary repair launch failed and L2 could not take custody session=$session result=${REPAIR_DISPATCH_RESULT:-unavailable}"
+  return 1
 }
 
 run_repair_data_maintenance() {
@@ -5881,19 +6157,11 @@ for path in chain_paths:
     pr_number = payload.get("pr_number")
     if last_state == "awaiting_pr_merge":
         pass
-    elif last_state in ("done", "complete", "finalized") and pr_number:
-        # Ground-truth guard: the chain driver can mark last_state=done once the
-        # milestone plan is finalized even when the milestone PR is still open
-        # under merge_policy: review. Verify the PR live; if it is not merged yet
-        # the chain is really awaiting_pr_merge, not done/finalized. Without this the
-        # watchdog trusts last_state=done and falls through to a stale
-        # repair-loop marker, mislabeling the session needs_human.
-        try:
-            if _pr_state(int(pr_number)) == "merged":
-                continue
-        except Exception:
-            continue
     else:
+        # ``finalized`` is the pre-execute plan state, not completion evidence.
+        # External merge authority is available only after the chain driver has
+        # durably entered awaiting_pr_merge; never infer it from a terminal-
+        # looking label while task and CI evidence may still be red.
         continue
     if not pr_number:
         print("awaiting_pr_merge")
@@ -7498,6 +7766,9 @@ PY
         fi
         return 0
       fi
+      if route_l1_launch_failure_to_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
+        return 0
+      fi
       log "session manual_review has unresolved quality blockers but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     fi
     manual_review_dispatch_env="$(manual_review_dispatch_status_env "$session" "$workspace" "$remote_spec_path" "$run_kind" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" 2>>"$LOG" || true)"
@@ -7550,6 +7821,9 @@ PY
           log "session manual_review classified for repair dispatch; background-dispatched repair loop before needs_human session=$session summary=$human_summary"
           report_item "$report_items" "$session" "repair" "repair_dispatched" "$manual_review_report_reason" "$workspace" "$remote_spec"
         fi
+        return 0
+      fi
+      if route_l1_launch_failure_to_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
         return 0
       fi
       log "session manual_review classified for repair dispatch but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
@@ -7718,8 +7992,21 @@ EOF
   log "relaunching stopped session=$session kind=$run_kind spec=$remote_spec"
   tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'" || {
     if tmux has-session -t "$session" 2>/dev/null; then
-      log "relaunch raced with existing tmux session; treating as relaunched: $session"
-      report_item "$report_items" "$session" "restart" "restarted" "session exists after relaunch race" "$workspace" "$remote_spec"
+      local race_health
+      if ! declare -F verify_relaunch_health >/dev/null 2>&1; then
+        race_health="modular_invocation_unverified"
+        log "relaunch raced with existing tmux session; verifier unavailable in modular invocation session=$session"
+        report_item "$report_items" "$session" "restart" "restarted" "session exists after relaunch race; health verifier unavailable in modular invocation" "$workspace" "$remote_spec"
+      elif race_health="$(verify_relaunch_health "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"; then
+        log "relaunch raced with existing tmux session; verified health=$race_health session=$session"
+        report_item "$report_items" "$session" "restart" "restarted" "session exists after relaunch race" "$workspace" "$remote_spec"
+      else
+        log "relaunch raced with existing tmux session but substantive launch failed health=$race_health session=$session"
+        report_item "$report_items" "$session" "restart" "restart_failed" "session exists after relaunch race but launch health=$race_health" "$workspace" "$remote_spec"
+        dispatch_kimi_repair "$session" "$workspace" "$remote_spec" || true
+        rm -f "$launch_script"
+        return 1
+      fi
       rm -f "$launch_script"
       return 0
     fi
@@ -7728,23 +8015,53 @@ EOF
     rm -f "$launch_script"
     return 1
   }
-  report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
+  local verified_health
+  if ! declare -F verify_relaunch_health >/dev/null 2>&1; then
+    # launch_chain_tick is extracted in isolation by focused shell contract
+    # tests. The deployed wrapper always defines the verifier above.
+    verified_health="modular_invocation_unverified"
+    report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
+    return 0
+  elif verified_health="$(verify_relaunch_health "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"; then
+    log "relaunch ground-truth verification passed session=$session health=$verified_health"
+    report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
+    return 0
+  fi
+  log "relaunch did not produce a healthy runner session=$session health=$verified_health"
+  report_item "$report_items" "$session" "restart" "restart_failed" "tmux relaunch did not produce a healthy runner; health=$verified_health" "$workspace" "$remote_spec"
+  emit_watchdog_incident_bridge_event "repair_failure" "$session" "$workspace" "$remote_spec" "mechanical relaunch failed ground-truth verification: $verified_health" "$verified_health" "l1_repair"
+  if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+    report_item "$report_items" "$session" "repair" "repair_dispatched" "repair loop dispatched after unverified relaunch; health=$verified_health" "$workspace" "$remote_spec"
+  fi
+  return 1
 }
 
 scan_once_unlocked() {
   log "scan start marker_dir=$MARKER_DIR"
   maybe_reexec_updated_watchdog
+  local report_items
+  report_items="$(mktemp)"
+  # Validate the observation/runtime path before any repair-trigger or status
+  # scan. If the watchdog cannot import its own cloud modules, never continue
+  # silently on a stale report.
+  if ! bootstrap_watchdog_observation "$report_items"; then
+    emit_report "$report_items" 0
+    rm -f "$report_items"
+    return 1
+  fi
+  # A heartbeat means observation readiness succeeded, not merely that the
+  # shell process reached the beginning of a sweep.
+  write_watchdog_heartbeat
   # P2: heartbeat + an early snapshot write BEFORE the heavy/stall-prone work
   # (repair_trigger_scan, git sync, pip refresh). If anything below hangs, the
   # cache is at most ~one sweep stale instead of frozen indefinitely. The early
   # write uses last sweep's report and is "notrack" (best-effort, not counted
   # toward escalation); the authoritative write at sweep end still counts.
-  write_watchdog_heartbeat
   write_status_snapshot "" "" "" notrack
-  local report_items
-  report_items="$(mktemp)"
   repair_trigger_scan
-  sync_editable_source_branch "$report_items" || true
+  if [[ "${WATCHDOG_BOOTSTRAP_RECOVERED:-0}" != "1" ]]; then
+    sync_editable_source_branch "$report_items" || true
+  fi
   maybe_reexec_updated_watchdog
   while IFS=$'\t' read -r adopted_session adopted_workspace adopted_remote_spec adopted_kind adopted_plan_name; do
     [[ -n "$adopted_session" ]] || continue
@@ -7828,8 +8145,14 @@ scan_once() {
     fi
   fi
 
+  write_watchdog_sweep_health started || return 74
   scan_once_unlocked
   scan_rc=$?
+  if [[ $scan_rc -eq 0 ]]; then
+    write_watchdog_sweep_health completed || scan_rc=74
+  else
+    write_watchdog_sweep_health failed || true
+  fi
   if [[ -n "${scan_lock_fd:-}" ]]; then
     flock -u "$scan_lock_fd" 2>/dev/null || true
     exec {scan_lock_fd}>&-

@@ -206,6 +206,135 @@ def test_advisory_sidecar_canonical_label_does_not_create_repair_custody(
     assert durable_repair_active(projection) is False
 
 
+def test_identity_free_legacy_attempt_cannot_own_current_request(tmp_path: Path) -> None:
+    """An S2 requestless sidecar must not suppress ordinary L1 for dead S3."""
+
+    custody = {
+        "custody_bucket": CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
+        "active_request_ids": ["current-s3-request"],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "legacy-s2-attempt",
+                "path": "/tmp/legacy-s2-progress.json",
+                "request_id": "",
+                "blocker_id": "",
+                "source": "repair_progress_sidecar",
+                "terminal": False,
+                "raw": {
+                    "problem_signature": {
+                        "current_state": "",
+                        "failure_kind": "",
+                        "phase_or_step": "",
+                        "milestone_or_plan": "",
+                    }
+                },
+            }
+        ],
+    }
+
+    assert durable_repair_active(custody) is False
+    assert repair_contract._problem_signature_matches_fingerprint(
+        custody["attempts"][0]["raw"]["problem_signature"],
+        {"current_state": "finalized", "milestone_or_plan": "s3"},
+    ) is False
+    assert repair_contract._has_active_repair(
+        lock_evidence=None,
+        process_evidence={},
+        custody=custody,
+    ) is False
+
+
+def test_terminal_attempt_closes_older_immutable_dispatch_receipt() -> None:
+    request_id = "workflow-boundary-request"
+    custody = {
+        "active_request_ids": [request_id],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "dispatch-receipt",
+                "path": "/queue/attempts/dispatch.json",
+                "request_id": request_id,
+                "blocker_id": "blocker:v1:demo",
+                "source": "repair_queue_dispatch_attempt",
+                "terminal": False,
+                "recorded_at": "2026-07-14T00:02:35Z",
+            },
+            {
+                "attempt_id": "66",
+                "path": "/repair-data/workflow-boundary.repair-data.json",
+                "request_id": request_id,
+                "source": "repair_data_snapshot",
+                "terminal": True,
+                "outcome": "partial_liveness",
+                "recorded_at": "2026-07-14T00:08:29Z",
+            },
+        ],
+    }
+
+    assert durable_repair_active(custody) is False
+
+
+def test_new_dispatch_after_terminal_attempt_remains_active() -> None:
+    request_id = "workflow-boundary-request"
+    custody = {
+        "active_request_ids": [request_id],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "closed-attempt",
+                "path": "/repair-data/workflow-boundary.repair-data.json",
+                "request_id": request_id,
+                "source": "repair_data_snapshot",
+                "terminal": True,
+                "outcome": "repair_exhausted",
+                "recorded_at": "2026-07-14T00:08:29Z",
+            },
+            {
+                "attempt_id": "new-dispatch-receipt",
+                "path": "/queue/attempts/new-dispatch.json",
+                "request_id": request_id,
+                "blocker_id": "blocker:v1:demo",
+                "source": "repair_queue_dispatch_attempt",
+                "terminal": False,
+                "recorded_at": "2026-07-14T00:09:00Z",
+            },
+        ],
+    }
+
+    assert durable_repair_active(custody) is True
+
+
+def test_live_execute_worker_is_not_a_finalized_state_contradiction() -> None:
+    target = {
+        "authoritative_source": "chain_state",
+        "current_refs": {"current_plan_name": "s3-boundary-coverage"},
+        "plan_state": {"present": True, "fingerprint": "sha256:live-plan"},
+        "active_step_heartbeat": {
+            "active": True,
+            "worker_pid": "1004788",
+            "pid_live": True,
+        },
+    }
+
+    assert repair_contract._has_terminality_contradiction(target) is False
+
+
+def test_dead_execute_worker_still_reopens_finalized_state_custody() -> None:
+    target = {
+        "authoritative_source": "chain_state",
+        "current_refs": {"current_plan_name": "s3-boundary-coverage"},
+        "plan_state": {"present": True, "fingerprint": "sha256:dead-plan"},
+        "active_step_heartbeat": {
+            "active": True,
+            "worker_pid": "3136480",
+            "pid_live": False,
+        },
+    }
+
+    assert repair_contract._has_terminality_contradiction(target) is True
+
+
 def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcomes(
     tmp_path: Path,
 ) -> None:

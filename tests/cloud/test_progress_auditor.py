@@ -174,6 +174,54 @@ def test_superfixer_cycle_fails_closed_on_unknown_custody_evidence() -> None:
     assert projected["unknown_evidence"] is True
 
 
+def test_marker_launch_failure_without_chain_state_reason() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = {
+        "current_state": "initialized",
+        "session_header": {
+            "marker_path": "/workspace/.megaplan/cloud-sessions/demo-session.json",
+            "launch_outcome": {
+                "status": "failed",
+                "code": "engine_ref_not_advertised",
+                "detail": "Configured cloud megaplan.ref is not advertised by the source repo.",
+            },
+        },
+        "current_target": {"tmux_process": {"live_status": "stopped"}},
+        "active_step_liveness": {"present": True, "worker_pid_alive": False},
+        "chain_state_summary": {"current": {}, "all": []},
+        "prior_watchdog_report_refs": [],
+    }
+
+    reason = namespace["_marker_present_stopped_without_chain_state_reason"](evidence)
+
+    assert reason.startswith("marker_launch_failure_without_chain_state:")
+    assert "engine_ref_not_advertised" in reason
+
+
+def test_marker_launch_failure_is_actionable_even_when_tmux_liveness_is_unknown() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = {
+        "current_state": "unknown",
+        "session_header": {
+            "marker_path": "/workspace/.megaplan/cloud-sessions/demo-session.json",
+            "launch_outcome": {
+                "status": "failed",
+                "code": "launch_verification_failed",
+                "detail": "chain state did not appear",
+            },
+        },
+        "current_target": {"tmux_process": {"live_status": "unknown"}},
+        "active_step_liveness": {"present": False},
+        "chain_state_summary": {"current": {}, "all": []},
+        "prior_watchdog_report_refs": [],
+    }
+
+    reason = namespace["_marker_present_stopped_without_chain_state_reason"](evidence)
+
+    assert reason.startswith("marker_launch_failure_without_chain_state:")
+    assert "launch_verification_failed" in reason
+
+
 def _extract_gather_function(name: str, next_name: str) -> str:
     text = _extract_gather_program()
     start = text.index(f"def {name}(")
@@ -2653,6 +2701,38 @@ class TestLiveSignalFiltering:
         assert findings["findings"] == []
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
+
+    def test_failed_launch_without_chain_state_becomes_finding_not_green_check(
+        self, tmp_path: Path
+    ) -> None:
+        del tmp_path
+        namespace = _load_superfixer_cycle_functions()
+        evidence = {
+            "current_state": "initialized",
+            "session_header": {
+                "marker_path": "/workspace/.megaplan/cloud-sessions/demo-session.json",
+                "launch_outcome": {
+                    "status": "failed",
+                    "code": "engine_ref_not_advertised",
+                    "detail": "Configured cloud megaplan.ref is not advertised by the source repo.",
+                },
+            },
+            "current_target": {"tmux_process": {"live_status": "stopped"}},
+            "active_step_liveness": {"present": True, "worker_pid_alive": False},
+            "chain_state_summary": {"current": {}, "all": []},
+            "prior_watchdog_report_refs": [],
+        }
+
+        reasons = [
+            reason
+            for reason in (
+                namespace["_marker_present_stopped_without_chain_state_reason"](evidence),
+            )
+            if reason
+        ]
+
+        assert len(reasons) == 1
+        assert reasons[0].startswith("marker_launch_failure_without_chain_state:")
 
     def test_meta_repair_summary_ignores_partial_liveness_for_live_active_step_after_finalize(
         self, tmp_path: Path
