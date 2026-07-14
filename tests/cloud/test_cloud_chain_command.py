@@ -28,6 +28,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _derive_bootstrap_session_name,
     _latest_failure_from_plan_status,
     _materialize_canonical_epic_input,
+    _megaplan_refresh_command,
     _normalized_chain_upload_spec,
     _phase_model_by_label_from_preflight,
     _filter_cloud_sessions_since,
@@ -175,6 +176,14 @@ def test_atomic_marker_writer_can_be_followed_by_shell_operator(tmp_path: Path) 
         "run_kind": "chain",
         "session": "demo",
     }
+
+
+def test_megaplan_refresh_recognizes_linked_worktree_gitfile() -> None:
+    command = _megaplan_refresh_command(_cloud_spec())
+
+    assert '[ ! -e "$SRC/.git" ]' in command
+    assert '[ -e "$SRC/.git" ]' in command
+    assert '[ -d "$SRC/.git" ]' not in command
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
@@ -421,6 +430,8 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     marker = next(marker for marker in provider.markers.values() if marker["remote_spec"] == remote_spec)
     assert marker["run_kind"] == "chain"
     assert marker["allow_human_gates"] is False
+    assert marker["should_run"] is True
+    assert marker["operator_pause"] is None
     assert "python -P -m arnold_pipelines.megaplan chain start" in marker["relaunch_command"]
     assert f"--spec {remote_spec}" in marker["relaunch_command"]
     assert remote_spec in provider.remote_files

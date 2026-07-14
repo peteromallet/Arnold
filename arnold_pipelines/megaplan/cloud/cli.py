@@ -2936,11 +2936,13 @@ def _megaplan_refresh_command(
         '    https://github.com/*) UPSTREAM_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${UPSTREAM_URL#https://github.com/}" ;;',
         "  esac",
         "fi",
-        'if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then',
+        # Linked Git worktrees expose ``.git`` as a file. Treat both a normal
+        # checkout directory and a worktree gitfile as an existing source.
+        'if [ -n "$REPO" ] && [ ! -e "$SRC/.git" ]; then',
         '  mkdir -p "$(dirname "$SRC")"',
         '  git clone --branch "$REF" "$UPSTREAM_URL" "$SRC"',
         "fi",
-        'if [ -d "$SRC/.git" ]; then',
+        'if [ -e "$SRC/.git" ]; then',
         '  git -C "$SRC" fetch origin "$REF"',
         '  BRANCH="$(git -C "$SRC" branch --show-current)"',
         '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
@@ -4191,6 +4193,12 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             detail="cloud chain launch is preparing the remote session",
         ),
     }
+    if bool(getattr(args, "fresh", False)):
+        # A fresh launch explicitly supersedes any prior pause for this exact
+        # identity. Atomic marker writes merge existing fields, so overwrite
+        # both controls instead of leaving a stale should_run=false marker.
+        marker_payload["should_run"] = True
+        marker_payload["operator_pause"] = None
     try:
         engine_ref_check = _verify_configured_megaplan_ref_advertised(launch_spec)
     except CliError as exc:
@@ -4674,6 +4682,9 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
             detail="cloud epic-chain launch is preparing the remote session",
         ),
     }
+    if bool(getattr(args, "fresh", False)):
+        marker_payload["should_run"] = True
+        marker_payload["operator_pause"] = None
     try:
         engine_ref_check = _verify_configured_megaplan_ref_advertised(launch_spec)
     except CliError as exc:
