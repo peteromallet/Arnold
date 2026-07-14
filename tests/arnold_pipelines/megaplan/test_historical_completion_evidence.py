@@ -7,7 +7,9 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.orchestration.completion_contract import (
+    CompletionContext,
     CompletionSubject,
+    GreenSuiteProvider,
     LandedDiffProvider,
     compute_verdict,
 )
@@ -129,3 +131,18 @@ def test_failed_plan_resume_uses_plan_phase_timeout(tmp_path: Path, monkeypatch)
     )
 
     assert observed["timeout"] == 1800
+
+
+def test_verification_does_not_reuse_legacy_short_baseline_timeout(
+    tmp_path: Path,
+) -> None:
+    ctx = CompletionContext(
+        plan_dir=tmp_path / "plan",
+        project_dir=tmp_path,
+        state={"config": {"test_baseline_timeout": 900}},
+        subject=CompletionSubject(kind="plan", name="p", to_state="done"),
+    )
+
+    _config, timeout = GreenSuiteProvider._suite_config_and_timeout(ctx)
+
+    assert timeout == 3600

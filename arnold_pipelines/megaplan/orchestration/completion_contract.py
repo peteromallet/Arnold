@@ -1204,9 +1204,28 @@ class GreenSuiteProvider:
                 if isinstance(candidate, str) and candidate.strip():
                     config["test_command"] = candidate.strip()
                     break
-        timeout: int = config.get("test_baseline_timeout", 900)
-        if not isinstance(timeout, (int, float)) or timeout <= 0:
-            timeout = 900
+        # Baseline and post-execute verification are distinct phases. Legacy
+        # plan state commonly persists ``test_baseline_timeout=900``; reusing
+        # that value killed a healthy, output-producing full verification suite
+        # at 90% and made the recovery look dead. Verification gets its own
+        # explicit override and otherwise a generous absolute ceiling; the idle
+        # timeout remains the primary hang detector.
+        raw_timeout = config.get("test_verification_timeout")
+        if raw_timeout is None:
+            raw_timeout = os.getenv("MEGAPLAN_TEST_VERIFICATION_TIMEOUT_S")
+        if raw_timeout is None:
+            raw_timeout = max(
+                config.get("test_baseline_timeout", 3600)
+                if isinstance(config.get("test_baseline_timeout", 3600), (int, float))
+                else 3600,
+                3600,
+            )
+        try:
+            timeout = int(raw_timeout)
+        except (TypeError, ValueError):
+            timeout = 3600
+        if timeout <= 0:
+            timeout = 3600
         return config, timeout
 
     @staticmethod
