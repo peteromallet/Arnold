@@ -79,6 +79,11 @@ def test_meta_repair_wrapper_fails_closed_on_commit_custody() -> None:
 
     assert 'SOURCE_BASELINE_HEAD="$(git -C "$ARNOLD_SRC" rev-parse HEAD' in text
     assert "verify_meta_repair_commit_custody" in text
+
+
+def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:
+    text = _meta_repair_wrapper()
+    assert 'PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$marker_path"' in text
     assert 'INSTALL_SYNC_STATUS="commit_custody_failed"' in text
     assert "will NOT install sync or retrigger ordinary repair" in text
     assert 'post_retrigger_verification["commit_custody"]' in text
@@ -287,11 +292,22 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
     )
     (repair_data_dir / "demo-session.repair-data.json").write_text(
         json.dumps(
-            {
-                "session": "demo-session",
-                "outcome": "complete",
-                "verification": {"outcome": "complete"},
-            }
+                {
+                    "session": "demo-session",
+                    "outcome": "complete",
+                    "verification": {
+                        "outcome": "complete",
+                        "original_blocker": {"blocker_id": "blocker:demo"},
+                        "observation": {
+                            "blocker_id": "blocker:demo",
+                            "blocker_cleared": True,
+                            "directly_observed": True,
+                            "independent": True,
+                            "observed_at": "2026-07-04T01:01:00Z",
+                        },
+                        "repair_completed_at": "2026-07-04T01:00:00Z",
+                    },
+                }
         ),
         encoding="utf-8",
     )

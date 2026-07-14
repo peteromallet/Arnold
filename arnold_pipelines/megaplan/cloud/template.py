@@ -27,6 +27,7 @@ PLACEHOLDERS = (
     "MEGAPLAN_REF",
     "MEGAPLAN_REPO",
     "MEGAPLAN_INSTALL_SPEC_OVERRIDE",
+    "MEGAPLAN_SRC_PATH",
     "CODEX_AUTH_METHOD",
     "CODEX_AUTH_CONFIG_BLOCK",
     "ROBUSTNESS",
@@ -305,6 +306,7 @@ def render_entrypoint(spec: CloudSpec) -> str:
         "MEGAPLAN_REF": spec.megaplan.ref,
         "MEGAPLAN_REPO": spec.megaplan.repo or "",
         "MEGAPLAN_INSTALL_SPEC_OVERRIDE": spec.megaplan.install_spec or "",
+        "MEGAPLAN_SRC_PATH": spec.megaplan.src_path or "/workspace/arnold",
         "CODEX_AUTH_METHOD": spec.megaplan.codex_auth,
         "CODEX_AUTH_CONFIG_BLOCK": _codex_auth_config_block(spec),
         "ROBUSTNESS": spec.auto.robustness if spec.auto is not None else "standard",
@@ -382,7 +384,11 @@ def materialize_deploy_dir(spec: CloudSpec, dest: Path) -> None:
 
     for name in ("mp-run", "mp-supervise", "mp-heartbeat", "mp-chain",
                  "arnold-run", "arnold-supervise", "arnold-heartbeat", "arnold-chain",
-                 "arnold-watchdog", "arnold-kimi-goal-operator"):
+                 "arnold-watchdog", "arnold-kimi-goal-operator",
+                 "arnold-repair-trigger", "arnold-repair-loop",
+                 "arnold-meta-repair-loop", "arnold-progress-auditor",
+                 "arnold-supervisor-runtime", "arnold-supervisor-runtime-lib",
+                 "arnold-supervisor-gap-scan"):
         _write_text(
             wrappers_dir / name,
             wrappers.joinpath(name).read_text(encoding="utf-8"),
