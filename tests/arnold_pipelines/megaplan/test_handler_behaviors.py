@@ -2185,6 +2185,7 @@ class TestFinalizeBaselineSelectionRecovery:
         assert response["next_step"] == "revise"
         assert state["current_state"] == "critiqued"
         assert state["last_gate"]["recommendation"] == "ITERATE"
+        assert state["last_gate"]["north_star_actions"] == []
         assert (plan_dir / "gate.json").exists()
         assert (plan_dir / "gate_carry.json").exists()
         assert (plan_dir / "finalize_revise_feedback.json").exists()
@@ -2193,6 +2194,10 @@ class TestFinalizeBaselineSelectionRecovery:
         persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         assert persisted["current_state"] == "critiqued"
         assert persisted["last_gate"]["recommendation"] == "ITERATE"
+        assert persisted["last_gate"]["north_star_actions"] == []
+        assert json.loads(
+            (plan_dir / "gate_carry.json").read_text(encoding="utf-8")
+        )["north_star_actions"] == []
 
 
 class TestExecuteTimeoutHardening:

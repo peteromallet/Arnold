@@ -202,7 +202,7 @@ def test_plan_structure_error_valid_next_retries_plan(monkeypatch, tmp_path) -> 
     ],
     ids=["empty-north-star-actions", "schema-valid-north-star-action"],
 )
-def test_gate_capture_preserves_schema_owned_north_star_actions_and_strips_unknown_fields(
+def test_gate_capture_preserves_schema_owned_north_star_actions_and_rejects_unknown_fields(
     north_star_actions: list[object],
 ) -> None:
     invocation = _gate_capture_invocation()
@@ -218,10 +218,12 @@ def test_gate_capture_preserves_schema_owned_north_star_actions_and_strips_unkno
         "model_note": "unknown top-level data must still be stripped",
     }
 
-    outcome = capture_step_output(invocation, payload)
+    with pytest.raises(ModelStructuralAuditError, match="model_note"):
+        capture_step_output(invocation, payload)
 
+    payload.pop("model_note")
+    outcome = capture_step_output(invocation, payload)
     assert outcome.legacy_payload["north_star_actions"] == north_star_actions
-    assert "model_note" not in outcome.legacy_payload
 
 
 def test_gate_capture_with_schema_valid_north_star_action_is_stable_across_retries() -> None:

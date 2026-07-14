@@ -104,6 +104,7 @@ from arnold_pipelines.megaplan.execute.timeout import (
 )
 from arnold_pipelines.megaplan.model_seam import (
     ModelTier,
+    _normalize_execute_capture_payload as _normalize_execute_capture_payload_at_seam,
     capture_step_output,
     render_step_message,
 )
@@ -1427,72 +1428,11 @@ def _capture_execute_payload(
 
 
 def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Normalize receipt-shaped execute output before structural capture."""
+    """Use the shared execute seam, then apply batch-only path filtering."""
 
-    from arnold_pipelines.megaplan.execute.status_constants import normalize_execute_task_status
-
-    normalized = dict(payload)
-    task_updates: list[Any] = []
-    for item in normalized.get("task_updates") or []:
-        if not isinstance(item, dict):
-            task_updates.append(item)
-            continue
-        update = {
-            key: item[key]
-            for key in (
-                "task_id",
-                "status",
-                "executor_notes",
-                "files_changed",
-                "commands_run",
-                "evidence_files",
-                "auto_attributed_files",
-                "sections_written",
-                "stance",
-                "stop_signal",
-                "stance_violations",
-                "head_sha",
-                "code_hash",
-            )
-            if key in item
-        }
-        if "task_id" not in update and isinstance(item.get("id"), str):
-            update["task_id"] = item["id"]
-        if "status" in update and isinstance(update["status"], str):
-            raw_status = update["status"]
-            canonical = normalize_execute_task_status(raw_status)
-            if canonical != raw_status:
-                update["status"] = str(canonical)
-                existing = update.get("executor_notes", "")
-                note_line = f"[harness] status normalized: {raw_status} -> {canonical}"
-                if isinstance(existing, str) and existing:
-                    update["executor_notes"] = f"{existing}\n{note_line}"
-                else:
-                    update["executor_notes"] = note_line
-        update.setdefault("files_changed", [])
-        update.setdefault("commands_run", [])
-        update.setdefault("auto_attributed_files", False)
-        task_updates.append(update)
-    normalized["task_updates"] = task_updates
-
-    acknowledgments: list[Any] = []
-    for item in normalized.get("sense_check_acknowledgments") or []:
-        if not isinstance(item, dict):
-            acknowledgments.append(item)
-            continue
-        acknowledgment = {
-            key: item[key]
-            for key in (
-                "sense_check_id",
-                "executor_note",
-            )
-            if key in item
-        }
-        if "sense_check_id" not in acknowledgment and isinstance(item.get("id"), str):
-            acknowledgment["sense_check_id"] = item["id"]
-        acknowledgments.append(acknowledgment)
-    normalized["sense_check_acknowledgments"] = acknowledgments
-    return _filter_harness_artifacts_from_payload(normalized)
+    return _filter_harness_artifacts_from_payload(
+        _normalize_execute_capture_payload_at_seam(payload)
+    )
 
 
 def _default_max_tasks_per_batch() -> int:
