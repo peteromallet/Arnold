@@ -15,6 +15,7 @@ import yaml
 
 from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.cloud.cli import (
+    _atomic_marker_write_command,
     _bootstrap_launch_command,
     _chain_anchor_uploads,
     _chain_launch_verification_command,
@@ -153,6 +154,27 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     assert marker["run_kind"] == "chain"
     assert marker["notification_context"]["audience"] == "test_only"
     assert marker["notification_context"]["reason"] == "pytest_environment"
+
+
+def test_atomic_marker_writer_can_be_followed_by_shell_operator(tmp_path: Path) -> None:
+    marker = tmp_path / "markers" / "demo.json"
+    command = _atomic_marker_write_command(
+        str(marker),
+        {"session": "demo", "run_kind": "chain"},
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", f"{command}; test -s {marker}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(marker.read_text()) == {
+        "run_kind": "chain",
+        "session": "demo",
+    }
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:

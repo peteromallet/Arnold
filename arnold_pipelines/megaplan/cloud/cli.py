@@ -2657,7 +2657,16 @@ with os.fdopen(fd, "w", encoding="utf-8") as handle:
     handle.write(json.dumps(current, indent=2, sort_keys=True) + "\\n")
 os.replace(tmp_name, path)
 """
-    return f"python3 - <<'MEGAPLAN_MARKER_WRITE'\n{script.strip()}\nMEGAPLAN_MARKER_WRITE"
+    # The marker writer is embedded before ``;`` or ``&&`` in several larger
+    # shell commands. Group it so the heredoc terminator remains on a line by
+    # itself while the caller can safely append an operator to the closing
+    # brace. The group preserves the Python process exit status.
+    return (
+        "{\n"
+        f"python3 - <<'MEGAPLAN_MARKER_WRITE'\n{script.strip()}\n"
+        "MEGAPLAN_MARKER_WRITE\n"
+        "}"
+    )
 
 
 def _prelaunch_marker_guard_command(ctx: "ChainLaunchContext") -> str:
