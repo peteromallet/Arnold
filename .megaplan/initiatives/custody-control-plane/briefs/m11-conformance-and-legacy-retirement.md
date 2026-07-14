@@ -64,11 +64,21 @@ nominal manifests cannot substitute. Scope is no more than two weeks.
   deterministic Transaction Spine and Strategy Roadmap replay; idle projection
   canary; planner/executor canary; repair/worker canary; controlled installed-
   runtime deployment; then one genuine supported blocked-run recovery.
+- Include the captured M5 quality-block chain-of-custody as a named regression:
+  structured `failed: <detail>` evidence, canonical classification, eligible
+  trigger, managed-worker provenance, dispatch/launch failure, bounded
+  meta-repair, six-hour reconciliation, and final independent outcome must all
+  remain joinable under one exact occurrence.
 - For the genuine block, prove durable eligible blocker event, exact signature,
   current Run Authority fence, current Custody lease/epoch, one managed repair,
   accepted repair or typed escalation within
   the p95 SLO, authoritative resumed progress, independent 5m/1h/6h checks,
   projection agreement, and no duplicate/replayed effect.
+- Prove both outcomes for that regression: a repairable deterministic block
+  reaches one accepted repair, while an unapproved or genuinely incoherent case
+  reaches one typed human gate. Neither may stall as unknown due to prefix
+  parsing, disappear because L1 was never launched, or count as recovered
+  without authoritative progress and independent verification.
 - Remove approved raw-state/status/process/marker/sidecar/wrapper/compatibility
   authority bypasses only after their gates pass; preserve required read-only
   historical adapters with explicit expiry.

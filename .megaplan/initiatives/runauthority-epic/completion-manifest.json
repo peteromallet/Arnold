@@ -15,6 +15,22 @@
         {
           "path": ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
           "sha256": "c5a30561a4c4009538596f203b569f3ed9857f839f5bd3c2aa0467f790ef2b5d"
+        },
+        {
+          "path": ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json",
+          "sha256": "feb365af386661f10a0e05891d79da866c81650d45bfd7310ef183767da344b8"
+        },
+        {
+          "path": ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/finalize.json",
+          "sha256": "c0f989ee9036ba703208e01e4d67ca4f539ee98a29eef5e61c2c9d5e2d8e92fe"
+        },
+        {
+          "path": ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/finalize_snapshot.json",
+          "sha256": "577483c0a3095f833436fe127b18f8c5aefad741f0d3bd41aab9176af94641d6"
+        },
+        {
+          "path": ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/phase_result.json",
+          "sha256": "3796a66e9bc78481580f8803910ebb4abc35d743a6614d8daf235d860913e8b7"
         }
       ]
     },
@@ -28,6 +44,22 @@
         {
           "path": ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
           "sha256": "c5a30561a4c4009538596f203b569f3ed9857f839f5bd3c2aa0467f790ef2b5d"
+        },
+        {
+          "path": ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json",
+          "sha256": "8292b4d9d47a66871ebb2ad1dcbd2c4f607991ff18d3fbbb580a2e37bb4b710c"
+        },
+        {
+          "path": ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/finalize.json",
+          "sha256": "21f0c00764d0fc8539b96bc7793a72168a8164e5edb6f290f2ec5fe472e386cd"
+        },
+        {
+          "path": ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/finalize_snapshot.json",
+          "sha256": "d09b47d9f8682ded60748d1ae9bf5a48421a5d6b210b8ce00bbd9216f7b44bdc"
+        },
+        {
+          "path": ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/phase_result.json",
+          "sha256": "e3fd1b46f78052db0da1b93b0eb1fcb8c883ce5f751bb749902a371c55ee2b97"
         }
       ]
     },
@@ -41,6 +73,22 @@
         {
           "path": ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
           "sha256": "c5a30561a4c4009538596f203b569f3ed9857f839f5bd3c2aa0467f790ef2b5d"
+        },
+        {
+          "path": ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json",
+          "sha256": "127c195b48237792516e39f8be3b2ff60facba6e248d443227159245ea0ed6bc"
+        },
+        {
+          "path": ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/finalize.json",
+          "sha256": "b4f5fe5e735d41eac5401d01d9d5d7c78d6da2c6ceb9d428821ffa7cb68fb3d2"
+        },
+        {
+          "path": ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/finalize_snapshot.json",
+          "sha256": "f061dc1d796fe7ef65598ac8b84451de2bd81a0d5fa641edccf988edc2293c45"
+        },
+        {
+          "path": ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/phase_result.json",
+          "sha256": "d4e5f8916407acd3e597e26ffb98a965bfe9a4d412d045ce4e76ab19fb996b76"
         }
       ]
     }

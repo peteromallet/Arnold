@@ -37,6 +37,11 @@ for M6A's transactional WBC store and M8's universal producer adoption.
   normalized failure kind, blocker/phase-result hash, managed-worker identity,
   Run Authority grant/fence, lease owner/host/process-birth identity, and custody
   epoch immediately before claim and effect.
+- Admit explicitly approved deterministic quality-block families, including the
+  captured review-budget-exhausted occurrence, through the same exact-signature
+  repair allowlist. If classification or L1 launch fails, persist that failed
+  launch as an occurrence and route it to bounded meta-repair/reconciliation;
+  “L1 never launched” may not disappear before the six-hour backstop.
 - Exercise cross-host acquisition, renewal, orderly transfer, expired-owner
   reclaim, network delay, host death, and restarted process/PID reuse. The old
   epoch must be durably fenced before the new host can perform an effect.
@@ -114,6 +119,11 @@ evidence, reconciliation, and verification.
 - Captured T7/T12 and same-basename fixtures cannot cross-bind; duplicate, late, lost, and out-of-
   order triggers launch at most one current managed repair or remain visibly
   pending for reconciliation.
+- The captured M5 `failed: <detail>` review block launches at most one approved
+  L1 attempt with machine provenance. Parser loss, dispatch incompatibility,
+  and launcher failure each produce a durable failed occurrence that reaches
+  bounded L2 or typed human escalation; no layer may report success merely
+  because the child process was absent.
 - Shadow and repair/worker canary measurements prove p95 from durable eligible
   blocker event to accepted repair or typed escalation is under five minutes.
   A deliberately missed event is recovered by the six-hour backstop.
