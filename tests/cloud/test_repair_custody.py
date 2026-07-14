@@ -240,6 +240,96 @@ def test_identity_free_legacy_attempt_cannot_own_current_request(tmp_path: Path)
     ) is False
 
 
+def test_terminal_attempt_closes_older_immutable_dispatch_receipt() -> None:
+    request_id = "workflow-boundary-request"
+    custody = {
+        "active_request_ids": [request_id],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "dispatch-receipt",
+                "path": "/queue/attempts/dispatch.json",
+                "request_id": request_id,
+                "blocker_id": "blocker:v1:demo",
+                "source": "repair_queue_dispatch_attempt",
+                "terminal": False,
+                "recorded_at": "2026-07-14T00:02:35Z",
+            },
+            {
+                "attempt_id": "66",
+                "path": "/repair-data/workflow-boundary.repair-data.json",
+                "request_id": request_id,
+                "source": "repair_data_snapshot",
+                "terminal": True,
+                "outcome": "partial_liveness",
+                "recorded_at": "2026-07-14T00:08:29Z",
+            },
+        ],
+    }
+
+    assert durable_repair_active(custody) is False
+
+
+def test_new_dispatch_after_terminal_attempt_remains_active() -> None:
+    request_id = "workflow-boundary-request"
+    custody = {
+        "active_request_ids": [request_id],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "closed-attempt",
+                "path": "/repair-data/workflow-boundary.repair-data.json",
+                "request_id": request_id,
+                "source": "repair_data_snapshot",
+                "terminal": True,
+                "outcome": "repair_exhausted",
+                "recorded_at": "2026-07-14T00:08:29Z",
+            },
+            {
+                "attempt_id": "new-dispatch-receipt",
+                "path": "/queue/attempts/new-dispatch.json",
+                "request_id": request_id,
+                "blocker_id": "blocker:v1:demo",
+                "source": "repair_queue_dispatch_attempt",
+                "terminal": False,
+                "recorded_at": "2026-07-14T00:09:00Z",
+            },
+        ],
+    }
+
+    assert durable_repair_active(custody) is True
+
+
+def test_live_execute_worker_is_not_a_finalized_state_contradiction() -> None:
+    target = {
+        "authoritative_source": "chain_state",
+        "current_refs": {"current_plan_name": "s3-boundary-coverage"},
+        "plan_state": {"present": True, "fingerprint": "sha256:live-plan"},
+        "active_step_heartbeat": {
+            "active": True,
+            "worker_pid": "1004788",
+            "pid_live": True,
+        },
+    }
+
+    assert repair_contract._has_terminality_contradiction(target) is False
+
+
+def test_dead_execute_worker_still_reopens_finalized_state_custody() -> None:
+    target = {
+        "authoritative_source": "chain_state",
+        "current_refs": {"current_plan_name": "s3-boundary-coverage"},
+        "plan_state": {"present": True, "fingerprint": "sha256:dead-plan"},
+        "active_step_heartbeat": {
+            "active": True,
+            "worker_pid": "3136480",
+            "pid_live": False,
+        },
+    }
+
+    assert repair_contract._has_terminality_contradiction(target) is True
+
+
 def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcomes(
     tmp_path: Path,
 ) -> None:

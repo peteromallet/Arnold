@@ -2819,6 +2819,18 @@ def durable_repair_active(custody: Mapping[str, Any] | None) -> bool:
     }
     if active_request_ids & active_claim_ids:
         return True
+    terminal_at_by_request: dict[str, datetime] = {}
+    for value in _as_list(payload.get("attempts")):
+        attempt = _as_mapping(value)
+        if attempt.get("terminal") is not True:
+            continue
+        request_id = _as_text(attempt.get("request_id"))
+        recorded_at = _parse_custody_attempt_time(attempt.get("recorded_at"))
+        if not request_id or recorded_at is None:
+            continue
+        previous = terminal_at_by_request.get(request_id)
+        if previous is None or recorded_at > previous:
+            terminal_at_by_request[request_id] = recorded_at
     for value in _as_list(payload.get("attempts")):
         attempt = _as_mapping(value)
         if attempt.get("terminal") is not False:
@@ -2826,6 +2838,14 @@ def durable_repair_active(custody: Mapping[str, Any] | None) -> bool:
         if not _as_scalar_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
             continue
         request_id = _as_text(attempt.get("request_id"))
+        terminal_at = terminal_at_by_request.get(request_id)
+        attempt_at = _parse_custody_attempt_time(attempt.get("recorded_at"))
+        if terminal_at is not None and attempt_at is not None and terminal_at >= attempt_at:
+            # Queue dispatch attempts are immutable launch receipts.  A later
+            # terminal repair-data attempt for the same request closes that
+            # launch; otherwise the old receipt advertises "repairing" forever
+            # after its child exits and masks the next real failure.
+            continue
         if request_id and request_id in active_request_ids:
             return True
         if (
@@ -2834,6 +2854,19 @@ def durable_repair_active(custody: Mapping[str, Any] | None) -> bool:
         ):
             return True
     return False
+
+
+def _parse_custody_attempt_time(value: Any) -> datetime | None:
+    text = _as_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _collect_snapshot_request_ids(
@@ -3287,6 +3320,12 @@ def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
     """Return true for states that must reopen custody despite a success label."""
     target = _as_mapping(current_target)
     active_step = _as_mapping(target.get("active_step_heartbeat"))
+    if active_step.get("pid_live") is True:
+        # Megaplan can legitimately retain a finalized planning state while a
+        # new execute batch is active.  Verified worker liveness is execution,
+        # not a terminality contradiction; dead/unknown PIDs still fail closed
+        # through the branches below.
+        return False
     if bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")):
         return _has_current_target_evidence(target)
     stale_kinds = {
