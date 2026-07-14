@@ -3039,6 +3039,20 @@ if plan_state_path is not None:
     }
     plan_dir = plan_state_path.parent
     execute_attempt_context = _collect_execute_attempt_context(plan_dir, plan_state)
+    try:
+        from arnold_pipelines.megaplan.cloud.repair_contract import build_repair_semantic_context
+        from arnold_pipelines.megaplan.semantic_health import inspect_semantic_health, project_semantic_findings
+        findings = inspect_semantic_health(plan_dir)
+        semantic_health = project_semantic_findings(findings, session_id=session, plan_dir=plan_dir)
+        semantic_context = build_repair_semantic_context(
+            findings=findings,
+            session_id=session,
+        )
+        custody_projection = semantic_context.get("custody_projection") or {}
+    except Exception:
+        semantic_health = None
+        semantic_context = None
+        custody_projection = {}
     resume_cursor = plan_state.get("resume_cursor") if isinstance(plan_state.get("resume_cursor"), dict) else {}
     meta = plan_state.get("meta") if isinstance(plan_state.get("meta"), dict) else {}
     clarification = plan_state.get("clarification") if isinstance(plan_state.get("clarification"), dict) else {}
@@ -3147,6 +3161,9 @@ else:
     latest_failure = {}
     execute_attempt_context = {}
     last_gate = {}
+    semantic_health = None
+    semantic_context = None
+    custody_projection = {}
 
 state_mismatch = _state_mismatch_analysis(plan_latest_failure, chain_state_summary)
 raw_failure_signals = _unique_strings(
@@ -3327,6 +3344,9 @@ payload = {
     "provider_profile_viability": provider_profile_viability,
 }
 payload["resolver_output"] = resolver_output
+payload["semantic_health"] = semantic_health
+payload["semantic_context"] = semantic_context
+payload["custody_projection"] = custody_projection
 print(json.dumps(payload, sort_keys=True))
 PY
 }
@@ -4241,6 +4261,9 @@ if managed_run_id:
     payload["managed_agent_runs"] = managed_runs
 resolver_output = failure_context_payload.get("resolver_output")
 payload["initial_facts"]["resolver_output"] = resolver_output or {}
+payload["initial_facts"]["semantic_health"] = failure_context_payload.get("semantic_health") or {}
+payload["initial_facts"]["semantic_context"] = failure_context_payload.get("semantic_context") or {}
+payload["initial_facts"]["custody_projection"] = failure_context_payload.get("custody_projection") or {}
 payload = merge_additive_fields(payload, target=resolver_output or {}, incident_id=incident_id)
 save_repair_data(data_path, payload)
 PY
@@ -4686,6 +4709,97 @@ if is_success_outcome(outcome):
     payload["last_success_outcome"] = outcome
     payload["run_recurrence_detected"] = False
 save_repair_data(pathlib.Path(path), payload)
+PY
+  repair_save_verdict_evidence
+}
+
+repair_save_verdict_evidence() {
+  # best-effort: do not require the repair lock (the data file has already
+  # been written by repair_data_set_outcome or save_repair_data). If the
+  # data file is missing or unreadable, skip quietly.
+  local verdict_path="${DATA_FILE%.repair-data.json}.repair-verdict.json"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$verdict_path" "$SESSION" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" <<'PY'
+import pathlib
+import sys
+
+data_path_raw, verdict_path_raw, session, blocker_id, request_id = sys.argv[1:]
+data_path = pathlib.Path(data_path_raw)
+verdict_path = pathlib.Path(verdict_path_raw)
+
+try:
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        build_ordinary_repair_verdict,
+        load_json,
+        save_repair_verdict,
+    )
+except Exception:
+    raise SystemExit(0)
+
+payload = load_json(data_path, default=None)
+if payload is None:
+    raise SystemExit(0)
+
+verdict = build_ordinary_repair_verdict(
+    repair_data_payload=payload,
+    session=session,
+    request_id=request_id or payload.get("request_id", ""),
+    blocker_id=blocker_id or payload.get("blocker_id", ""),
+    attempted_actions=tuple(payload.get("attempted_actions") or ()),
+    before_evidence_refs=tuple(payload.get("before_evidence_refs") or ()),
+    after_evidence_refs=tuple(payload.get("after_evidence_refs") or ()),
+    durable_refs=tuple(payload.get("durable_refs") or ()),
+)
+save_repair_verdict(verdict_path, verdict)
+
+# --- repair success without custody check ---
+# When the repair verdict indicates success (cleared), verify that custody
+# evidence exists for this session.  If custody is missing or shows an
+# unmanaged/blocked state, the repair success cannot be fully trusted and
+# should be flagged.
+if verdict.verdict_kind == "cleared":
+    import json as _json
+    _snapshot_path = pathlib.Path("/workspace/.megaplan/status/cloud-status.json")
+    try:
+        _snapshot = _json.loads(_snapshot_path.read_text(encoding="utf-8"))
+    except Exception:
+        _snapshot = None
+    if isinstance(_snapshot, dict):
+        _sessions = _snapshot.get("sessions")
+        if isinstance(_sessions, list):
+            _custody_kind = ""
+            for _entry in _sessions:
+                if isinstance(_entry, dict) and _entry.get("session") == session:
+                    _cc = _entry.get("cloud_custody")
+                    if isinstance(_cc, dict):
+                        _custody_kind = _cc.get("custody_kind", "")
+                    break
+            # Managed-running or complete custody backs the repair success.
+            # Any other custody state (unmanaged-warning, blocked-relaunch,
+            # escalated-unchanged, or missing) indicates the repair success
+            # should not be fully trusted without custody evidence.
+            if _custody_kind not in ("managed-running", "complete", ""):
+                # Write a custody-gap sidecar so S4 consumers can find it.
+                _gap_path = pathlib.Path(
+                    "/workspace/.megaplan/cloud-sessions/repair-data"
+                ) / f"{session}.repair-custody-gap.json"
+                try:
+                    _gap_path.parent.mkdir(parents=True, exist_ok=True)
+                    _gap_payload = {
+                        "session": session,
+                        "verdict_kind": verdict.verdict_kind,
+                        "custody_kind": _custody_kind,
+                        "evidence_timestamp": verdict.evidence_timestamp,
+                        "message": (
+                            f"repair verdict cleared but custody is {_custody_kind or 'missing'}; "
+                            f"repair success not backed by managed custody evidence"
+                        ),
+                    }
+                    _gap_path.write_text(
+                        _json.dumps(_gap_payload, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
 PY
 }
 

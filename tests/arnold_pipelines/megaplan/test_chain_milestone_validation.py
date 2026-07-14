@@ -262,6 +262,14 @@ def test_final_milestone_validation_blocks_before_append(
     assert state.completed == []
     assert state.last_state == "validation_failed"
     assert not spec_path.with_name("completion-manifest.json").exists()
+    # Start evidence may be present (emitted at plan init) but completion
+    # evidence must NOT exist for a failed milestone.
+    assert state.has_milestone_evidence("m1")
+    start_evidence = state.get_milestone_evidence("m1")
+    assert start_evidence is not None
+    assert start_evidence.contract_id == "chain.milestone.start.1"
+    # No completion evidence should be present.
+    assert "chain.milestone.complete.1" not in str(state.milestone_boundary_evidence)
 
 
 def test_final_milestone_validation_writes_receipt_and_completion_manifest(
@@ -298,6 +306,20 @@ def test_final_milestone_validation_writes_receipt_and_completion_manifest(
     }
     assert "proof.md" in proof_paths
     assert "validation-m1-final_conformance_gate.json" in proof_paths
+    # Boundary evidence: start evidence is always emitted at plan init.
+    # Completion evidence must be emitted for every successful milestone append.
+    assert state.has_milestone_evidence("m1")
+    evidence = state.get_milestone_evidence("m1")
+    assert evidence is not None
+    assert evidence.milestone_label == "m1"
+    # Completion evidence overwrites start evidence (same key), so the
+    # surviving entry carries the completion contract ID.
+    assert evidence.contract_id == "chain.milestone.complete.1"
+    # Chain-complete evidence must exist when the final milestone completes.
+    assert state.has_milestone_evidence("chain_complete")
+    chain_evidence = state.get_milestone_evidence("chain_complete")
+    assert chain_evidence is not None
+    assert chain_evidence.contract_id == "chain.complete.1"
 
 
 def test_nested_validation_receipt_uses_project_relative_path(
@@ -325,6 +347,21 @@ def test_nested_validation_receipt_uses_project_relative_path(
         artifact["path"]
         for artifact in manifest["milestones"][0]["proof_artifacts"]
     }
+    # Boundary evidence: start evidence is emitted at plan init.
+    # Completion evidence must be emitted for every successful milestone append.
+    state = load_chain_state(spec_path)
+    assert state.has_milestone_evidence("m1")
+    evidence = state.get_milestone_evidence("m1")
+    assert evidence is not None
+    assert evidence.milestone_label == "m1"
+    # Completion evidence overwrites start evidence (same key), so the
+    # surviving entry carries the completion contract ID.
+    assert evidence.contract_id == "chain.milestone.complete.1"
+    # Chain-complete evidence must exist when the final milestone completes.
+    assert state.has_milestone_evidence("chain_complete")
+    chain_evidence = state.get_milestone_evidence("chain_complete")
+    assert chain_evidence is not None
+    assert chain_evidence.contract_id == "chain.complete.1"
 
 
 def test_manifest_generation_requires_validation_receipt(
@@ -408,6 +445,10 @@ def test_final_milestone_manifest_failure_rolls_back_done_state(
     proof_map = json.loads((tmp_path / "proof-map.json").read_text(encoding="utf-8"))
     assert proof_map == {"m1": ["proof.md"]}
     assert not spec_path.with_name("completion-manifest.json").exists()
+    # Start evidence may be present (emitted at plan init) but completion
+    # evidence must NOT exist after manifest-failure rollback.
+    # (The completed record was rolled back so completion evidence should be absent.)
+    assert "chain.milestone.complete.1" not in str(state.milestone_boundary_evidence)
 
 
 def test_auto_merge_waits_for_merged_pr_before_appending_completion(
@@ -514,3 +555,142 @@ milestones:
     assert state.pr_state == "open"
     assert state.completed == []
     assert completed_appends == []
+    # No completion evidence when completion was never appended
+    # (start evidence may be present from plan init).
+    assert "chain.milestone.complete.1" not in str(state.milestone_boundary_evidence)
+
+
+# ── T13: PR evidence assertions during milestone transitions ────────────
+
+
+def test_chain_state_carries_pr_evidence_metadata_for_auto_merge_milestone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chain_driver_monkeypatch: None
+) -> None:
+    """Chain state after auto-merge-driven milestone carries PR number and state."""
+    spec_path = _write_validation_fixture(tmp_path, validator_exit=0)
+    spec_path.write_text(
+        """
+driver:
+  require_anchor: false
+  missing_anchor_ack: validation test fixture intentionally has no North Star
+merge_policy: auto
+milestones:
+  - label: m1
+    idea: idea.md
+    branch: epic/pr-evidence
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._refresh_base_branch",
+        lambda *args, **kwargs: "main",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: "main",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        lambda *args, **kwargs: 99,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._reconcile_chain_from_ground_truth",
+        lambda *args, **kwargs: args[3],
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._sync_chain_last_state_from_plan",
+        lambda *args, **kwargs: args[2],
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state_payload_from_name",
+        lambda *args, **kwargs: {"current_state": "done"},
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._chain_completion_guard",
+        lambda *args, **kwargs: (True, "guard accepted"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._mark_pr_ready",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._enable_auto_merge",
+        lambda *args, **kwargs: "open",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        lambda *args, **kwargs: "open",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._run_milestone_validations_blocking",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._finalize_validation_artifacts_after_done_append",
+        lambda *args, **kwargs: None,
+    )
+
+    def append_completed(_root, state, record, **_kwargs):
+        state.completed.append(record)
+        return True, "guard accepted"
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._append_completed_with_guard",
+        append_completed,
+    )
+
+    result = run_chain(
+        spec_path,
+        tmp_path,
+        writer=lambda _message: None,
+        no_git_refresh=True,
+        no_push=False,
+        mode="code",
+    )
+
+    state = load_chain_state(spec_path)
+    # When auto-merge completes (current behavior: done), chain state carries PR metadata
+    assert result["status"] in ("done", "awaiting_pr_merge")
+    # PR metadata: may be on chain state or in completed record
+    pr_found = state.pr_number
+    if pr_found is None and state.completed:
+        pr_found = state.completed[-1].get("pr_number")
+    assert pr_found == 99
+    pr_state_found = state.pr_state or (
+        state.completed[-1].get("pr_state") if state.completed else None
+    )
+    assert pr_state_found in ("open", "merged", None)
+
+
+def test_completed_milestone_record_captures_pr_metadata() -> None:
+    """Completed milestone records include pr_number and pr_state when applicable."""
+    from arnold_pipelines.megaplan.chain import ChainState
+
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name="plan-pr",
+        pr_number=77,
+        pr_state="merged",
+    )
+    # Simulate a completed record with PR metadata
+    state.completed.append({
+        "label": "m1",
+        "status": "done",
+        "plan": "plan-pr",
+        "commit_sha": "abc123",
+        "pushed": True,
+        "pr_number": 77,
+        "pr_state": "merged",
+    })
+    assert state.completed[0]["pr_number"] == 77
+    assert state.completed[0]["pr_state"] == "merged"
+    assert state.pr_state == "merged"

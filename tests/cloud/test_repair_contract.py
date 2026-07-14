@@ -1848,6 +1848,395 @@ def test_recovery_view_legacy_fallback_when_no_recovery_view() -> None:
     assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_L1
 
 
+# ---------------------------------------------------------------------------
+# T15: Ordinary repair verdict evidence tests
+# ---------------------------------------------------------------------------
+
+
+def test_repair_verdict_cleared_construction_and_round_trip() -> None:
+    """RepairVerdict with cleared kind round-trips through to_dict/from_dict."""
+    verdict = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_CLEARED,
+        blocker_id="blocker-42",
+        attempted_actions=("retry_execute", "fix_dependency"),
+        before_evidence_refs=("before-1.json",),
+        after_evidence_refs=("after-1.json",),
+        durable_refs=("audit-report.md",),
+        evidence_timestamp="2026-07-09T07:53:00Z",
+        session="demo-session",
+        request_id="req-abc123",
+        outcome="complete",
+        stale_detected=False,
+        no_verdict_detected=False,
+    )
+    payload = verdict.to_dict()
+    assert payload["verdict_kind"] == "cleared"
+    assert payload["blocker_id"] == "blocker-42"
+    assert payload["attempted_actions"] == ["retry_execute", "fix_dependency"]
+    assert payload["before_evidence_refs"] == ["before-1.json"]
+    assert payload["after_evidence_refs"] == ["after-1.json"]
+    assert payload["durable_refs"] == ["audit-report.md"]
+    assert payload["evidence_timestamp"] == "2026-07-09T07:53:00Z"
+    assert payload["contract_id"] == "repair.ordinary_complete.1"
+    assert payload["boundary_id"] == "ordinary_repair_completion"
+    assert payload["session"] == "demo-session"
+    assert payload["request_id"] == "req-abc123"
+    assert payload["outcome"] == "complete"
+    assert payload["stale_detected"] is False
+    assert payload["no_verdict_detected"] is False
+
+    restored = repair_contract.RepairVerdict.from_dict(payload)
+    assert restored.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert restored.blocker_id == "blocker-42"
+    assert restored.attempted_actions == ("retry_execute", "fix_dependency")
+
+
+def test_repair_verdict_no_fix_construction_and_round_trip() -> None:
+    """RepairVerdict with no_fix kind carries the exhaustion evidence."""
+    verdict = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_NO_FIX,
+        blocker_id="blocker-99",
+        attempted_actions=("runtime_patch", "env_restart"),
+        before_evidence_refs=(),
+        after_evidence_refs=(),
+        durable_refs=("run-log.txt",),
+        evidence_timestamp="2026-07-10T14:22:00Z",
+        session="session-no-fix",
+        request_id="req-no-fix-001",
+        outcome="repair_exhausted",
+    )
+    payload = verdict.to_dict()
+    assert payload["verdict_kind"] == "no_fix"
+    assert payload["outcome"] == "repair_exhausted"
+    assert payload["blocker_id"] == "blocker-99"
+
+    restored = repair_contract.RepairVerdict.from_dict(payload)
+    assert restored.verdict_kind == repair_contract.REPAIR_VERDICT_NO_FIX
+    assert restored.attempted_actions == ("runtime_patch", "env_restart")
+    assert restored.durable_refs == ("run-log.txt",)
+
+
+def test_repair_verdict_escalated_construction_and_round_trip() -> None:
+    """RepairVerdict with escalated kind preserves the human-required evidence."""
+    verdict = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_ESCALATED,
+        blocker_id="blocker-human-1",
+        attempted_actions=("discord_ping", "email_alert"),
+        before_evidence_refs=("state-before.json",),
+        after_evidence_refs=(),
+        durable_refs=("escalation-log.md",),
+        evidence_timestamp="2026-07-11T09:00:00Z",
+        session="session-esc",
+        request_id="req-esc-001",
+        outcome="needs_human",
+    )
+    payload = verdict.to_dict()
+    assert payload["verdict_kind"] == "escalated"
+    assert payload["blocker_id"] == "blocker-human-1"
+    assert payload["outcome"] == "needs_human"
+
+    restored = repair_contract.RepairVerdict.from_dict(payload)
+    assert restored.verdict_kind == repair_contract.REPAIR_VERDICT_ESCALATED
+    assert restored.request_id == "req-esc-001"
+
+
+def test_repair_verdict_stale_detection_flags_on_old_timestamps() -> None:
+    """Stale repair data is detected and flagged in verdict."""
+    from datetime import datetime, timezone, timedelta
+
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    stale_detected, stale_reason = repair_contract.detect_stale_repair_data(
+        {"completed_at": old_ts},
+        stale_threshold_secs=3600,  # 1 hour
+    )
+    assert stale_detected is True
+    assert "exceeds stale threshold" in stale_reason
+
+    # Fresh data is not stale
+    fresh_ts = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    fresh_detected, fresh_reason = repair_contract.detect_stale_repair_data(
+        {"completed_at": fresh_ts},
+        stale_threshold_secs=3600,
+    )
+    assert fresh_detected is False
+    assert fresh_reason == ""
+
+    # Missing timestamp is stale
+    no_ts_detected, no_ts_reason = repair_contract.detect_stale_repair_data({})
+    assert no_ts_detected is True
+    assert "no completion" in no_ts_reason
+
+
+def test_repair_verdict_no_verdict_artifact_detection() -> None:
+    """No-verdict artifacts (liveness-only, no outcome) are detected."""
+    # No outcome at all
+    detected, reason = repair_contract.detect_no_verdict_artifact({})
+    assert detected is True
+    assert "no outcome" in reason
+
+    # Liveness-only with no evidence refs
+    detected, reason = repair_contract.detect_no_verdict_artifact(
+        {"outcome": "partial_liveness"}
+    )
+    assert detected is True
+    assert "liveness-only" in reason
+
+    # Still repairing (non-terminal)
+    detected, reason = repair_contract.detect_no_verdict_artifact(
+        {"outcome": "repairing"}
+    )
+    assert detected is True
+    assert "still in non-terminal" in reason
+
+    # Complete outcome with evidence is fine
+    detected, reason = repair_contract.detect_no_verdict_artifact(
+        {
+            "outcome": "complete",
+            "before_evidence_refs": ["before.json"],
+            "after_evidence_refs": ["after.json"],
+        }
+    )
+    assert detected is False
+
+
+def test_repair_verdict_frozen_dataclass_is_immutable() -> None:
+    """RepairVerdict is a frozen dataclass — mutation raises FrozenInstanceError."""
+    verdict = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_CLEARED,
+        blocker_id="blocker-immutable",
+    )
+    with pytest.raises(Exception):
+        verdict.blocker_id = "mutated"  # type: ignore[misc]
+
+
+def test_build_ordinary_repair_verdict_for_cleared_outcome() -> None:
+    """build_ordinary_repair_verdict maps 'complete' to cleared."""
+    verdict = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "complete",
+            "blocker_id": "blocker-1",
+            "session": "demo",
+            "request_id": "req-1",
+            "completed_at": "2026-07-10T10:00:00Z",
+        },
+    )
+    assert verdict.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert verdict.blocker_id == "blocker-1"
+    assert verdict.outcome == "complete"
+    assert verdict.contract_id == "repair.ordinary_complete.1"
+
+
+def test_build_ordinary_repair_verdict_for_no_fix_outcome() -> None:
+    """build_ordinary_repair_verdict maps 'repair_exhausted' to no_fix."""
+    verdict = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "repair_exhausted",
+            "blocker_id": "blocker-exhausted",
+            "completed_at": "2026-07-10T12:00:00Z",
+        },
+    )
+    assert verdict.verdict_kind == repair_contract.REPAIR_VERDICT_NO_FIX
+    assert verdict.blocker_id == "blocker-exhausted"
+    assert verdict.outcome == "repair_exhausted"
+
+    # repair_timeout also maps to no_fix
+    verdict_to = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "repair_timeout",
+            "blocker_id": "blocker-timedout",
+        },
+    )
+    assert verdict_to.verdict_kind == repair_contract.REPAIR_VERDICT_NO_FIX
+
+
+def test_build_ordinary_repair_verdict_for_escalated_outcome() -> None:
+    """build_ordinary_repair_verdict maps 'needs_human' to escalated."""
+    verdict = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "needs_human",
+            "blocker_id": "blocker-human",
+            "completed_at": "2026-07-10T15:00:00Z",
+        },
+    )
+    assert verdict.verdict_kind == repair_contract.REPAIR_VERDICT_ESCALATED
+    assert verdict.blocker_id == "blocker-human"
+
+    # true_human_blocker also maps to escalated
+    verdict_thb = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "true_human_blocker",
+            "blocker_id": "blocker-thb",
+        },
+    )
+    assert verdict_thb.verdict_kind == repair_contract.REPAIR_VERDICT_ESCALATED
+
+
+def test_build_ordinary_repair_verdict_detects_stale_repair_data() -> None:
+    """When repair data is stale, the verdict flags stale_detected."""
+    from datetime import datetime, timezone, timedelta
+
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    verdict = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "complete",
+            "blocker_id": "blocker-stale",
+            "completed_at": old_ts,
+        },
+    )
+    assert verdict.stale_detected is True
+    assert "exceeds stale threshold" in verdict.stale_reason
+    # The outcome-based verdict kind is still 'cleared' because staleness
+    # is a separate concern from outcome classification.
+    assert verdict.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+
+
+def test_build_ordinary_repair_verdict_detects_no_verdict_artifact() -> None:
+    """When outcome is liveness-only, no_verdict_detected flag is set."""
+    verdict = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "partial_liveness",
+            "blocker_id": "blocker-live",
+        },
+    )
+    assert verdict.verdict_kind == repair_contract.REPAIR_VERDICT_NO_VERDICT
+    assert verdict.no_verdict_detected is True
+    assert "liveness-only" in verdict.no_verdict_reason
+
+
+def test_repair_success_not_trusted_without_original_finding_clearance() -> None:
+    """A 'complete' outcome without original blocker clearance evidence should not
+    be trusted as a verified recovery. The verdict may be 'cleared' by outcome, but
+    the absence of before/after evidence refs means downstream consumers must still
+    verify original finding clearance.
+    """
+    # Liveness-only complete — no before/after evidence
+    payload_liveness = {
+        "outcome": "complete",
+        "blocker_id": "blocker-suspect",
+        "session": "demo",
+    }
+    verdict_liveness = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload=payload_liveness,
+    )
+    # It's 'cleared' by outcome type, but has no before/after evidence.
+    assert verdict_liveness.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert verdict_liveness.before_evidence_refs == ()
+    assert verdict_liveness.after_evidence_refs == ()
+
+    # Contrast with a properly evidenced clearance
+    verdict_evidenced = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "complete",
+            "blocker_id": "blocker-ok",
+            "before_evidence_refs": ["pre-fix-state.json"],
+            "after_evidence_refs": ["post-fix-state.json"],
+        },
+        before_evidence_refs=("pre-fix-state.json",),
+        after_evidence_refs=("post-fix-state.json",),
+    )
+    assert verdict_evidenced.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert "pre-fix-state.json" in verdict_evidenced.before_evidence_refs
+    assert "post-fix-state.json" in verdict_evidenced.after_evidence_refs
+
+
+def test_repair_success_not_trusted_without_explicit_escalation_no_fix_evidence() -> None:
+    """A liveness-only outcome (live_with_fresh_activity) cannot satisfy
+    the requirement for explicit escalation or no-fix evidence — it must be
+    flagged as no-verdict.
+    """
+    verdict = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "live_with_fresh_activity",
+            "blocker_id": "blocker-live-2",
+        },
+    )
+    # live_with_fresh_activity maps to no_verdict in the outcome-to-verdict table
+    assert verdict.verdict_kind == repair_contract.REPAIR_VERDICT_NO_VERDICT
+    assert verdict.no_verdict_detected is True
+
+    # escalated outcome IS trusted — it provides explicit evidence
+    verdict_esc = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "discord_escalated",
+            "blocker_id": "blocker-discord",
+            "completed_at": "2026-07-10T16:00:00Z",
+        },
+    )
+    assert verdict_esc.verdict_kind == repair_contract.REPAIR_VERDICT_ESCALATED
+    assert verdict_esc.no_verdict_detected is False
+
+    # no_fix outcome IS trusted — it provides explicit evidence
+    verdict_nf = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "deterministic_failure",
+            "blocker_id": "blocker-det",
+            "completed_at": "2026-07-10T17:00:00Z",
+        },
+    )
+    assert verdict_nf.verdict_kind == repair_contract.REPAIR_VERDICT_NO_FIX
+    assert verdict_nf.no_verdict_detected is False
+
+
+def test_validate_repair_verdict_payload_rejects_bad_inputs() -> None:
+    """validate_repair_verdict_payload raises ValueError on invalid payloads."""
+    # Not a dict
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        repair_contract.validate_repair_verdict_payload([1, 2, 3])  # type: ignore[arg-type]
+
+    # Missing verdict_kind
+    with pytest.raises(ValueError, match="missing required field"):
+        repair_contract.validate_repair_verdict_payload({"blocker_id": "b1"})
+
+    # Unknown verdict_kind
+    with pytest.raises(ValueError, match="unknown repair verdict kind"):
+        repair_contract.validate_repair_verdict_payload({"verdict_kind": "invalid_kind"})
+
+    # Valid payload passes
+    result = repair_contract.validate_repair_verdict_payload(
+        {"verdict_kind": "cleared", "blocker_id": "b1"}
+    )
+    assert result["verdict_kind"] == "cleared"
+
+
+def test_save_repair_verdict_persists_and_round_trips(tmp_path: Path) -> None:
+    """save_repair_verdict atomically persists and what is read matches."""
+    path = tmp_path / "verdict.json"
+    verdict = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_CLEARED,
+        blocker_id="blocker-save-1",
+        attempted_actions=("action-1",),
+        before_evidence_refs=("before.json",),
+        after_evidence_refs=("after.json",),
+        durable_refs=("report.md",),
+        evidence_timestamp="2026-07-13T08:00:00Z",
+        session="demo-save",
+        request_id="req-save-1",
+        outcome="complete",
+    )
+    persisted = repair_contract.save_repair_verdict(path, verdict)
+    assert persisted["verdict_kind"] == "cleared"
+    assert Path(path).exists()
+
+    # Read back and rehydrate
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    restored = repair_contract.RepairVerdict.from_dict(raw)
+    assert restored.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert restored.blocker_id == "blocker-save-1"
+    assert restored.attempted_actions == ("action-1",)
+    assert restored.evidence_timestamp == "2026-07-13T08:00:00Z"
+
+
+def test_repair_verdict_from_dict_defaults_unknown_kind_to_no_verdict() -> None:
+    """from_dict coerces unknown verdict_kind strings to no_verdict."""
+    restored = repair_contract.RepairVerdict.from_dict(
+        {"verdict_kind": "garbage", "blocker_id": "b1"}
+    )
+    assert restored.verdict_kind == repair_contract.REPAIR_VERDICT_NO_VERDICT
+
+
+# ---------------------------------------------------------------------------
+
+
 def test_recovery_view_drift_emission_when_custody_disagrees(tmp_path: Path) -> None:
     """Drift event is emitted when legacy custody bucket disagrees with recovery view."""
     recovery = _make_recovery_view_dict(

@@ -38,6 +38,7 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     contract_satisfies_profile,
     diff_contracts,
+    families_without_coverage,
     get_profile_by_kind,
     get_template_by_id,
 )
@@ -67,6 +68,29 @@ _EXECUTE_TERMINAL_BOUNDARY_IDS = {"execute_no_review_terminal"}
 _EXECUTE_APPROVAL_BOUNDARY_IDS = {"execute_approval"}
 _EXECUTE_AGGREGATE_BOUNDARY_IDS = {"execute_aggregate_promotion"}
 _EXECUTE_CHECKPOINT_BOUNDARY_IDS = {"execute_batch_checkpoint", "execute_partial_failure"}
+
+# ── T5 reducer evidence state keys ──────────────────────────────────
+# Keys written into state.json by _write_reducer_evidence_to_state in
+# arnold_pipelines/megaplan/execute/_binding/reducer.py (T5).
+_REDUCER_CHILD_OUTPUTS_KEY = "_reducer_child_outputs"
+_REDUCER_AGGREGATE_CANONICAL_KEY = "_reducer_aggregate_canonical_outputs"
+_REDUCER_PARENT_PROMOTION_KEY = "_reducer_parent_promotion_points"
+_REDUCER_SIDE_EFFECT_REFS_KEY = "_reducer_side_effect_refs"
+_REDUCER_BLOCKED_RETRY_KEY = "_reducer_blocked_retry_records"
+_REDUCER_REPAIR_DOMAIN_KEY = "_reducer_repair_domain_separation"
+_REDUCER_RESUME_ANCHORS_KEY = "_reducer_resume_anchors"
+
+_REDUCER_EVIDENCE_KEYS: frozenset[str] = frozenset(
+    {
+        _REDUCER_CHILD_OUTPUTS_KEY,
+        _REDUCER_AGGREGATE_CANONICAL_KEY,
+        _REDUCER_PARENT_PROMOTION_KEY,
+        _REDUCER_SIDE_EFFECT_REFS_KEY,
+        _REDUCER_BLOCKED_RETRY_KEY,
+        _REDUCER_REPAIR_DOMAIN_KEY,
+        _REDUCER_RESUME_ANCHORS_KEY,
+    }
+)
 _REVIEW_CHILD_OUTPUTS_BOUNDARY_ID = "review_child_outputs"
 _REVIEW_REDUCER_PROMOTION_BOUNDARY_ID = "review_reducer_promotion"
 _REVIEW_REWORK_EFFECTS_BOUNDARY_ID = "review_rework_effects"
@@ -128,6 +152,9 @@ def inspect_semantic_health(plan_dir: Path) -> list[SemanticFinding]:
                 phase_result=phase_result,
             )
         )
+
+    # ── cross-contract phase-family coverage check ──────────────────
+    findings.extend(_check_phase_family_coverage())
 
     return findings
 
@@ -710,6 +737,49 @@ def _check_profile_template_metadata(
     return findings
 
 
+# ── phase-family coverage check ────────────────────────────────────────
+
+
+def _check_phase_family_coverage() -> list[SemanticFinding]:
+    """Read-only check: every covered phase-family must have a contract or exemption.
+
+    Calls :func:`families_without_coverage` from the boundary-contracts
+    registry and emits a :class:`SemanticFinding` for every family that
+    is neither contract-backed nor exempted.
+
+    This check is intentionally stateless — it only inspects the registry
+    itself, not any plan-dir state.  Coverage gaps are reported at ERROR
+    severity because they represent a structural hole in the boundary
+    contract surface.
+    """
+    findings: list[SemanticFinding] = []
+    gaps = families_without_coverage()
+    for gap in gaps:
+        family = str(gap["family"])
+        missing = gap["missing_contracts"]
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-coverage-{family}-missing-contracts",
+                boundary_id="*",
+                description=(
+                    f"phase-family '{family}' is covered by the coverage matrix "
+                    f"but lacks expected contracts {tuple(missing)} and has no "
+                    f"tested exemption"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=family,
+                details={
+                    "family": family,
+                    "expected_contracts": list(gap["expected_contracts"]),
+                    "missing_contracts": list(missing),
+                    "exempted": gap["exempted"],
+                },
+            )
+        )
+    return findings
+
+
 def _check_override_authority(
     *,
     plan_dir: Path,
@@ -835,9 +905,12 @@ def _check_execute_semantics(
     if bid in _EXECUTE_APPROVAL_BOUNDARY_IDS:
         findings.extend(_check_execute_approval_authority(plan_dir, contract, state))
     if bid in _EXECUTE_AGGREGATE_BOUNDARY_IDS:
-        findings.extend(_check_execute_aggregate_promotion(plan_dir, contract))
+        findings.extend(_check_execute_aggregate_promotion(plan_dir, contract, state))
     if bid in _EXECUTE_TERMINAL_BOUNDARY_IDS:
         findings.extend(_check_execute_terminal_state(contract, state))
+
+    # T6: reducer-evidence-in-state checks for all execute-phase contracts.
+    findings.extend(_check_reducer_evidence_in_state(plan_dir, contract, state))
 
     return findings
 
@@ -976,8 +1049,15 @@ def _check_execute_approval_authority(
 def _check_execute_aggregate_promotion(
     plan_dir: Path,
     contract: Any,
+    state: dict[str, Any] | None = None,
 ) -> list[SemanticFinding]:
-    """Child output without reducer promotion / promotion without child evidence."""
+    """Child output without reducer promotion / promotion without child evidence.
+
+    T6 generalized: also cross-references T5 reducer evidence in state to
+    ensure child turn evidence never satisfies parent state advancement on
+    its own — only the reducer promotion contract (receipt + state
+    parent_promotion_points) can prove parent promotion.
+    """
     findings: list[SemanticFinding] = []
     bid = contract.boundary_id
     receipt = _load_receipt(plan_dir, bid)
@@ -986,8 +1066,24 @@ def _check_execute_aggregate_promotion(
 
     child_artifacts = list_batch_artifacts(plan_dir)
     has_child_evidence = bool(child_artifacts)
-    promotion_present = bool(receipt and receipt.get("reducer_promotion"))
 
+    # ── receipt-based promotion check ────────────────────────────────
+    receipt_promotion = bool(receipt and receipt.get("reducer_promotion"))
+
+    # ── T5 state-based promotion evidence ────────────────────────────
+    state_promotion_points: list[dict[str, Any]] = []
+    if isinstance(state, dict):
+        spp = state.get(_REDUCER_PARENT_PROMOTION_KEY)
+        if isinstance(spp, list):
+            state_promotion_points = [
+                p for p in spp if isinstance(p, dict)
+            ]
+    has_state_promotion = bool(state_promotion_points)
+
+    # Effective promotion: receipt-based OR state-based.
+    promotion_present = receipt_promotion or has_state_promotion
+
+    # ── child evidence without ANY promotion (receipt or state) ─────
     if has_child_evidence and not promotion_present:
         findings.append(
             SemanticFinding(
@@ -995,12 +1091,18 @@ def _check_execute_aggregate_promotion(
                 boundary_id=bid,
                 description=(
                     f"execute child batch outputs exist for '{bid}' but no "
-                    f"reducer promotion receipt is present"
+                    f"reducer promotion receipt nor state parent_promotion_points "
+                    f"are present — child turn evidence cannot satisfy parent "
+                    f"state advancement alone"
                 ),
-                severity=FindingSeverity.WARNING,
+                severity=FindingSeverity.ERROR,
                 diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
                 contract_ref=bid,
-                details={"child_batch_count": len(child_artifacts)},
+                details={
+                    "child_batch_count": len(child_artifacts),
+                    "receipt_promotion": receipt_promotion,
+                    "state_promotion": has_state_promotion,
+                },
             )
         )
     elif promotion_present and not has_child_evidence:
@@ -1015,9 +1117,258 @@ def _check_execute_aggregate_promotion(
                 severity=FindingSeverity.WARNING,
                 diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
                 contract_ref=bid,
-                details={"child_batch_count": 0},
+                details={
+                    "child_batch_count": 0,
+                    "receipt_promotion": receipt_promotion,
+                    "state_promotion": has_state_promotion,
+                },
             )
         )
+
+    # ── T6: child-evidence-only (without reducer promotion) cannot  ──
+    #      prove parent advancement — detect state-based child outputs
+    #      present without corresponding parent_promotion_points.
+    if isinstance(state, dict):
+        child_outputs = state.get(_REDUCER_CHILD_OUTPUTS_KEY)
+        if isinstance(child_outputs, dict) and child_outputs:
+            has_done_child = any(
+                isinstance(v, dict) and v.get("status") == "done"
+                for v in child_outputs.values()
+            )
+            if has_done_child and not has_state_promotion:
+                findings.append(
+                    SemanticFinding(
+                        finding_id=f"SH-{bid}-child-done-without-state-promotion",
+                        boundary_id=bid,
+                        description=(
+                            f"T5 reducer child_outputs record completed child "
+                            f"tasks for '{bid}' but _reducer_parent_promotion_points "
+                            f"is absent or empty — child evidence cannot substitute "
+                            f"for reducer promotion contract"
+                        ),
+                        severity=FindingSeverity.ERROR,
+                        diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                        contract_ref=bid,
+                        details={
+                            "child_output_count": len(child_outputs),
+                            "state_promotion": has_state_promotion,
+                        },
+                    )
+                )
+
+    return findings
+
+
+# ── T6: reducer evidence in state ───────────────────────────────────────
+
+
+def _check_reducer_evidence_in_state(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+) -> list[SemanticFinding]:
+    """Validate T5 reducer evidence keys in state for execute-phase contracts.
+
+    T6: child turn evidence never satisfies parent state advancement — only
+    the reducer promotion contract can prove parent promotion.  This check
+    detects:
+
+    * missing child evidence when reducer promotion is present in state
+    * missing reducer promotion when child evidence is present in state
+    * side-effect ref gaps (child tasks changed files but no side_effect_refs)
+    * resume-anchor gaps (partial/blocked execution without resume anchors)
+    * repair-domain mixing (is_repair_execution inconsistent with child tasks)
+    """
+    findings: list[SemanticFinding] = []
+    if not isinstance(state, dict):
+        return findings
+
+    bid = contract.boundary_id
+
+    # ── load T5 evidence dimensions from state ───────────────────────
+    child_outputs_raw = state.get(_REDUCER_CHILD_OUTPUTS_KEY)
+    child_outputs: dict[str, Any] = (
+        child_outputs_raw if isinstance(child_outputs_raw, dict) else {}
+    )
+
+    parent_promotion_raw = state.get(_REDUCER_PARENT_PROMOTION_KEY)
+    parent_promotion: list[dict[str, Any]] = (
+        parent_promotion_raw if isinstance(parent_promotion_raw, list) else []
+    )
+
+    side_effect_refs_raw = state.get(_REDUCER_SIDE_EFFECT_REFS_KEY)
+    side_effect_refs: list[str] = (
+        side_effect_refs_raw if isinstance(side_effect_refs_raw, list) else []
+    )
+
+    blocked_retry_raw = state.get(_REDUCER_BLOCKED_RETRY_KEY)
+    blocked_retry: list[dict[str, Any]] = (
+        blocked_retry_raw if isinstance(blocked_retry_raw, list) else []
+    )
+
+    repair_domain_raw = state.get(_REDUCER_REPAIR_DOMAIN_KEY)
+    repair_domain: dict[str, Any] = (
+        repair_domain_raw if isinstance(repair_domain_raw, dict) else {}
+    )
+
+    resume_anchors_raw = state.get(_REDUCER_RESUME_ANCHORS_KEY)
+    resume_anchors: list[dict[str, Any]] = (
+        resume_anchors_raw if isinstance(resume_anchors_raw, list) else []
+    )
+
+    has_any_evidence = any(
+        (
+            child_outputs,
+            parent_promotion,
+            side_effect_refs,
+            blocked_retry,
+            repair_domain,
+            resume_anchors,
+        )
+    )
+    if not has_any_evidence:
+        return findings  # no T5 evidence to validate
+
+    # ── 1. child evidence without parent promotion ────────────────────
+    has_done_children = any(
+        isinstance(v, dict) and v.get("status") == "done"
+        for v in child_outputs.values()
+    )
+    has_promotion_points = bool(parent_promotion)
+    if has_done_children and not has_promotion_points:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-reducer-child-evidence-no-promotion",
+                boundary_id=bid,
+                description=(
+                    f"T5 _reducer_child_outputs records completed child tasks "
+                    f"for '{bid}' but _reducer_parent_promotion_points is absent "
+                    f"or empty — child turn evidence must not satisfy parent "
+                    f"state advancement; only the reducer promotion contract "
+                    f"can prove parent promotion"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={
+                    "completed_child_count": sum(
+                        1 for v in child_outputs.values()
+                        if isinstance(v, dict) and v.get("status") == "done"
+                    ),
+                    "total_child_count": len(child_outputs),
+                },
+            )
+        )
+
+    # ── 2. parent promotion without child evidence ───────────────────
+    if has_promotion_points and not child_outputs:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-reducer-promotion-no-child-evidence",
+                boundary_id=bid,
+                description=(
+                    f"_reducer_parent_promotion_points exist for '{bid}' "
+                    f"but _reducer_child_outputs is absent or empty — reducer "
+                    f"promotion requires corresponding child task evidence"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=bid,
+                details={
+                    "promotion_point_count": len(parent_promotion),
+                },
+            )
+        )
+
+    # ── 3. side-effect ref gaps ──────────────────────────────────────
+    #    When child tasks claim files_changed but side_effect_refs is empty.
+    child_files_changed: set[str] = set()
+    for v in child_outputs.values():
+        if isinstance(v, dict):
+            fcs = v.get("files_changed", []) or []
+            for fc in fcs:
+                if isinstance(fc, str):
+                    child_files_changed.add(fc)
+
+    if child_files_changed and not side_effect_refs:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-reducer-missing-side-effect-refs",
+                boundary_id=bid,
+                description=(
+                    f"child tasks for '{bid}' report {len(child_files_changed)} "
+                    f"files_changed but _reducer_side_effect_refs is empty — "
+                    f"side-effect traceability gap"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={
+                    "child_files_changed_count": len(child_files_changed),
+                    "sample_files": sorted(list(child_files_changed))[:10],
+                },
+            )
+        )
+
+    # ── 4. resume-anchor gaps ────────────────────────────────────────
+    #    When blocked/retry records or uncorroborated tasks exist but no
+    #    resume anchors are recorded — the next invocation has no stable
+    #    resume point.
+    has_blocked_or_partial = bool(blocked_retry)
+    if has_blocked_or_partial and not resume_anchors:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-reducer-missing-resume-anchors",
+                boundary_id=bid,
+                description=(
+                    f"_reducer_blocked_retry_records exist for '{bid}' "
+                    f"({len(blocked_retry)} records) but _reducer_resume_anchors "
+                    f"is absent or empty — no stable resume point for next "
+                    f"invocation"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={
+                    "blocked_retry_count": len(blocked_retry),
+                    "resume_anchor_count": len(resume_anchors),
+                },
+            )
+        )
+
+    # ── 5. repair-domain mixing ──────────────────────────────────────
+    #    When _reducer_repair_domain_separation declares is_repair_execution
+    #    but child tasks all look ordinary (no deviation markers), or vice
+    #    versa when child tasks have repair markers but domain is ordinary.
+    is_repair = repair_domain.get("is_repair_execution", False)
+    if isinstance(is_repair, bool):
+        child_has_repair_markers = any(
+            isinstance(v, dict)
+            and isinstance(v.get("executor_notes"), str)
+            and ("[harness]" in v["executor_notes"] or "repair" in v["executor_notes"].lower())
+            for v in child_outputs.values()
+        )
+        if is_repair and not child_has_repair_markers and child_outputs:
+            findings.append(
+                SemanticFinding(
+                    finding_id=f"SH-{bid}-reducer-repair-domain-mixing",
+                    boundary_id=bid,
+                    description=(
+                        f"_reducer_repair_domain_separation declares "
+                        f"is_repair_execution=True for '{bid}' but no child "
+                        f"tasks show repair markers (harness notes / repair "
+                        f"references) — repair-domain evidence appears mixed"
+                    ),
+                    severity=FindingSeverity.WARNING,
+                    diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                    contract_ref=bid,
+                    details={
+                        "declared_repair_domain": is_repair,
+                        "child_output_count": len(child_outputs),
+                        "child_repair_markers_found": child_has_repair_markers,
+                    },
+                )
+            )
 
     return findings
 
@@ -1699,6 +2050,283 @@ def _load_phase_result(plan_dir: Path) -> dict[str, Any] | None:
         return None
 
 
+# ── consumer projection layer (S4) ──────────────────────────────────────
+
+
+def compute_finding_fingerprint(findings: list[SemanticFinding]) -> str:
+    """Compute a stable, deterministic fingerprint for a list of findings.
+
+    The fingerprint is derived from the sorted, stable representation of
+    every finding's key identity fields (finding_id, boundary_id, severity,
+    diagnostic_code).  Two identical lists of findings produce the same
+    fingerprint; any difference in finding identity produces a different
+    fingerprint.
+
+    This is intentionally a *content* fingerprint of the finding identities,
+    not a hash of the full serialized payload.  Consumers (repair-loop,
+    auditor, meta-repair) use this to detect unchanged finding sets across
+    repeated inspections without needing to diff individual fields.
+    """
+    import hashlib
+
+    hasher = hashlib.sha256()
+    # Sort by (boundary_id, finding_id) for deterministic ordering
+    for f in sorted(findings, key=lambda f: (f.boundary_id, f.finding_id)):
+        line = (
+            f"{f.finding_id}|{f.boundary_id}|{f.severity.value}|"
+            f"{f.diagnostic_code.value if f.diagnostic_code else 'none'}"
+        )
+        hasher.update(line.encode("utf-8"))
+    return hasher.hexdigest()
+
+
+def project_semantic_findings(
+    findings: list[SemanticFinding],
+    *,
+    session_id: str = "default",
+    plan_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Project a list of findings into a stable consumer-readable payload.
+
+    Returns a dictionary with:
+
+    * ``fingerprint`` — stable content hash of the finding identities
+    * ``total_count`` — total number of findings
+    * ``counts_by_boundary`` — ``{boundary_id: count}`` sorted by key
+    * ``counts_by_phase`` — ``{phase: count}`` derived from finding_id prefix
+    * ``counts_by_severity`` — ``{severity: count}``
+    * ``counts_by_kind`` — ``{kind: count}`` derived from finding_id
+    * ``counts_by_repair_domain`` — ``{repair_domain: count}``
+    * ``findings`` — list of stable finding dicts
+    * ``session_id`` — session identifier
+    * ``plan_dir`` — plan directory path (if provided)
+
+    This function is **read-only**: it never mutates plan state, lifecycle
+    routing, or receipts.  It only serializes and counts findings produced
+    by :func:`inspect_semantic_health`.
+    """
+    fingerprint = compute_finding_fingerprint(findings)
+
+    # ── counts by boundary (stable, sorted by key) ────────────────────
+    counts_by_boundary: dict[str, int] = {}
+    for f in findings:
+        counts_by_boundary[f.boundary_id] = counts_by_boundary.get(f.boundary_id, 0) + 1
+    counts_by_boundary = dict(sorted(counts_by_boundary.items()))
+
+    # ── counts by phase ──────────────────────────────────────────────
+    # Derive phase from finding_id: e.g. "SH-prep_to_plan-..." → phase="prep"
+    _PHASE_PREFIXES: dict[str, str] = {
+        "prep": "prep",
+        "plan": "plan",
+        "critique": "critique",
+        "gate": "gate",
+        "revise": "revise",
+        "execute": "execute",
+        "review": "review",
+        "finalize": "finalize",
+        "tiebreaker": "tiebreaker",
+        "replan": "replan",
+        "chain": "chain",
+        "cloud": "cloud",
+        "meta": "meta",
+    }
+
+    def _phase_from_finding_id(finding_id: str) -> str:
+        """Extract a phase label from a finding_id.
+
+        Heuristic: look for known phase prefixes after 'SH-' or in the
+        boundary portion of the id (e.g. ``SH-prep_to_plan-...`` → ``prep``).
+        Falls back to the first segment after ``SH-``, then to ``unknown``.
+        """
+        body = finding_id[3:] if finding_id.startswith("SH-") else finding_id
+        # Try known phase prefixes
+        for prefix, phase in sorted(
+            _PHASE_PREFIXES.items(), key=lambda x: -len(x[0])
+        ):
+            if body.startswith(prefix) or f"-{prefix}" in body:
+                return phase
+        # Fallback: use the first segment before '-'
+        if "-" in body:
+            return body.split("-")[0]
+        return "unknown"
+
+    counts_by_phase: dict[str, int] = {}
+    for f in findings:
+        phase = _phase_from_finding_id(f.finding_id)
+        counts_by_phase[phase] = counts_by_phase.get(phase, 0) + 1
+    counts_by_phase = dict(sorted(counts_by_phase.items()))
+
+    # ── counts by severity ───────────────────────────────────────────
+    counts_by_severity: dict[str, int] = {}
+    for f in findings:
+        sev = f.severity.value
+        counts_by_severity[sev] = counts_by_severity.get(sev, 0) + 1
+    counts_by_severity = dict(sorted(counts_by_severity.items()))
+
+    # ── counts by kind ───────────────────────────────────────────────
+    # Derive kind from finding_id: everything between the boundary_id
+    # prefix and the unique suffix.  e.g. "SH-prep_to_plan-missing-artifact-research.md"
+    # → kind = "missing-artifact"
+    def _kind_from_finding_id(finding_id: str, boundary_id: str) -> str:
+        """Extract a finding kind from the finding_id and boundary_id.
+
+        The kind is the middle portion between the boundary-specific prefix
+        and any trailing unique identifier.  Falls back to the last segment.
+        """
+        body = finding_id[3:] if finding_id.startswith("SH-") else finding_id
+        if boundary_id != "*" and body.startswith(boundary_id + "-"):
+            suffix = body[len(boundary_id) + 1:]
+        else:
+            suffix = body
+        # Remove unique trailing identifiers like filenames or indices
+        # e.g. "missing-artifact-research.md" → "missing-artifact"
+        #      "state-delta-current_phase" → "state-delta"
+        #      "authority-evidence-hash-mismatch-0" → "authority-evidence-hash-mismatch"
+        parts = suffix.rsplit("-", 1)
+        if len(parts) == 2 and (parts[1].isdigit() or "." in parts[1]):
+            return parts[0]
+        return suffix
+
+    counts_by_kind: dict[str, int] = {}
+    for f in findings:
+        kind = _kind_from_finding_id(f.finding_id, f.boundary_id)
+        counts_by_kind[kind] = counts_by_kind.get(kind, 0) + 1
+    counts_by_kind = dict(sorted(counts_by_kind.items()))
+
+    # ── counts by repair domain ──────────────────────────────────────
+    # Derive repair domain from finding_id or boundary_id heuristics.
+    _REPAIR_DOMAIN_MAP: dict[str, str] = {
+        "SH-plan-dir-missing": "plan-infra",
+        "missing-artifact": "artifact",
+        "state-missing": "state",
+        "state-delta": "state",
+        "current-state": "state",
+        "history-entry": "state",
+        "receipt-missing": "receipt",
+        "receipt-malformed": "receipt",
+        "receipt-unreadable": "receipt",
+        "phase-result": "phase-result",
+        "stale-iteration": "state",
+        "missing-created-at": "state",
+        "authority-missing": "authority",
+        "authority-evidence": "authority",
+        "authority-freshness": "authority",
+        "authority-decision": "authority",
+        "authority-scope": "authority",
+        "authority-declared": "authority",
+        "authority-undeclared": "authority",
+        "authority-records": "authority",
+        "profile": "profile",
+        "template": "template",
+        "coverage": "contract-coverage",
+        "stale-checkpoint": "execute",
+        "missing-side-effect": "execute",
+        "stale-approval": "execute",
+        "missing-approval": "execute",
+        "child-output": "execute",
+        "promotion": "execute",
+        "terminal-state": "execute",
+        "reducer": "execute",
+        "review": "review",
+        "finalize": "finalize",
+        "chain": "chain",
+        "cloud": "custody",
+        "custody": "custody",
+        "repair": "repair",
+        "meta": "meta-repair",
+    }
+
+    def _repair_domain_from_finding_id(finding_id: str) -> str:
+        """Extract a repair domain from a finding_id."""
+        body = finding_id[3:] if finding_id.startswith("SH-") else finding_id
+        for prefix, domain in sorted(
+            _REPAIR_DOMAIN_MAP.items(), key=lambda x: -len(x[0])
+        ):
+            if body.startswith(prefix) or f"-{prefix}" in body:
+                return domain
+        return "unknown"
+
+    counts_by_repair_domain: dict[str, int] = {}
+    for f in findings:
+        domain = _repair_domain_from_finding_id(f.finding_id)
+        counts_by_repair_domain[domain] = counts_by_repair_domain.get(domain, 0) + 1
+    counts_by_repair_domain = dict(sorted(counts_by_repair_domain.items()))
+
+    # ── stable finding list ──────────────────────────────────────────
+    finding_dicts = [
+        f.to_dict()
+        for f in sorted(findings, key=lambda f: (f.boundary_id, f.finding_id))
+    ]
+
+    result: dict[str, Any] = {
+        "schema": "arnold.workflow.semantic_finding_projection.v1",
+        "session_id": session_id,
+        "fingerprint": fingerprint,
+        "total_count": len(findings),
+        "counts_by_boundary": counts_by_boundary,
+        "counts_by_phase": counts_by_phase,
+        "counts_by_severity": counts_by_severity,
+        "counts_by_kind": counts_by_kind,
+        "counts_by_repair_domain": counts_by_repair_domain,
+        "findings": finding_dicts,
+    }
+    if plan_dir is not None:
+        result["plan_dir"] = str(plan_dir)
+    return result
+
+
+def count_findings_by_session(
+    findings: list[SemanticFinding],
+    *,
+    session_id: str = "default",
+) -> dict[str, int]:
+    """Return ``{session_id: total_count}`` for consumer ingestion.
+
+    Simple wrapper around :func:`project_semantic_findings` for consumers
+    that only need the count dimension.
+    """
+    return {session_id: len(findings)}
+
+
+def count_findings_by_boundary(
+    findings: list[SemanticFinding],
+) -> dict[str, int]:
+    """Return ``{boundary_id: count}`` with stable key ordering."""
+    proj = project_semantic_findings(findings)
+    return proj["counts_by_boundary"]
+
+
+def count_findings_by_phase(
+    findings: list[SemanticFinding],
+) -> dict[str, int]:
+    """Return ``{phase: count}`` with stable key ordering."""
+    proj = project_semantic_findings(findings)
+    return proj["counts_by_phase"]
+
+
+def count_findings_by_kind(
+    findings: list[SemanticFinding],
+) -> dict[str, int]:
+    """Return ``{kind: count}`` with stable key ordering."""
+    proj = project_semantic_findings(findings)
+    return proj["counts_by_kind"]
+
+
+def count_findings_by_repair_domain(
+    findings: list[SemanticFinding],
+) -> dict[str, int]:
+    """Return ``{repair_domain: count}`` with stable key ordering."""
+    proj = project_semantic_findings(findings)
+    return proj["counts_by_repair_domain"]
+
+
 __all__ = [
+    "compute_finding_fingerprint",
+    "count_findings_by_boundary",
+    "count_findings_by_kind",
+    "count_findings_by_phase",
+    "count_findings_by_repair_domain",
+    "count_findings_by_session",
     "inspect_semantic_health",
+    "project_semantic_findings",
 ]

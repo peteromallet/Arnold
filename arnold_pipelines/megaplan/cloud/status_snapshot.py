@@ -43,6 +43,8 @@ from arnold_pipelines.megaplan.authority.views import (
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.repair_contract import (
+    CloudCustodyClassification,
+    classify_cloud_custody,
     classify_repair_dispatch,
     durable_repair_active,
     is_success_outcome,
@@ -1081,6 +1083,33 @@ def _build_session_entry(
         completed=chain_complete or status == "complete",
     )
 
+    custody_classification = _classify_session_custody(
+        session_id=session,
+        supervisor_identity=str(marker.get("supervisor_identity") or ""),
+        tmux_live=bool(liveness.get("tmux")),
+        process_live=bool(liveness.get("process")),
+        active_step_worker_pid_liveness=_active_step_pid_liveness(plan_state_doc),
+        watchdog_status=_watchdog_status(watchdog_item, chain_complete),
+        chain_complete=chain_complete,
+        relaunch_command=str(marker.get("relaunch_command") or ""),
+        needs_human=bool(needs_human),
+        repair_active=(status == "repairing"),
+        now=now,
+    )
+
+    # --- S4: enriched status fields -----------------------------------------
+    lifecycle_state = plan_current_state or ""
+    activity_phase = _derive_activity_phase(plan_state_doc, plan_current_state, status)
+    semantic_health = _derive_semantic_health(
+        session=session,
+        workspace=workspace,
+        current_plan=current_plan,
+        plan_state_doc=plan_state_doc,
+    )
+    repair_state = _derive_repair_state(status, repair_progress)
+    custody_state = custody_classification.custody_kind if custody_classification else ""
+    repairable_issue = _derive_repairable_issue(plan_state_doc)
+
     entry = {
         "session": session,
         "display_name": session,
@@ -1114,6 +1143,13 @@ def _build_session_entry(
         "latest_activity": latest_activity,
         "operator_next": operator_next,
         "advancement": advancement.to_dict(),
+        "cloud_custody": custody_classification.to_dict(),
+        "lifecycle_state": lifecycle_state,
+        "activity_phase": activity_phase,
+        "semantic_health": semantic_health,
+        "repair_state": repair_state,
+        "custody_state": custody_state,
+        "repairable_issue": repairable_issue,
         "evidence": {
             "marker": str(marker_path),
             "chain_health": str(marker_dir / f"{session}.chain-health.progress.json"),
@@ -2009,6 +2045,56 @@ def _watchdog_status(watchdog_item: Mapping[str, Any], chain_complete: bool) -> 
     return status or "unknown"
 
 
+def _active_step_pid_liveness(plan_state: Mapping[str, Any] | None) -> bool:
+    """Check whether the active-step worker PID recorded in plan state is live."""
+    if not isinstance(plan_state, Mapping):
+        return False
+    active_step = plan_state.get("active_step")
+    if not isinstance(active_step, Mapping):
+        return False
+    pid = _as_int(active_step.get("worker_pid"))
+    if pid is not None and _pid_is_live(pid):
+        return True
+    return False
+
+
+def _classify_session_custody(
+    *,
+    session_id: str,
+    supervisor_identity: str,
+    tmux_live: bool,
+    process_live: bool,
+    active_step_worker_pid_liveness: bool,
+    watchdog_status: str,
+    chain_complete: bool,
+    relaunch_command: str,
+    needs_human: bool,
+    repair_active: bool,
+    now: datetime,
+) -> CloudCustodyClassification:
+    """Classify cloud custody for a single session from local observation evidence.
+
+    Wraps :func:`classify_cloud_custody` with defaults appropriate for the
+    status-snapshot producer and an evidence timestamp.
+    """
+    return classify_cloud_custody(
+        session_id=session_id,
+        supervisor_identity=supervisor_identity,
+        tmux_live=tmux_live,
+        process_live=process_live,
+        active_step_worker_pid_liveness=active_step_worker_pid_liveness,
+        watchdog_status=watchdog_status,
+        chain_complete=chain_complete,
+        relaunch_command=relaunch_command,
+        relaunch_command_available=bool(relaunch_command),
+        needs_human=needs_human,
+        repair_active=repair_active,
+        failure_reasons=None,
+        previous_classification=None,
+        finding_unchanged_count=0,
+    )
+
+
 def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[str, Any] | None:
     if workspace is None or not current_plan:
         return None
@@ -2038,6 +2124,124 @@ def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> boo
         "handler_failed",
         "no_next_step",
     }
+
+
+# --- S4: enriched status field derivation -----------------------------------
+
+
+def _derive_activity_phase(
+    plan_state_doc: Mapping[str, Any] | None,
+    plan_current_state: str,
+    status: str,
+) -> str:
+    """Derive the current activity phase from plan state or status signals.
+
+    Prefers ``current_phase`` from the plan state document, then falls back to
+    the ``phase`` field inside ``active_step``, then derives from the legacy
+    ``status`` classification.
+    """
+    if isinstance(plan_state_doc, Mapping):
+        phase = str(plan_state_doc.get("current_phase") or plan_state_doc.get("phase") or "")
+        if phase:
+            return phase.strip().lower()
+        active_step = plan_state_doc.get("active_step")
+        if isinstance(active_step, Mapping):
+            phase = str(active_step.get("phase") or "")
+            if phase:
+                return phase.strip().lower()
+
+    # Derive from legacy status
+    if status == "repairing":
+        return "repair"
+    if status == "complete":
+        return "done"
+    if status == "blocked":
+        return "blocked"
+    if status == "attention":
+        return "attention"
+    if status == "running":
+        return "execute"
+    return status
+
+
+def _derive_semantic_health(
+    *,
+    session: str,
+    workspace: Path | None,
+    current_plan: str | None,
+    plan_state_doc: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Derive a semantic-health projection for the session.
+
+    When the plan directory is resolvable, calls
+    :func:`inspect_semantic_health` and projects the findings through
+    :func:`cloud_counts_summary`.  Returns ``None`` when the plan directory
+    cannot be resolved or the inspection fails, so the snapshot remains
+    robust against incomplete state.
+    """
+    if workspace is None or not current_plan:
+        return None
+    plan_dir = workspace / ".megaplan" / "plans" / str(current_plan)
+    if not plan_dir.is_dir():
+        return None
+    try:
+        from arnold_pipelines.megaplan.cloud.semantic_findings import (
+            cloud_counts_summary,
+        )
+        from arnold_pipelines.megaplan.semantic_health import (
+            inspect_semantic_health,
+        )
+
+        findings = inspect_semantic_health(plan_dir)
+        return cloud_counts_summary(findings, session_id=session)
+    except Exception:
+        return None
+
+
+def _derive_repair_state(
+    status: str,
+    repair_progress: Mapping[str, Any] | None,
+) -> str:
+    """Derive the current repair state for a session.
+
+    Returns one of ``"active"``, ``"stale"``, or ``"none"`` based on the
+    legacy status and the presence of repair-progress evidence.
+    """
+    if status == "repairing":
+        return "active"
+    if isinstance(repair_progress, Mapping) and repair_progress:
+        return "stale"
+    return "none"
+
+
+def _derive_repairable_issue(
+    plan_state_doc: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Derive a repairable-issue detail from plan state when one exists.
+
+    Returns a dict with ``kind``, ``phase``, and ``message`` from the
+    ``latest_failure`` block when the plan state indicates a current
+    repairable failure.  Returns ``None`` when there is no repairable
+    issue.
+    """
+    if not _has_current_repairable_failure(plan_state_doc):
+        return None
+    if not isinstance(plan_state_doc, Mapping):
+        return None
+    latest_failure = plan_state_doc.get("latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        return None
+    issue: dict[str, Any] = {}
+    kind = latest_failure.get("kind")
+    if kind is not None:
+        issue["kind"] = kind
+    phase = latest_failure.get("phase")
+    if phase is not None:
+        issue["phase"] = phase
+    message = latest_failure.get("message")
+    if message is not None:
+        issue["message"] = message
+    return issue if issue else None
 
 
 def _latest_activity(

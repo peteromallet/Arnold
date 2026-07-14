@@ -1347,6 +1347,7 @@ def _failure_resume_cursor_for_step(
 
     if next_step == "recover-blocked" and plan_dir is not None:
         try:
+            # dormant-path: subprocess seam, retired at M6
             state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
             state_payload = {}

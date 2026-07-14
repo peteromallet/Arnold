@@ -136,6 +136,228 @@ Instead, declare intent as metadata. See
 [`package-authoring-contract.md`](package-authoring-contract.md) for the
 full platform-boundary contract.
 
+## Boundary Contracts
+
+Workflow boundaries — the handoffs between producers and consumers, gates that
+require authority, and checkpoints where artifacts must be durable — are
+declared through `BoundaryContract` instances from `arnold.workflow`. A
+boundary contract makes explicit what artifacts must be produced, what state
+deltas are expected, whether authority is required, and what evidence must be
+recorded before a transition is considered complete.
+
+### Defining A Boundary Contract
+
+```python
+from arnold.workflow import BoundaryContract, BoundaryPhase
+
+review_gate = BoundaryContract(
+    boundary_id="review.gate",
+    workflow_id="my.workflow",
+    row_id="my.workflow.review.gate.1",
+    phase=BoundaryPhase.GATE,
+    required_artifacts=("reviewed_output.json",),
+    expected_state_delta={"review_stage": "gated"},
+    phase_result_required=True,
+    receipt_required=True,
+)
+```
+
+Contracts are declarative data — they do not route, dispatch, or mutate state.
+They live beside the workflow definition and are read by downstream consumers
+(semantic-health checks, repair loops, auditors, conformance verification).
+
+### Selecting Reusable Templates
+
+Rather than hand-author every required field, use the reusable template system
+in `arnold.workflow.boundary_templates`. Ten canonical profiles cover common
+boundary shapes:
+
+| Template Kind | Required-Field Highlights |
+|---|---|
+| `revision_boundary` | `revision_kind`, `revision_log_ref` |
+| `validation_boundary` | `validation_kind`, `receipt_required` |
+| `artifact_handoff_boundary` | `handoff_from`, `handoff_to`, `artifact_policy_ref` |
+| `artifact_promotion` | `effect_id`, `promotion_kind`, `artifact_policy_ref` |
+| `approval_boundary` | `approval_scope`, `authority_required` |
+| `human_approval_waiver` | `approval_scope`, `suspension_route_id`, `resume_policy_ref` |
+| `external_effect` | `effect_kind`, `effect_id` |
+| `execution_custody` | `custody_scope`, `fresh_session` |
+| `graph_join_fanout` | `fan_out_refs`, `fan_in_ref`, `join_requirements` |
+| `external_witness` | `witness_ref`, `witness_kind` |
+
+Select and extend a template:
+
+```python
+from dataclasses import replace
+from arnold.workflow import (
+    BoundaryTemplateKind,
+    get_template,
+    get_required_fields,
+    check_contract_conformance,
+)
+
+# Get the canonical template
+base = get_template(BoundaryTemplateKind.APPROVAL_BOUNDARY)
+
+# Extend with domain-specific fields (in details, not core schema)
+my_approval = replace(
+    base,
+    boundary_id="my.workflow.approval",
+    workflow_id="my.workflow",
+    row_id="my.workflow.approval.1",
+    required_artifacts=("plan_doc.json", "review_verdict.json"),
+    details={
+        **base.details,
+        "approval_scope": "plan_finalization",
+    },
+)
+
+# Verify conformance against the template profile
+missing = check_contract_conformance(
+    my_approval,
+    BoundaryTemplateKind.APPROVAL_BOUNDARY,
+)
+assert not missing, f"Missing: {missing}"
+```
+
+`check_contract_conformance` returns a tuple of missing required
+field paths, or an empty tuple when conformant. It is pure data
+validation — no imports, no IO, no mutation.
+
+For a higher-level API that combines template selection with
+customization, use `select_template`:
+
+```python
+from arnold.workflow import select_template, BoundaryTemplateKind
+
+selection = select_template(
+    BoundaryTemplateKind.ARTIFACT_HANDOFF_BOUNDARY,
+    boundary_id="my.workflow.handoff",
+    workflow_id="my.workflow",
+    required_artifacts=("output.json",),
+    details={"handoff_from": "producer", "handoff_to": "consumer"},
+)
+# selection.template -> customized BoundaryContract
+# selection.required_fields -> required-field frozenset for this kind
+```
+
+`select_template` returns a `TemplateSelection` with the kind, customized
+template instance, and required-field profile in one call.
+
+### Versioning Templates
+
+Templates carry a stable `row_id` for version anchoring. Pin your workflow to
+a template version and check for upgrades:
+
+```python
+from arnold.workflow import (
+    pin_template_version,
+    check_template_upgrade,
+    deliberate_upgrade_template,
+    BoundaryTemplateKind,
+)
+
+pin = pin_template_version(
+    BoundaryTemplateKind.REVISION_BOUNDARY,
+    workflow_id="my.workflow",
+)
+
+upgrade = check_template_upgrade(pin)
+if upgrade.available:
+    # Review the upgrade before applying it
+    new_pin = deliberate_upgrade_template(pin)
+```
+
+Version pins are frozen dataclasses with `workflow_id`, `template_kind`,
+`row_id`, and `pinned_at` fields. They carry a `required_fields` property
+that resolves to the pinned kind's frozenset.
+
+### Emitting Receipts And Evidence
+
+When a workflow boundary is crossed, emit a `BoundaryReceipt` to record that
+the contract was satisfied:
+
+```python
+from arnold.workflow import BoundaryReceipt, BoundaryOutcome
+
+receipt = BoundaryReceipt(
+    boundary_id="review.gate",
+    workflow_id="my.workflow",
+    outcome=BoundaryOutcome.ACCEPTED,
+    artifact_refs=("reviewed_output.json",),
+    phase_result_ref="review.gate.result",
+)
+```
+
+Receipts must match the contract's `boundary_id` and `workflow_id`, cover all
+`required_artifacts`, and include a terminal outcome. When
+`authority_required=True`, receipts must also carry authority records.
+
+Evidence (`BoundaryEvidence`) records durable proof that a boundary step
+executed. Evidence is accumulated across attempts and read by conformance
+verification.
+
+### Conformance Verification
+
+Verify that a workflow's boundary contracts, receipts, evidence, and template
+profiles are internally consistent:
+
+```python
+from arnold.workflow import (
+    WorkflowBoundarySpec,
+    verify_boundary_conformance,
+)
+
+result = verify_boundary_conformance(
+    workflow_id="my.workflow",
+    boundaries={
+        "b1": WorkflowBoundarySpec(
+            boundary_id="b1",
+            contract=review_gate,
+            receipt=receipt,
+            evidence=(evidence,),
+            template_kind="revision_boundary",
+        ),
+    },
+)
+
+if not result.conformant:
+    for v in result.violations:
+        print(f"[{v.kind}] {v.description}")
+```
+
+`verify_boundary_conformance` is a read-only in-memory engine. It produces
+violations across contract, receipt, authority, evidence, durable-effect,
+graph-topology, and semantic-finding categories. It does not require a
+running runtime, artifact store, or journal backend.
+
+### Adapter Boundaries
+
+The boundary vocabulary in `arnold.workflow` is generic. Domain-specific
+concepts (Megaplan lifecycle transitions, chain milestones, PR transitions,
+partial acceptance rules) belong in adapters, not in the core schema.
+
+Adapters (`arnold_pipelines.megaplan.workflows.boundary_contracts`) import
+from `arnold.workflow.boundary_templates` and re-use the generic helpers.
+They add domain-specific template kinds and required-field profiles through
+adapter-level `details.*` keys without modifying `BoundaryContract` fields.
+
+When authoring a workflow, put extra domain fields in the `details` mapping.
+Core required-field profiles only check for the keys declared in the generic
+template — adapter checks enforce domain-specific requirements separately.
+
+### Gating Native-Runtime Conformance
+
+The generic conformance verifier is a pure in-memory engine. Full
+runtime-integrated conformance (journal replay, artifact store resolution,
+suspension/resume path checks) is gated behind the native runtime substrate
+readiness signal. Until that substrate is available, pure in-memory
+verification provides contract feedback at authoring time without requiring
+a live executor or backend.
+
+See [`workflow-boundary-contracts.md`](workflow-boundary-contracts.md) for
+the complete boundary contract reference.
+
 ## CLI Validation
 
 Validate a shipped pipeline with the workflow CLI:

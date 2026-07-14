@@ -655,6 +655,7 @@ import json, os, sys, uuid
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.meta_repair import (
+    build_meta_repair_verdict,
     derive_meta_repair_effective_outcome,
     MetaRepairRecord,
     MetaRepairTrigger,
@@ -729,9 +730,28 @@ record = MetaRepairRecord(
     post_retrigger_verification=post_retrigger_verification,
     outcome=effective_outcome,
 )
-record_path = persist_meta_repair_record(record, repair_data_dir=repair_data_dir)
+
+# Build the meta-repair verdict following the same discipline as ordinary repair
+meta_verdict = build_meta_repair_verdict(
+    record=record,
+    verdict=verdict,
+    session=session,
+    failure_reasons=(
+        f"trigger={trigger_raw}" if trigger_raw else "no_trigger",
+    ),
+    retrigger_command_evidence=(
+        os.environ.get("META_REPAIR_VERIFICATION_JSON", "{}")
+    ),
+)
+
+record_path = persist_meta_repair_record(
+    record,
+    repair_data_dir=repair_data_dir,
+    verdict=meta_verdict,
+)
 print(f"RECORD_PATH={record_path}")
 print(f"META_REPAIR_ID={meta_repair_id}")
+print(f"VERDICT_KIND={meta_verdict.verdict_kind}")
 PY
 }
 export META_REPAIR_VERIFICATION_JSON='{}'

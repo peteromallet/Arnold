@@ -1,0 +1,206 @@
+{
+  "schema_version": "arnold.workflow.boundary_contracts.diagnostics.golden.v1",
+  "description": "Deterministic compact golden diagnostics for C1 contract reality — stable diagnostic codes, payload policy failures, durable ref validation failures, ledger validation failures, and non-retrievable hash preservation rejection.",
+  "diagnostics": {
+    "c1r_codes": {
+      "C1R001": {
+        "code": "C1R001_RUN_AUTHORITY_MANIFEST_MISMATCH",
+        "severity": "error",
+        "category": "run_authority_preflight",
+        "message": "Run Authority completion manifest hash does not match the pinned prerequisite value; manifest may be stale or tampered"
+      },
+      "C1R002": {
+        "code": "C1R002_RUN_AUTHORITY_BASE_SHA_MISMATCH",
+        "severity": "error",
+        "category": "run_authority_preflight",
+        "message": "Run Authority base SHA does not match the pinned prerequisite value; base revision may be stale or tampered"
+      },
+      "C1R003": {
+        "code": "C1R003_ROUTE_MIGRATION_DISPOSITION_MISSING",
+        "severity": "error",
+        "category": "route_migration_disposition",
+        "message": "Route migration disposition is missing; every route must declare its migration status"
+      },
+      "C1R004": {
+        "code": "C1R004_ROUTE_MIGRATION_WARN_ONLY_NON_CONFORMANT",
+        "severity": "warning",
+        "category": "route_migration_disposition",
+        "message": "Route marked as warn-only non-conformant; this disposition blocks C1 acceptance"
+      },
+      "C1R005": {
+        "code": "C1R005_DUAL_MUTATING_OWNERSHIP",
+        "severity": "error",
+        "category": "dual_mutating_ownership",
+        "message": "Dual mutating ownership detected; a workflow resource has two concurrent mutating owners"
+      },
+      "C1R006": {
+        "code": "C1R006_FIXTURE_REPLAY_MUTABILITY",
+        "severity": "error",
+        "category": "fixture_replay_mutability",
+        "message": "Fixture replay mutability detected; a fixture used for replay testing has changed since capture"
+      },
+      "C1R007": {
+        "code": "C1R007_PRODUCER_MAPPING_INCOMPLETE",
+        "severity": "warning",
+        "category": "producer_mapping",
+        "message": "Producer mapping is incomplete; not all required producers have manifest entries"
+      },
+      "C1R008": {
+        "code": "C1R008_MIGRATION_COVERAGE_GAP",
+        "severity": "warning",
+        "category": "migration_coverage",
+        "message": "Migration coverage gap detected; some producers lack migration milestone entries"
+      },
+      "C1R009": {
+        "code": "C1R009_MIGRATION_MILESTONE_MISSING",
+        "severity": "error",
+        "category": "migration_coverage",
+        "message": "Migration milestone missing; a required migration milestone has no recorded completion"
+      },
+      "C1R010": {
+        "code": "C1R010_HASH_WITHOUT_RETAINED_PAYLOAD",
+        "severity": "error",
+        "category": "hash_without_retained_payload",
+        "message": "Hash without retained payload detected; a digest is present but the retrievable payload bytes are not preserved"
+      }
+    },
+    "digest_only_rejection": {
+      "description": "Digest-only preservation is rejected by all boundary contract validators. A hash without retained retrievable bytes does not preserve a result.",
+      "payload_policy_digest_only": {
+        "scenario": "Payload with digest but no store_id/locator/durable_ref",
+        "payload": {"digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+        "expected_issue_inline": "Digest-only payload preservation is rejected by wbc.inline.v1 policy",
+        "expected_issue_retention": "Digest-only payload preservation is rejected by wbc.retention.v1 policy"
+      },
+      "durable_ref_digest_only": {
+        "scenario": "DurableRef with only a digest (empty store_id/locator)",
+        "store_id": "",
+        "locator": "",
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "expected_issue_store": "DurableRef.store_id is empty; cannot locate the durable store",
+        "expected_issue_locator": "DurableRef.locator is empty; cannot retrieve the object from the store",
+        "expected_issue_construction": "DurableRef.store_id must be non-empty"
+      },
+      "typed_payload_digest_only": {
+        "scenario": "TypedPayload with only content_digest (no inline_data, no ref)",
+        "is_digest_only": true,
+        "note": "Digest-only typed payloads are integrity evidence, not result preservation"
+      }
+    },
+    "secret_exclusion_diagnostics": {
+      "description": "Boundary contracts must never carry secrets in durable refs or payloads",
+      "forbidden_patterns": ["api_key", "password", "secret", "token", "private_key", "credential", "bearer", "authorization"],
+      "durable_ref_secret": {
+        "scenario": "DurableRef metadata contains a forbidden key",
+        "metadata_key": "api_key",
+        "expected_issue_pattern": "matches forbidden secret pattern"
+      },
+      "payload_policy_secret": {
+        "scenario": "Payload contains a key matching secret patterns",
+        "payload_key": "bearer_token",
+        "expected_issue_pattern": "matches forbidden secret pattern"
+      }
+    },
+    "payload_policy_validation_diagnostics": {
+      "inline_exceeds_threshold": {
+        "description": "Payload exceeding 16KiB without durable ref",
+        "expected_issue": "Payload exceeds inline threshold (16384 bytes) but no durable_ref is present"
+      },
+      "legal_hold_ephemeral_conflict": {
+        "description": "Legal hold active with ephemeral retention",
+        "retention_mode": "ephemeral",
+        "legal_hold": true,
+        "expected_issue": "Legal hold is active but retention_mode is 'ephemeral'"
+      },
+      "retention_encryption_bypass": {
+        "description": "Non-ephemeral retention with encryption_required=false",
+        "note": "Policy flag encryption_required=true is the default and should be validated"
+      }
+    },
+    "ledger_validation_diagnostics": {
+      "identity_validation": {
+        "empty_workflow_id": "LedgerEvent.identity.workflow_id is empty",
+        "empty_run_id": "LedgerEvent.identity.run_id is empty",
+        "empty_graph_revision": "LedgerEvent.identity.graph_revision is empty",
+        "invalid_ordinal": "LedgerEvent.identity.attempt_ordinal must be >= 1",
+        "empty_attempt_id": "LedgerEvent.identity.attempt_id is empty",
+        "invalid_uuid": "is not a valid UUID"
+      },
+      "ordering_validation": {
+        "duplicate_sequence": "Duplicate sequence number",
+        "non_monotonic_sequence": "Sequence not strictly monotonic",
+        "non_monotonic_append": "Append position not strictly monotonic",
+        "first_event_nonzero_predecessor": "First event must have causal_predecessor_sequence == 0",
+        "missing_predecessor": "does not exist in earlier events",
+        "lifecycle_precedence": "requires preceding event types"
+      },
+      "provenance_validation": {
+        "lineage_no_parent": "Provenance has causal_lineage but parent_attempt_id is None",
+        "parent_lineage_mismatch": "does not match last lineage entry",
+        "parent_no_lineage": "Provenance has parent_attempt_id but causal_lineage is empty",
+        "invalid_lineage_uuid": "is not a valid UUID"
+      },
+      "grant_validation": {
+        "empty_grant_id": "LedgerEvent.grant_ref.grant_id is empty",
+        "empty_decision_id": "LedgerEvent.grant_ref.decision_id is present but empty"
+      },
+      "timestamp_validation": {
+        "empty_occurred_at": "LedgerEvent.occurred_at is empty",
+        "empty_observed_at": "LedgerEvent.observed_at is empty"
+      },
+      "adapter_validation": {
+        "empty_version": "LedgerEvent.adapter.adapter_version is empty",
+        "invalid_kind": "is not a valid AdapterKind"
+      },
+      "idempotency_validation": {
+        "empty_key": "LedgerEvent.idempotency_key is empty"
+      }
+    },
+    "durable_ref_validation_diagnostics": {
+      "retrievability": {
+        "empty_store_id": "DurableRef.store_id is empty; cannot locate the durable store",
+        "empty_locator": "DurableRef.locator is empty; cannot retrieve the object from the store",
+        "empty_digest": "DurableRef.digest is empty; integrity verification is impossible without a digest",
+        "invalid_digest": "is not a valid sha256 hex digest"
+      },
+      "tenant_scope": {
+        "tenant_mismatch": "DurableRef.tenant_id does not match expected",
+        "workflow_mismatch": "DurableRef.workflow_id does not match expected",
+        "tenant_scope_no_tenant_id": "DurableRef.access_scope is 'tenant' but tenant_id is None",
+        "workflow_scope_no_workflow_id": "DurableRef.access_scope is 'workflow' but workflow_id is None"
+      },
+      "secret_exclusion": {
+        "forbidden_key": "DurableRef metadata key matches forbidden secret pattern"
+      }
+    },
+    "stability_assertions": {
+      "no_non_retrievable_hash_preservation": {
+        "rule": "Every payload that carries a digest MUST also carry retrievable store identity and locator OR inline data. A digest alone is integrity evidence, not result preservation.",
+        "enforcement_points": [
+          "DurableRef.__post_init__ rejects empty store_id",
+          "DurableRef.__post_init__ rejects empty locator",
+          "validate_durable_ref_retrievability rejects digest-only refs",
+          "validate_inline_payload_policy rejects digest-only payloads",
+          "validate_retention_payload_policy rejects digest-only payloads",
+          "validate_payload_preservation enforces both inline and retention policies",
+          "C1R010 diagnostic code covers hash-without-retained-payload"
+        ]
+      },
+      "diagnostic_code_stability": {
+        "rule": "All C1R diagnostic codes are stable and must not be renamed, repurposed, or removed without a migration plan.",
+        "codes": [
+          "C1R001_RUN_AUTHORITY_MANIFEST_MISMATCH",
+          "C1R002_RUN_AUTHORITY_BASE_SHA_MISMATCH",
+          "C1R003_ROUTE_MIGRATION_DISPOSITION_MISSING",
+          "C1R004_ROUTE_MIGRATION_WARN_ONLY_NON_CONFORMANT",
+          "C1R005_DUAL_MUTATING_OWNERSHIP",
+          "C1R006_FIXTURE_REPLAY_MUTABILITY",
+          "C1R007_PRODUCER_MAPPING_INCOMPLETE",
+          "C1R008_MIGRATION_COVERAGE_GAP",
+          "C1R009_MIGRATION_MILESTONE_MISSING",
+          "C1R010_HASH_WITHOUT_RETAINED_PAYLOAD"
+        ]
+      }
+    }
+  }
+}

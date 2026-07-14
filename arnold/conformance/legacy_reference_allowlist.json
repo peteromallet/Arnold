@@ -133,12 +133,6 @@
       "reason": "Neutral-product import boundary scanner target for the deleted legacy Megaplan package root."
     },
     {
-      "path": "arnold/pipeline/native/decorators.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Sphinx cross-reference to deleted legacy module; retained as historical documentation of the interface ancestry."
-    },
-    {
       "path": "arnold/pipeline/native/MILESTONE_3_HANDOFF.md",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
@@ -523,12 +517,6 @@
       "reason": "Packaging configuration excludes the deleted legacy source path."
     },
     {
-      "path": "scripts/check_workflow_pipeline_inventory.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Denylist entry that names the deleted legacy package for inventory validation."
-    },
-    {
       "path": "tests/arnold_pipelines/megaplan/fixtures/native_goldens/legacy_baseline_inventory.json",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
@@ -671,12 +659,6 @@
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
       "reason": "Cloud-chain test intentionally references the legacy import path for compatibility checks."
-    },
-    {
-      "path": "tests/docs/test_m5_generated_scans.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
     },
     {
       "path": "tests/docs/test_m5_generated_scans.py",

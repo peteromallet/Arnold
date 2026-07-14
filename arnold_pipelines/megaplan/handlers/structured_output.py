@@ -306,6 +306,25 @@ def assert_file_fill_eligible(phase_identity: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_boundary_ids(phase_identity: str) -> tuple[str, ...]:
+    """Return the boundary contract ids for *phase_identity* from the registry.
+
+    Returns the registered ``boundary_contract_ids`` when the phase has them,
+    falling back to a small phase-specific mapping for backward compatibility.
+    Returns an empty tuple when no boundary ids can be resolved.
+    """
+    reg = get_template_registration(phase_identity)
+    if reg is not None and reg.boundary_contract_ids:
+        return reg.boundary_contract_ids
+    # Phase-specific fallback for callers that haven't set up template registry
+    # bindings (robustness: backward compat).
+    if phase_identity == "gate":
+        return ("gate_to_revise",)
+    if phase_identity == "finalize":
+        return ("finalize_artifacts",)
+    return ()
+
+
 def build_promotion_evidence(
     plan_dir: Path,
     scratch_status: ScratchStatus,
@@ -354,6 +373,10 @@ def build_promotion_evidence(
     workflow_id = "megaplan-review"
     _now = None  # lazy import to avoid top-level dependency
 
+    # ── resolve boundary ids for this phase ───────────────────────────
+    boundary_ids = _resolve_boundary_ids(phase_identity)
+    primary_boundary_id = boundary_ids[0] if boundary_ids else ""
+
     # ── canonical artifact paths ──────────────────────────────────────
     # Derive the likely canonical artifact filename from the scratch
     # filename (e.g. "gate_output.json" → "gate.json").
@@ -392,6 +415,7 @@ def build_promotion_evidence(
             "boundary_id": f"{phase_identity}_to_revise"
             if phase_identity == "gate"
             else f"{phase_identity}_artifacts",
+            "boundary_id": primary_boundary_id,
             "workflow_id": workflow_id,
             "promotion_state": promotion_state,
             "phase_identity": phase_identity,
@@ -420,6 +444,22 @@ def build_promotion_evidence(
             if _now is None:
                 import time as _time
                 _now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+    # phase has been written.  Receipts are stored under the boundary id
+    # filename (e.g. boundary_receipts/gate_to_revise.json), matching
+    # write_boundary_receipt() and semantic-health receipt paths.
+    if canonical_exists and boundary_ids:
+        any_receipt_exists = any(
+            (plan_dir / "boundary_receipts" / f"{bid}.json").exists()
+            for bid in boundary_ids
+        )
+        if not any_receipt_exists:
+            if _now is None:
+                import time as _time
+                _now = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+            missing_paths = [
+                str(plan_dir / "boundary_receipts" / f"{bid}.json")
+                for bid in boundary_ids
+            ]
             evidence_records.append({
                 "evidence_id": (
                     f"promotion-{phase_identity}-canonical-without-receipt"
@@ -427,6 +467,7 @@ def build_promotion_evidence(
                 "boundary_id": f"{phase_identity}_to_revise"
                 if phase_identity == "gate"
                 else f"{phase_identity}_artifacts",
+                "boundary_id": primary_boundary_id,
                 "workflow_id": workflow_id,
                 "promotion_state": "canonical-without-receipt",
                 "phase_identity": phase_identity,
@@ -438,6 +479,8 @@ def build_promotion_evidence(
                     "canonical_exists": True,
                     "receipt_exists": False,
                     "receipt_path": str(receipt_path),
+                    "checked_boundary_ids": list(boundary_ids),
+                    "receipt_paths_checked": missing_paths,
                 },
             })
 
@@ -451,6 +494,13 @@ def build_promotion_evidence(
         phase_result_path = plan_dir / "phase_result.json"
         phase_result_missing = not phase_result_path.exists()
         phase_result_stale = False
+    # or does not record this phase.  Receipts are checked under the
+    # boundary id filename, matching write_boundary_receipt().
+    if boundary_ids:
+        phase_result_path = plan_dir / "phase_result.json"
+        phase_result_missing = not phase_result_path.exists()
+        phase_result_stale = False
+        recorded_phase = None
         if not phase_result_missing:
             try:
                 import json as _json
@@ -487,6 +537,40 @@ def build_promotion_evidence(
                     "expected_phase": phase_identity,
                 },
             })
+        for bid in boundary_ids:
+            receipt_path = plan_dir / "boundary_receipts" / f"{bid}.json"
+            if receipt_path.exists():
+                if phase_result_missing or phase_result_stale:
+                    if _now is None:
+                        import time as _time
+                        _now = _time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", _time.gmtime()
+                        )
+                    state_label = (
+                        "missing" if phase_result_missing else "stale-phase"
+                    )
+                    evidence_records.append({
+                        "evidence_id": (
+                            f"promotion-{phase_identity}"
+                            f"-receipt-without-phase-result"
+                        ),
+                        "boundary_id": bid,
+                        "workflow_id": workflow_id,
+                        "promotion_state": (
+                            f"receipt-without-phase-result-{state_label}"
+                        ),
+                        "phase_identity": phase_identity,
+                        "scratch_status": scratch_status,
+                        "scratch_filename": scratch_filename,
+                        "observation_time": _now,
+                        "details": {
+                            "receipt_exists": True,
+                            "receipt_path": str(receipt_path),
+                            "phase_result_missing": phase_result_missing,
+                            "phase_result_stale": phase_result_stale,
+                            "expected_phase": phase_identity,
+                        },
+                    })
 
     # ── model-written-wrong-path ──────────────────────────────────────
     if model_wrote_wrong_path:
@@ -497,6 +581,7 @@ def build_promotion_evidence(
             "boundary_id": f"{phase_identity}_to_revise"
             if phase_identity == "gate"
             else f"{phase_identity}_artifacts",
+            "boundary_id": primary_boundary_id,
             "workflow_id": workflow_id,
             "promotion_state": "model-wrote-wrong-path",
             "phase_identity": phase_identity,

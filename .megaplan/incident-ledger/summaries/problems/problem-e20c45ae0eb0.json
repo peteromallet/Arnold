@@ -1,19 +1,19 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-07T01:36:24.081477+00:00",
+  "generated_at": "2026-07-14T12:59:25.914622+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
-    "inc-superfixer-alive-but-failed-recovery"
+    "inc-workflow-boundary-contracts-corrective-20260710"
   ],
   "next_review_ts": null,
-  "occurrence_count": 1,
+  "occurrence_count": 23,
   "owner_actor": "watchdog",
   "problem_id": "problem-e20c45ae0eb0",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:c96cf6179e6f342d635416e16508e7b6b6e5a4962a84c85614b0e279d828bf8c",
-    "last_seq": 206,
+    "digest": "sha256:a796d20dd4710cbf0c5e43ebd8bf945c123e355f3e9c9ccc5c989140742c206f",
+    "last_seq": 489,
     "projection": "problems"
   },
   "status": "open",

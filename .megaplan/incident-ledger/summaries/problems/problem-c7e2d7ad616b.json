@@ -1,6 +1,6 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-14T07:41:54.663505+00:00",
+  "generated_at": "2026-07-14T12:59:25.914383+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-demo-session"
@@ -12,8 +12,8 @@
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
-    "last_seq": 360,
+    "digest": "sha256:a796d20dd4710cbf0c5e43ebd8bf945c123e355f3e9c9ccc5c989140742c206f",
+    "last_seq": 505,
     "projection": "problems"
   },
   "status": "open",

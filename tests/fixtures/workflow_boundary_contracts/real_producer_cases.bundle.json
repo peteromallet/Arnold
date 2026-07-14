@@ -1,0 +1,2033 @@
+{
+  "cases": [
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "prep_to_plan.json": {
+            "artifact_refs": [
+              "research.md",
+              "brief.md"
+            ],
+            "boundary_id": "prep_to_plan",
+            "history_ref": "prep_completed",
+            "invocation_id": "inv-prep_to_plan",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s2.prep.1",
+            "state_observation": {
+              "current_state": "prepped"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "research.md",
+            "brief.md"
+          ],
+          "authority_records": [],
+          "boundary_id": "prep_to_plan",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "prep_to_plan",
+          "path_hashes": {
+            "phase_result_path": "sha256:27796f039776f9e653a7f25fdd2fe30e6b8de3d521e5432bafcf6ad245291195",
+            "receipt_path": "sha256:5c7e1cc84863063f4b1eb853d38305405f4130eb7d2b72d15d36026b7ae0d2af",
+            "semantic_health_path": "sha256:07f6ff5d1bea6f1815d6793a72d3ddaee98e03aa9f61da6071f33ead581b0d49",
+            "state_path": "sha256:54063512ead25c2c844f5596e1a2bcba720b9665ad1ea1e5936ff1fda6e535b1"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/boundary_receipts/prep_to_plan.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-prep_to_plan",
+          "phase": "prep",
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "prep_to_plan",
+          "external_effect_refs": [],
+          "fixture_id": "prep_to_plan",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/boundary_receipts/prep_to_plan.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "prep_to_plan"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "prep",
+          "current_state": "prepped",
+          "history": [
+            {
+              "result": "success",
+              "step": "prep"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-prep_to_plan"
+          },
+          "name": "boundary-fixture-prep_to_plan",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "prep_to_plan",
+      "case_id": "healthy_prep",
+      "case_type": "healthy",
+      "description": "Real producer-driven healthy case for prep phase family from captured_bundle_025_prep_to_plan.json.",
+      "expected_compatibility": "compatible",
+      "expected_diagnostics": [],
+      "phase_family": "prep",
+      "source_bundle": "captured_bundle_025_prep_to_plan.json"
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "prep_to_plan.json": {
+            "artifact_refs": [
+              "research.md",
+              "brief.md"
+            ],
+            "boundary_id": "prep_to_plan",
+            "history_ref": "prep_completed",
+            "invocation_id": "inv-prep_to_plan",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s2.prep.1",
+            "state_observation": {
+              "current_state": "prepped"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "research.md",
+            "brief.md"
+          ],
+          "authority_records": [],
+          "boundary_id": "prep_to_plan",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "prep_to_plan",
+          "path_hashes": {
+            "phase_result_path": "sha256:27796f039776f9e653a7f25fdd2fe30e6b8de3d521e5432bafcf6ad245291195",
+            "receipt_path": "sha256:5c7e1cc84863063f4b1eb853d38305405f4130eb7d2b72d15d36026b7ae0d2af",
+            "semantic_health_path": "sha256:07f6ff5d1bea6f1815d6793a72d3ddaee98e03aa9f61da6071f33ead581b0d49",
+            "state_path": "sha256:54063512ead25c2c844f5596e1a2bcba720b9665ad1ea1e5936ff1fda6e535b1"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/boundary_receipts/prep_to_plan.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-prep_to_plan",
+          "phase": "prep",
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "prep_to_plan",
+          "external_effect_refs": [],
+          "fixture_id": "prep_to_plan",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/boundary_receipts/prep_to_plan.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "prep_to_plan"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "prep",
+          "current_state": "prepped",
+          "history": [
+            {
+              "result": "success",
+              "step": "prep"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-prep_to_plan"
+          },
+          "name": "boundary-fixture-prep_to_plan",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "prep_to_plan",
+      "case_id": "broken_prep_missing_receipt_outcome",
+      "case_type": "broken",
+      "corruption": {
+        "corruption_id": "missing_receipt_outcome",
+        "description": "Receipt outcome field removed \u2014 breaks receipt relation by removing the completion verdict from the boundary receipt.",
+        "target_relation": "receipt"
+      },
+      "description": "Broken case: Receipt outcome field removed \u2014 breaks receipt relation by removing the completion verdict from the boundary receipt.",
+      "expected_compatibility": "incompatible",
+      "expected_diagnostics": [
+        "CBC008_RECEIPT_OUTCOME_MISSING"
+      ],
+      "phase_family": "prep",
+      "source_bundle": "captured_bundle_025_prep_to_plan.json",
+      "source_pre_existing_issues": []
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "revise_to_critique.json": {
+            "artifact_refs": [
+              "revised_plan.md",
+              "revision_log.md"
+            ],
+            "boundary_id": "revise_to_critique",
+            "history_ref": "revise_completed",
+            "invocation_id": "inv-revise_to_critique",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s2.revise.1",
+            "state_observation": {
+              "current_state": "planned"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "revised_plan.md",
+            "revision_log.md"
+          ],
+          "authority_records": [],
+          "boundary_id": "revise_to_critique",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "revise_to_critique",
+          "path_hashes": {
+            "phase_result_path": "sha256:0d31332ffb0d583b0ec0d13e1e0c4f4471fc7198d8a5893895845c3129e9a850",
+            "receipt_path": "sha256:28a488f33d746c2c172e609b0c01ffc7ba61966ed0d8a876581adca10ac7f6ff",
+            "semantic_health_path": "sha256:efa573894d33cd96cc6148ae82fdaa3e65df1c1ead103015d3527529fa12e12f",
+            "state_path": "sha256:8dbf02780a250acfab0b0217fd6459c9f535b10e3aece39c51fd233110364544"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/boundary_receipts/revise_to_critique.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-revise_to_critique",
+          "phase": "revise",
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "revise_to_critique",
+          "external_effect_refs": [],
+          "fixture_id": "revise_to_critique",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/boundary_receipts/revise_to_critique.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "revise_to_critique"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "revise",
+          "current_state": "planned",
+          "history": [
+            {
+              "result": "success",
+              "step": "revise"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-revise_to_critique"
+          },
+          "name": "boundary-fixture-revise_to_critique",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "revise_to_critique",
+      "case_id": "healthy_plan_revise",
+      "case_type": "healthy",
+      "description": "Real producer-driven healthy case for plan_revise phase family from captured_bundle_029_revise_to_critique.json.",
+      "expected_compatibility": "compatible",
+      "expected_diagnostics": [],
+      "phase_family": "plan_revise",
+      "source_bundle": "captured_bundle_029_revise_to_critique.json"
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "revise_to_critique.json": {
+            "artifact_refs": [
+              "revised_plan.md",
+              "revision_log.md"
+            ],
+            "boundary_id": "WRONG_boundary_id",
+            "history_ref": "revise_completed",
+            "invocation_id": "inv-revise_to_critique",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s2.revise.1",
+            "state_observation": {
+              "current_state": "planned"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "revised_plan.md",
+            "revision_log.md"
+          ],
+          "authority_records": [],
+          "boundary_id": "revise_to_critique",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "revise_to_critique",
+          "path_hashes": {
+            "phase_result_path": "sha256:0d31332ffb0d583b0ec0d13e1e0c4f4471fc7198d8a5893895845c3129e9a850",
+            "receipt_path": "sha256:28a488f33d746c2c172e609b0c01ffc7ba61966ed0d8a876581adca10ac7f6ff",
+            "semantic_health_path": "sha256:efa573894d33cd96cc6148ae82fdaa3e65df1c1ead103015d3527529fa12e12f",
+            "state_path": "sha256:8dbf02780a250acfab0b0217fd6459c9f535b10e3aece39c51fd233110364544"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/boundary_receipts/revise_to_critique.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-revise_to_critique",
+          "phase": "revise",
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "revise_to_critique",
+          "external_effect_refs": [],
+          "fixture_id": "revise_to_critique",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/revise_to_critique/boundary_receipts/revise_to_critique.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "revise_to_critique"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "revise",
+          "current_state": "planned",
+          "history": [
+            {
+              "result": "success",
+              "step": "revise"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-revise_to_critique"
+          },
+          "name": "boundary-fixture-revise_to_critique",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "revise_to_critique",
+      "case_id": "broken_plan_revise_boundary_id_mismatch",
+      "case_type": "broken",
+      "corruption": {
+        "corruption_id": "boundary_id_mismatch",
+        "description": "Receipt boundary_id changed to mismatched value \u2014 breaks receipt relation by making the receipt's declared boundary inconsistent with the manifest.",
+        "target_relation": "receipt"
+      },
+      "description": "Broken case: Receipt boundary_id changed to mismatched value \u2014 breaks receipt relation by making the receipt's declared boundary inconsistent with the manifest.",
+      "expected_compatibility": "incompatible",
+      "expected_diagnostics": [
+        "CBC005_BOUNDARY_ID_MISMATCH"
+      ],
+      "phase_family": "plan_revise",
+      "source_bundle": "captured_bundle_029_revise_to_critique.json",
+      "source_pre_existing_issues": []
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "gate_to_revise.json": {
+            "artifact_refs": [
+              "gate_decision.json",
+              "phase_result.json"
+            ],
+            "authority_records": [
+              {
+                "actor": "fixture-operator",
+                "authority_version": "arnold.workflow.authority_record.v1",
+                "role": "reviewer"
+              }
+            ],
+            "boundary_id": "gate_to_revise",
+            "history_ref": "gate_iterate",
+            "invocation_id": "inv-gate_to_revise",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s2.gate.1",
+            "state_observation": {
+              "current_state": "gated"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "gate_review_artifacts": {
+          "gate_decision.json": {
+            "artifact": "gate_decision.json",
+            "fixture_id": "gate_to_revise"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "gate_decision.json",
+            "phase_result.json"
+          ],
+          "authority_records": [
+            {
+              "actor": "fixture-operator",
+              "authority_version": "arnold.workflow.authority_record.v1",
+              "role": "reviewer"
+            }
+          ],
+          "boundary_id": "gate_to_revise",
+          "capability_effects": [
+            "artifact",
+            "authority",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "gate_to_revise",
+          "path_hashes": {
+            "phase_result_path": "sha256:5d520d2da8ae2ed2f3bd1c86b2d3f00553c338d2856e17444f2fc68831ecc002",
+            "receipt_path": "sha256:2eb5685b455980389a595e9c8ef91a8aa5108eb127d35c43a510e29b54b11c55",
+            "semantic_health_path": "sha256:a69a4220668e8518dafccc9fc7341367c00150224931f3b03e5340f74c1f7846",
+            "state_path": "sha256:558c3ad7c5d7d6c2dd31c4e76873666dc2b00c2b63f41443e2f0d1d337fb90ec"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/boundary_receipts/gate_to_revise.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/state.json"
+        },
+        "phase_result": {
+          "artifact": "phase_result.json",
+          "fixture_id": "gate_to_revise"
+        },
+        "semantic_health": {
+          "authority_record_count": 1,
+          "boundary_id": "gate_to_revise",
+          "external_effect_refs": [],
+          "fixture_id": "gate_to_revise",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/boundary_receipts/gate_to_revise.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "gate_to_revise"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [
+            {
+              "boundary_id": "gate_to_revise",
+              "contract_ref": "gate_to_revise",
+              "description": "phase_result.json records phase 'None' but boundary 'gate_to_revise' expects phase 'gate'",
+              "details": {
+                "expected_phase": "gate",
+                "recorded_phase": null
+              },
+              "diagnostic_code": "AWF249_BOUNDARY_EVIDENCE_STALE",
+              "finding_id": "SH-gate_to_revise-phase-result-stale-phase",
+              "finding_version": "arnold.workflow.semantic_finding.v1",
+              "severity": "warning"
+            }
+          ],
+          "scoped_warning_count": 1,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "gate",
+          "current_state": "gated",
+          "history": [
+            {
+              "result": "success",
+              "step": "gate"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-gate_to_revise"
+          },
+          "name": "boundary-fixture-gate_to_revise",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "gate_to_revise",
+      "case_id": "healthy_critique_gate",
+      "case_type": "healthy",
+      "description": "Real producer-driven healthy case for critique_gate phase family from captured_bundle_015_gate_to_revise.json.",
+      "expected_compatibility": "compatible",
+      "expected_diagnostics": [],
+      "phase_family": "critique_gate",
+      "source_bundle": "captured_bundle_015_gate_to_revise.json"
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "gate_to_revise.json": {
+            "artifact_refs": [
+              "gate_decision.json",
+              "phase_result.json"
+            ],
+            "authority_records": [
+              {
+                "actor": "fixture-operator",
+                "authority_version": "arnold.workflow.authority_record.v1",
+                "role": "reviewer"
+              }
+            ],
+            "boundary_id": "gate_to_revise",
+            "history_ref": "gate_iterate",
+            "invocation_id": "inv-gate_to_revise",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s2.gate.1",
+            "state_observation": {
+              "current_state": "gated"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "gate_review_artifacts": {
+          "gate_decision.json": {
+            "artifact": "gate_decision.json",
+            "fixture_id": "gate_to_revise"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "gate_decision.json",
+            "phase_result.json"
+          ],
+          "authority_records": [
+            {
+              "actor": "fixture-operator",
+              "authority_version": "arnold.workflow.authority_record.v1",
+              "role": "reviewer"
+            }
+          ],
+          "boundary_id": "gate_to_revise",
+          "external_effect_refs": [],
+          "fixture_id": "gate_to_revise",
+          "path_hashes": {
+            "phase_result_path": "sha256:5d520d2da8ae2ed2f3bd1c86b2d3f00553c338d2856e17444f2fc68831ecc002",
+            "receipt_path": "sha256:2eb5685b455980389a595e9c8ef91a8aa5108eb127d35c43a510e29b54b11c55",
+            "semantic_health_path": "sha256:a69a4220668e8518dafccc9fc7341367c00150224931f3b03e5340f74c1f7846",
+            "state_path": "sha256:558c3ad7c5d7d6c2dd31c4e76873666dc2b00c2b63f41443e2f0d1d337fb90ec"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/boundary_receipts/gate_to_revise.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/state.json"
+        },
+        "phase_result": {
+          "artifact": "phase_result.json",
+          "fixture_id": "gate_to_revise"
+        },
+        "semantic_health": {
+          "authority_record_count": 1,
+          "boundary_id": "gate_to_revise",
+          "external_effect_refs": [],
+          "fixture_id": "gate_to_revise",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/boundary_receipts/gate_to_revise.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "gate_to_revise"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [
+            {
+              "boundary_id": "gate_to_revise",
+              "contract_ref": "gate_to_revise",
+              "description": "phase_result.json records phase 'None' but boundary 'gate_to_revise' expects phase 'gate'",
+              "details": {
+                "expected_phase": "gate",
+                "recorded_phase": null
+              },
+              "diagnostic_code": "AWF249_BOUNDARY_EVIDENCE_STALE",
+              "finding_id": "SH-gate_to_revise-phase-result-stale-phase",
+              "finding_version": "arnold.workflow.semantic_finding.v1",
+              "severity": "warning"
+            }
+          ],
+          "scoped_warning_count": 1,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "gate",
+          "current_state": "gated",
+          "history": [
+            {
+              "result": "success",
+              "step": "gate"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-gate_to_revise"
+          },
+          "name": "boundary-fixture-gate_to_revise",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "gate_to_revise",
+      "case_id": "broken_critique_gate_missing_capability_effects",
+      "case_type": "broken",
+      "corruption": {
+        "corruption_id": "missing_capability_effects",
+        "description": "Manifest capability_effects removed \u2014 breaks artifact relation by removing the declared effects that tie manifest to receipts and phase results.",
+        "target_relation": "artifact"
+      },
+      "description": "Broken case: Manifest capability_effects removed \u2014 breaks artifact relation by removing the declared effects that tie manifest to receipts and phase results.",
+      "expected_compatibility": "incompatible",
+      "expected_diagnostics": [
+        "CBC009_MANIFEST_CAPABILITY_EFFECTS_MISSING",
+        "CBC010_PHASE_RESULT_EXIT_KIND_MISSING"
+      ],
+      "phase_family": "critique_gate",
+      "source_bundle": "captured_bundle_015_gate_to_revise.json",
+      "source_pre_existing_issues": [
+        "CBC010_PHASE_RESULT_EXIT_KIND_MISSING"
+      ]
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "tiebreaker_challenger_to_synthesis.json": {
+            "artifact_refs": [
+              "challenge_findings.json"
+            ],
+            "boundary_id": "tiebreaker_challenger_to_synthesis",
+            "history_ref": "tiebreaker_challenger_completed",
+            "invocation_id": "inv-tiebreaker_challenger_to_synthesis",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s3.tiebreaker_challenger.1",
+            "state_observation": {
+              "current_state": "critiqued"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "challenge_findings.json"
+          ],
+          "authority_records": [],
+          "boundary_id": "tiebreaker_challenger_to_synthesis",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "tiebreaker_challenger_to_synthesis",
+          "path_hashes": {
+            "phase_result_path": "sha256:d39a6b7533be645485318a69c9c49dfc4f0577889c2195dbd054c9400379fae6",
+            "receipt_path": "sha256:7465fd9f5d2aac15ebce2a5c364db579d7a7e3ade717c5b01ba1f912102f99c7",
+            "semantic_health_path": "sha256:af7b6b5d8b4fc1d9f611ec144fc2c59ad3e84e23828bb769451cfe6c0be9b2e5",
+            "state_path": "sha256:669c61b882b6b2e9e7b1407e40fe1550272f839e49a1721aacc50d88a3ef1bb2"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/boundary_receipts/tiebreaker_challenger_to_synthesis.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-tiebreaker_challenger_to_synthesis",
+          "phase": "tiebreaker_challenger",
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "tiebreaker_challenger_to_synthesis",
+          "external_effect_refs": [],
+          "fixture_id": "tiebreaker_challenger_to_synthesis",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/boundary_receipts/tiebreaker_challenger_to_synthesis.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "tiebreaker_challenger_to_synthesis"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "tiebreaker_challenger",
+          "current_state": "critiqued",
+          "history": [
+            {
+              "result": "success",
+              "step": "tiebreaker"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-tiebreaker_challenger_to_synthesis"
+          },
+          "name": "boundary-fixture-tiebreaker_challenger_to_synthesis",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "tiebreaker_challenger_to_synthesis",
+      "case_id": "healthy_tiebreaker",
+      "case_type": "healthy",
+      "description": "Real producer-driven healthy case for tiebreaker phase family from captured_bundle_030_tiebreaker_challenger_to_synthesis.json.",
+      "expected_compatibility": "compatible",
+      "expected_diagnostics": [],
+      "phase_family": "tiebreaker",
+      "source_bundle": "captured_bundle_030_tiebreaker_challenger_to_synthesis.json"
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "tiebreaker_challenger_to_synthesis.json": {
+            "artifact_refs": [
+              "challenge_findings.json"
+            ],
+            "boundary_id": "tiebreaker_challenger_to_synthesis",
+            "history_ref": "tiebreaker_challenger_completed",
+            "invocation_id": "inv-tiebreaker_challenger_to_synthesis",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s3.tiebreaker_challenger.1",
+            "state_observation": {
+              "current_state": "critiqued"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "challenge_findings.json"
+          ],
+          "authority_records": [],
+          "boundary_id": "tiebreaker_challenger_to_synthesis",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "tiebreaker_challenger_to_synthesis",
+          "path_hashes": {
+            "phase_result_path": "sha256:d39a6b7533be645485318a69c9c49dfc4f0577889c2195dbd054c9400379fae6",
+            "receipt_path": "sha256:7465fd9f5d2aac15ebce2a5c364db579d7a7e3ade717c5b01ba1f912102f99c7",
+            "semantic_health_path": "sha256:af7b6b5d8b4fc1d9f611ec144fc2c59ad3e84e23828bb769451cfe6c0be9b2e5",
+            "state_path": "sha256:669c61b882b6b2e9e7b1407e40fe1550272f839e49a1721aacc50d88a3ef1bb2"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/boundary_receipts/tiebreaker_challenger_to_synthesis.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-tiebreaker_challenger_to_synthesis",
+          "phase": "tiebreaker_challenger",
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "tiebreaker_challenger_to_synthesis",
+          "external_effect_refs": [],
+          "fixture_id": "tiebreaker_challenger_to_synthesis",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_challenger_to_synthesis/boundary_receipts/tiebreaker_challenger_to_synthesis.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "tiebreaker_challenger_to_synthesis"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        }
+      },
+      "boundary_id": "tiebreaker_challenger_to_synthesis",
+      "case_id": "broken_tiebreaker_missing_state",
+      "case_type": "broken",
+      "corruption": {
+        "corruption_id": "missing_state",
+        "description": "State artifact removed entirely \u2014 breaks state relation by removing the state snapshot that receipts reference.",
+        "target_relation": "state"
+      },
+      "description": "Broken case: State artifact removed entirely \u2014 breaks state relation by removing the state snapshot that receipts reference.",
+      "expected_compatibility": "unknown",
+      "expected_diagnostics": [
+        "CBC004_MISSING_STATE"
+      ],
+      "phase_family": "tiebreaker",
+      "source_bundle": "captured_bundle_030_tiebreaker_challenger_to_synthesis.json",
+      "source_pre_existing_issues": []
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "execute_approval.json": {
+            "artifact_refs": [
+              "approval_record.json"
+            ],
+            "authority_records": [
+              {
+                "actor": "fixture-operator",
+                "authority_version": "arnold.workflow.authority_record.v1",
+                "role": "reviewer"
+              }
+            ],
+            "boundary_id": "execute_approval",
+            "history_ref": "execute_approval_cleared",
+            "invocation_id": "inv-execute_approval",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s4.execute.1",
+            "state_observation": {
+              "current_state": "executed"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "approval_record.json"
+          ],
+          "authority_records": [
+            {
+              "actor": "fixture-operator",
+              "authority_version": "arnold.workflow.authority_record.v1",
+              "role": "reviewer"
+            }
+          ],
+          "boundary_id": "execute_approval",
+          "capability_effects": [
+            "artifact",
+            "authority",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [
+            "execute:approval-approved"
+          ],
+          "fixture_id": "execute_approval",
+          "path_hashes": {
+            "phase_result_path": "sha256:d318cb60a381ab1b217c6d0420917ef813de587d61b70bbaa900bb93446d755b",
+            "receipt_path": "sha256:23fd8315903579afd77c1c9822d8e62cfc510ff456d92558c5efbb0fc16eb3cf",
+            "semantic_health_path": "sha256:85dc2ac00c32858be1f7db046dc54d959c8a5a1cc4d45b653848a7a91a0843b1",
+            "state_path": "sha256:ad65bbfb3a132c0cc055c1c4e42e7cc7cfda97fed0414431fc11295dd3845399"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/boundary_receipts/execute_approval.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-execute_approval",
+          "phase": "execute",
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 1,
+          "boundary_id": "execute_approval",
+          "external_effect_refs": [
+            "execute:approval-approved"
+          ],
+          "fixture_id": "execute_approval",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/boundary_receipts/execute_approval.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "execute_approval"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "approval_gate": "cleared",
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "execute",
+          "current_state": "executed",
+          "history": [
+            {
+              "result": "success",
+              "step": "execute"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-execute_approval"
+          },
+          "name": "boundary-fixture-execute_approval",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "execute_approval",
+      "case_id": "healthy_execute",
+      "case_type": "healthy",
+      "description": "Real producer-driven healthy case for execute phase family from captured_bundle_005_execute_approval.json.",
+      "expected_compatibility": "compatible",
+      "expected_diagnostics": [],
+      "phase_family": "execute",
+      "source_bundle": "captured_bundle_005_execute_approval.json"
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "execute_approval.json": {
+            "artifact_refs": [
+              "approval_record.json"
+            ],
+            "authority_records": [
+              {
+                "actor": "fixture-operator",
+                "authority_version": "arnold.workflow.authority_record.v1",
+                "role": "reviewer"
+              }
+            ],
+            "boundary_id": "execute_approval",
+            "history_ref": "execute_approval_cleared",
+            "invocation_id": "inv-execute_approval",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s4.execute.1",
+            "state_observation": {
+              "current_state": "executed"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "approval_record.json"
+          ],
+          "authority_records": [
+            {
+              "actor": "fixture-operator",
+              "authority_version": "arnold.workflow.authority_record.v1",
+              "role": "reviewer"
+            }
+          ],
+          "boundary_id": "execute_approval",
+          "capability_effects": [
+            "artifact",
+            "authority",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [
+            "execute:approval-approved"
+          ],
+          "fixture_id": "execute_approval",
+          "path_hashes": {
+            "phase_result_path": "sha256:d318cb60a381ab1b217c6d0420917ef813de587d61b70bbaa900bb93446d755b",
+            "receipt_path": "sha256:23fd8315903579afd77c1c9822d8e62cfc510ff456d92558c5efbb0fc16eb3cf",
+            "semantic_health_path": "sha256:85dc2ac00c32858be1f7db046dc54d959c8a5a1cc4d45b653848a7a91a0843b1",
+            "state_path": "sha256:ad65bbfb3a132c0cc055c1c4e42e7cc7cfda97fed0414431fc11295dd3845399"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/boundary_receipts/execute_approval.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "external_error": null,
+          "invocation_id": "inv-execute_approval",
+          "phase": "execute",
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 1,
+          "boundary_id": "execute_approval",
+          "external_effect_refs": [
+            "execute:approval-approved"
+          ],
+          "fixture_id": "execute_approval",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_approval/boundary_receipts/execute_approval.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "execute_approval"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "approval_gate": "cleared",
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "execute",
+          "current_state": "executed",
+          "history": [
+            {
+              "result": "success",
+              "step": "execute"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-execute_approval"
+          },
+          "name": "boundary-fixture-execute_approval",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "execute_approval",
+      "case_id": "broken_execute_missing_exit_kind",
+      "case_type": "broken",
+      "corruption": {
+        "corruption_id": "missing_exit_kind",
+        "description": "Phase result exit_kind removed \u2014 breaks artifact relation by removing the phase completion signal that receipts depend on.",
+        "target_relation": "artifact"
+      },
+      "description": "Broken case: Phase result exit_kind removed \u2014 breaks artifact relation by removing the phase completion signal that receipts depend on.",
+      "expected_compatibility": "incompatible",
+      "expected_diagnostics": [
+        "CBC010_PHASE_RESULT_EXIT_KIND_MISSING"
+      ],
+      "phase_family": "execute",
+      "source_bundle": "captured_bundle_005_execute_approval.json",
+      "source_pre_existing_issues": []
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "finalize_artifacts.json": {
+            "artifact_refs": [
+              "contract.json",
+              "final.md",
+              "finalize.json"
+            ],
+            "boundary_id": "finalize_artifacts",
+            "details": {
+              "artifact_hash": "sha256:585c740eddca1080f624076a51834fcab8d3426ace82f7415ab8da954141c175"
+            },
+            "history_ref": "finalize_artifacts_published",
+            "invocation_id": "inv-finalize_artifacts",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s5.finalize_artifacts.1",
+            "state_observation": {
+              "current_state": "gated"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "contract.json",
+            "final.md",
+            "finalize.json"
+          ],
+          "authority_records": [],
+          "boundary_id": "finalize_artifacts",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "finalize_artifacts",
+          "path_hashes": {
+            "phase_result_path": "sha256:a10bacb37abdd9a5040752d0773fb1fa09d39a28a62808296006d3edbc783e52",
+            "receipt_path": "sha256:219c6c99fd837cda56059e267e6f8b247ccbfe9fa62f492609452276cd1a0a7e",
+            "semantic_health_path": "sha256:7906b52d2a6d92c8e1fb5001bfd29041227c77d132265249226aedf63be57894",
+            "state_path": "sha256:c747082abf632c0f984d88bc9f1f68b9b9a4241ee9a10cf2f161566bfc195c35"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/boundary_receipts/finalize_artifacts.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-finalize_artifacts",
+          "phase": null,
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "finalize_artifacts",
+          "external_effect_refs": [],
+          "fixture_id": "finalize_artifacts",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/boundary_receipts/finalize_artifacts.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "finalize_artifacts"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "finalize",
+          "current_state": "gated",
+          "history": [
+            {
+              "result": "success",
+              "step": "finalize"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-finalize_artifacts"
+          },
+          "name": "boundary-fixture-finalize_artifacts",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "finalize_artifacts",
+      "case_id": "healthy_finalize",
+      "case_type": "healthy",
+      "description": "Real producer-driven healthy case for finalize phase family from captured_bundle_013_finalize_artifacts.json.",
+      "expected_compatibility": "compatible",
+      "expected_diagnostics": [],
+      "phase_family": "finalize",
+      "source_bundle": "captured_bundle_013_finalize_artifacts.json"
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "finalize_artifacts.json": {
+            "artifact_refs": [
+              "contract.json",
+              "final.md",
+              "finalize.json"
+            ],
+            "boundary_id": "finalize_artifacts",
+            "details": {
+              "artifact_hash": "sha256:585c740eddca1080f624076a51834fcab8d3426ace82f7415ab8da954141c175"
+            },
+            "history_ref": "finalize_artifacts_published",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s5.finalize_artifacts.1",
+            "state_observation": {
+              "current_state": "gated"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "contract.json",
+            "final.md",
+            "finalize.json"
+          ],
+          "authority_records": [],
+          "boundary_id": "finalize_artifacts",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "finalize_artifacts",
+          "path_hashes": {
+            "phase_result_path": "sha256:a10bacb37abdd9a5040752d0773fb1fa09d39a28a62808296006d3edbc783e52",
+            "receipt_path": "sha256:219c6c99fd837cda56059e267e6f8b247ccbfe9fa62f492609452276cd1a0a7e",
+            "semantic_health_path": "sha256:7906b52d2a6d92c8e1fb5001bfd29041227c77d132265249226aedf63be57894",
+            "state_path": "sha256:c747082abf632c0f984d88bc9f1f68b9b9a4241ee9a10cf2f161566bfc195c35"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/boundary_receipts/finalize_artifacts.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-finalize_artifacts",
+          "phase": null,
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "finalize_artifacts",
+          "external_effect_refs": [],
+          "fixture_id": "finalize_artifacts",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/boundary_receipts/finalize_artifacts.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "finalize_artifacts"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "finalize",
+          "current_state": "gated",
+          "history": [
+            {
+              "result": "success",
+              "step": "finalize"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-finalize_artifacts"
+          },
+          "name": "boundary-fixture-finalize_artifacts",
+          "plan_versions": [],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "finalize_artifacts",
+      "case_id": "broken_finalize_missing_invocation_id",
+      "case_type": "broken",
+      "corruption": {
+        "corruption_id": "missing_invocation_id",
+        "description": "Receipt invocation_id removed \u2014 breaks receipt relation by removing invocation identity that links receipt to phase_result.",
+        "target_relation": "receipt"
+      },
+      "description": "Broken case: Receipt invocation_id removed \u2014 breaks receipt relation by removing invocation identity that links receipt to phase_result.",
+      "expected_compatibility": "incompatible",
+      "expected_diagnostics": [
+        "CBC007_RECEIPT_INVOCATION_ID_MISSING"
+      ],
+      "phase_family": "finalize",
+      "source_bundle": "captured_bundle_013_finalize_artifacts.json",
+      "source_pre_existing_issues": []
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "review_human_verification.json": {
+            "artifact_refs": [
+              "review.json"
+            ],
+            "boundary_id": "review_human_verification",
+            "history_ref": "review_human_verification_deferred",
+            "invocation_id": "inv-review_human_verification",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s5.review_human_verification.1",
+            "state_observation": {
+              "current_state": "awaiting_human_verify"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "review.json"
+          ],
+          "authority_records": [],
+          "boundary_id": "review_human_verification",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "review_human_verification",
+          "path_hashes": {
+            "phase_result_path": "sha256:aace9c1f9124dc131568e4a2732d18a7a33b7b076ab551db761e39a0a99c8607",
+            "receipt_path": "sha256:94294b7bf131e1977f53d5f4a88ba9a10c118292fa0fda0b933d9a1c3d8518c4",
+            "semantic_health_path": "sha256:cec3faccd7e45b2c5d95f245fea44d81312e30b182bde59d9bf80abb7e109603",
+            "state_path": "sha256:1329d6a093f06d7b000faf3065628caf75748cef79cd142e6953b2e63d117c20"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/boundary_receipts/review_human_verification.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-review_human_verification",
+          "phase": null,
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "review_human_verification",
+          "external_effect_refs": [],
+          "fixture_id": "review_human_verification",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/boundary_receipts/review_human_verification.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "review_human_verification"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "review",
+          "current_state": "awaiting_human_verify",
+          "history": [
+            {
+              "result": "success",
+              "step": "review"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-review_human_verification"
+          },
+          "name": "boundary-fixture-review_human_verification",
+          "plan_versions": [
+            {
+              "file": "plan_v1.md",
+              "version": 1
+            }
+          ],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "review_human_verification",
+      "case_id": "healthy_review",
+      "case_type": "healthy",
+      "description": "Real producer-driven healthy case for review phase family from captured_bundle_028_review_human_verification.json.",
+      "expected_compatibility": "compatible",
+      "expected_diagnostics": [],
+      "phase_family": "review",
+      "source_bundle": "captured_bundle_028_review_human_verification.json"
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "review_human_verification.json": {
+            "artifact_refs": [
+              "review.json"
+            ],
+            "boundary_id": "review_human_verification",
+            "history_ref": "review_human_verification_deferred",
+            "invocation_id": "inv-review_human_verification",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s5.review_human_verification.1",
+            "state_observation": {},
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "manifest": {
+          "artifact_refs": [
+            "review.json"
+          ],
+          "authority_records": [],
+          "boundary_id": "review_human_verification",
+          "capability_effects": [
+            "artifact",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "review_human_verification",
+          "path_hashes": {
+            "phase_result_path": "sha256:aace9c1f9124dc131568e4a2732d18a7a33b7b076ab551db761e39a0a99c8607",
+            "receipt_path": "sha256:94294b7bf131e1977f53d5f4a88ba9a10c118292fa0fda0b933d9a1c3d8518c4",
+            "semantic_health_path": "sha256:cec3faccd7e45b2c5d95f245fea44d81312e30b182bde59d9bf80abb7e109603",
+            "state_path": "sha256:1329d6a093f06d7b000faf3065628caf75748cef79cd142e6953b2e63d117c20"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/boundary_receipts/review_human_verification.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-review_human_verification",
+          "phase": null,
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 0,
+          "boundary_id": "review_human_verification",
+          "external_effect_refs": [],
+          "fixture_id": "review_human_verification",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/review_human_verification/boundary_receipts/review_human_verification.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "review_human_verification"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "config": {
+            "project_dir": "/tmp/boundary-fixture"
+          },
+          "created_at": "2026-07-08T00:00:00Z",
+          "current_phase": "review",
+          "current_state": "awaiting_human_verify",
+          "history": [
+            {
+              "result": "success",
+              "step": "review"
+            }
+          ],
+          "iteration": 1,
+          "last_gate": {},
+          "latest_failure": null,
+          "meta": {
+            "current_invocation_id": "inv-review_human_verification"
+          },
+          "name": "boundary-fixture-review_human_verification",
+          "plan_versions": [
+            {
+              "file": "plan_v1.md",
+              "version": 1
+            }
+          ],
+          "sessions": {}
+        }
+      },
+      "boundary_id": "review_human_verification",
+      "case_id": "broken_review_empty_state_observation",
+      "case_type": "broken",
+      "corruption": {
+        "corruption_id": "empty_state_observation",
+        "description": "Receipt state_observation emptied \u2014 breaks state relation by severing the receipt's link to observable state.",
+        "target_relation": "state"
+      },
+      "description": "Broken case: Receipt state_observation emptied \u2014 breaks state relation by severing the receipt's link to observable state.",
+      "expected_compatibility": "incompatible",
+      "expected_diagnostics": [],
+      "phase_family": "review",
+      "source_bundle": "captured_bundle_028_review_human_verification.json",
+      "source_pre_existing_issues": []
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "override_adopt_execution_authority.json": {
+            "authority_records": [
+              {
+                "actor": "fixture-operator",
+                "authority_version": "arnold.workflow.authority_record.v1",
+                "decision": "adopt-execution",
+                "details": {
+                  "actor_role_ref": "authority_records[].{actor,role}",
+                  "authority_transition": "adopt-execution",
+                  "contract_ref": "override_adopt_execution_authority",
+                  "evidence_hashes": {
+                    "execution.json": "78ebba42ac02bd9f98738eeecb032010d6660d4738f3bec3809962da0db24b09",
+                    "execution_audit.json": "d55ad8492c06d54bee686b9a529ad73afffdc8d1372a29f2198c7f165c095f5d",
+                    "final.md": "1653dc38d6d082c2d94941e585e856a6fea2bb82656be967801bd8b639ecd523",
+                    "finalize.json": "cd80ba078870720f1c7779b78f8d42efa1baa6dc9c35510780ab8c78ce083b28",
+                    "state.json": "d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+                  },
+                  "freshness_token": "inv-override_adopt_execution_authority",
+                  "freshness_token_ref": "state.meta.current_invocation_id",
+                  "optional_evidence_refs": [
+                    "execution_audit.json",
+                    "final.md"
+                  ],
+                  "required_evidence_refs": [
+                    "state.json",
+                    "execution.json",
+                    "finalize.json"
+                  ]
+                },
+                "evidence_refs": [
+                  "state.json",
+                  "execution.json",
+                  "finalize.json",
+                  "execution_audit.json",
+                  "final.md"
+                ],
+                "role": "reviewer",
+                "scope": "override.adopt_execution"
+              }
+            ],
+            "boundary_id": "override_adopt_execution_authority",
+            "invocation_id": "inv-override_adopt_execution_authority",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s6.override.adopt_execution.1",
+            "state_observation": {
+              "current_state": "critiqued"
+            },
+            "workflow_id": "megaplan-review"
+          }
+        },
+        "execution": {
+          "artifact": "execution.json",
+          "fixture_id": "override_adopt_execution_authority"
+        },
+        "manifest": {
+          "artifact_refs": [],
+          "authority_records": [
+            {
+              "actor": "fixture-operator",
+              "authority_version": "arnold.workflow.authority_record.v1",
+              "decision": "adopt-execution",
+              "details": {
+                "actor_role_ref": "authority_records[].{actor,role}",
+                "authority_transition": "adopt-execution",
+                "contract_ref": "override_adopt_execution_authority",
+                "evidence_hashes": {
+                  "execution.json": "78ebba42ac02bd9f98738eeecb032010d6660d4738f3bec3809962da0db24b09",
+                  "execution_audit.json": "d55ad8492c06d54bee686b9a529ad73afffdc8d1372a29f2198c7f165c095f5d",
+                  "final.md": "1653dc38d6d082c2d94941e585e856a6fea2bb82656be967801bd8b639ecd523",
+                  "finalize.json": "cd80ba078870720f1c7779b78f8d42efa1baa6dc9c35510780ab8c78ce083b28",
+                  "state.json": "d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+                },
+                "freshness_token": "inv-override_adopt_execution_authority",
+                "freshness_token_ref": "state.meta.current_invocation_id",
+                "optional_evidence_refs": [
+                  "execution_audit.json",
+                  "final.md"
+                ],
+                "required_evidence_refs": [
+                  "state.json",
+                  "execution.json",
+                  "finalize.json"
+                ]
+              },
+              "evidence_refs": [
+                "state.json",
+                "execution.json",
+                "finalize.json",
+                "execution_audit.json",
+                "final.md"
+              ],
+              "role": "reviewer",
+              "scope": "override.adopt_execution"
+            }
+          ],
+          "boundary_id": "override_adopt_execution_authority",
+          "capability_effects": [
+            "authority",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "override_adopt_execution_authority",
+          "path_hashes": {
+            "phase_result_path": "sha256:b0638e51b6f739ba528b865b74c7b5ec83d79598817781db687ca9c921959de0",
+            "receipt_path": "sha256:7c155295262ad4448202249ed9fd1c85599fd0dff049de4e6cc2d418fd752f73",
+            "semantic_health_path": "sha256:77f03751094b5ee0b1c1cac814022cd5870f0cc45bdc7510f38156fce22e1930",
+            "state_path": "sha256:d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/boundary_receipts/override_adopt_execution_authority.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-override_adopt_execution_authority",
+          "phase": null,
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 1,
+          "boundary_id": "override_adopt_execution_authority",
+          "external_effect_refs": [],
+          "fixture_id": "override_adopt_execution_authority",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/boundary_receipts/override_adopt_execution_authority.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "override_adopt_execution_authority"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "artifact": "state.json",
+          "fixture_id": "override_adopt_execution_authority"
+        }
+      },
+      "boundary_id": "override_adopt_execution_authority",
+      "case_id": "healthy_override",
+      "case_type": "healthy",
+      "description": "Real producer-driven healthy case for override phase family from captured_bundle_017_override_adopt_execution_authority.json.",
+      "expected_compatibility": "compatible",
+      "expected_diagnostics": [],
+      "phase_family": "override",
+      "source_bundle": "captured_bundle_017_override_adopt_execution_authority.json"
+    },
+    {
+      "artifacts": {
+        "boundary_receipts": {
+          "override_adopt_execution_authority.json": {
+            "authority_records": [
+              {
+                "actor": "fixture-operator",
+                "authority_version": "arnold.workflow.authority_record.v1",
+                "decision": "adopt-execution",
+                "details": {
+                  "actor_role_ref": "authority_records[].{actor,role}",
+                  "authority_transition": "adopt-execution",
+                  "contract_ref": "override_adopt_execution_authority",
+                  "evidence_hashes": {
+                    "execution.json": "78ebba42ac02bd9f98738eeecb032010d6660d4738f3bec3809962da0db24b09",
+                    "execution_audit.json": "d55ad8492c06d54bee686b9a529ad73afffdc8d1372a29f2198c7f165c095f5d",
+                    "final.md": "1653dc38d6d082c2d94941e585e856a6fea2bb82656be967801bd8b639ecd523",
+                    "finalize.json": "cd80ba078870720f1c7779b78f8d42efa1baa6dc9c35510780ab8c78ce083b28",
+                    "state.json": "d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+                  },
+                  "freshness_token": "inv-override_adopt_execution_authority",
+                  "freshness_token_ref": "state.meta.current_invocation_id",
+                  "optional_evidence_refs": [
+                    "execution_audit.json",
+                    "final.md"
+                  ],
+                  "required_evidence_refs": [
+                    "state.json",
+                    "execution.json",
+                    "finalize.json"
+                  ]
+                },
+                "evidence_refs": [
+                  "state.json",
+                  "execution.json",
+                  "finalize.json",
+                  "execution_audit.json",
+                  "final.md"
+                ],
+                "role": "reviewer",
+                "scope": "override.adopt_execution"
+              }
+            ],
+            "boundary_id": "override_adopt_execution_authority",
+            "invocation_id": "inv-override_adopt_execution_authority",
+            "outcome": "succeeded",
+            "phase_result_ref": "phase_result.json",
+            "receipt_version": "arnold.workflow.boundary_receipt.v1",
+            "row_id": "s6.override.adopt_execution.1",
+            "state_observation": {
+              "current_state": "critiqued"
+            }
+          }
+        },
+        "execution": {
+          "artifact": "execution.json",
+          "fixture_id": "override_adopt_execution_authority"
+        },
+        "manifest": {
+          "artifact_refs": [],
+          "authority_records": [
+            {
+              "actor": "fixture-operator",
+              "authority_version": "arnold.workflow.authority_record.v1",
+              "decision": "adopt-execution",
+              "details": {
+                "actor_role_ref": "authority_records[].{actor,role}",
+                "authority_transition": "adopt-execution",
+                "contract_ref": "override_adopt_execution_authority",
+                "evidence_hashes": {
+                  "execution.json": "78ebba42ac02bd9f98738eeecb032010d6660d4738f3bec3809962da0db24b09",
+                  "execution_audit.json": "d55ad8492c06d54bee686b9a529ad73afffdc8d1372a29f2198c7f165c095f5d",
+                  "final.md": "1653dc38d6d082c2d94941e585e856a6fea2bb82656be967801bd8b639ecd523",
+                  "finalize.json": "cd80ba078870720f1c7779b78f8d42efa1baa6dc9c35510780ab8c78ce083b28",
+                  "state.json": "d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+                },
+                "freshness_token": "inv-override_adopt_execution_authority",
+                "freshness_token_ref": "state.meta.current_invocation_id",
+                "optional_evidence_refs": [
+                  "execution_audit.json",
+                  "final.md"
+                ],
+                "required_evidence_refs": [
+                  "state.json",
+                  "execution.json",
+                  "finalize.json"
+                ]
+              },
+              "evidence_refs": [
+                "state.json",
+                "execution.json",
+                "finalize.json",
+                "execution_audit.json",
+                "final.md"
+              ],
+              "role": "reviewer",
+              "scope": "override.adopt_execution"
+            }
+          ],
+          "boundary_id": "override_adopt_execution_authority",
+          "capability_effects": [
+            "authority",
+            "phase_result",
+            "receipt",
+            "state_history"
+          ],
+          "external_effect_refs": [],
+          "fixture_id": "override_adopt_execution_authority",
+          "path_hashes": {
+            "phase_result_path": "sha256:b0638e51b6f739ba528b865b74c7b5ec83d79598817781db687ca9c921959de0",
+            "receipt_path": "sha256:7c155295262ad4448202249ed9fd1c85599fd0dff049de4e6cc2d418fd752f73",
+            "semantic_health_path": "sha256:77f03751094b5ee0b1c1cac814022cd5870f0cc45bdc7510f38156fce22e1930",
+            "state_path": "sha256:d8fdb575dd5cc0aad370bcd39f72a4c8763ab2a2e49aac2cee3b702e97949b49"
+          },
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/phase_result.json",
+          "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/boundary_receipts/override_adopt_execution_authority.json",
+          "reducer_promotion": false,
+          "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/semantic_health.json",
+          "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/state.json"
+        },
+        "phase_result": {
+          "artifacts_written": [],
+          "blocked_tasks": [],
+          "cli_provenance": {},
+          "deviations": [],
+          "exit_kind": "success",
+          "external_error": null,
+          "invocation_id": "inv-override_adopt_execution_authority",
+          "phase": null,
+          "phase_result_contract_version": 1,
+          "schema": "megaplan.phase_result",
+          "schema_version": 1
+        },
+        "semantic_health": {
+          "authority_record_count": 1,
+          "boundary_id": "override_adopt_execution_authority",
+          "external_effect_refs": [],
+          "fixture_id": "override_adopt_execution_authority",
+          "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/phase_result.json",
+          "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_adopt_execution_authority/boundary_receipts/override_adopt_execution_authority.json",
+          "reducer_promotion": false,
+          "scope_boundary_ids": [
+            "override_adopt_execution_authority"
+          ],
+          "scoped_error_count": 0,
+          "scoped_findings": [],
+          "scoped_warning_count": 0,
+          "status": "healthy"
+        },
+        "state": {
+          "artifact": "state.json",
+          "fixture_id": "override_adopt_execution_authority"
+        }
+      },
+      "boundary_id": "override_adopt_execution_authority",
+      "case_id": "broken_override_missing_workflow_id",
+      "case_type": "broken",
+      "corruption": {
+        "corruption_id": "missing_workflow_id",
+        "description": "Receipt workflow_id removed \u2014 breaks receipt relation by removing workflow scope identity.",
+        "target_relation": "receipt"
+      },
+      "description": "Broken case: Receipt workflow_id removed \u2014 breaks receipt relation by removing workflow scope identity.",
+      "expected_compatibility": "incompatible",
+      "expected_diagnostics": [
+        "CBC006_RECEIPT_WORKFLOW_ID_MISSING"
+      ],
+      "phase_family": "override",
+      "source_bundle": "captured_bundle_017_override_adopt_execution_authority.json",
+      "source_pre_existing_issues": []
+    }
+  ],
+  "meta": {
+    "broken_count": 8,
+    "corruption_discipline": "Each broken case corrupts exactly one required artifact/state/receipt relation. No case corrupts more than one relation. Source plan directories are never mutated \u2014 all corruptions are applied in-memory to deep copies.",
+    "description": "Real producer-driven healthy and broken cases for each boundary contract phase family. Healthy cases are extracted directly from captured producer bundles. Each broken case corrupts exactly one required artifact/state/receipt relation without mutating source plan directories. Designed for use with CompatibilityEvaluator to verify that structural corruptions are correctly detected.",
+    "generated_by": "C1 Contract Reality Reconciliation \u2014 T18",
+    "healthy_count": 8,
+    "phase_families": [
+      "prep",
+      "plan_revise",
+      "critique_gate",
+      "tiebreaker",
+      "execute",
+      "finalize",
+      "review",
+      "override"
+    ],
+    "schema_version": "wbc.real_producer_cases.v1",
+    "timestamp_utc": "2026-07-11T20:00:00Z",
+    "total_cases": 16
+  }
+}
