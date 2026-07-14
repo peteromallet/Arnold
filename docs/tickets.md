@@ -188,6 +188,68 @@ Follow the core-first principle: the local-file path lives in `_core` / `megapla
 - Epic planner prompt assembly: when building context for a new/refined epic, include open tickets for the repo. In local-only mode this reads `.megaplan/tickets/*.md`; in cloud mode it queries the DB. Same shape of data, different source.
 - Resident/agent prompt: a short paragraph telling the agent that `megaplan ticket new` exists and when to reach for it (out-of-scope observations during epic work, user-requested captures).
 
+## Strategy roadmap integration
+
+Tickets are **backlog artifacts**, not automatically strategy-visible items. A ticket only appears in the repository's strategy roadmap (`.megaplan/STRATEGY.md`) when explicitly added. This preserves the distinction between the full ticket backlog and the deliberately selected subset that represents strategic direction.
+
+### Opt-in visibility at creation time
+
+`megaplan ticket new` supports optional `--roadmap-horizon` and `--roadmap-title` flags:
+
+```bash
+# File a ticket AND add it to the Next horizon:
+megaplan ticket new "Fix authentication timeout" -b "..." --roadmap-horizon Next
+
+# With an explicit roadmap display title:
+megaplan ticket new "Fix auth" -b "..." --roadmap-horizon Now --roadmap-title "Fix authentication timeout in OAuth flow"
+```
+
+Without these flags, the ticket is created as a normal backlog artifact — it does not appear in the strategy roadmap.
+
+### Adding existing tickets to the roadmap
+
+```bash
+megaplan strategy add --type ticket --ref <ULID> --title "Display Title" --horizon Next
+```
+
+The artifact (ticket file) must exist first. The strategy entry is a pointer — it references the ticket by ULID and never copies the ticket body, lifecycle status, or completion evidence.
+
+### Lifecycle stays in artifacts, not strategy
+
+When a ticket is marked addressed (`megaplan ticket addressed <id>`), the status is written to the ticket file only. The strategy Markdown is **not** modified. If the roadmap entry should be removed, do that as a separate deliberate action:
+
+```bash
+megaplan strategy remove --type ticket --ref <ULID>
+```
+
+### Ticket promotion to epic
+
+When a ticket grows in scope and warrants its own initiative, promote it:
+
+```bash
+megaplan ticket promote <ticket_id> \
+  --initiative-slug my-feature \
+  --title "My Feature Epic" \
+  --goal "..."
+```
+
+Promotion preserves distinct ticket and epic identities (the ticket ULID is never reused as the epic ID). If the ticket was in the strategy roadmap, its entry is replaced by an epic entry in the same horizon. See `docs/strategy.md` for full promotion details.
+
+### Visualization
+
+```bash
+# See what's in the roadmap:
+megaplan strategy list
+
+# Filter to tickets only:
+megaplan strategy list --type ticket
+
+# See ticket status (separate from strategy):
+megaplan ticket list --status open
+```
+
+The strategy shows _what the repository is working toward_. The ticket list shows _what problems exist_. They are related but intentionally separate views.
+
 ## Open items
 
 - Exact ranking heuristic for "open tickets shown at planning time" — start with `tag overlap desc, created_at desc`, refine if it's noisy.

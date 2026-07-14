@@ -1,0 +1,99 @@
+{
+  "diagnostics": [],
+  "roadmap": {
+    "Later": [
+      {
+        "horizon": "Later",
+        "ref": "01KTH21EC489596QWBC3419JC9",
+        "source": {
+          "column": 1,
+          "line": 47,
+          "path": ".megaplan/STRATEGY.md"
+        },
+        "title": "Add compact megaplan monitor command for plan and chain health",
+        "type": "ticket"
+      }
+    ],
+    "Next": [
+      {
+        "horizon": "Next",
+        "ref": "01KTH21DTP1HR3ER5W7SRRJVV5",
+        "source": {
+          "column": 1,
+          "line": 43,
+          "path": ".megaplan/STRATEGY.md"
+        },
+        "title": "Prevent stale git pre-commit hook rot",
+        "type": "ticket"
+      }
+    ],
+    "Now": [
+      {
+        "horizon": "Now",
+        "ref": "repository-strategy-roadmap",
+        "source": {
+          "column": 1,
+          "line": 39,
+          "path": ".megaplan/STRATEGY.md"
+        },
+        "title": "Repository Strategy Roadmap",
+        "type": "epic"
+      }
+    ]
+  },
+  "schema_version": "megaplan-strategy-projection-v1",
+  "source_version": "megaplan-strategy-v1",
+  "stable_direction": [
+    {
+      "body": "Arnold builds intelligent pipelines out of many coordinated models. Its first tool, Megaplan, is a planning and execution harness that makes LLM-driven software development systematically robust by decomposing work into independently checked phases, each running on the cheapest model that can do it well.",
+      "source": {
+        "column": 1,
+        "line": 7,
+        "path": ".megaplan/STRATEGY.md"
+      },
+      "title": "Mission"
+    },
+    {
+      "body": "- Structure makes LLMs robust — decompose, scope, and independently check every phase.\n- Use the cheapest capable model per component; reserve premium models for adjudication and genuinely hard work.\n- Typed Markdown is authoritative; generated JSON is a disposable projection.\n- Strategy entries point to artifacts, never copy bodies or lifecycle state.",
+      "source": {
+        "column": 1,
+        "line": 11,
+        "path": ".megaplan/STRATEGY.md"
+      },
+      "title": "Principles"
+    },
+    {
+      "body": "- Pipeline phases are explicit stages with typed I/O contracts.\n- Model routing is profile-driven and vendor-neutral at the agent-spec level.\n- Run state is durable and recoverable; custody and audit trails are first-class.\n- The strategy contract separates stable direction from the living roadmap.",
+      "source": {
+        "column": 1,
+        "line": 18,
+        "path": ".megaplan/STRATEGY.md"
+      },
+      "title": "Architecture Direction"
+    },
+    {
+      "body": "- Must work in dirty worktrees without cloud state for local validation.\n- Ticket identity is a ULID; epic identity is a canonical initiative slug.\n- The executable roadmap vocabulary is exactly `ticket` and `epic`.",
+      "source": {
+        "column": 1,
+        "line": 25,
+        "path": ".megaplan/STRATEGY.md"
+      },
+      "title": "Constraints"
+    },
+    {
+      "body": "- Replacing existing ticket/epic artifact storage with strategy entries.\n- Making the generated projection JSON independently authoritative.\n- Including every open ticket in the roadmap.",
+      "source": {
+        "column": 1,
+        "line": 31,
+        "path": ".megaplan/STRATEGY.md"
+      },
+      "title": "Non-Goals"
+    }
+  ],
+  "validation_summary": {
+    "clean": true,
+    "error_count": 0,
+    "total_diagnostics": 0,
+    "warning_count": 0
+  }
+}
