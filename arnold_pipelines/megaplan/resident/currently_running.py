@@ -357,6 +357,9 @@ def _render_session(row: Mapping[str, Any]) -> str:
     overall_percent = _percent(progress.get("percent"))
     if overall_percent is not None:
         details.append(f"{overall_percent}% overall")
+        delta_1h = _percentage_point_delta(progress.get("epic_delta_1h"))
+        if delta_1h is not None:
+            details.append(f"{delta_1h:+g} pp in the past hour")
     else:
         details.append("overall progress unavailable")
     plan_percent = _percent(progress.get("plan_percent"))
@@ -371,6 +374,13 @@ def _render_session(row: Mapping[str, Any]) -> str:
     elif session_status and session_status.casefold() != status.casefold():
         details.append(f"chain {session_status}")
     return f"• **{_safe_label(name)}**\n  `{_safe_label(status)}` · {' · '.join(details)}"
+
+
+def _percentage_point_delta(value: object) -> int | float | None:
+    """Return a canonical progress delta without treating absent history as zero."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
 
 
 def _render_completed_session(row: Mapping[str, Any]) -> str:

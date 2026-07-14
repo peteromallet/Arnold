@@ -62,6 +62,7 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
                     "current_plan": "m7-runtime-adoption",
                     "progress": {
                         "percent": 42.5,
+                        "epic_delta_1h": 2.5,
                         "plan_percent": 73,
                         "display_state": "executing",
                         "plan_state": "finalized",
@@ -78,8 +79,30 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
     assert "**Custody control plane · m7-runtime-adoption**" in rendered
     assert "`executing`" in rendered
     assert "42.5% overall" in rendered
+    assert "+2.5 pp in the past hour" in rendered
     assert "73% in-flight plan" in rendered
     assert "finalized" not in rendered
+
+
+def test_render_shows_truthful_hourly_percentage_point_deltas_only_with_telemetry() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [
+                    {"session": "positive", "status": "running", "progress": {"percent": 50, "epic_delta_1h": 4}},
+                    {"session": "zero", "status": "running", "progress": {"percent": 50, "epic_delta_1h": 0}},
+                    {"session": "negative", "status": "running", "progress": {"percent": 50, "epic_delta_1h": -3}},
+                    {"session": "no-history", "status": "running", "progress": {"percent": 50, "epic_delta_1h": None}},
+                ]
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "**positive**\n  `running` · 50% overall · +4 pp in the past hour" in rendered
+    assert "**zero**\n  `running` · 50% overall · +0 pp in the past hour" in rendered
+    assert "**negative**\n  `running` · 50% overall · -3 pp in the past hour" in rendered
+    assert "**no-history**\n  `running` · 50% overall\n" in rendered
 
 
 def test_active_executing_attention_remains_listed_with_overlay_visible() -> None:

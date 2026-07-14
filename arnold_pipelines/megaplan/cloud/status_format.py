@@ -157,12 +157,12 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
             in_flight = _in_flight_progress_text(progress)
             if in_flight:
                 progress_str += "  plan=" + in_flight.removeprefix("in-flight ")
-            # Epic % gained over the last 1h / 5h, from sweep history.
+            # Epic percentage-point change over the last 1h / 5h, from sweep history.
             delta_parts = []
             for window, key in (("1h", "epic_delta_1h"), ("5h", "epic_delta_5h")):
                 delta = progress.get(key)
                 if isinstance(delta, int):
-                    delta_parts.append(f"{delta:+d}%/{window}")
+                    delta_parts.append(f"{delta:+d} pp/{window}")
             if delta_parts:
                 progress_str += "  (" + ", ".join(delta_parts) + ")"
             # Ladder stages the plan newly reached in the past hour.
