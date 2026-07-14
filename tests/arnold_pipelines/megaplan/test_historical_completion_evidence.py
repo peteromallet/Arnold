@@ -158,6 +158,80 @@ def test_chain_verify_uses_recorded_milestone_base_for_squash_commit(
     assert "preexisting-repair.py" not in milestone["files_in_diff"]
 
 
+def test_chain_verify_uses_landed_parent_when_target_advanced(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+    (root / "base.txt").write_text("base\n", encoding="utf-8")
+    milestone_base = _commit(root, "milestone base")
+    main_branch = _git(root, "branch", "--show-current")
+
+    subprocess.run(["git", "checkout", "-b", "feature"], cwd=root, check=True, capture_output=True)
+    (root / "milestone.py").write_text("MILESTONE = True\n", encoding="utf-8")
+    _commit(root, "milestone work")
+
+    subprocess.run(["git", "checkout", main_branch], cwd=root, check=True, capture_output=True)
+    (root / "unrelated-main.py").write_text("UNRELATED = True\n", encoding="utf-8")
+    landed_parent = _commit(root, "unrelated target branch work")
+    subprocess.run(["git", "merge", "--squash", "feature"], cwd=root, check=True, capture_output=True)
+    landed_head = _commit(root, "milestone (#13)")
+
+    plan_dir = root / ".megaplan" / "plans" / "historical"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "config": {"mode": "code", "project_dir": str(root)},
+                "meta": {"chain_policy": {"milestone_base_sha": milestone_base}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "files_changed": ["milestone.py"],
+                        "executor_notes": "Implemented the milestone change.",
+                    }
+                ],
+                "sense_checks": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = chain_module._verify_completed_chain(
+        root,
+        root / "chain.yaml",
+        ChainSpec(milestones=[MilestoneSpec(label="m1", idea="m1.md")]),
+        ChainState(
+            completion_contract_mode="enforce",
+            completed=[
+                {
+                    "label": "m1",
+                    "plan": "historical",
+                    "status": "done",
+                    "landed_head_sha": landed_head,
+                }
+            ],
+        ),
+    )
+
+    assert payload["divergence_count"] == 0
+    milestone = payload["milestones"][0]
+    assert milestone["accepted"] is True
+    assert milestone["evidence_window"]["base_sha"] == landed_parent
+    assert milestone["diff_base_source"] == "landed_parent_after_milestone_base"
+    assert milestone["files_in_committed_range"] == ["milestone.py"]
+    assert "unrelated-main.py" not in milestone["files_in_diff"]
+
+
 def test_suite_runner_imports_subject_checkout_before_editable_engine(
     tmp_path: Path, monkeypatch
 ) -> None:

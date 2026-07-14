@@ -788,6 +788,10 @@ def _verify_completed_chain(
             record,
             completed_records,
         )
+        landed_parent_sha = _git_commit_sha(
+            project_dir,
+            f"{milestone_head_sha}^" if milestone_head_sha else None,
+        )
         if base_sha is None or milestone_head_sha is None:
             divergence_count += 1
             milestones_payload.append(
@@ -817,6 +821,16 @@ def _verify_completed_chain(
                 }
             )
             continue
+        diff_base_sha = base_sha
+        diff_base_source = "recorded_milestone_base"
+        if landed_parent_sha is not None and _git_is_ancestor(
+            project_dir, base_sha, landed_parent_sha
+        ):
+            # The target branch advanced after the milestone began.  Its
+            # landed commit parent isolates the squash patch and excludes
+            # those intervening target-branch commits.
+            diff_base_sha = landed_parent_sha
+            diff_base_source = "landed_parent_after_milestone_base"
         verdict = compute_verdict(
             plan_dir=plan_dir or (root / ".megaplan" / "plans" / plan_name),
             project_dir=project_dir,
@@ -830,13 +844,12 @@ def _verify_completed_chain(
             ),
             mode=verify_mode,
             providers=(LandedDiffProvider(),),
-            # The recorded milestone base is the task/evidence boundary.  A
-            # squash commit's first parent can predate repairs already present
-            # on the milestone branch at plan start; diffing from that parent
-            # would falsely attribute those pre-existing branch changes to the
-            # milestone.  Pinning both recorded base and landed head preserves
-            # the intended tree delta without ever consulting checkout HEAD.
-            git_base_ref=base_sha,
+            # Prefer the squash parent only when the recorded milestone base
+            # is in that target-branch lineage.  Otherwise the branch already
+            # contained pre-milestone work absent from the squash parent, and
+            # the recorded base is the only valid tree boundary.  Both ends
+            # remain exact commits; checkout HEAD is never consulted.
+            git_base_ref=diff_base_sha,
             git_head_ref=milestone_head_sha,
         )
         landed_diff = next(
@@ -862,6 +875,8 @@ def _verify_completed_chain(
                 "diff_source": details.get("diff_source"),
                 "head_source": milestone_head_source,
                 "chain_milestone_base_sha": base_sha,
+                "diff_base_source": diff_base_source,
+                "landed_parent_sha": landed_parent_sha,
             }
         )
 
