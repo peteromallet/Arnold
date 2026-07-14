@@ -1640,6 +1640,9 @@ def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(tmp_path
             "watchdog_log_tail": "watchdog-log",
             "tmux_pane_tail": "tmux-pane",
             "chain_state_files": "/tmp/workspace/.megaplan/plans/.chains/chain-demo.json",
+            "semantic_health": {},
+            "semantic_context": {},
+            "custody_projection": {},
         },
         "attempts": [{"attempt_id": 7, "legacy": True}],
         "current_attempt_id": None,
@@ -8946,6 +8949,141 @@ def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "NO_TRIGGER"
+
+
+def test_compute_meta_repair_trigger_detects_semantic_fingerprint_recurrence(
+    tmp_path: Path,
+) -> None:
+    """3 unchanged semantic fingerprints should trigger persistent_recurring_retry."""
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    unchanged_fp = "abc123def456"  # stable fingerprint across attempts
+    (repair_data_dir / "fp-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "fp-session",
+                "outcome": "repairing",
+                "initial_facts": {
+                    "semantic_health": {"fingerprint": unchanged_fp}
+                },
+                "attempts": [
+                    {
+                        "attempt_id": 1,
+                        "failure_classification": "semantic_boundary_violation",
+                        "failure_context": {
+                            "semantic_health": {"fingerprint": unchanged_fp}
+                        },
+                    },
+                    {
+                        "attempt_id": 2,
+                        "failure_classification": "semantic_boundary_violation",
+                        "failure_context": {
+                            "semantic_health": {"fingerprint": unchanged_fp}
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "fp-plan",
+                "chain_current_plan_name": "fp-plan",
+                "plan_current_state": "initialized",
+                "chain_last_state": "initialized",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": False},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                f"compute_meta_repair_trigger fp-session "
+                f"{shlex.quote(observation)} stopped"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TRIGGER:persistent_recurring_retry"
+
+
+def test_compute_meta_repair_trigger_skips_when_semantic_fingerprint_changes(
+    tmp_path: Path,
+) -> None:
+    """Changed semantic fingerprints should NOT trigger persistent_recurring_retry on fingerprint recurrence alone."""
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "fp-chg-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "fp-chg-session",
+                "outcome": "repairing",
+                "initial_facts": {
+                    "semantic_health": {"fingerprint": "fp_v3_different"}
+                },
+                "attempts": [
+                    {
+                        "attempt_id": 1,
+                        "failure_classification": "semantic_boundary_violation",
+                        "failure_context": {
+                            "semantic_health": {"fingerprint": "fp_v1_old"}
+                        },
+                    },
+                    {
+                        "attempt_id": 2,
+                        "failure_classification": "semantic_boundary_violation",
+                        "failure_context": {
+                            "semantic_health": {"fingerprint": "fp_v2_changed"}
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "fp-chg-plan",
+                "chain_current_plan_name": "fp-chg-plan",
+                "plan_current_state": "initialized",
+                "chain_last_state": "initialized",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": False},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                f"compute_meta_repair_trigger fp-chg-session "
+                f"{shlex.quote(observation)} stopped"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    # Changed fingerprints: no fingerprint recurrence; failure_kinds only has
+    # 2 entries (< 3 threshold) so overall trigger should be NO_TRIGGER.
     assert result.stdout.strip() == "NO_TRIGGER"
 
 

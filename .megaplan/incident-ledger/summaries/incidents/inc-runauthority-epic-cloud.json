@@ -1,17 +1,38 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 1,
+  "evidence_ref_count": 6,
   "evidence_refs": [
     {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 220,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/220"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
       "kind": "verification_record"
+    },
+    {
+      "kind": "github_sync.incident_projection",
+      "session_id": "runauthority-epic-cloud"
+    },
+    {
+      "kind": "github_sync.problem_projection",
+      "status": "open"
     }
   ],
-  "generated_at": "2026-07-11T13:41:18.493279+00:00",
+  "generated_at": "2026-07-14T12:59:25.889792+00:00",
   "incident_id": "inc-runauthority-epic-cloud",
   "kind": "incident_summary",
-  "latest_actor": "immediate_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "outcome": "partial_liveness",
+  "latest_actor": "github_sync",
+  "next_expected_event": "six_hour_auditor.diagnosis",
+  "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "unknown",
@@ -22,10 +43,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
-    "last_seq": 347,
+    "digest": "sha256:a796d20dd4710cbf0c5e43ebd8bf945c123e355f3e9c9ccc5c989140742c206f",
+    "last_seq": 463,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "inc-runauthority-epic-cloud: repair-data outcome=partial_liveness kind=chain workspace=/workspace/runauthority-epic-cloud/Arnold"
+  "state": "github_sync.issue_published",
+  "summary_text": "inc-runauthority-epic-cloud: Published persistent problem problem-72f87afd3954 to GitHub as a new issue"
 }

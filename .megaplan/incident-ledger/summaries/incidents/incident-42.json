@@ -1,7 +1,14 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 87,
+  "evidence_ref_count": 92,
   "evidence_refs": [
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 217,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/217"
+    },
     {
       "action": "created",
       "kind": "github.issue",
@@ -11,6 +18,12 @@
     },
     {
       "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "github_sync.publication_payload"
@@ -188,23 +201,14 @@
     },
     {
       "kind": "attempt_ids"
-    },
-    {
-      "kind": "attempt_ids"
-    },
-    {
-      "kind": "attempt_ids"
-    },
-    {
-      "kind": "attempt_ids"
     }
   ],
-  "generated_at": "2026-07-14T07:41:54.660119+00:00",
+  "generated_at": "2026-07-14T12:59:25.907241+00:00",
   "incident_id": "incident-42",
   "kind": "incident_summary",
   "latest_actor": "github_sync",
   "next_expected_event": "six_hour_auditor.diagnosis",
-  "omitted_evidence_ref_count": 23,
+  "omitted_evidence_ref_count": 28,
   "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
@@ -216,8 +220,8 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
-    "last_seq": 353,
+    "digest": "sha256:a796d20dd4710cbf0c5e43ebd8bf945c123e355f3e9c9ccc5c989140742c206f",
+    "last_seq": 498,
     "projection": "incidents"
   },
   "state": "github_sync.issue_published",

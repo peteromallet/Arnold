@@ -178,10 +178,12 @@ def check_template_compatibility(
 ) -> TemplateCompatibilityResult:
     """Compare two template/profile field sets and classify compatibility.
 
-    A *breaking change* is any removal of a required field or a change that
-    moves a field from optional to required (which existing producers cannot
-    satisfy).  A *compatible extension* adds optional fields without removing
-    or tightening existing requirements.
+    A *breaking change* is any removal of a required field, a change that
+    moves a field from optional to required, or the addition of a brand-new
+    required field that was neither previously required nor optional
+    (existing producers cannot satisfy a field they never knew about).
+    A *compatible extension* adds optional fields without removing or
+    tightening existing requirements.
     """
     if from_required_fields == to_required_fields and from_optional_fields == to_optional_fields:
         return TemplateCompatibilityResult(
@@ -197,16 +199,23 @@ def check_template_compatibility(
     changed_to_required = tuple(
         sorted(f for f in from_optional_fields if f in to_required_fields)
     )
+    newly_added_required = tuple(
+        sorted(
+            f for f in to_required_fields
+            if f not in from_required_fields and f not in from_optional_fields
+        )
+    )
     added_optional = tuple(
         sorted(f for f in to_optional_fields if f not in from_optional_fields and f not in from_required_fields)
     )
 
-    if removed_required or changed_to_required:
+    if removed_required or changed_to_required or newly_added_required:
         return TemplateCompatibilityResult(
             compatibility=TemplateCompatibility.BREAKING_CHANGE,
             removed_required_fields=tuple(
                 sorted(set(removed_required) | set(changed_to_required))
             ),
+            changed_required_fields=newly_added_required,
             added_optional_fields=added_optional,
             template_id=template_id,
             from_version=from_version,

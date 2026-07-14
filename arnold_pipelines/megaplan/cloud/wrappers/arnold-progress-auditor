@@ -5199,4 +5199,84 @@ with open(log_path, "a", encoding="utf-8") as h:
 print(json_out)
 PY
 
+# ── Persist 6h auditor completion evidence ─────────────────────────────
+AUDITOR_EVIDENCE_OUT="$REPORT_DIR/${TS}-auditor-evidence.json"
+python3 - "$GATHER_DIR/findings.json" "$AUDITOR_EVIDENCE_OUT" "$AUDIT_WINDOW_HOURS" "$TS" "$REPAIR_DATA_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+    build_auditor_completion_evidence,
+    save_auditor_completion_evidence,
+)
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+findings_path, evidence_out, window_hours, ts, repair_data_dir = sys.argv[1:6]
+data = json.loads(Path(findings_path).read_text(encoding="utf-8"))
+findings = data.get("findings") if isinstance(data.get("findings"), list) else []
+
+# Gather individual incident_audit results from each finding.
+audit_findings: list[dict] = []
+aggregate_outcome = "audit_cycle_complete"
+aggregate_next_event = ""
+repair_dispatch_refs: list[str] = []
+
+for finding in findings:
+    if not isinstance(finding, dict):
+        continue
+    incident_audit = (
+        finding.get("incident_audit")
+        if isinstance(finding.get("incident_audit"), dict)
+        else {}
+    )
+    incident_findings = incident_audit.get("findings") or []
+    if isinstance(incident_findings, list):
+        audit_findings.extend(
+            item for item in incident_findings if isinstance(item, dict)
+        )
+
+    audit_complete = (
+        incident_audit.get("audit_complete")
+        if isinstance(incident_audit.get("audit_complete"), dict)
+        else {}
+    )
+    outcome = audit_complete.get("outcome") or ""
+    if outcome == "auditor_human_escalation":
+        aggregate_outcome = "auditor_human_escalation"
+    elif outcome == "escalated" and aggregate_outcome != "auditor_human_escalation":
+        aggregate_outcome = "escalated"
+
+    next_event = audit_complete.get("next_expected_event") or incident_audit.get(
+        "next_expected_event"
+    ) or ""
+    if next_event and not aggregate_next_event:
+        aggregate_next_event = next_event
+
+    # Collect repair dispatch refs from repair-queue paths.
+    workspace = finding.get("workspace") or ""
+    session = finding.get("session") or ""
+    if workspace:
+        repair_queue = str(Path(workspace) / ".megaplan" / "repair-queue")
+        repair_dispatch_refs.append(repair_queue)
+
+# Deduplicate repair dispatch refs.
+repair_dispatch_refs = sorted(set(repair_dispatch_refs))
+
+evidence = build_auditor_completion_evidence(
+    audit_findings=audit_findings,
+    audit_outcome=aggregate_outcome,
+    next_expected_event=aggregate_next_event,
+    audited_window_hours=float(window_hours),
+    repair_dispatch_refs=tuple(repair_dispatch_refs),
+    timestamp=ts,
+)
+
+save_auditor_completion_evidence(
+    evidence_out,
+    evidence,
+    redactor=redact_text,
+)
+PY
+
 log "report written to $JSON_OUT (findings=$FINDING_COUNT)"

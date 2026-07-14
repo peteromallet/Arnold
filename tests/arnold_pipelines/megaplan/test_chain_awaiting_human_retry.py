@@ -838,7 +838,13 @@ def test_reconcile_appends_missing_completed_record_for_terminal_merged_pr_plan(
     assert saved.current_plan_name is None
     assert saved.last_state == "done"
     assert saved.completed == reconciled.completed
-    assert any("reconciled terminal plan m7-plan into completed milestone m7" in msg for msg in messages)
+    assert any("reconciled cursor past completed milestone m7" in msg for msg in messages)
+    # Boundary evidence must be recorded for the reconciled completed milestone.
+    assert saved.has_milestone_evidence("m7")
+    evidence = saved.get_milestone_evidence("m7")
+    assert evidence is not None
+    assert evidence.contract_id == "chain.milestone.complete.1"
+    assert evidence.milestone_label == "m7"
 
 
 def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
@@ -880,6 +886,12 @@ def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
     assert saved.current_plan_name is None
     assert saved.last_state == "done"
     assert saved.completed == reconciled.completed
+    # Boundary evidence must be recorded for the reconciled completed milestone.
+    assert saved.has_milestone_evidence("m7")
+    evidence = saved.get_milestone_evidence("m7")
+    assert evidence is not None
+    assert evidence.contract_id == "chain.milestone.complete.1"
+    assert evidence.milestone_label == "m7"
 
 
 def test_reconcile_rewinds_branch_completion_missing_pr_context(

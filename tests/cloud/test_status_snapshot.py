@@ -1699,6 +1699,231 @@ def test_session_entry_carries_plan_percent_from_last_state(fx):
     assert entry["progress"]["plan_percent"] == 100
 
 
+# --- S4 enriched status fields ---------------------------------------------
+
+
+def test_session_entry_carries_s4_enriched_fields(fx):
+    """Each session entry must carry the six S4 enriched status fields."""
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run",
+        current_plan_name="s2-loop",
+        completed_count=1,
+        milestone_count=4,
+        last_state="executed",
+    )
+    snap = fx.build()
+    entry = _by_session(snap, "epic-run")
+
+    # All six S4 fields must be present.
+    assert "lifecycle_state" in entry
+    assert "activity_phase" in entry
+    assert "semantic_health" in entry
+    assert "repair_state" in entry
+    assert "custody_state" in entry
+    assert "repairable_issue" in entry
+
+    # Legacy status still present and unchanged.
+    assert "status" in entry
+    assert entry["status"] == "running"
+
+
+def test_lifecycle_state_reflects_plan_current_state(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health("s1", current_plan_name="planA", last_state="finalized")
+    fx.add_plan_state("s1", "planA", current_state="finalized")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["lifecycle_state"] == "finalized"
+
+
+def test_lifecycle_state_empty_when_no_plan_state(fx):
+    fx.add_session("s1")
+    fx.add_chain_health("s1", last_state="executed")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    # No plan state doc, so lifecycle_state falls back to empty string.
+    assert entry["lifecycle_state"] == ""
+
+
+def test_activity_phase_derives_from_plan_state_current_phase(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health("s1", current_plan_name="planA", last_state="executed")
+    # Write plan state with explicit current_phase.
+    plan_dir = fx.root / "s1" / ".megaplan" / "plans" / "planA"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"current_state": "executed", "current_phase": "execute"}),
+        encoding="utf-8",
+    )
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["activity_phase"] == "execute"
+
+
+def test_activity_phase_falls_back_to_active_step_phase(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health("s1", current_plan_name="planA", last_state="executed")
+    fx.add_plan_state(
+        "s1",
+        "planA",
+        active_step={
+            "phase": "execute",
+            "worker_pid": 42,
+            "started_at": (NOW - timedelta(minutes=5)).isoformat(),
+        },
+    )
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["activity_phase"] == "execute"
+
+
+def test_activity_phase_derives_from_legacy_status_running(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health("s1", current_plan_name="planA", last_state="executed")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    # No current_phase or active_step phase → fall back to status-derived.
+    assert entry["activity_phase"] == "execute"
+
+
+def test_advisory_repair_progress_without_durable_custody_needs_attention(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health(
+        "s1", current_plan_name="planA", last_state="error",
+        updated_at=NOW - timedelta(hours=3),
+    )
+    fx.add_repair_progress("s1")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["status"] == "attention"
+    assert entry["activity_phase"] == "attention"
+
+
+def test_advisory_repair_progress_without_durable_custody_is_stale(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health(
+        "s1", current_plan_name="planA", last_state="error",
+        updated_at=NOW - timedelta(hours=3),
+    )
+    fx.add_repair_progress("s1")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["repair_state"] == "stale"
+
+
+def test_repair_state_stale_when_progress_present_but_not_repairing(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health("s1", current_plan_name="planA", last_state="finalized",
+                        updated_at=NOW - timedelta(hours=5))
+    # Repair progress exists but session is not currently repairing (stale marker).
+    fx.add_repair_progress("s1", updated_at=NOW - timedelta(hours=10))
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["repair_state"] == "stale"
+
+
+def test_repair_state_none_when_no_repair_evidence(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health("s1", current_plan_name="planA", last_state="executed")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["repair_state"] == "none"
+
+
+def test_custody_state_matches_classification(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health("s1", current_plan_name="planA", last_state="executed")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["custody_state"] == entry["cloud_custody"]["custody_kind"]
+
+
+def test_repairable_issue_populated_for_current_failure(fx):
+    fx.add_session("alive-failed", plan_name="planFailed")
+    fx.add_chain_health(
+        "alive-failed",
+        current_plan_name="planFailed",
+        last_state="finalized",
+        updated_at=NOW - timedelta(minutes=5),
+    )
+    fx.add_plan_state("alive-failed", "planFailed", current_state="finalized")
+    state_path = (
+        fx.root / "alive-failed" / ".megaplan" / "plans" / "planFailed" / "state.json"
+    )
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["latest_failure"] = {
+        "kind": "phase_failed",
+        "phase": "execute",
+        "message": "ValueError: module must be a Python identifier",
+    }
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "alive-failed")
+    assert entry["repairable_issue"] is not None
+    assert entry["repairable_issue"]["kind"] == "phase_failed"
+    assert entry["repairable_issue"]["phase"] == "execute"
+    assert "ValueError" in entry["repairable_issue"]["message"]
+
+
+def test_repairable_issue_none_when_no_failure(fx):
+    fx.add_session("s1", plan_name="planA")
+    fx.add_chain_health("s1", current_plan_name="planA", last_state="executed")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["repairable_issue"] is None
+
+
+def test_semantic_health_none_when_no_plan_dir(fx):
+    """semantic_health is None when plan dir cannot be resolved."""
+    fx.add_session("s1")
+    fx.add_chain_health("s1", last_state="executed")
+
+    snap = fx.build()
+    entry = _by_session(snap, "s1")
+    assert entry["semantic_health"] is None
+
+
+def test_semantic_health_populated_with_valid_plan_dir(fx):
+    """semantic_health is populated when plan_dir is resolvable."""
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run",
+        current_plan_name="s2-loop",
+        completed_count=1,
+        milestone_count=4,
+        last_state="executed",
+    )
+    # Ensure the plan directory exists (created by Fixture.add_session workspace).
+    plan_dir = fx.root / "epic-run" / ".megaplan" / "plans" / "s2-loop"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+
+    snap = fx.build()
+    entry = _by_session(snap, "epic-run")
+    sh = entry["semantic_health"]
+    # When plan_dir exists, semantic_health should be a cloud_counts_summary.
+    assert sh is not None
+    assert sh.get("schema") == "arnold.workflow.cloud_counts_summary.v1"
+    assert "fingerprint" in sh
+    assert "total_count" in sh
+    assert "counts_by_boundary" in sh
+    assert "counts_by_phase" in sh
+    assert "counts_by_kind" in sh
+    assert "counts_by_repair_domain" in sh
+
+
 def test_plan_activity_summary_propagates_plan_percent(fx):
     fx.add_session("epic-run", plan_name="s2-loop")
     fx.add_chain_health(

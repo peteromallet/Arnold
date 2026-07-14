@@ -19,17 +19,112 @@
   ],
   "problems": [
     {
+      "first_seen_seq": 350,
+      "first_seen_ts": "2026-07-11T22:46:01.923651+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 513,
+      "last_seen_ts": "2026-07-14T07:53:13.249387+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stale active step plan c contract reality state executed phase review pid not live",
+      "occurrence_count": 53,
+      "owner_actor": "six_hour_auditor",
+      "problem_id": "problem-3bc7a5eaa27e",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=executed; phase=review; worker_pid=1412472 not live"
+    },
+    {
+      "first_seen_seq": 453,
+      "first_seen_ts": "2026-07-13T14:58:47.078157+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 481,
+      "last_seen_ts": "2026-07-13T19:48:52.155287+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair dispatch lacks canonical request blocker identity",
+      "occurrence_count": 4,
+      "owner_actor": "github_sync",
+      "problem_id": "problem-3c52277cbfc5",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair dispatch lacks canonical request/blocker identity"
+    },
+    {
+      "first_seen_seq": 360,
+      "first_seen_ts": "2026-07-12T01:02:50.983666+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 482,
+      "last_seen_ts": "2026-07-13T19:48:53.470792+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome repair exhausted kind chain workspace transient path",
+      "occurrence_count": 21,
+      "owner_actor": "github_sync",
+      "problem_id": "problem-461ac04158b3",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+    },
+    {
+      "first_seen_seq": 487,
+      "first_seen_ts": "2026-07-13T22:44:54.539079+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 487,
+      "last_seen_ts": "2026-07-13T22:44:54.539079+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "managed automatic repair accepted execution custody",
+      "occurrence_count": 1,
+      "owner_actor": "immediate_repair",
+      "problem_id": "problem-51b6859a7c76",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "managed automatic_repair accepted execution custody"
+    },
+    {
+      "first_seen_seq": 348,
+      "first_seen_ts": "2026-07-11T15:36:45.288233+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 507,
+      "last_seen_ts": "2026-07-14T01:53:16.558412+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome repairing kind chain workspace transient path",
+      "occurrence_count": 26,
+      "owner_actor": "github_sync",
+      "problem_id": "problem-67a765759422",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair-data outcome=repairing kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+    },
+    {
       "first_seen_seq": 1,
       "first_seen_ts": "2026-07-03T20:59:15.263244+00:00",
       "fix_commits": [],
-      "last_seen_seq": 353,
+      "last_seen_seq": 498,
       "last_seen_ts": "2026-07-14T01:52:51.108082+00:00",
       "linked_incident_ids": [
         "incident-42"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan m plan kind chain workspace transient path",
-      "occurrence_count": 42,
+      "occurrence_count": 43,
       "owner_actor": "github_sync",
       "problem_id": "problem-68a048c70af7",
       "recurred_after_fix": false,
@@ -38,10 +133,10 @@
       "title": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
     },
     {
-      "first_seen_seq": 347,
+      "first_seen_seq": 468,
       "first_seen_ts": "2026-07-13T16:31:48.839694+00:00",
       "fix_commits": [],
-      "last_seen_seq": 354,
+      "last_seen_seq": 499,
       "last_seen_ts": "2026-07-14T01:52:54.291278+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
@@ -60,14 +155,14 @@
       "first_seen_seq": 5,
       "first_seen_ts": "2026-07-03T21:24:24.562997+00:00",
       "fix_commits": [],
-      "last_seen_seq": 355,
+      "last_seen_seq": 500,
       "last_seen_ts": "2026-07-14T01:52:57.559557+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind chain workspace transient path",
-      "occurrence_count": 235,
+      "occurrence_count": 237,
       "owner_actor": "github_sync",
       "problem_id": "problem-6e386e382223",
       "recurred_after_fix": false,
@@ -79,14 +174,14 @@
       "first_seen_seq": 134,
       "first_seen_ts": "2026-07-04T16:05:39.851549+00:00",
       "fix_commits": [],
-      "last_seen_seq": 356,
+      "last_seen_seq": 501,
       "last_seen_ts": "2026-07-14T01:53:00.931749+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind plan workspace private var folders w b tthv m c dbyzvk gn t pytest of peteromalley pytest test repair loop serializes sa ws",
-      "occurrence_count": 4,
+      "occurrence_count": 5,
       "owner_actor": "github_sync",
       "problem_id": "problem-6eaee57d9632",
       "recurred_after_fix": false,
@@ -95,18 +190,40 @@
       "title": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-46/test_repair_loop_serializes_sa0/ws"
     },
     {
+      "first_seen_seq": 486,
+      "first_seen_ts": "2026-07-13T22:44:53.752231+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 508,
+      "last_seen_ts": "2026-07-14T01:53:19.856439+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stale active step plan s megaplan boundary coverage state finalized phase execute pid not live",
+      "occurrence_count": 3,
+      "owner_actor": "github_sync",
+      "problem_id": "problem-72932d0eb948",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "stale_active_step: plan=s3-megaplan-boundary-coverage-20260713-1934; state=finalized; phase=execute; worker_pid=3136480 not live"
+    },
+    {
       "first_seen_seq": 202,
       "first_seen_ts": "2026-07-07T01:45:04.474384+00:00",
       "fix_commits": [],
-      "last_seen_seq": 362,
+      "last_seen_seq": 511,
       "last_seen_ts": "2026-07-14T05:14:01.379484+00:00",
       "linked_incident_ids": [
+        "inc-megaplan-north-star-sense-checks-revise-design",
         "inc-repository-strategy-roadmap",
-        "inc-superfixer-alive-but-failed-recovery"
+        "inc-runauthority-epic-cloud",
+        "inc-superfixer-alive-but-failed-recovery",
+        "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome partial liveness kind chain workspace transient path",
-      "occurrence_count": 7,
+      "occurrence_count": 12,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-72f87afd3954",
       "recurred_after_fix": false,
@@ -115,17 +232,74 @@
       "title": "repair-data outcome=partial_liveness kind=chain workspace=/workspace/superfixer-alive-but-failed-recovery/Arnold"
     },
     {
+      "first_seen_seq": 349,
+      "first_seen_ts": "2026-07-11T16:37:53.282164+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 349,
+      "last_seen_ts": "2026-07-11T16:37:53.282164+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stale active step plan c contract reality state gated phase finalize pid not live",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-8628c3b9c119",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "stale_active_step: plan=c1-contract-reality-20260711-1433; state=gated; phase=finalize; worker_pid=591931 not live"
+    },
+    {
+      "first_seen_seq": 473,
+      "first_seen_ts": "2026-07-13T16:35:29.040943+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 484,
+      "last_seen_ts": "2026-07-13T19:48:57.818925+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "meta repair recursion guard blocked dispatch",
+      "occurrence_count": 3,
+      "owner_actor": "github_sync",
+      "problem_id": "problem-8f475cf8e677",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "meta-repair recursion guard blocked dispatch"
+    },
+    {
+      "first_seen_seq": 471,
+      "first_seen_ts": "2026-07-13T16:35:20.365102+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 485,
+      "last_seen_ts": "2026-07-13T19:49:01.041395+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "progress stall s contract foundation and iteration attempt plan v count active step attempt",
+      "occurrence_count": 3,
+      "owner_actor": "github_sync",
+      "problem_id": "problem-90fb37f640af",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "progress_stall:s2-contract-foundation-and-20260713-1544:iteration=1:attempt=20:plan_v_count=1:active_step.attempt=20>=10"
+    },
+    {
       "first_seen_seq": 9,
       "first_seen_ts": "2026-07-03T21:24:28.137736+00:00",
       "fix_commits": [],
-      "last_seen_seq": 358,
+      "last_seen_seq": 503,
       "last_seen_ts": "2026-07-14T01:53:07.412733+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome discord escalated plan demo plan kind chain workspace transient path",
-      "occurrence_count": 58,
+      "occurrence_count": 59,
       "owner_actor": "github_sync",
       "problem_id": "problem-9e338df241c5",
       "recurred_after_fix": false,
@@ -137,20 +311,58 @@
       "first_seen_seq": 154,
       "first_seen_ts": "2026-07-05T02:27:34.712582+00:00",
       "fix_commits": [],
-      "last_seen_seq": 359,
+      "last_seen_seq": 504,
       "last_seen_ts": "2026-07-14T01:53:10.512398+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind plan workspace transient path",
-      "occurrence_count": 3,
+      "occurrence_count": 4,
       "owner_actor": "github_sync",
       "problem_id": "problem-b3c4cc0b2599",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-701/test_repair_loop_serializes_sa0/ws"
+    },
+    {
+      "first_seen_seq": 488,
+      "first_seen_ts": "2026-07-13T22:44:54.540909+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 488,
+      "last_seen_ts": "2026-07-13T22:44:54.540909+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "managed automatic repair execution started",
+      "occurrence_count": 1,
+      "owner_actor": "immediate_repair",
+      "problem_id": "problem-bca9d501eede",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "managed automatic_repair execution started"
+    },
+    {
+      "first_seen_seq": 478,
+      "first_seen_ts": "2026-07-13T17:40:27.256275+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 478,
+      "last_seen_ts": "2026-07-13T17:40:27.256275+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stopped and needs repair attention",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-bd43205325d0",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "session stopped and needs repair attention"
     },
     {
       "first_seen_seq": 155,
@@ -174,10 +386,10 @@
       "title": "repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/superfixer-alive-but-failed-recovery/Arnold"
     },
     {
-      "first_seen_seq": 346,
+      "first_seen_seq": 467,
       "first_seen_ts": "2026-07-13T16:31:48.837697+00:00",
       "fix_commits": [],
-      "last_seen_seq": 360,
+      "last_seen_seq": 505,
       "last_seen_ts": "2026-07-14T01:53:13.839722+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
@@ -191,15 +403,34 @@
       "scope": "repair_system",
       "status": "open",
       "title": "managed automatic_meta_repair accepted execution custody"
+    },
+    {
+      "first_seen_seq": 351,
+      "first_seen_ts": "2026-07-11T22:46:03.299023+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 489,
+      "last_seen_ts": "2026-07-13T22:44:55.050899+00:00",
+      "linked_incident_ids": [
+        "inc-workflow-boundary-contracts-corrective-20260710"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair loop background dispatched",
+      "occurrence_count": 23,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-e20c45ae0eb0",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair loop background-dispatched"
     }
   ],
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
-    "event_count": 362,
-    "journal_line_count": 362,
-    "last_seq": 362,
+    "digest": "sha256:a796d20dd4710cbf0c5e43ebd8bf945c123e355f3e9c9ccc5c989140742c206f",
+    "event_count": 513,
+    "journal_line_count": 513,
+    "last_seq": 513,
     "malformed_line_count": 0
   }
 }

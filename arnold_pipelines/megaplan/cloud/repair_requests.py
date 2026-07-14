@@ -934,6 +934,36 @@ def _malformed_attempt(path: Path, exc: Exception) -> dict[str, Any]:
         "path": str(path),
         "reason": str(exc),
     }
+def write_repair_verdict_decision(
+    queue_dir: str | Path,
+    *,
+    request_id: str,
+    verdict_kind: str,
+    verdict_path: str = "",
+    blocker_id: str = "",
+    reason: str = "",
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Write an immutable decision record linking a repair verdict to a request.
+
+    This is a specialized wrapper around ``write_decision`` that records the
+    verdict kind, verdict artifact path, and blocker identity alongside the
+    standard request decision flow.  The decision kind is always ``dispatched``
+    because the verdict itself carries the outcome semantics.
+    """
+    return write_decision(
+        queue_dir,
+        request_id=request_id,
+        decision="dispatched",
+        reason=(
+            f"repair_verdict: {verdict_kind}"
+            f"{' blocker=' + blocker_id if blocker_id else ''}"
+            f"{' path=' + verdict_path if verdict_path else ''}"
+            f"{'; ' + reason if reason else ''}"
+        ),
+        related_request_id="",
+        created_at=created_at,
+    )
 
 
 __all__ = [
@@ -966,4 +996,5 @@ __all__ = [
     "validate_queue_root",
     "write_decision",
     "write_dispatch_attempt",
+    "write_repair_verdict_decision",
 ]

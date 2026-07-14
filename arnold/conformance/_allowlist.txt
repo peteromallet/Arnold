@@ -88,6 +88,26 @@
 #      Current extraction/runtime validation surfaces still enumerate Megaplan
 #      package literals as data.  Owner: Platform  Expiry: 2026-12-31
 #
+# 15b. package-name-staleness arnold.workflow.boundary_compatibility /
+#      arnold.workflow.execution_attempt_ledger /
+#      arnold.workflow.handler_semantics / arnold.workflow.source_compiler
+#      Pre-existing Workflow Boundary adapter compatibility: these neutral
+#      modules still carry Megaplan resource paths, durable effect names, and
+#      source/handler adapter references.  Keep them as four exact ratchet
+#      entries until those adapters are injected or moved; new modules and
+#      additional unlisted coupling remain blocking.
+#      Owner: Workflow Extraction  Expiry: 2026-08-15
+#
+# 15c. semantic-coupling arnold.conformance.authoring_terms /
+#      arnold.workflow.boundary_evidence / arnold.workflow.diagnostics /
+#      arnold.workflow.handler_semantics /
+#      arnold.workflow.semantic_evidence / arnold.workflow.source_compiler
+#      Pre-existing workflow compatibility vocabulary (`.megaplan`, handler
+#      names, and tiebreaker phase labels).  These exact modules remain visible
+#      as ratchet debt while vocabulary injection/extraction proceeds; new
+#      modules or unlisted semantic coupling still fail the gate.
+#      Owner: Workflow Extraction  Expiry: 2026-08-15
+#
 # 16. never-port-artifacts .megaplan/plans/**
 #     Plans are local working artifacts, never packaged.
 #     Owner: Platform  Expiry: 2026-12-31
@@ -128,7 +148,11 @@ package-name-staleness arnold.conformance.deleted_surfaces
 package-name-staleness arnold.conformance.workflow_manifest_runtime
 package-name-staleness arnold.pipeline.registry
 package-name-staleness arnold.workflow.diagnostics
+package-name-staleness arnold.workflow.boundary_compatibility
+package-name-staleness arnold.workflow.execution_attempt_ledger
+package-name-staleness arnold.workflow.handler_semantics
 package-name-staleness arnold.workflow.registry
+package-name-staleness arnold.workflow.source_compiler
 package-name-staleness arnold.workflow.validation
 
 semantic-coupling arnold.agent.adapters._oneshot
@@ -144,11 +168,17 @@ semantic-coupling arnold.agent.agent.prompt_caching
 semantic-coupling arnold.agent.agent.redact
 semantic-coupling arnold.agent.agent.trajectory
 semantic-coupling arnold.agent.tools.terminal_tool
+semantic-coupling arnold.conformance.authoring_terms
 semantic-coupling arnold.conformance.checks
 semantic-coupling arnold.conformance.deleted_surfaces
 semantic-coupling arnold.conformance.workflow_manifest_runtime
 semantic-coupling arnold.security.coverage_matrix
 semantic-coupling arnold.supervisor.outcomes
+semantic-coupling arnold.workflow.boundary_evidence
+semantic-coupling arnold.workflow.diagnostics
+semantic-coupling arnold.workflow.handler_semantics
+semantic-coupling arnold.workflow.semantic_evidence
+semantic-coupling arnold.workflow.source_compiler
 semantic-coupling arnold.workflow.validation
 
 megaplan-artifact-layout .megaplan/initiatives/CLOUD.md

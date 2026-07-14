@@ -1,7 +1,42 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 330,
+  "evidence_ref_count": 354,
   "evidence_refs": [
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 218,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/218#issuecomment-4962013288"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 218,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/218"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 219,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/219"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 221,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/221"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 222,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/222"
+    },
     {
       "action": "created",
       "kind": "github.issue",
@@ -63,7 +98,16 @@
       "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "managed_agent_execution"
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
     },
     {
       "kind": "managed_agent_execution"
@@ -75,7 +119,7 @@
       "kind": "managed_agent_execution"
     },
     {
-      "kind": "github_sync.publication_payload"
+      "kind": "managed_agent_execution"
     },
     {
       "kind": "github_sync.publication_payload"
@@ -93,46 +137,22 @@
       "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -219,12 +239,12 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-14T07:41:54.653684+00:00",
+  "generated_at": "2026-07-14T12:59:25.883505+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
   "latest_actor": "github_sync",
   "next_expected_event": "six_hour_auditor.diagnosis",
-  "omitted_evidence_ref_count": 266,
+  "omitted_evidence_ref_count": 290,
   "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
@@ -241,8 +261,8 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
-    "last_seq": 360,
+    "digest": "sha256:a796d20dd4710cbf0c5e43ebd8bf945c123e355f3e9c9ccc5c989140742c206f",
+    "last_seq": 505,
     "projection": "incidents"
   },
   "state": "github_sync.issue_published",
