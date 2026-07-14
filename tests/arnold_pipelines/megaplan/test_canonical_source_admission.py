@@ -134,6 +134,8 @@ def test_active_chain_future_stale_milestone_cannot_enter_and_then_reconciles(tm
         )
     assert state.metadata["canonical_source_reconciliations"][-1]["outcome"] == "blocked"
     assert requirement["expected"]["semantic_sha256"]
+    assert requirement["admission_decision"] == "block"
+    assert requirement["block_code"] == "canonical_milestone_source_changed"
 
     installed = tmp_path / spec.milestones[2].idea
     installed.write_text(authoritative.read_text(encoding="utf-8"), encoding="utf-8")
@@ -147,4 +149,5 @@ def test_active_chain_future_stale_milestone_cannot_enter_and_then_reconciles(tm
     )
     assert event["outcome"] == "reconciled"
     assert requirement["status"] == "reconciled"
+    assert requirement["admission_decision"] == "admitted"
     assert event["current_identity"]["semantic_sha256"] == requirement["expected"]["semantic_sha256"]

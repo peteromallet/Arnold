@@ -78,6 +78,17 @@ def require_milestone_source_update(
             if observed.get("semantic_sha256") == expected.get("semantic_sha256")
             else "pending_source_update"
         ),
+        "admission_boundary": "after_base_refresh_before_plan_init",
+        "admission_decision": (
+            "admit_after_reconcile"
+            if observed.get("semantic_sha256") == expected.get("semantic_sha256")
+            else "block"
+        ),
+        "block_code": (
+            ""
+            if observed.get("semantic_sha256") == expected.get("semantic_sha256")
+            else CHAIN_SOURCE_ERROR
+        ),
     }
     metadata = dict(getattr(state, "metadata", {}) or {})
     requirements = metadata.setdefault("required_canonical_source_updates", {})
@@ -200,6 +211,8 @@ def admit_milestone_source(
             launched["bundle_sha256"] = _bundle_sha(launched)
         if isinstance(requirement, dict):
             requirement["status"] = "reconciled"
+            requirement["admission_decision"] = "admitted"
+            requirement["block_code"] = ""
             requirement["reconciled_at"] = checked_at
             requirement["reconciled_identity"] = observed
     event = {
