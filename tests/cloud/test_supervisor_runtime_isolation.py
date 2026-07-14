@@ -85,6 +85,41 @@ PYTHONPATH="{str(REPO_ROOT)}:${{PYTHONPATH:-}}" python3 -c 'import arnold_pipeli
     assert stdout_lines[1] != ""
 
 
+def test_runtime_library_pins_selected_source_for_downstream_python(tmp_path: Path) -> None:
+    ambient = tmp_path / "ambient"
+    shadow_pkg = ambient / "arnold_pipelines"
+    shadow_pkg.mkdir(parents=True)
+    (shadow_pkg / "__init__.py").write_text(
+        "print('AMBIENT_EDITABLE_IMPORT')\n",
+        encoding="utf-8",
+    )
+    script = f"""
+source {str(WRAPPERS / 'arnold-supervisor-runtime-lib')!r}
+arnold_supervisor_runtime_init test-component {str(REPO_ROOT)!r}
+python3 -c 'import arnold_pipelines; print(arnold_pipelines.__file__)'
+"""
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYTHONPATH": str(ambient),
+            "MEGAPLAN_SUPERVISOR_PYTHON": sys.executable,
+            "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED": "1",
+            "MEGAPLAN_SUPERVISOR_STATUS_DIR": str(tmp_path / "status"),
+        }
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "AMBIENT_EDITABLE_IMPORT" not in result.stdout
+    assert result.stdout.strip().startswith(str(REPO_ROOT / "arnold_pipelines"))
+
+
 def test_watchdog_fails_before_heartbeat_when_runtime_is_not_ready(tmp_path: Path) -> None:
     status_dir = tmp_path / "status"
     env = os.environ.copy()

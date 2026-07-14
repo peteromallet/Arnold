@@ -90,9 +90,13 @@ arnold_supervisor_runtime_init() {
       esac
     done
     if [[ "$need_safe_path" == "1" ]]; then
-      PYTHONSAFEPATH=1 "$MEGAPLAN_SUPERVISOR_PYTHON" -P "$@"
+      PYTHONSAFEPATH=1 \
+        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
+        "$MEGAPLAN_SUPERVISOR_PYTHON" -P "$@"
     else
-      PYTHONSAFEPATH=1 "$MEGAPLAN_SUPERVISOR_PYTHON" "$@"
+      PYTHONSAFEPATH=1 \
+        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
+        "$MEGAPLAN_SUPERVISOR_PYTHON" "$@"
     fi
   }
   export -f arnold_supervisor_python
