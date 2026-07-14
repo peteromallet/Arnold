@@ -4361,7 +4361,7 @@ dispatch_kimi_repair() {
   incident_id="$(json_field "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json" incident_id 2>/dev/null || true)"
   incident_id="${incident_id:-inc-$session}"
   managed_cmd=(
-    python3 -m arnold_pipelines.megaplan.managed_agent run
+    python3 -P -m arnold_pipelines.megaplan.managed_agent run
     --run-kind automatic_repair
     --identity-key "$managed_identity"
     --project-dir "$workspace"
@@ -4386,6 +4386,7 @@ dispatch_kimi_repair() {
     "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec"
   )
   if command -v setsid >/dev/null 2>&1; then
+    PYTHONSAFEPATH=1 \
     PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
@@ -4393,6 +4394,7 @@ dispatch_kimi_repair() {
     setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
+    PYTHONSAFEPATH=1 \
     PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
@@ -4444,9 +4446,83 @@ PY
   kimi_dispatch_marker_clear "$session"
   rm -f "$pgid_path"
   log "repair loop launch failed confirmation session=$session pid=$child_pid run_id=${managed_run_id:-missing} manifest=${managed_manifest:-missing}"
+  if declare -F release_failed_repair_launch_claim >/dev/null 2>&1; then
+    if release_failed_repair_launch_claim \
+      "$session" "$request_id" "$blocker_id" "$child_pid" "$$"; then
+      log "released exact unbound repair claim after confirmed launch failure session=$session request=${request_id:-unknown}"
+    else
+      log "retained repair claim after launch failure because custody could not be disproven session=$session request=${request_id:-unknown}"
+    fi
+  fi
   REPAIR_DISPATCH_RESULT="launch_failed"
   emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop managed launch confirmation failed" "unavailable" "immediate_repair"
   return 1
+}
+
+release_failed_repair_launch_claim() {
+  local session="$1"
+  local request_id="$2"
+  local blocker_id="$3"
+  local child_pid="$4"
+  local watchdog_pid="$5"
+  if [[ -z "$request_id" || -z "$blocker_id" ]]; then
+    return 0
+  fi
+  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 -P - \
+    "$MARKER_DIR" "$session" "$request_id" "$blocker_id" "$child_pid" "$watchdog_pid" <<'PY'
+import os
+import sys
+
+from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan.cloud.repair_lock import inspect_repair_lock
+
+marker_dir, session, request_id, blocker_id, child_text, watchdog_text = sys.argv[1:]
+try:
+    child_pid = int(child_text)
+    watchdog_pid = int(watchdog_text)
+except ValueError:
+    raise SystemExit(1)
+
+
+def _pid_is_live(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+queue_dir = repair_requests.repair_queue_dir(marker_dir)
+lock_dir = repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
+inspected = inspect_repair_lock(lock_dir, is_pid_live=_pid_is_live)
+if inspected.status == "missing":
+    raise SystemExit(0)
+owner = inspected.owner if isinstance(inspected.owner, dict) else {}
+owner_pid = owner.get("pid")
+identity_matches = (
+    owner.get("actor") == "arnold-watchdog"
+    and owner.get("session") == session
+    and owner.get("request_id") == request_id
+    and owner.get("blocker_id") == blocker_id
+    and owner_pid == watchdog_pid
+)
+managed_binding_absent = not owner.get("managed_agent_run_id") and not owner.get(
+    "managed_manifest_path"
+)
+# The confirmation loop is not authority to steal a live or bound repair. Only
+# unwind this watchdog's exact claim after its launched child has really exited.
+if not identity_matches or not managed_binding_absent or _pid_is_live(child_pid):
+    raise SystemExit(1)
+released = repair_requests.release_active_repair_request_claim(
+    queue_dir,
+    blocker_id=blocker_id,
+    owner=owner,
+    expected_pid=watchdog_pid,
+)
+raise SystemExit(0 if released else 1)
+PY
 }
 
 claim_active_repair_launch() {
@@ -4897,7 +4973,7 @@ dispatch_meta_repair() {
   incident_id="${incident_id:-inc-$session}"
   parent_run_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" managed_agent_run_id 2>/dev/null || true)"
   managed_cmd=(
-    python3 -m arnold_pipelines.megaplan.managed_agent run
+    python3 -P -m arnold_pipelines.megaplan.managed_agent run
     --run-kind automatic_meta_repair
     --identity-key "meta-repair:${session}:${trigger_label}"
     --project-dir "$SRC_DIR"
@@ -4923,12 +4999,14 @@ dispatch_meta_repair() {
 
   # Background-dispatch meta-repair so it never blocks the watchdog tick
   if command -v setsid >/dev/null 2>&1; then
+    PYTHONSAFEPATH=1 \
     PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
+    PYTHONSAFEPATH=1 \
     PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
@@ -4943,6 +5021,27 @@ dispatch_meta_repair() {
     report_item "$report_items" "$session" "meta_repair" "dispatched" "meta-repair background-dispatched" "$workspace" "$remote_spec"
   fi
   return 0
+}
+
+route_l1_launch_failure_to_meta_repair() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local report_items="$4"
+  local meta_dispatch_result
+  [[ "${REPAIR_DISPATCH_RESULT:-}" == "launch_failed" ]] || return 1
+  if dispatch_meta_repair \
+    "$session" "$workspace" "$remote_spec" "$report_items" "l1_launch_failed"; then
+    meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+    if [[ "$meta_dispatch_result" == "dispatched" || "$meta_dispatch_result" == "busy" ]]; then
+      log "ordinary repair launch failed; L2 now has custody session=$session result=$meta_dispatch_result"
+      report_item "$report_items" "$session" "meta_repair" "$meta_dispatch_result" \
+        "L2 took custody after confirmed L1 launch failure" "$workspace" "$remote_spec"
+      return 0
+    fi
+  fi
+  log "ordinary repair launch failed and L2 could not take custody session=$session result=${REPAIR_DISPATCH_RESULT:-unavailable}"
+  return 1
 }
 
 run_repair_data_maintenance() {
@@ -7392,6 +7491,9 @@ PY
         fi
         return 0
       fi
+      if route_l1_launch_failure_to_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
+        return 0
+      fi
       log "session manual_review has unresolved quality blockers but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     fi
     manual_review_dispatch_env="$(manual_review_dispatch_status_env "$session" "$workspace" "$remote_spec_path" "$run_kind" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" 2>>"$LOG" || true)"
@@ -7444,6 +7546,9 @@ PY
           log "session manual_review classified for repair dispatch; background-dispatched repair loop before needs_human session=$session summary=$human_summary"
           report_item "$report_items" "$session" "repair" "repair_dispatched" "$manual_review_report_reason" "$workspace" "$remote_spec"
         fi
+        return 0
+      fi
+      if route_l1_launch_failure_to_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
         return 0
       fi
       log "session manual_review classified for repair dispatch but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
