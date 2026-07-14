@@ -2873,7 +2873,7 @@ def _chain_start_command(
         cwd = shlex.quote(project_dir or engine_dir)
         engine_path = shlex.quote(engine_dir)
         prefix += (
-            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
             f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
             f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
         )
@@ -2996,6 +2996,9 @@ def _megaplan_refresh_command(
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
         "fi",
+        # Preserve the refresh-verified source across the later cloud hot-env
+        # load, which may still advertise an older resident runtime.
+        'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"',
         'echo "[megaplan-refresh] done"',
         "true",
     ]
@@ -3188,7 +3191,7 @@ def _epic_chain_start_command(
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
         prefix += (
-            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
             f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
             f'cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
         )
