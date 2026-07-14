@@ -629,6 +629,7 @@ def classify_repair_dispatch(
     process_evidence: Mapping[str, Any] | None = None,
     custody_projection: Mapping[str, Any] | None = None,
     recovery_view: Mapping[str, Any] | None = None,
+    semantic_findings: list[Any] | None = None,
 ) -> RepairDispatchDecision:
     """Classify one repair dispatch decision from shared custody evidence.
 
@@ -636,6 +637,11 @@ def classify_repair_dispatch(
     compatible mapping), its custody-bucket and permitted-action classification
     is preferred.  Legacy *custody_projection* remains a fallback and drift
     diagnostics are emitted when the two disagree.
+
+    When *semantic_findings* is provided and ``latest_failure`` is absent,
+    semantic-health findings are used as a fallback to decide whether a
+    repairable issue exists.  This enables dispatch for boundary-evidence
+    gaps that do not manifest as a plan-level failure.
 
     Conservative defaults apply: unknown or ambiguous blocker shapes never
     auto-dispatch. L1 dispatch is reserved for blocked/manual_review states
@@ -688,6 +694,7 @@ def classify_repair_dispatch(
             lock_evidence=lock_evidence,
             process_evidence=process_evidence,
             terminal_outcomes=terminal_outcomes,
+            semantic_findings=semantic_findings,
         )
         # cross-check: if canonical_run_state is also present and disagrees,
         # emit a drift diagnostic capturing recovery-vs-canonical divergence.
@@ -704,6 +711,7 @@ def classify_repair_dispatch(
                 process_evidence=process_evidence,
                 custody=custody,
                 current_target=target_payload,
+                semantic_findings=semantic_findings,
             )
             _emit_dispatch_drift_detected(
                 event_plan_dir=event_plan_dir,
@@ -726,6 +734,7 @@ def classify_repair_dispatch(
             process_evidence=process_evidence,
             custody=custody,
             current_target=target_payload,
+            semantic_findings=semantic_findings,
         )
         if event_plan_dir is not None:
             legacy_decision = _classify_repair_dispatch_legacy(
@@ -741,6 +750,7 @@ def classify_repair_dispatch(
                 process_evidence=process_evidence,
                 custody=custody,
                 terminal_outcomes=terminal_outcomes,
+                semantic_findings=semantic_findings,
             )
             _emit_dispatch_drift_detected(
                 event_plan_dir=event_plan_dir,
@@ -776,6 +786,7 @@ def classify_repair_dispatch(
         process_evidence=process_evidence,
         custody=custody,
         terminal_outcomes=terminal_outcomes,
+        semantic_findings=semantic_findings,
     )
 
 
@@ -817,6 +828,7 @@ def _classify_repair_dispatch_canonical(
     process_evidence: Mapping[str, Any] | None,
     custody: Mapping[str, Any],
     current_target: Mapping[str, Any],
+    semantic_findings: list[Any] | None = None,
 ) -> RepairDispatchDecision:
     state = canonical_run_state.canonical_state
     if state is CanonicalState.COMPLETED:
@@ -912,6 +924,7 @@ def _classify_repair_dispatch_canonical(
             retry_strategy=retry_strategy,
             failure_kind=failure_kind,
             current_target=current_target,
+            semantic_findings=semantic_findings,
         ):
             if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
                 return _make_dispatch_decision(
@@ -995,12 +1008,14 @@ def _classify_repair_dispatch_legacy(
     process_evidence: Mapping[str, Any] | None,
     custody: Mapping[str, Any],
     terminal_outcomes: list[Any],
+    semantic_findings: list[Any] | None = None,
 ) -> RepairDispatchDecision:
     known_repairable = _is_known_repairable_shape(
         current_state=current_state,
         retry_strategy=retry_strategy,
         failure_kind=failure_kind,
         current_target=current_target,
+        semantic_findings=semantic_findings,
     )
 
     rationale: list[str] = []
@@ -1160,6 +1175,7 @@ def _classify_from_recovery_view(
     lock_evidence: Any,
     process_evidence: Mapping[str, Any] | None,
     terminal_outcomes: list[Any],
+    semantic_findings: list[Any] | None = None,
 ) -> RepairDispatchDecision:
     """Derive dispatch from a recovery-view dict, preferring its custody and
     permitted actions over raw legacy projection fields.
@@ -3190,10 +3206,14 @@ def _is_known_repairable_shape(
     retry_strategy: str,
     failure_kind: str,
     current_target: Mapping[str, Any],
+    semantic_findings: list[Any] | None = None,
 ) -> bool:
+    # --- primary: latest_failure-based classification --------------------
     if current_state == "failed" and retry_strategy == "repair_state" and failure_kind == "no_next_step":
         return _has_current_target_evidence(current_target)
-    resume_authority_failure = _as_mapping(current_target.get("resume_authority_failure"))
+    resume_authority_failure = _as_mapping(
+        _as_mapping(current_target.get("event_cursors", {})).get("resume_authority_failure", {})
+    )
     if (
         current_state == "failed"
         and retry_strategy == "rerun_phase"
@@ -3202,17 +3222,21 @@ def _is_known_repairable_shape(
         and _as_text(resume_authority_failure.get("reason")) == "execute_authority_diverged"
     ):
         return _has_current_target_evidence(current_target)
-    if current_state != "blocked":
-        return False
-    if retry_strategy != "manual_review":
-        return False
-    if failure_kind not in {
+    if current_state == "blocked" and retry_strategy == "manual_review" and failure_kind in {
         "blocked_recovery_not_resolved",
         "execution_blocked",
         "no_next_step_state_mapping_failure",
     }:
-        return False
-    return _has_current_target_evidence(current_target)
+        return _has_current_target_evidence(current_target)
+
+    # --- fallback: semantic findings indicate repairable issues ----------
+    if not failure_kind and current_state in {"blocked", "failed", ""}:
+        if semantic_findings is not None and len(semantic_findings) > 0:
+            classified = _classify_repairable_from_findings(semantic_findings)
+            if classified["has_repairable"]:
+                return _has_current_target_evidence(current_target)
+
+    return False
 
 
 def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
@@ -3874,6 +3898,224 @@ def validate_cloud_custody_payload(payload: Mapping[str, Any]) -> dict[str, Any]
     return dict(payload)
 
 
+# ── S4: semantic-health projection for repair initial facts ─────────────
+
+
+def build_repair_semantic_context(
+    *,
+    plan_dir: Path | None = None,
+    session_id: str = "",
+    findings: list[Any] | None = None,
+    cloud_meta: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a semantic-health + custody projection for repair initial facts.
+
+    When *plan_dir* is provided, calls :func:`inspect_semantic_health` and
+    projects findings through :func:`cloud_counts_summary`.  When *findings*
+    is provided directly (e.g. from a pre-computed inspection), uses those
+    findings instead of re-inspecting.
+
+    The returned payload is suitable for embedding directly into
+    ``initial_facts`` under ``semantic_context`` or ``semantic_health``.
+
+    Returns a dict with:
+
+    * ``semantic_counts`` — cloud_counts_summary projection
+    * ``has_repairable`` — bool indicating whether any findings are repairable
+    * ``repairable_details`` — list of compact repairable finding summaries
+    * ``custody_projection`` — custody classification hints derived from findings
+    """
+    result: dict[str, Any] = {
+        "schema": "arnold.workflow.repair_semantic_context.v1",
+        "session_id": session_id,
+        "semantic_counts": {},
+        "has_repairable": False,
+        "repairable_details": [],
+        "custody_projection": {},
+    }
+
+    resolved_findings: list[Any]
+    if findings is not None:
+        resolved_findings = list(findings)
+    elif plan_dir is not None and plan_dir.is_dir():
+        try:
+            from arnold_pipelines.megaplan.cloud.semantic_findings import (
+                cloud_counts_summary,
+            )
+            from arnold_pipelines.megaplan.semantic_health import (
+                inspect_semantic_health,
+            )
+
+            resolved_findings = inspect_semantic_health(plan_dir)
+            result["semantic_counts"] = cloud_counts_summary(
+                resolved_findings, session_id=session_id
+            )
+        except Exception:
+            return result
+    else:
+        return result
+
+    # Apply cloud_meta regardless of whether findings are empty
+    if isinstance(cloud_meta, Mapping):
+        target = cloud_meta.get("target")
+        if target is not None:
+            result["cloud_target"] = str(target)
+        provider = cloud_meta.get("provider")
+        if provider is not None:
+            result["cloud_provider"] = str(provider)
+
+    if not resolved_findings:
+        return result
+
+    # If semantic_counts wasn't populated (findings provided directly), compute it
+    if not result["semantic_counts"]:
+        try:
+            from arnold_pipelines.megaplan.cloud.semantic_findings import (
+                cloud_counts_summary,
+            )
+
+            result["semantic_counts"] = cloud_counts_summary(
+                resolved_findings, session_id=session_id
+            )
+        except Exception:
+            pass
+
+    repairable = _classify_repairable_from_findings(resolved_findings)
+    result["has_repairable"] = repairable["has_repairable"]
+    result["repairable_details"] = repairable["details"]
+    result["custody_projection"] = repairable.get("custody_projection", {})
+
+    return result
+
+
+_REPAIRABLE_DIAGNOSTIC_CODES: frozenset[str] = frozenset(
+    {
+        "AWF246_BOUNDARY_CONTRACT_MISSING",
+        "AWF247_BOUNDARY_EVIDENCE_MISSING",
+        "AWF248_BOUNDARY_EVIDENCE_WITHOUT_SOURCE",
+        "AWF249_BOUNDARY_EVIDENCE_STALE",
+        "AWF250_UNKNOWN_OUTCOME_TYPE",
+        "AWF003_MISSING_WORKFLOW_DECLARATION",
+        "AWF022_MISSING_PROMPT_DEPENDENCY",
+        "AWF023_MISSING_RESOURCE_DEPENDENCY",
+        "AWF245_ROW_EVIDENCE_INSUFFICIENCY",
+    }
+)
+
+_ERROR_SEVERITY_VALUES: frozenset[str] = frozenset({"error", "ERROR"})
+
+
+def _classify_repairable_from_findings(
+    findings: list[Any],
+) -> dict[str, Any]:
+    """Classify whether a set of semantic findings contains repairable issues.
+
+    Returns a dict with ``has_repairable``, ``details``, and
+    ``custody_projection`` fields derived from the finding severities and
+    diagnostic codes.
+    """
+    repairable_details: list[dict[str, Any]] = []
+    custody_kinds: set[str] = set()
+
+    for finding in findings:
+        severity = (
+            getattr(finding, "severity", None)
+            if hasattr(finding, "severity")
+            else (finding.get("severity") if isinstance(finding, Mapping) else None)
+        )
+        severity_value = (
+            severity.value if hasattr(severity, "value") else str(severity or "")
+        )
+        diagnostic_code = (
+            getattr(finding, "diagnostic_code", None)
+            if hasattr(finding, "diagnostic_code")
+            else (
+                finding.get("diagnostic_code")
+                if isinstance(finding, Mapping)
+                else None
+            )
+        )
+        diagnostic_value = (
+            diagnostic_code.value
+            if hasattr(diagnostic_code, "value")
+            else str(diagnostic_code or "")
+        )
+
+        if severity_value not in _ERROR_SEVERITY_VALUES:
+            continue
+
+        if diagnostic_value in _REPAIRABLE_DIAGNOSTIC_CODES:
+            custody_kinds.add("boundary_evidence_repairable")
+
+        finding_id = (
+            getattr(finding, "finding_id", "")
+            if hasattr(finding, "finding_id")
+            else (finding.get("finding_id", "") if isinstance(finding, Mapping) else "")
+        )
+        boundary_id = (
+            getattr(finding, "boundary_id", "")
+            if hasattr(finding, "boundary_id")
+            else (
+                finding.get("boundary_id", "") if isinstance(finding, Mapping) else ""
+            )
+        )
+        description = (
+            getattr(finding, "description", "")
+            if hasattr(finding, "description")
+            else (
+                finding.get("description", "") if isinstance(finding, Mapping) else ""
+            )
+        )
+
+        repairable_details.append(
+            {
+                "finding_id": str(finding_id),
+                "boundary_id": str(boundary_id),
+                "severity": severity_value,
+                "diagnostic_code": diagnostic_value,
+                "description": str(description)[:200],
+            }
+        )
+
+    custody_projection: dict[str, Any] = {}
+    if custody_kinds:
+        custody_projection["repair_domains"] = sorted(custody_kinds)
+        if "boundary_evidence_repairable" in custody_kinds:
+            custody_projection["suggested_custody_bucket"] = "repairable_not_repairing"
+
+    return {
+        "has_repairable": len(repairable_details) > 0,
+        "details": repairable_details,
+        "custody_projection": custody_projection,
+    }
+
+
+def has_repairable_semantic_finding(
+    findings: list[Any],
+) -> dict[str, Any]:
+    """Check whether a set of semantic findings contains repairable issues.
+
+    This is the public entry point for dispatch consumers that need to
+    decide whether to proceed with prompt/context generation when
+    ``latest_failure`` is absent.
+
+    Returns a dict with:
+
+    * ``has_repairable`` — bool
+    * ``count`` — number of repairable findings
+    * ``finding_ids`` — list of repairable finding IDs
+    * ``diagnostic_codes`` — list of diagnostic codes for repairable findings
+    """
+    classified = _classify_repairable_from_findings(findings)
+    return {
+        "has_repairable": classified["has_repairable"],
+        "count": len(classified["details"]),
+        "finding_ids": [d["finding_id"] for d in classified["details"]],
+        "diagnostic_codes": [d["diagnostic_code"] for d in classified["details"]],
+        "custody_projection": classified.get("custody_projection", {}),
+    }
+
+
 __all__ = [
     "ADDITIVE_FIELD_DEFAULTS",
     "ATTEMPT_STATE_CLAIMED",
@@ -3986,4 +4228,7 @@ __all__ = [
     "classify_cloud_custody",
     "save_cloud_custody_classification",
     "validate_cloud_custody_payload",
+    # ── S4: semantic-health projection for repair initial facts ──────
+    "build_repair_semantic_context",
+    "has_repairable_semantic_finding",
 ]

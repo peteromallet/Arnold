@@ -330,3 +330,201 @@ def test_cloud_status_custody_repair_verdict_blocker_id_present(
     # Blocker ID is always present (may be empty when no fingerprint is derivable,
     # but the field itself must exist for structured verdict binding)
     assert custody["blocker_id"] is not None
+
+
+# ── S4: custody rendered separately from process liveness ──────────────────
+
+
+def test_detailed_format_renders_custody_separate_from_process_liveness() -> None:
+    """Detailed format shows custody state independently from process/tmux fields."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_cloud_status_detailed,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 1, "repairing": 0, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "demo",
+                "status": "running",
+                "current_plan": "test-plan",
+                "completed_count": 1,
+                "milestone_count": 3,
+                "lifecycle_state": "executed",
+                "activity_phase": "execute",
+                "custody_state": "repairable_not_repairing",
+                "repair_state": "stale",
+                "repairable_issue": {
+                    "kind": "blocked_recovery_not_resolved",
+                    "phase": "execute",
+                },
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": True,
+                "process": True,
+                "latest_activity": "2026-07-14T00:59:00Z",
+                "operator_next": "",
+            }
+        ],
+        "degraded": None,
+    }
+
+    detailed = format_cloud_status_detailed(snap)
+
+    # Custody is rendered as its own line, NOT merged into process liveness.
+    assert "custody=repairable_not_repairing" in detailed
+    assert "repair=stale" in detailed
+    # Repairable issue details are included.
+    assert "issue=blocked_recovery_not_resolved/execute" in detailed
+    # Process liveness remains separate (not conflated with custody).
+    # The custody line is distinct from the lifecycle/activity line.
+    assert "lifecycle:" in detailed
+    assert "activity:" in detailed
+
+
+def test_detailed_format_custody_line_absent_when_no_custody_state() -> None:
+    """Detailed format omits custody/repair line when no custody state is set."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_cloud_status_detailed,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 1, "repairing": 0, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "clean",
+                "status": "running",
+                "current_plan": "test-plan",
+                "completed_count": 0,
+                "milestone_count": 1,
+                "lifecycle_state": "planned",
+                "activity_phase": "execute",
+                "custody_state": "",
+                "repair_state": "none",
+                "repairable_issue": None,
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": True,
+                "process": True,
+                "latest_activity": "2026-07-14T00:59:00Z",
+                "operator_next": "",
+            }
+        ],
+        "degraded": None,
+    }
+
+    detailed = format_cloud_status_detailed(snap)
+
+    # Custody line should not appear when no custody/repair info.
+    assert "custody=" not in detailed
+    assert "repair=" not in detailed
+
+
+def test_short_format_includes_custody_tag_independently() -> None:
+    """Short format includes custody tag separate from process liveness."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_cloud_status_short,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 1, "repairing": 0, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "demo",
+                "status": "running",
+                "current_plan": "test-plan",
+                "completed_count": 1,
+                "milestone_count": 3,
+                "lifecycle_state": "executed",
+                "activity_phase": "execute",
+                "semantic_health": {
+                    "schema": "arnold.workflow.cloud_counts_summary.v1",
+                    "session_id": "demo",
+                    "fingerprint": "abc123",
+                    "total_count": 0,
+                    "counts_by_boundary": {},
+                    "counts_by_phase": {},
+                    "counts_by_kind": {},
+                    "counts_by_repair_domain": {},
+                },
+                "custody_state": "broken_superfixer",
+                "repair_state": "active",
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": True,
+                "process": False,
+                "latest_activity": "2026-07-14T00:59:00Z",
+                "operator_next": "manual intervention needed",
+            }
+        ],
+        "degraded": None,
+    }
+
+    chunks = format_cloud_status_short(snap)
+    combined = " ".join(chunks)
+
+    # Custody appears as a compact tag.
+    assert "[custody:broken_superfixer]" in combined
+    assert "[repair:active]" in combined
+    # Unmanaged-process does NOT fire (process is False).
+    assert "[⚠unmanaged]" not in combined
+
+
+def test_attention_only_includes_s4_tags() -> None:
+    """Attention-only watchdog alert includes compact S4 tags."""
+    from arnold_pipelines.megaplan.cloud.status_format import (
+        format_attention_only,
+    )
+
+    snap = {
+        "generated_at": "2026-07-14T01:00:00Z",
+        "source": "test",
+        "summary": {"running": 0, "repairing": 1, "blocked": 0, "attention": 0, "complete": 0},
+        "sessions": [
+            {
+                "session": "stuck",
+                "status": "repairing",
+                "current_plan": "test-plan",
+                "completed_count": 0,
+                "milestone_count": 1,
+                "lifecycle_state": "executed",
+                "activity_phase": "repair",
+                "semantic_health": {
+                    "schema": "arnold.workflow.cloud_counts_summary.v1",
+                    "session_id": "stuck",
+                    "fingerprint": "def456",
+                    "total_count": 5,
+                    "counts_by_boundary": {},
+                    "counts_by_phase": {},
+                    "counts_by_kind": {},
+                    "counts_by_repair_domain": {},
+                },
+                "custody_state": "repairing",
+                "repair_state": "active",
+                "progress": {},
+                "evidence": {"marker": "/tmp/marker"},
+                "tmux": False,
+                "process": True,
+                "latest_activity": "2026-07-14T00:00:00Z",
+                "operator_next": "check repair loop",
+            }
+        ],
+        "degraded": None,
+    }
+
+    alert = format_attention_only(snap)
+
+    # S4 tags present in attention output.
+    assert "[SH:5]" in alert
+    assert "[custody:repairing]" in alert
+    assert "[repair:active]" in alert
+    assert "[⚠unmanaged]" in alert
+    # Original content still present.
+    assert "stuck" in alert
+    assert "check repair loop" in alert

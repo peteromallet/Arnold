@@ -2050,6 +2050,283 @@ def _load_phase_result(plan_dir: Path) -> dict[str, Any] | None:
         return None
 
 
+# ── consumer projection layer (S4) ──────────────────────────────────────
+
+
+def compute_finding_fingerprint(findings: list[SemanticFinding]) -> str:
+    """Compute a stable, deterministic fingerprint for a list of findings.
+
+    The fingerprint is derived from the sorted, stable representation of
+    every finding's key identity fields (finding_id, boundary_id, severity,
+    diagnostic_code).  Two identical lists of findings produce the same
+    fingerprint; any difference in finding identity produces a different
+    fingerprint.
+
+    This is intentionally a *content* fingerprint of the finding identities,
+    not a hash of the full serialized payload.  Consumers (repair-loop,
+    auditor, meta-repair) use this to detect unchanged finding sets across
+    repeated inspections without needing to diff individual fields.
+    """
+    import hashlib
+
+    hasher = hashlib.sha256()
+    # Sort by (boundary_id, finding_id) for deterministic ordering
+    for f in sorted(findings, key=lambda f: (f.boundary_id, f.finding_id)):
+        line = (
+            f"{f.finding_id}|{f.boundary_id}|{f.severity.value}|"
+            f"{f.diagnostic_code.value if f.diagnostic_code else 'none'}"
+        )
+        hasher.update(line.encode("utf-8"))
+    return hasher.hexdigest()
+
+
+def project_semantic_findings(
+    findings: list[SemanticFinding],
+    *,
+    session_id: str = "default",
+    plan_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Project a list of findings into a stable consumer-readable payload.
+
+    Returns a dictionary with:
+
+    * ``fingerprint`` — stable content hash of the finding identities
+    * ``total_count`` — total number of findings
+    * ``counts_by_boundary`` — ``{boundary_id: count}`` sorted by key
+    * ``counts_by_phase`` — ``{phase: count}`` derived from finding_id prefix
+    * ``counts_by_severity`` — ``{severity: count}``
+    * ``counts_by_kind`` — ``{kind: count}`` derived from finding_id
+    * ``counts_by_repair_domain`` — ``{repair_domain: count}``
+    * ``findings`` — list of stable finding dicts
+    * ``session_id`` — session identifier
+    * ``plan_dir`` — plan directory path (if provided)
+
+    This function is **read-only**: it never mutates plan state, lifecycle
+    routing, or receipts.  It only serializes and counts findings produced
+    by :func:`inspect_semantic_health`.
+    """
+    fingerprint = compute_finding_fingerprint(findings)
+
+    # ── counts by boundary (stable, sorted by key) ────────────────────
+    counts_by_boundary: dict[str, int] = {}
+    for f in findings:
+        counts_by_boundary[f.boundary_id] = counts_by_boundary.get(f.boundary_id, 0) + 1
+    counts_by_boundary = dict(sorted(counts_by_boundary.items()))
+
+    # ── counts by phase ──────────────────────────────────────────────
+    # Derive phase from finding_id: e.g. "SH-prep_to_plan-..." → phase="prep"
+    _PHASE_PREFIXES: dict[str, str] = {
+        "prep": "prep",
+        "plan": "plan",
+        "critique": "critique",
+        "gate": "gate",
+        "revise": "revise",
+        "execute": "execute",
+        "review": "review",
+        "finalize": "finalize",
+        "tiebreaker": "tiebreaker",
+        "replan": "replan",
+        "chain": "chain",
+        "cloud": "cloud",
+        "meta": "meta",
+    }
+
+    def _phase_from_finding_id(finding_id: str) -> str:
+        """Extract a phase label from a finding_id.
+
+        Heuristic: look for known phase prefixes after 'SH-' or in the
+        boundary portion of the id (e.g. ``SH-prep_to_plan-...`` → ``prep``).
+        Falls back to the first segment after ``SH-``, then to ``unknown``.
+        """
+        body = finding_id[3:] if finding_id.startswith("SH-") else finding_id
+        # Try known phase prefixes
+        for prefix, phase in sorted(
+            _PHASE_PREFIXES.items(), key=lambda x: -len(x[0])
+        ):
+            if body.startswith(prefix) or f"-{prefix}" in body:
+                return phase
+        # Fallback: use the first segment before '-'
+        if "-" in body:
+            return body.split("-")[0]
+        return "unknown"
+
+    counts_by_phase: dict[str, int] = {}
+    for f in findings:
+        phase = _phase_from_finding_id(f.finding_id)
+        counts_by_phase[phase] = counts_by_phase.get(phase, 0) + 1
+    counts_by_phase = dict(sorted(counts_by_phase.items()))
+
+    # ── counts by severity ───────────────────────────────────────────
+    counts_by_severity: dict[str, int] = {}
+    for f in findings:
+        sev = f.severity.value
+        counts_by_severity[sev] = counts_by_severity.get(sev, 0) + 1
+    counts_by_severity = dict(sorted(counts_by_severity.items()))
+
+    # ── counts by kind ───────────────────────────────────────────────
+    # Derive kind from finding_id: everything between the boundary_id
+    # prefix and the unique suffix.  e.g. "SH-prep_to_plan-missing-artifact-research.md"
+    # → kind = "missing-artifact"
+    def _kind_from_finding_id(finding_id: str, boundary_id: str) -> str:
+        """Extract a finding kind from the finding_id and boundary_id.
+
+        The kind is the middle portion between the boundary-specific prefix
+        and any trailing unique identifier.  Falls back to the last segment.
+        """
+        body = finding_id[3:] if finding_id.startswith("SH-") else finding_id
+        if boundary_id != "*" and body.startswith(boundary_id + "-"):
+            suffix = body[len(boundary_id) + 1:]
+        else:
+            suffix = body
+        # Remove unique trailing identifiers like filenames or indices
+        # e.g. "missing-artifact-research.md" → "missing-artifact"
+        #      "state-delta-current_phase" → "state-delta"
+        #      "authority-evidence-hash-mismatch-0" → "authority-evidence-hash-mismatch"
+        parts = suffix.rsplit("-", 1)
+        if len(parts) == 2 and (parts[1].isdigit() or "." in parts[1]):
+            return parts[0]
+        return suffix
+
+    counts_by_kind: dict[str, int] = {}
+    for f in findings:
+        kind = _kind_from_finding_id(f.finding_id, f.boundary_id)
+        counts_by_kind[kind] = counts_by_kind.get(kind, 0) + 1
+    counts_by_kind = dict(sorted(counts_by_kind.items()))
+
+    # ── counts by repair domain ──────────────────────────────────────
+    # Derive repair domain from finding_id or boundary_id heuristics.
+    _REPAIR_DOMAIN_MAP: dict[str, str] = {
+        "SH-plan-dir-missing": "plan-infra",
+        "missing-artifact": "artifact",
+        "state-missing": "state",
+        "state-delta": "state",
+        "current-state": "state",
+        "history-entry": "state",
+        "receipt-missing": "receipt",
+        "receipt-malformed": "receipt",
+        "receipt-unreadable": "receipt",
+        "phase-result": "phase-result",
+        "stale-iteration": "state",
+        "missing-created-at": "state",
+        "authority-missing": "authority",
+        "authority-evidence": "authority",
+        "authority-freshness": "authority",
+        "authority-decision": "authority",
+        "authority-scope": "authority",
+        "authority-declared": "authority",
+        "authority-undeclared": "authority",
+        "authority-records": "authority",
+        "profile": "profile",
+        "template": "template",
+        "coverage": "contract-coverage",
+        "stale-checkpoint": "execute",
+        "missing-side-effect": "execute",
+        "stale-approval": "execute",
+        "missing-approval": "execute",
+        "child-output": "execute",
+        "promotion": "execute",
+        "terminal-state": "execute",
+        "reducer": "execute",
+        "review": "review",
+        "finalize": "finalize",
+        "chain": "chain",
+        "cloud": "custody",
+        "custody": "custody",
+        "repair": "repair",
+        "meta": "meta-repair",
+    }
+
+    def _repair_domain_from_finding_id(finding_id: str) -> str:
+        """Extract a repair domain from a finding_id."""
+        body = finding_id[3:] if finding_id.startswith("SH-") else finding_id
+        for prefix, domain in sorted(
+            _REPAIR_DOMAIN_MAP.items(), key=lambda x: -len(x[0])
+        ):
+            if body.startswith(prefix) or f"-{prefix}" in body:
+                return domain
+        return "unknown"
+
+    counts_by_repair_domain: dict[str, int] = {}
+    for f in findings:
+        domain = _repair_domain_from_finding_id(f.finding_id)
+        counts_by_repair_domain[domain] = counts_by_repair_domain.get(domain, 0) + 1
+    counts_by_repair_domain = dict(sorted(counts_by_repair_domain.items()))
+
+    # ── stable finding list ──────────────────────────────────────────
+    finding_dicts = [
+        f.to_dict()
+        for f in sorted(findings, key=lambda f: (f.boundary_id, f.finding_id))
+    ]
+
+    result: dict[str, Any] = {
+        "schema": "arnold.workflow.semantic_finding_projection.v1",
+        "session_id": session_id,
+        "fingerprint": fingerprint,
+        "total_count": len(findings),
+        "counts_by_boundary": counts_by_boundary,
+        "counts_by_phase": counts_by_phase,
+        "counts_by_severity": counts_by_severity,
+        "counts_by_kind": counts_by_kind,
+        "counts_by_repair_domain": counts_by_repair_domain,
+        "findings": finding_dicts,
+    }
+    if plan_dir is not None:
+        result["plan_dir"] = str(plan_dir)
+    return result
+
+
+def count_findings_by_session(
+    findings: list[SemanticFinding],
+    *,
+    session_id: str = "default",
+) -> dict[str, int]:
+    """Return ``{session_id: total_count}`` for consumer ingestion.
+
+    Simple wrapper around :func:`project_semantic_findings` for consumers
+    that only need the count dimension.
+    """
+    return {session_id: len(findings)}
+
+
+def count_findings_by_boundary(
+    findings: list[SemanticFinding],
+) -> dict[str, int]:
+    """Return ``{boundary_id: count}`` with stable key ordering."""
+    proj = project_semantic_findings(findings)
+    return proj["counts_by_boundary"]
+
+
+def count_findings_by_phase(
+    findings: list[SemanticFinding],
+) -> dict[str, int]:
+    """Return ``{phase: count}`` with stable key ordering."""
+    proj = project_semantic_findings(findings)
+    return proj["counts_by_phase"]
+
+
+def count_findings_by_kind(
+    findings: list[SemanticFinding],
+) -> dict[str, int]:
+    """Return ``{kind: count}`` with stable key ordering."""
+    proj = project_semantic_findings(findings)
+    return proj["counts_by_kind"]
+
+
+def count_findings_by_repair_domain(
+    findings: list[SemanticFinding],
+) -> dict[str, int]:
+    """Return ``{repair_domain: count}`` with stable key ordering."""
+    proj = project_semantic_findings(findings)
+    return proj["counts_by_repair_domain"]
+
+
 __all__ = [
+    "compute_finding_fingerprint",
+    "count_findings_by_boundary",
+    "count_findings_by_kind",
+    "count_findings_by_phase",
+    "count_findings_by_repair_domain",
+    "count_findings_by_session",
     "inspect_semantic_health",
+    "project_semantic_findings",
 ]

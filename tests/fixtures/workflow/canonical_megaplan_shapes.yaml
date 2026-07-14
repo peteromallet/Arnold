@@ -1,246 +1,226 @@
-# Canonical Megaplan-shaped semantic fixture matrix.
-#
-# This file stores deterministic expected shapes for the M2 explicit-node DSL
-# compiler conformance suite.  Each shape is a product-neutral subset of nodes
-# and edges that a compiled manifest must contain.  Node and edge IDs are
-# prefixed by shape name to keep the matrix composable into a single pipeline.
-# Full manifest hashes are intentionally omitted; conformance tests compare
-# topology, refs, capabilities, suspension points, and control routes.
-
 shapes:
   branch:
     description: A branch node routes to explicit then/else targets.
     nodes:
-      - id: branch-decide
-        kind: branch
-      - id: branch-plan
-        kind: agent
-      - id: branch-fallback
-        kind: agent
+    - id: branch-decide
+      kind: branch
+    - id: branch-plan
+      kind: agent
+    - id: branch-fallback
+      kind: agent
     edges:
-      - id: branch-decide-branch-plan
-        source: branch-decide
-        target: branch-plan
-        label: then
-        condition_ref: tests.arnold.patterns._fixtures:decide_condition
-      - id: branch-decide-branch-fallback
-        source: branch-decide
-        target: branch-fallback
-        label: else
-        condition_ref: "tests.arnold.patterns._fixtures:decide_condition:negated"
-
+    - id: branch-decide-branch-plan
+      source: branch-decide
+      target: branch-plan
+      label: then
+      condition_ref: tests.arnold.patterns._fixtures:decide_condition
+    - id: branch-decide-branch-fallback
+      source: branch-decide
+      target: branch-fallback
+      label: else
+      condition_ref: tests.arnold.patterns._fixtures:decide_condition:negated
   loop_revise:
     description: Bounded loop/revise uses explicit reentry edges, not arbitrary cycles.
     nodes:
-      - id: loop
-        kind: loop
-      - id: loop-body
-        kind: agent
-      - id: revise
-        kind: revise
-      - id: draft
-        kind: agent
+    - id: loop
+      kind: loop
+    - id: loop-body
+      kind: agent
+    - id: revise
+      kind: revise
+    - id: draft
+      kind: agent
     edges:
-      - id: loop-loop-body
-        source: loop
-        target: loop-body
-        label: go
-        condition_ref: null
-      - id: loop-body-loop
-        source: loop-body
-        target: loop
-        label: reentry
-        condition_ref: retry
-      - id: draft-revise
-        source: draft
-        target: revise
-        label: revise
-        condition_ref: retry-revise
+    - id: loop-loop-body
+      source: loop
+      target: loop-body
+      label: go
+      condition_ref: null
+    - id: loop-body-loop
+      source: loop-body
+      target: loop
+      label: reentry
+      condition_ref: retry
+    - id: draft-revise
+      source: draft
+      target: revise
+      label: revise
+      condition_ref: retry-revise
     policies:
       loop:
         loop:
           max_iterations: 3
           until_ref: tests.arnold.patterns._fixtures:decide_condition
         suspension_routes:
-          - route_id: loop-reentry
-            capability_id: null
-            reentry_id: retry
+        - route_id: loop-reentry
+          capability_id: null
+          reentry_id: retry
       revise:
         loop:
           max_iterations: 4
           until_ref: tests.arnold.patterns._fixtures:decide_condition
         suspension_routes:
-          - route_id: revise-reentry
-            capability_id: null
-            reentry_id: retry-revise
-
+        - route_id: revise-reentry
+          capability_id: null
+          reentry_id: retry-revise
   fanout_panel:
     description: Fanout branches to parallel agents joined by a merge node.
     nodes:
-      - id: fan
-        kind: fanout
-      - id: fan-branch-a
-        kind: agent
-      - id: fan-branch-b
-        kind: agent
-      - id: fan-merged
-        kind: merge
+    - id: fan
+      kind: fanout
+    - id: fan-branch-a
+      kind: agent
+    - id: fan-branch-b
+      kind: agent
+    - id: fan-merged
+      kind: merge
     edges:
-      - id: fan-fan-branch-a
-        source: fan
-        target: fan-branch-a
-        label: branch
-      - id: fan-fan-branch-b
-        source: fan
-        target: fan-branch-b
-        label: branch
-      - id: fan-branch-a-fan-merged
-        source: fan-branch-a
-        target: fan-merged
-        label: join
-      - id: fan-branch-b-fan-merged
-        source: fan-branch-b
-        target: fan-merged
-        label: join
+    - id: fan-fan-branch-a
+      source: fan
+      target: fan-branch-a
+      label: branch
+    - id: fan-fan-branch-b
+      source: fan
+      target: fan-branch-b
+      label: branch
+    - id: fan-branch-a-fan-merged
+      source: fan-branch-a
+      target: fan-merged
+      label: join
+    - id: fan-branch-b-fan-merged
+      source: fan-branch-b
+      target: fan-merged
+      label: join
     policies:
       fan:
         fanout:
           mode: static
           reducer_ref: tests.arnold.patterns._fixtures:reducer
-
   retry:
     description: Bounded retry wraps a fragile step with explicit reentry.
     nodes:
-      - id: retry
-        kind: retry
-      - id: retry-fragile
-        kind: agent
+    - id: retry
+      kind: retry
+    - id: retry-fragile
+      kind: agent
     edges:
-      - id: retry-retry-fragile
-        source: retry
-        target: retry-fragile
-        label: attempt
-      - id: retry-fragile-retry
-        source: retry-fragile
-        target: retry
-        label: retry
-        condition_ref: retry:retry
+    - id: retry-retry-fragile
+      source: retry
+      target: retry-fragile
+      label: attempt
+    - id: retry-fragile-retry
+      source: retry-fragile
+      target: retry
+      label: retry
+      condition_ref: retry:retry
     policies:
       retry:
         retry:
           max_attempts: 3
           backoff: none
           retry_on:
-            - error
+          - error
         loop:
           max_iterations: 3
         suspension_routes:
-          - route_id: retry-reentry
-            capability_id: null
-            reentry_id: retry:retry
-
+        - route_id: retry-reentry
+          capability_id: null
+          reentry_id: retry:retry
   subpipeline:
     description: Subpipeline step references a nested manifest by hash.
     nodes:
-      - id: inner
-        kind: subpipeline
+    - id: inner
+      kind: subpipeline
     subpipelines:
       inner:
-        manifest_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        manifest_hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         alias: nested
-
   suspension_capability:
     description: Generic suspension step is gated by a capability and reentry id.
     nodes:
-      - id: gate
-        kind: suspension
-        capabilities:
-          - capability_id: human:operator
-            route: default
-            required: true
+    - id: gate
+      kind: suspension
+      capabilities:
+      - capability_id: human:operator
+        route: default
+        required: true
     policies:
       gate:
         suspension_routes:
-          - route_id: gate-gate
-            capability_id: human:operator
-            reentry_id: resume
-
+        - route_id: gate-gate
+          capability_id: human:operator
+          reentry_id: resume
   override_fallback:
     description: Override edge labels allow fallback routing without changing ids.
     nodes:
-      - id: override-decide
-        kind: branch
-      - id: override-primary
-        kind: agent
-      - id: override-fallback
-        kind: agent
+    - id: override-decide
+      kind: branch
+    - id: override-primary
+      kind: agent
+    - id: override-fallback
+      kind: agent
     edges:
-      - id: override-decide-override-primary
-        source: override-decide
-        target: override-primary
-        label: default
-      - id: override-decide-override-fallback
-        source: override-decide
-        target: override-fallback
-        label: fallback
-
+    - id: override-decide-override-primary
+      source: override-decide
+      target: override-primary
+      label: default
+    - id: override-decide-override-fallback
+      source: override-decide
+      target: override-fallback
+      label: fallback
   escalation:
     description: Escalation target receives a labeled control route.
     nodes:
-      - id: escalate-review
-        kind: review
-      - id: escalate-supervisor
-        kind: agent
+    - id: escalate-review
+      kind: review
+    - id: escalate-supervisor
+      kind: agent
     edges:
-      - id: escalate-review-escalate-supervisor
-        source: escalate-review
-        target: escalate-supervisor
-        label: escalate
-
+    - id: escalate-review-escalate-supervisor
+      source: escalate-review
+      target: escalate-supervisor
+      label: escalate
   compensation:
     description: Compensation target receives a labeled rollback route.
     nodes:
-      - id: compensate-fragile
-        kind: agent
-      - id: compensate-target
-        kind: agent
+    - id: compensate-fragile
+      kind: agent
+    - id: compensate-target
+      kind: agent
     edges:
-      - id: compensate-fragile-compensate-target
-        source: compensate-fragile
-        target: compensate-target
-        label: compensate
-
+    - id: compensate-fragile-compensate-target
+      source: compensate-fragile
+      target: compensate-target
+      label: compensate
   supervisor_promotion:
     description: Supervisor promotion is a labeled route to an elevated agent.
     nodes:
-      - id: promote-gate
-        kind: suspension
-      - id: promote-supervisor
-        kind: agent
+    - id: promote-gate
+      kind: suspension
+    - id: promote-supervisor
+      kind: agent
     edges:
-      - id: promote-gate-promote-supervisor
-        source: promote-gate
-        target: promote-supervisor
-        label: promote
-
+    - id: promote-gate-promote-supervisor
+      source: promote-gate
+      target: promote-supervisor
+      label: promote
   feedback:
     description: Feedback loop routes output back to an earlier step.
     nodes:
-      - id: feedback-review
-        kind: review
-      - id: feedback-plan
-        kind: agent
+    - id: feedback-review
+      kind: review
+    - id: feedback-plan
+      kind: agent
     edges:
-      - id: feedback-review-feedback-plan
-        source: feedback-review
-        target: feedback-plan
-        label: feedback
-
+    - id: feedback-review-feedback-plan
+      source: feedback-review
+      target: feedback-plan
+      label: feedback
   robustness_budget:
     description: Robustness policy slots are carried on nodes.
     nodes:
-      - id: robust-plan
-        kind: agent
+    - id: robust-plan
+      kind: agent
     policies:
       robust-plan:
         budget:
@@ -248,83 +228,80 @@ shapes:
           max_seconds: 30.0
           max_attempts: 2
           token_budget: 1000
-
   dynamic_topology_overlay:
     description: Dynamic overlay event slots are neutral metadata, not runtime code.
     nodes:
-      - id: overlay
-        kind: agent
+    - id: overlay
+      kind: agent
     metadata:
       overlay:
         dynamic_events:
-          - event: on_branch
-            slot: branch
-          - event: on_suspend
-            slot: suspension
-
+        - event: on_branch
+          slot: branch
+        - event: on_suspend
+          slot: suspension
   tournament:
     description: Tournament lowers two full tiebreaker rounds plus a bounded retry loop-back to the judge.
     nodes:
-      - id: tourney-judge
-        kind: branch
-      - id: tourney-tiebreak-1
-        kind: branch
-      - id: tourney-tiebreak-2
-        kind: branch
-      - id: tourney-winner
-        kind: merge
-      - id: tourney-candidate-a
-        kind: agent
-      - id: tourney-candidate-b
-        kind: agent
+    - id: tourney-judge
+      kind: branch
+    - id: tourney-tiebreak-1
+      kind: branch
+    - id: tourney-tiebreak-2
+      kind: branch
+    - id: tourney-winner
+      kind: merge
+    - id: tourney-candidate-a
+      kind: agent
+    - id: tourney-candidate-b
+      kind: agent
     edges:
-      - id: tourney-candidate-a-tourney-judge
-        source: tourney-candidate-a
-        target: tourney-judge
-        label: candidate
-      - id: tourney-candidate-b-tourney-judge
-        source: tourney-candidate-b
-        target: tourney-judge
-        label: candidate
-      - id: tourney-judge-tourney-tiebreak-1
-        source: tourney-judge
-        target: tourney-tiebreak-1
-        label: tie
-        condition_ref: tests.arnold.patterns._fixtures:decide_condition
-      - id: tourney-judge-tourney-winner
-        source: tourney-judge
-        target: tourney-winner
-        label: winner
-        condition_ref: tests.arnold.patterns._fixtures:judge_winner
-      - id: tourney-tiebreak-1-tourney-tiebreak-2
-        source: tourney-tiebreak-1
-        target: tourney-tiebreak-2
-        label: tie
-        condition_ref: tests.arnold.patterns._fixtures:decide_condition
-      - id: tourney-tiebreak-1-tourney-winner
-        source: tourney-tiebreak-1
-        target: tourney-winner
-        label: winner
-        condition_ref: tests.arnold.patterns._fixtures:judge_winner
-      - id: tourney-tiebreak-2-tourney-judge
-        source: tourney-tiebreak-2
-        target: tourney-judge
-        label: retry
-        condition_ref: tourney:tiebreak
-      - id: tourney-tiebreak-2-tourney-winner
-        source: tourney-tiebreak-2
-        target: tourney-winner
-        label: winner
-        condition_ref: tests.arnold.patterns._fixtures:judge_winner
+    - id: tourney-candidate-a-tourney-judge
+      source: tourney-candidate-a
+      target: tourney-judge
+      label: candidate
+    - id: tourney-candidate-b-tourney-judge
+      source: tourney-candidate-b
+      target: tourney-judge
+      label: candidate
+    - id: tourney-judge-tourney-tiebreak-1
+      source: tourney-judge
+      target: tourney-tiebreak-1
+      label: tie
+      condition_ref: tests.arnold.patterns._fixtures:decide_condition
+    - id: tourney-judge-tourney-winner
+      source: tourney-judge
+      target: tourney-winner
+      label: winner
+      condition_ref: tests.arnold.patterns._fixtures:judge_winner
+    - id: tourney-tiebreak-1-tourney-tiebreak-2
+      source: tourney-tiebreak-1
+      target: tourney-tiebreak-2
+      label: tie
+      condition_ref: tests.arnold.patterns._fixtures:decide_condition
+    - id: tourney-tiebreak-1-tourney-winner
+      source: tourney-tiebreak-1
+      target: tourney-winner
+      label: winner
+      condition_ref: tests.arnold.patterns._fixtures:judge_winner
+    - id: tourney-tiebreak-2-tourney-judge
+      source: tourney-tiebreak-2
+      target: tourney-judge
+      label: retry
+      condition_ref: tourney:tiebreak
+    - id: tourney-tiebreak-2-tourney-winner
+      source: tourney-tiebreak-2
+      target: tourney-winner
+      label: winner
+      condition_ref: tests.arnold.patterns._fixtures:judge_winner
     policies:
       tourney-judge:
         loop:
           max_iterations: 2
         suspension_routes:
-          - route_id: tourney-reentry
-            capability_id: null
-            reentry_id: tourney:tiebreak
-
+        - route_id: tourney-reentry
+          capability_id: null
+          reentry_id: tourney:tiebreak
 python_authoring_m3:
   supported_subset:
     branch_routes:
@@ -333,260 +310,771 @@ python_authoring_m3:
       topology_hash: sha256:3f24a804768e6dd18ac04b7a1bade1edc6552eaa8d022f250872ab085c9faa2c
       manifest_hash: sha256:bde84d01b81f90018be816f84cca8d05228cc608eff5680ec58d1f212288648b
       nodes:
-        - id: route
-          kind: agent
-        - id: execute
-          kind: agent
-        - id: review-approved
-          kind: agent
-        - id: revise-plan
-          kind: agent
-        - id: review-revised
-          kind: agent
-        - id: review-fallback
-          kind: agent
+      - id: route
+        kind: agent
+      - id: execute
+        kind: agent
+      - id: review-approved
+        kind: agent
+      - id: revise-plan
+        kind: agent
+      - id: review-revised
+        kind: agent
+      - id: review-fallback
+        kind: agent
       edges:
-        - id: route-execute
-          source: route
-          target: execute
-          label: approve
-          condition_ref: route.decision.eq.approve
-        - id: route-revise-plan
-          source: route
-          target: revise-plan
-          label: revise
-          condition_ref: route.decision.eq.revise
-        - id: route-review-fallback
-          source: route
-          target: review-fallback
-          label: else
-          condition_ref: route.decision.else
-        - id: execute-review-approved
-          source: execute
-          target: review-approved
-          label: default
-          condition_ref: null
-        - id: revise-plan-review-revised
-          source: revise-plan
-          target: review-revised
-          label: default
-          condition_ref: null
-
+      - id: route-execute
+        source: route
+        target: execute
+        label: approve
+        condition_ref: route.decision.eq.approve
+      - id: route-revise-plan
+        source: route
+        target: revise-plan
+        label: revise
+        condition_ref: route.decision.eq.revise
+      - id: route-review-fallback
+        source: route
+        target: review-fallback
+        label: else
+        condition_ref: route.decision.else
+      - id: execute-review-approved
+        source: execute
+        target: review-approved
+        label: default
+        condition_ref: null
+      - id: revise-plan-review-revised
+        source: revise-plan
+        target: review-revised
+        label: default
+        condition_ref: null
     bounded_review_loop:
       fixture: tests/fixtures/workflow_authoring/m3/valid_m3_bounded_loop.py
       canonical_shape: loop_revise
       topology_hash: sha256:95bafa9aae2729b45e2a032525755cb6ec4b0921a4c5c63bba6341253974ef29
       manifest_hash: sha256:3a90136d081ac2784e56077c87816560880164fe261e7fdd0389b01ddc7d9055
       nodes:
-        - id: plan
-          kind: agent
-        - id: execute
-          kind: agent
-        - id: review
-          kind: agent
-        - id: revise
-          kind: agent
+      - id: plan
+        kind: agent
+      - id: execute
+        kind: agent
+      - id: review
+        kind: agent
+      - id: revise
+        kind: agent
       edges:
-        - id: plan-execute
-          source: plan
-          target: execute
-          label: default
-          condition_ref: null
-        - id: execute-review
-          source: execute
-          target: review
-          label: default
-          condition_ref: null
-        - id: review-revise
-          source: review
-          target: revise
-          label: default
-          condition_ref: null
-        - id: revise-execute
-          source: revise
-          target: execute
-          label: reentry
-          condition_ref: loop:bounded_review_loop:reentry:execute
+      - id: plan-execute
+        source: plan
+        target: execute
+        label: default
+        condition_ref: null
+      - id: execute-review
+        source: execute
+        target: review
+        label: default
+        condition_ref: null
+      - id: review-revise
+        source: review
+        target: revise
+        label: default
+        condition_ref: null
+      - id: revise-execute
+        source: revise
+        target: execute
+        label: reentry
+        condition_ref: loop:bounded_review_loop:reentry:execute
       policies:
         execute:
           loop:
             max_iterations: 3
             until_ref: review.approved
           suspension_routes:
-            - route_id: execute-reentry
-              capability_id: null
-              reentry_id: loop:bounded_review_loop:reentry:execute
-
+          - route_id: execute-reentry
+            capability_id: null
+            reentry_id: loop:bounded_review_loop:reentry:execute
     policy_refs:
       fixture: tests/fixtures/workflow_authoring/m3/valid_m3_policy_refs.py
       canonical_shape: retry
       topology_hash: sha256:c05e1a33c42b70e2e1f5fb25d616c1a528939b4e5bb3ce13e21b6b05ef028650
       manifest_hash: sha256:54af2a7764012319643080db284186482c50ce7a55ff9a7d07d7f2b4ba35f3b7
       nodes:
-        - id: plan
-          kind: agent
-        - id: execute
-          kind: agent
-        - id: review
-          kind: agent
+      - id: plan
+        kind: agent
+      - id: execute
+        kind: agent
+      - id: review
+        kind: agent
       edges:
-        - id: plan-execute
-          source: plan
-          target: execute
-          label: default
-          condition_ref: null
-        - id: execute-review
-          source: execute
-          target: review
-          label: default
-          condition_ref: null
+      - id: plan-execute
+        source: plan
+        target: execute
+        label: default
+        condition_ref: null
+      - id: execute-review
+        source: execute
+        target: review
+        label: default
+        condition_ref: null
       policies:
         execute:
           retry:
             max_attempts: 2
             backoff: none
             retry_on:
-              - transient
+            - transient
         review:
           timing:
             timeout_seconds: 60
           authority:
-            - authority_id: review-approval
-              action: approve-review
-              capability_id: human.review
-          control_transitions:
-            - transition_id: handoff
-              transition_type: approval-handoff
-              trigger_ref: review.needs_approval
-              target_ref: reviewer
-              policy_ref: review_approval
-      workflow_policy:
-        suspension_routes:
-          - route_id: operator
-            capability_id: human.review
-            reentry_id: execute
-            resume_schema_ref: operator.resume
-        authority:
           - authority_id: review-approval
             action: approve-review
             capability_id: human.review
-        control_transitions:
+          control_transitions:
           - transition_id: handoff
             transition_type: approval-handoff
             trigger_ref: review.needs_approval
             target_ref: reviewer
             policy_ref: review_approval
-
+      workflow_policy:
+        suspension_routes:
+        - route_id: operator
+          capability_id: human.review
+          reentry_id: execute
+          resume_schema_ref: operator.resume
+        authority:
+        - authority_id: review-approval
+          action: approve-review
+          capability_id: human.review
+        control_transitions:
+        - transition_id: handoff
+          transition_type: approval-handoff
+          trigger_ref: review.needs_approval
+          target_ref: reviewer
+          policy_ref: review_approval
     subpipeline_ref:
       fixture: tests/fixtures/workflow_authoring/m3/valid_m3_subflow_ref.py
       canonical_shape: subpipeline
       topology_hash: sha256:bdd336706c58d3cea6b740c6582a138a55be53296b8ca3716f5436203599fc54
       manifest_hash: sha256:9f1470c87355418df5fca4d7f60fbadbaffed67e9668cf8893bfbebef441f9a2
       nodes:
-        - id: plan
-          kind: agent
-        - id: execute
-          kind: agent
-        - id: nested-review
-          kind: subpipeline
+      - id: plan
+        kind: agent
+      - id: execute
+        kind: agent
+      - id: nested-review
+        kind: subpipeline
       edges:
-        - id: plan-execute
-          source: plan
-          target: execute
-          label: default
-          condition_ref: null
-        - id: execute-nested-review
-          source: execute
-          target: nested-review
-          label: default
-          condition_ref: null
+      - id: plan-execute
+        source: plan
+        target: execute
+        label: default
+        condition_ref: null
+      - id: execute-nested-review
+        source: execute
+        target: nested-review
+        label: default
+        condition_ref: null
       subpipelines:
         nested-review:
           manifest_hash: sha256:1111111111111111111111111111111111111111111111111111111111111111
           alias: review
-
     canonical_megaplan_topology:
       fixture: tests/fixtures/workflow_authoring/m3/valid_m3_canonical_megaplan_topology.py
       canonical_shape: fanout_panel
-      topology_hash: sha256:635698fb235a5c87553c35258154b72a1f1774fff29caa6030dd7499a0643ab1
-      manifest_hash: sha256:db4b3522cdd3e39be1246d6a4f3569c650bbff72fad45cf0ea7f4a56f85f8afc
+      topology_hash: sha256:6680554eb181f686d0058cb1f5f837c709bee098fb00f41941ed8ffdc5fd0cf9
+      manifest_hash: sha256:2a5d35e6931acac7b57ffeec87fd1998f5e139bb5725125028553befc73b3fdc
       nodes:
-        - id: prep
-          kind: megaplan:prep
-        - id: plan
-          kind: megaplan:plan
-        - id: critique-fanout
-          kind: parallel_map
-        - id: gate
-          kind: megaplan:gate
-        - id: tiebreaker
-          kind: subpipeline
-        - id: finalize
-          kind: megaplan:finalize
-        - id: execute-batches
-          kind: parallel_map
-        - id: review-fan-in
-          kind: parallel_map
-        - id: halt
-          kind: megaplan:halt
-        - id: revise
-          kind: megaplan:revise
+      - id: blocked_override
+        kind: megaplan:override
+      - id: critique-fanout
+        kind: parallel_map
+      - id: execute-batches
+        kind: parallel_map
+      - id: fallback_execute
+        kind: megaplan:execute
+      - id: fallback_finalize
+        kind: megaplan:finalize
+      - id: finalize
+        kind: megaplan:finalize
+      - id: force_execute
+        kind: megaplan:execute
+      - id: force_finalize
+        kind: megaplan:finalize
+      - id: gate
+        kind: megaplan:gate
+      - id: gate_abort
+        kind: megaplan:halt
+      - id: gate_reprompt_revise
+        kind: megaplan:revise
+      - id: gate_retry_revise
+        kind: megaplan:revise
+      - id: gate_suspend
+        kind: megaplan:halt
+      - id: halt
+        kind: megaplan:halt
+      - id: override
+        kind: megaplan:override
+      - id: override-review-rework-execute-batches
+        kind: parallel_map
+      - id: override-review-rework-fan-in
+        kind: parallel_map
+      - id: override_execute_batches
+        kind: parallel_map
+      - id: override_finalize
+        kind: megaplan:finalize
+      - id: override_halt
+        kind: megaplan:halt
+      - id: override_halt_review
+        kind: megaplan:halt
+      - id: override_replan_revise
+        kind: megaplan:revise
+      - id: override_review_deferred_human
+        kind: megaplan:halt
+      - id: override_review_fan_in
+        kind: parallel_map
+      - id: override_review_halt
+        kind: megaplan:halt
+      - id: override_review_override
+        kind: megaplan:override
+      - id: override_review_revise
+        kind: megaplan:revise
+      - id: override_review_rework_deferred_human
+        kind: megaplan:halt
+      - id: override_review_rework_halt
+        kind: megaplan:halt
+      - id: override_review_rework_halt_unknown
+        kind: megaplan:halt
+      - id: override_review_rework_override
+        kind: megaplan:override
+      - id: override_unknown
+        kind: megaplan:halt
+      - id: plan
+        kind: megaplan:plan
+      - id: prep
+        kind: megaplan:prep
+      - id: review-fan-in
+        kind: parallel_map
+      - id: review-rework-execute-batches
+        kind: parallel_map
+      - id: review-rework-fan-in
+        kind: parallel_map
+      - id: review_deferred_human
+        kind: megaplan:halt
+      - id: review_halt
+        kind: megaplan:halt
+      - id: review_override
+        kind: megaplan:override
+      - id: review_revise
+        kind: megaplan:revise
+      - id: review_rework_deferred_human
+        kind: megaplan:halt
+      - id: review_rework_halt
+        kind: megaplan:halt
+      - id: review_rework_halt_unknown
+        kind: megaplan:halt
+      - id: review_rework_override
+        kind: megaplan:override
+      - id: revise
+        kind: megaplan:revise
+      - id: tiebreaker-override-review-rework-execute-batches
+        kind: parallel_map
+      - id: tiebreaker-override-review-rework-fan-in
+        kind: parallel_map
+      - id: tiebreaker-review-rework-execute-batches
+        kind: parallel_map
+      - id: tiebreaker-review-rework-fan-in
+        kind: parallel_map
+      - id: tiebreaker_challenger
+        kind: megaplan:tiebreaker_challenger
+      - id: tiebreaker_decision
+        kind: megaplan:tiebreaker_decision
+      - id: tiebreaker_execute_batches
+        kind: parallel_map
+      - id: tiebreaker_fallback_override
+        kind: megaplan:override
+      - id: tiebreaker_finalize
+        kind: megaplan:finalize
+      - id: tiebreaker_halt
+        kind: megaplan:halt
+      - id: tiebreaker_iterate_revise
+        kind: megaplan:revise
+      - id: tiebreaker_override
+        kind: megaplan:override
+      - id: tiebreaker_override_execute_batches
+        kind: parallel_map
+      - id: tiebreaker_override_finalize
+        kind: megaplan:finalize
+      - id: tiebreaker_override_halt
+        kind: megaplan:halt
+      - id: tiebreaker_override_halt_review
+        kind: megaplan:halt
+      - id: tiebreaker_override_review_deferred_human
+        kind: megaplan:halt
+      - id: tiebreaker_override_review_fan_in
+        kind: parallel_map
+      - id: tiebreaker_override_review_halt
+        kind: megaplan:halt
+      - id: tiebreaker_override_review_override
+        kind: megaplan:override
+      - id: tiebreaker_override_review_revise
+        kind: megaplan:revise
+      - id: tiebreaker_override_review_rework_deferred_human
+        kind: megaplan:halt
+      - id: tiebreaker_override_review_rework_halt
+        kind: megaplan:halt
+      - id: tiebreaker_override_review_rework_halt_unknown
+        kind: megaplan:halt
+      - id: tiebreaker_override_review_rework_override
+        kind: megaplan:override
+      - id: tiebreaker_override_revise
+        kind: megaplan:revise
+      - id: tiebreaker_override_unknown
+        kind: megaplan:halt
+      - id: tiebreaker_replan_revise
+        kind: megaplan:revise
+      - id: tiebreaker_researcher
+        kind: megaplan:tiebreaker_researcher
+      - id: tiebreaker_review_deferred_human
+        kind: megaplan:halt
+      - id: tiebreaker_review_fan_in
+        kind: parallel_map
+      - id: tiebreaker_review_halt
+        kind: megaplan:halt
+      - id: tiebreaker_review_override
+        kind: megaplan:override
+      - id: tiebreaker_review_revise
+        kind: megaplan:revise
+      - id: tiebreaker_review_rework_deferred_human
+        kind: megaplan:halt
+      - id: tiebreaker_review_rework_halt
+        kind: megaplan:halt
+      - id: tiebreaker_review_rework_halt_unknown
+        kind: megaplan:halt
+      - id: tiebreaker_review_rework_override
+        kind: megaplan:override
+      - id: tiebreaker_synthesis
+        kind: megaplan:tiebreaker_synthesis
       edges:
-        - id: prep-plan
-          source: prep
-          target: plan
-          label: default
-          condition_ref: null
-        - id: plan-critique-fanout
-          source: plan
-          target: critique-fanout
-          label: default
-          condition_ref: null
-        - id: critique-fanout-gate
-          source: critique-fanout
-          target: gate
-          label: default
-          condition_ref: null
-        - id: gate-finalize
-          source: gate
-          target: finalize
-          label: proceed
-          condition_ref: gate.gate_route_signal.eq.proceed
-        - id: gate-revise
-          source: gate
-          target: revise
-          label: iterate
-          condition_ref: gate.gate_route_signal.eq.iterate
-        - id: gate-tiebreaker
-          source: gate
-          target: tiebreaker
-          label: tiebreaker
-          condition_ref: gate.gate_route_signal.eq.tiebreaker
-        - id: finalize-execute-batches
-          source: finalize
-          target: execute-batches
-          label: default
-          condition_ref: null
-        - id: execute-batches-review-fan-in
-          source: execute-batches
-          target: review-fan-in
-          label: default
-          condition_ref: null
-        - id: review-fan-in-halt
-          source: review-fan-in
-          target: halt
-          label: pass
-          condition_ref: review-fan-in.review_route_signal.eq.pass
-        - id: review-fan-in-review_revise
-          source: review-fan-in
-          target: review_revise
-          label: rework
-          condition_ref: review-fan-in.review_route_signal.eq.rework
-      subpipelines:
-        tiebreaker:
-          manifest_hash: sha256:de851fe19389f02de8a1edc5d4b616100c2d40a28fef95de74d0ac0d8798a075
-          alias: tiebreaker_child
-
+      - id: critique-fanout-gate
+        source: critique-fanout
+        target: gate
+        label: default
+        condition_ref: null
+      - id: execute-batches-review-fan-in
+        source: execute-batches
+        target: review-fan-in
+        label: default
+        condition_ref: null
+      - id: fallback_finalize-fallback_execute
+        source: fallback_finalize
+        target: fallback_execute
+        label: default
+        condition_ref: null
+      - id: finalize-execute-batches
+        source: finalize
+        target: execute-batches
+        label: default
+        condition_ref: null
+      - id: force_finalize-force_execute
+        source: force_finalize
+        target: force_execute
+        label: default
+        condition_ref: null
+      - id: gate-blocked_override
+        source: gate
+        target: blocked_override
+        label: blocked_preflight
+        condition_ref: gate.gate_route_signal.eq.blocked_preflight
+      - id: gate-fallback_finalize
+        source: gate
+        target: fallback_finalize
+        label: else
+        condition_ref: gate.gate_route_signal.else
+      - id: gate-finalize
+        source: gate
+        target: finalize
+        label: proceed
+        condition_ref: gate.gate_route_signal.eq.proceed
+      - id: gate-force_finalize
+        source: gate
+        target: force_finalize
+        label: force_proceed
+        condition_ref: gate.gate_route_signal.eq.force_proceed
+      - id: gate-gate_abort
+        source: gate
+        target: gate_abort
+        label: abort
+        condition_ref: gate.gate_route_signal.eq.abort
+      - id: gate-gate_reprompt_revise
+        source: gate
+        target: gate_reprompt_revise
+        label: reprompt_downgrade
+        condition_ref: gate.gate_route_signal.eq.reprompt_downgrade
+      - id: gate-gate_retry_revise
+        source: gate
+        target: gate_retry_revise
+        label: retry_gate
+        condition_ref: gate.gate_route_signal.eq.retry_gate
+      - id: gate-gate_suspend
+        source: gate
+        target: gate_suspend
+        label: suspend
+        condition_ref: gate.gate_route_signal.eq.suspend
+      - id: gate-override
+        source: gate
+        target: override
+        label: escalate
+        condition_ref: gate.gate_route_signal.eq.escalate
+      - id: gate-revise
+        source: gate
+        target: revise
+        label: iterate
+        condition_ref: gate.gate_route_signal.eq.iterate
+      - id: gate-tiebreaker_researcher
+        source: gate
+        target: tiebreaker_researcher
+        label: tiebreaker
+        condition_ref: gate.gate_route_signal.eq.tiebreaker
+      - id: override-override_finalize
+        source: override
+        target: override_finalize
+        label: force_proceed
+        condition_ref: override.override_result.eq.force_proceed
+      - id: override-override_halt
+        source: override
+        target: override_halt
+        label: abort
+        condition_ref: override.override_result.eq.abort
+      - id: override-override_replan_revise
+        source: override
+        target: override_replan_revise
+        label: replan
+        condition_ref: override.override_result.eq.replan
+      - id: override-override_unknown
+        source: override
+        target: override_unknown
+        label: else
+        condition_ref: override.override_result.else
+      - id: override-review-rework-execute-batches-override-review-rework-fan-in
+        source: override-review-rework-execute-batches
+        target: override-review-rework-fan-in
+        label: default
+        condition_ref: null
+      - id: override-review-rework-fan-in-override_review_revise
+        source: override-review-rework-fan-in
+        target: override_review_revise
+        label: rework
+        condition_ref: override-review-rework-fan-in.rework_review_route_signal.eq.rework
+      - id: override-review-rework-fan-in-override_review_rework_deferred_human
+        source: override-review-rework-fan-in
+        target: override_review_rework_deferred_human
+        label: deferred_human
+        condition_ref: override-review-rework-fan-in.rework_review_route_signal.eq.deferred_human
+      - id: override-review-rework-fan-in-override_review_rework_halt
+        source: override-review-rework-fan-in
+        target: override_review_rework_halt
+        label: pass
+        condition_ref: override-review-rework-fan-in.rework_review_route_signal.eq.pass
+      - id: override-review-rework-fan-in-override_review_rework_halt_unknown
+        source: override-review-rework-fan-in
+        target: override_review_rework_halt_unknown
+        label: else
+        condition_ref: override-review-rework-fan-in.rework_review_route_signal.else
+      - id: override-review-rework-fan-in-override_review_rework_override
+        source: override-review-rework-fan-in
+        target: override_review_rework_override
+        label: blocked
+        condition_ref: override-review-rework-fan-in.rework_review_route_signal.eq.blocked
+      - id: override_execute_batches-override_review_fan_in
+        source: override_execute_batches
+        target: override_review_fan_in
+        label: default
+        condition_ref: null
+      - id: override_finalize-override_execute_batches
+        source: override_finalize
+        target: override_execute_batches
+        label: default
+        condition_ref: null
+      - id: override_review_fan_in-override-review-rework-execute-batches
+        source: override_review_fan_in
+        target: override-review-rework-execute-batches
+        label: rework
+        condition_ref: override_review_fan_in.review_route_signal.eq.rework
+      - id: override_review_fan_in-override_halt_review
+        source: override_review_fan_in
+        target: override_halt_review
+        label: pass
+        condition_ref: override_review_fan_in.review_route_signal.eq.pass
+      - id: override_review_fan_in-override_review_deferred_human
+        source: override_review_fan_in
+        target: override_review_deferred_human
+        label: deferred_human
+        condition_ref: override_review_fan_in.review_route_signal.eq.deferred_human
+      - id: override_review_fan_in-override_review_halt
+        source: override_review_fan_in
+        target: override_review_halt
+        label: else
+        condition_ref: override_review_fan_in.review_route_signal.else
+      - id: override_review_fan_in-override_review_override
+        source: override_review_fan_in
+        target: override_review_override
+        label: blocked
+        condition_ref: override_review_fan_in.review_route_signal.eq.blocked
+      - id: plan-critique-fanout
+        source: plan
+        target: critique-fanout
+        label: default
+        condition_ref: null
+      - id: prep-plan
+        source: prep
+        target: plan
+        label: default
+        condition_ref: null
+      - id: review-fan-in-halt
+        source: review-fan-in
+        target: halt
+        label: pass
+        condition_ref: review-fan-in.review_route_signal.eq.pass
+      - id: review-fan-in-review-rework-execute-batches
+        source: review-fan-in
+        target: review-rework-execute-batches
+        label: rework
+        condition_ref: review-fan-in.review_route_signal.eq.rework
+      - id: review-fan-in-review_deferred_human
+        source: review-fan-in
+        target: review_deferred_human
+        label: deferred_human
+        condition_ref: review-fan-in.review_route_signal.eq.deferred_human
+      - id: review-fan-in-review_halt
+        source: review-fan-in
+        target: review_halt
+        label: else
+        condition_ref: review-fan-in.review_route_signal.else
+      - id: review-fan-in-review_override
+        source: review-fan-in
+        target: review_override
+        label: blocked
+        condition_ref: review-fan-in.review_route_signal.eq.blocked
+      - id: review-rework-execute-batches-review-rework-fan-in
+        source: review-rework-execute-batches
+        target: review-rework-fan-in
+        label: default
+        condition_ref: null
+      - id: review-rework-fan-in-review_revise
+        source: review-rework-fan-in
+        target: review_revise
+        label: rework
+        condition_ref: review-rework-fan-in.rework_review_route_signal.eq.rework
+      - id: review-rework-fan-in-review_rework_deferred_human
+        source: review-rework-fan-in
+        target: review_rework_deferred_human
+        label: deferred_human
+        condition_ref: review-rework-fan-in.rework_review_route_signal.eq.deferred_human
+      - id: review-rework-fan-in-review_rework_halt
+        source: review-rework-fan-in
+        target: review_rework_halt
+        label: pass
+        condition_ref: review-rework-fan-in.rework_review_route_signal.eq.pass
+      - id: review-rework-fan-in-review_rework_halt_unknown
+        source: review-rework-fan-in
+        target: review_rework_halt_unknown
+        label: else
+        condition_ref: review-rework-fan-in.rework_review_route_signal.else
+      - id: review-rework-fan-in-review_rework_override
+        source: review-rework-fan-in
+        target: review_rework_override
+        label: blocked
+        condition_ref: review-rework-fan-in.rework_review_route_signal.eq.blocked
+      - id: tiebreaker-override-review-rework-execute-batches-tiebreaker-override-review-rework-fan-in
+        source: tiebreaker-override-review-rework-execute-batches
+        target: tiebreaker-override-review-rework-fan-in
+        label: default
+        condition_ref: null
+      - id: tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_revise
+        source: tiebreaker-override-review-rework-fan-in
+        target: tiebreaker_override_review_revise
+        label: rework
+        condition_ref: tiebreaker-override-review-rework-fan-in.rework_review_route_signal.eq.rework
+      - id: tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_rework_deferred_human
+        source: tiebreaker-override-review-rework-fan-in
+        target: tiebreaker_override_review_rework_deferred_human
+        label: deferred_human
+        condition_ref: tiebreaker-override-review-rework-fan-in.rework_review_route_signal.eq.deferred_human
+      - id: tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_rework_halt
+        source: tiebreaker-override-review-rework-fan-in
+        target: tiebreaker_override_review_rework_halt
+        label: pass
+        condition_ref: tiebreaker-override-review-rework-fan-in.rework_review_route_signal.eq.pass
+      - id: tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_rework_halt_unknown
+        source: tiebreaker-override-review-rework-fan-in
+        target: tiebreaker_override_review_rework_halt_unknown
+        label: else
+        condition_ref: tiebreaker-override-review-rework-fan-in.rework_review_route_signal.else
+      - id: tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_rework_override
+        source: tiebreaker-override-review-rework-fan-in
+        target: tiebreaker_override_review_rework_override
+        label: blocked
+        condition_ref: tiebreaker-override-review-rework-fan-in.rework_review_route_signal.eq.blocked
+      - id: tiebreaker-review-rework-execute-batches-tiebreaker-review-rework-fan-in
+        source: tiebreaker-review-rework-execute-batches
+        target: tiebreaker-review-rework-fan-in
+        label: default
+        condition_ref: null
+      - id: tiebreaker-review-rework-fan-in-tiebreaker_review_revise
+        source: tiebreaker-review-rework-fan-in
+        target: tiebreaker_review_revise
+        label: rework
+        condition_ref: tiebreaker-review-rework-fan-in.rework_review_route_signal.eq.rework
+      - id: tiebreaker-review-rework-fan-in-tiebreaker_review_rework_deferred_human
+        source: tiebreaker-review-rework-fan-in
+        target: tiebreaker_review_rework_deferred_human
+        label: deferred_human
+        condition_ref: tiebreaker-review-rework-fan-in.rework_review_route_signal.eq.deferred_human
+      - id: tiebreaker-review-rework-fan-in-tiebreaker_review_rework_halt
+        source: tiebreaker-review-rework-fan-in
+        target: tiebreaker_review_rework_halt
+        label: pass
+        condition_ref: tiebreaker-review-rework-fan-in.rework_review_route_signal.eq.pass
+      - id: tiebreaker-review-rework-fan-in-tiebreaker_review_rework_halt_unknown
+        source: tiebreaker-review-rework-fan-in
+        target: tiebreaker_review_rework_halt_unknown
+        label: else
+        condition_ref: tiebreaker-review-rework-fan-in.rework_review_route_signal.else
+      - id: tiebreaker-review-rework-fan-in-tiebreaker_review_rework_override
+        source: tiebreaker-review-rework-fan-in
+        target: tiebreaker_review_rework_override
+        label: blocked
+        condition_ref: tiebreaker-review-rework-fan-in.rework_review_route_signal.eq.blocked
+      - id: tiebreaker_challenger:synthesis
+        source: tiebreaker_challenger
+        target: tiebreaker_synthesis
+        label: default
+        condition_ref: null
+      - id: tiebreaker_decision-tiebreaker_fallback_override
+        source: tiebreaker_decision
+        target: tiebreaker_fallback_override
+        label: else
+        condition_ref: tiebreaker_decision.decision.else
+      - id: tiebreaker_decision:critique
+        source: tiebreaker_decision
+        target: tiebreaker_iterate_revise
+        label: iterate
+        condition_ref: tiebreaker:loop
+      - id: tiebreaker_decision:finalize
+        source: tiebreaker_decision
+        target: tiebreaker_finalize
+        label: proceed
+        condition_ref: proceed
+      - id: tiebreaker_decision:override
+        source: tiebreaker_decision
+        target: tiebreaker_override
+        label: escalate
+        condition_ref: escalate
+      - id: tiebreaker_decision:revise_replan
+        source: tiebreaker_decision
+        target: tiebreaker_replan_revise
+        label: replan
+        condition_ref: tiebreaker:replan
+      - id: tiebreaker_execute_batches-tiebreaker_review_fan_in
+        source: tiebreaker_execute_batches
+        target: tiebreaker_review_fan_in
+        label: default
+        condition_ref: null
+      - id: tiebreaker_finalize-tiebreaker_execute_batches
+        source: tiebreaker_finalize
+        target: tiebreaker_execute_batches
+        label: default
+        condition_ref: null
+      - id: tiebreaker_override-tiebreaker_override_finalize
+        source: tiebreaker_override
+        target: tiebreaker_override_finalize
+        label: force_proceed
+        condition_ref: tiebreaker_override.override_result.eq.force_proceed
+      - id: tiebreaker_override-tiebreaker_override_halt
+        source: tiebreaker_override
+        target: tiebreaker_override_halt
+        label: abort
+        condition_ref: tiebreaker_override.override_result.eq.abort
+      - id: tiebreaker_override-tiebreaker_override_revise
+        source: tiebreaker_override
+        target: tiebreaker_override_revise
+        label: replan
+        condition_ref: tiebreaker_override.override_result.eq.replan
+      - id: tiebreaker_override-tiebreaker_override_unknown
+        source: tiebreaker_override
+        target: tiebreaker_override_unknown
+        label: else
+        condition_ref: tiebreaker_override.override_result.else
+      - id: tiebreaker_override_execute_batches-tiebreaker_override_review_fan_in
+        source: tiebreaker_override_execute_batches
+        target: tiebreaker_override_review_fan_in
+        label: default
+        condition_ref: null
+      - id: tiebreaker_override_finalize-tiebreaker_override_execute_batches
+        source: tiebreaker_override_finalize
+        target: tiebreaker_override_execute_batches
+        label: default
+        condition_ref: null
+      - id: tiebreaker_override_review_fan_in-tiebreaker-override-review-rework-execute-batches
+        source: tiebreaker_override_review_fan_in
+        target: tiebreaker-override-review-rework-execute-batches
+        label: rework
+        condition_ref: tiebreaker_override_review_fan_in.review_route_signal.eq.rework
+      - id: tiebreaker_override_review_fan_in-tiebreaker_override_halt_review
+        source: tiebreaker_override_review_fan_in
+        target: tiebreaker_override_halt_review
+        label: pass
+        condition_ref: tiebreaker_override_review_fan_in.review_route_signal.eq.pass
+      - id: tiebreaker_override_review_fan_in-tiebreaker_override_review_deferred_human
+        source: tiebreaker_override_review_fan_in
+        target: tiebreaker_override_review_deferred_human
+        label: deferred_human
+        condition_ref: tiebreaker_override_review_fan_in.review_route_signal.eq.deferred_human
+      - id: tiebreaker_override_review_fan_in-tiebreaker_override_review_halt
+        source: tiebreaker_override_review_fan_in
+        target: tiebreaker_override_review_halt
+        label: else
+        condition_ref: tiebreaker_override_review_fan_in.review_route_signal.else
+      - id: tiebreaker_override_review_fan_in-tiebreaker_override_review_override
+        source: tiebreaker_override_review_fan_in
+        target: tiebreaker_override_review_override
+        label: blocked
+        condition_ref: tiebreaker_override_review_fan_in.review_route_signal.eq.blocked
+      - id: tiebreaker_researcher:challenger
+        source: tiebreaker_researcher
+        target: tiebreaker_challenger
+        label: default
+        condition_ref: null
+      - id: tiebreaker_review_fan_in-tiebreaker-review-rework-execute-batches
+        source: tiebreaker_review_fan_in
+        target: tiebreaker-review-rework-execute-batches
+        label: rework
+        condition_ref: tiebreaker_review_fan_in.review_route_signal.eq.rework
+      - id: tiebreaker_review_fan_in-tiebreaker_halt
+        source: tiebreaker_review_fan_in
+        target: tiebreaker_halt
+        label: pass
+        condition_ref: tiebreaker_review_fan_in.review_route_signal.eq.pass
+      - id: tiebreaker_review_fan_in-tiebreaker_review_deferred_human
+        source: tiebreaker_review_fan_in
+        target: tiebreaker_review_deferred_human
+        label: deferred_human
+        condition_ref: tiebreaker_review_fan_in.review_route_signal.eq.deferred_human
+      - id: tiebreaker_review_fan_in-tiebreaker_review_halt
+        source: tiebreaker_review_fan_in
+        target: tiebreaker_review_halt
+        label: else
+        condition_ref: tiebreaker_review_fan_in.review_route_signal.else
+      - id: tiebreaker_review_fan_in-tiebreaker_review_override
+        source: tiebreaker_review_fan_in
+        target: tiebreaker_review_override
+        label: blocked
+        condition_ref: tiebreaker_review_fan_in.review_route_signal.eq.blocked
+      - id: tiebreaker_synthesis:decision
+        source: tiebreaker_synthesis
+        target: tiebreaker_decision
+        label: default
+        condition_ref: null
   deferred_canonical_shapes:
     fanout_panel:
       reason: Static compile-time panel remains a DSL shape; M3-owned runtime-list fanout is covered by parallel_map in canonical_megaplan_topology.

@@ -1,6 +1,6 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-13T23:02:15.309189+00:00",
+  "generated_at": "2026-07-14T07:42:30.648889+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-workflow-boundary-contracts-corrective-20260710"
@@ -12,7 +12,7 @@
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:fb5de21f68a75a1d2c93e9b0bc73a0cf8903a4d40ffb42e83f13acec7eba2b7f",
+    "digest": "sha256:74c5329dcb48bf335e8bb495588fbdf9b85cbf7146b88becba3d9381ac27a6fa",
     "last_seq": 478,
     "projection": "problems"
   },

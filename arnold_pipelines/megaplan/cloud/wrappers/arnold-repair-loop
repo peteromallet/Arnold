@@ -2710,6 +2710,20 @@ if plan_state_path is not None:
     }
     plan_dir = plan_state_path.parent
     execute_attempt_context = _collect_execute_attempt_context(plan_dir, plan_state)
+    try:
+        from arnold_pipelines.megaplan.cloud.repair_contract import build_repair_semantic_context
+        from arnold_pipelines.megaplan.semantic_health import inspect_semantic_health, project_semantic_findings
+        findings = inspect_semantic_health(plan_dir)
+        semantic_health = project_semantic_findings(findings, session_id=session, plan_dir=plan_dir)
+        semantic_context = build_repair_semantic_context(
+            findings=findings,
+            session_id=session,
+        )
+        custody_projection = semantic_context.get("custody_projection") or {}
+    except Exception:
+        semantic_health = None
+        semantic_context = None
+        custody_projection = {}
     resume_cursor = plan_state.get("resume_cursor") if isinstance(plan_state.get("resume_cursor"), dict) else {}
     meta = plan_state.get("meta") if isinstance(plan_state.get("meta"), dict) else {}
     clarification = plan_state.get("clarification") if isinstance(plan_state.get("clarification"), dict) else {}
@@ -2818,6 +2832,9 @@ else:
     latest_failure = {}
     execute_attempt_context = {}
     last_gate = {}
+    semantic_health = None
+    semantic_context = None
+    custody_projection = {}
 
 state_mismatch = _state_mismatch_analysis(plan_latest_failure, chain_state_summary)
 raw_failure_signals = _unique_strings(
@@ -2987,6 +3004,9 @@ payload = {
     "resume_authority_failure": resume_authority_failure,
 }
 payload["resolver_output"] = resolver_output
+payload["semantic_health"] = semantic_health
+payload["semantic_context"] = semantic_context
+payload["custody_projection"] = custody_projection
 print(json.dumps(payload, sort_keys=True))
 PY
 }
@@ -3813,6 +3833,9 @@ payload = {
 }
 resolver_output = failure_context_payload.get("resolver_output")
 payload["initial_facts"]["resolver_output"] = resolver_output or {}
+payload["initial_facts"]["semantic_health"] = failure_context_payload.get("semantic_health") or {}
+payload["initial_facts"]["semantic_context"] = failure_context_payload.get("semantic_context") or {}
+payload["initial_facts"]["custody_projection"] = failure_context_payload.get("custody_projection") or {}
 payload = merge_additive_fields(payload, target=resolver_output or {}, incident_id=incident_id)
 save_repair_data(data_path, payload)
 PY

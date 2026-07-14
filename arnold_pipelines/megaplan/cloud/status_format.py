@@ -15,6 +15,7 @@ so a snapshot is genuinely the single source of truth.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 # Discord's hard per-message ceiling. Stay under it with headroom for code fences.
@@ -30,6 +31,9 @@ _STATUS_EMOJI = {
 }
 
 _STATUS_ORDER = ("running", "repairing", "blocked", "attention", "complete")
+
+# Activity age threshold for stale active-step warnings (seconds).
+STALE_ACTIVE_STEP_S = 30 * 60
 
 
 def _summary_line(snapshot: Mapping[str, Any]) -> str:
@@ -97,13 +101,24 @@ def format_cloud_status_short(
         line = f"{emoji} `{entry.get('session', '?')}` — {status}: {plan}"
         if entry.get("operator_next") and status in {"repairing", "blocked", "attention"}:
             line += f" ({entry['operator_next']})"
+
+        # Compact S4 annotations: semantic-health findings count, custody, warnings.
+        s4_tags = _compact_s4_tags(entry)
+        if s4_tags:
+            line += " " + s4_tags
+
         lines.append(line)
 
     return _chunk_lines(lines, max_chars=max_chars)
 
 
 def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
-    """Multi-line CLI / human view of the snapshot."""
+    """Multi-line CLI / human view of the snapshot.
+
+    Renders semantic health separately from lifecycle/activity, and custody
+    separately from process liveness, including unmanaged-process and stale
+    active-step warnings.
+    """
     if not snapshot or not isinstance(snapshot, Mapping):
         return "Cloud status snapshot unavailable (degraded)."
     out = [f"Cloud status — {_summary_line(snapshot)}"]
@@ -112,6 +127,7 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
     if isinstance(degraded, Mapping) and degraded.get("reasons"):
         out.append("degraded: " + "; ".join(degraded["reasons"]))
     out.append("")
+    generated_at = _parse_iso(snapshot.get("generated_at"))
     for entry in _ordered_sessions(snapshot):
         status = entry.get("status", "attention")
         progress = entry.get("progress")
@@ -153,8 +169,196 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
         evidence = entry.get("evidence") or {}
         if isinstance(evidence, Mapping) and evidence.get("marker"):
             out.append(f"      evidence: {evidence['marker']}")
+
+        # --- S4: lifecycle / activity phase (separate from semantic health) ---
+        _append_lifecycle_activity(out, entry)
+
+        # --- S4: semantic health (separate from lifecycle/activity) ---
+        _append_semantic_health(out, entry)
+
+        # --- S4: custody (separate from process liveness) ---
+        _append_custody_repair(out, entry)
+
+        # --- S4: warnings ---
+        _append_s4_warnings(out, entry, generated_at)
+
         _append_shadow_views(out, entry)
     return "\n".join(out)
+
+
+# ── S4: compact tags for short format ──────────────────────────────────────
+
+
+def _compact_s4_tags(entry: Mapping[str, Any]) -> str:
+    """Build compact one-line S4 annotations for the short/Discord format.
+
+    Returns a string like ``[SH:3] [custody:repairing] [⚠unmanaged]`` or
+    empty string when nothing is noteworthy.
+    """
+    tags: list[str] = []
+
+    # Semantic-health findings count (only when non-zero).
+    health = entry.get("semantic_health")
+    if isinstance(health, Mapping):
+        total = health.get("total_count")
+        if total:
+            tags.append(f"[SH:{total}]")
+
+    # Custody state when not empty/neutral.
+    custody = entry.get("custody_state")
+    if custody:
+        tags.append(f"[custody:{custody}]")
+
+    # Repair state when active.
+    repair = entry.get("repair_state")
+    if repair and repair != "none":
+        tags.append(f"[repair:{repair}]")
+
+    # Warnings compact.
+    if entry.get("process") and not entry.get("tmux"):
+        tags.append("[⚠unmanaged]")
+
+    return " ".join(tags)
+
+
+# ── S4: lifecycle / activity phase ────────────────────────────────────────
+
+
+def _append_lifecycle_activity(out: list[str], entry: Mapping[str, Any]) -> None:
+    """Render lifecycle state and activity phase independently from status.
+
+    Lifecycle state is the plan's ``current_state`` (prepped, planned, …).
+    Activity phase is the phase the session is currently in (execute, repair,
+    blocked, …).  These are rendered together as one line because they are the
+    two orthogonal axes of "what stage is the plan at" vs "what is the session
+    doing right now."
+    """
+    lifecycle = entry.get("lifecycle_state")
+    phase = entry.get("activity_phase")
+    if lifecycle or phase:
+        lc = lifecycle or "?"
+        ap = phase or "?"
+        out.append(f"      lifecycle: {lc}  activity: {ap}")
+
+
+# ── S4: semantic health ───────────────────────────────────────────────────
+
+
+def _append_semantic_health(out: list[str], entry: Mapping[str, Any]) -> None:
+    """Render semantic-health projection independently from lifecycle/activity.
+
+    The semantic-health payload is a read-only consumer projection produced by
+    :func:`inspect_semantic_health` + :func:`cloud_counts_summary`.  It carries
+    a stable fingerprint, total finding count, and dimension counts.  This
+    line is separate from the lifecycle/activity line so operators can
+    distinguish "the plan is executing" from "the plan has 3 boundary findings."
+    """
+    health = entry.get("semantic_health")
+    if not isinstance(health, Mapping):
+        return
+    total = health.get("total_count")
+    fp = health.get("fingerprint", "?")
+    fp_short = fp[:12] if isinstance(fp, str) else "?"
+    parts = [f"findings={total}" if total is not None else "findings=?"]
+    parts.append(f"fp={fp_short}")
+
+    # Add dimension counts for quick operator visibility.
+    by_kind = health.get("counts_by_kind")
+    if isinstance(by_kind, Mapping) and by_kind:
+        kind_strs = [f"{k}:{v}" for k, v in sorted(by_kind.items())]
+        parts.append("kinds={" + ", ".join(kind_strs) + "}")
+
+    out.append("      semantic_health: " + "  ".join(parts))
+
+
+# ── S4: custody / repair state ─────────────────────────────────────────────
+
+
+def _append_custody_repair(out: list[str], entry: Mapping[str, Any]) -> None:
+    """Render custody state separately from process liveness.
+
+    Custody tracks the repair-queue bucket (repairing, repairable_not_repairing,
+    broken_superfixer, …).  Process liveness (tmux/process booleans) is a
+    separate concept shown elsewhere.  Repair state tells whether a repair loop
+    is active, stale, or none.
+    """
+    custody = entry.get("custody_state")
+    repair = entry.get("repair_state")
+    repairable = entry.get("repairable_issue")
+    parts: list[str] = []
+    if custody:
+        parts.append(f"custody={custody}")
+    if repair and repair != "none":
+        parts.append(f"repair={repair}")
+    if isinstance(repairable, Mapping):
+        kind = repairable.get("kind", "?")
+        phase = repairable.get("phase", "")
+        if phase:
+            parts.append(f"issue={kind}/{phase}")
+        else:
+            parts.append(f"issue={kind}")
+    if parts:
+        out.append("      " + "  ".join(parts))
+
+
+# ── S4: warnings ───────────────────────────────────────────────────────────
+
+
+def _append_s4_warnings(
+    out: list[str],
+    entry: Mapping[str, Any],
+    generated_at: datetime | None,
+) -> None:
+    """Emit operator-facing warnings for unmanaged processes and stale steps.
+
+    - **unmanaged-process**: process liveness is true but the session is not
+      under tmux — a runner that escaped its terminal and may not be monitored.
+    - **stale active-step**: the ``latest_activity`` timestamp is older than
+      ``STALE_ACTIVE_STEP_S`` relative to the snapshot generation time.
+    """
+    warnings: list[str] = []
+
+    # Unmanaged-process: process alive, tmux dead.
+    if entry.get("process") and not entry.get("tmux"):
+        warnings.append("unmanaged-process (process alive without tmux)")
+
+    # Stale active-step: activity_phase is active but latest_activity is old.
+    activity_phase = entry.get("activity_phase", "")
+    if activity_phase and activity_phase not in ("done", "complete", ""):
+        latest = entry.get("latest_activity")
+        if latest and generated_at:
+            latest_dt = _parse_iso(latest)
+            if latest_dt is not None:
+                age_s = (generated_at - latest_dt).total_seconds()
+                if age_s > STALE_ACTIVE_STEP_S:
+                    age_min = int(age_s // 60)
+                    warnings.append(
+                        f"stale active-step (last activity {age_min}m ago)"
+                    )
+
+    if warnings:
+        out.append("      warnings: " + "; ".join(warnings))
+
+
+# ── ISO parsing helper ──────────────────────────────────────────────────────
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    """Parse a best-effort ISO-8601 string into a naive UTC datetime."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        # Handle both 'Z' suffix and '+00:00' offset.
+        cleaned = value.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except (ValueError, TypeError):
+        return None
+
+
+# ── shadow views ────────────────────────────────────────────────────────────
 
 
 def _append_shadow_views(out: list[str], entry: Mapping[str, Any]) -> None:
@@ -310,10 +514,15 @@ def format_attention_only(snapshot: Mapping[str, Any] | None) -> str:
     lines = [f"Cloud status needs attention — {_summary_line(snapshot)}"]
     for entry in sorted(noteworthy, key=lambda e: _STATUS_ORDER.index(e.get("status", "attention")) if e.get("status") in _STATUS_ORDER else len(_STATUS_ORDER)):
         emoji = _STATUS_EMOJI.get(entry.get("status"), "⚠️")
-        lines.append(
+        base = (
             f"{emoji} {entry.get('session', '?')}: {entry.get('status')} — "
             f"{entry.get('operator_next', '')}".rstrip()
         )
+        # Append compact S4 context.
+        s4_tags = _compact_s4_tags(entry)
+        if s4_tags:
+            base += " " + s4_tags
+        lines.append(base)
     return "\n".join(lines)
 
 
