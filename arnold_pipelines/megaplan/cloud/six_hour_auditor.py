@@ -7,10 +7,15 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
+
+# ── auditor completion evidence constants ─────────────────────────────
+
+_AUDITOR_6H_COMPLETION_ROW_ID = "auditor.6h_complete.1"
+_AUDITOR_6H_COMPLETION_BOUNDARY_ID = "auditor_6h_completion"
 
 AUDIT_CODEX_MODEL = "gpt-5.6-sol"
 AUDIT_MODEL_INPUTS = (
@@ -33,6 +38,7 @@ _LAYER_ORDER = (
     "reconciler",
     "resolver_confidence",
     "resolver_semantics",
+    "semantic_custody",
     "auditor_recursion",
     "ci_health",
     "engine_tree",
@@ -116,23 +122,30 @@ def enqueue_audit_repair_request(
         if isinstance(audit_item.get("incident_audit"), dict)
         else {}
     )
-    findings = [
-        finding
-        for finding in incident_audit.get("findings") or []
-        if isinstance(finding, dict) and finding.get("status") != "ok"
-    ]
     deterministic = (
         audit_item.get("deterministic_superfixer_evidence")
         if isinstance(audit_item.get("deterministic_superfixer_evidence"), dict)
         else {}
     )
-    deterministic_actionable = deterministic.get("actionable") is True
-    if not findings and not deterministic_actionable:
+    escalation_gate = (
+        audit_item.get("l3_escalation_gate")
+        if isinstance(audit_item.get("l3_escalation_gate"), dict)
+        else {}
+    )
+    deterministic_actionable = (
+        deterministic.get("actionable") is True
+        and escalation_gate.get("eligible") is True
+        and escalation_gate.get("decision") == "true_stall"
+    )
+    # Ordinary reconciler/report findings are not repair authority.  The
+    # separately authorized controller is the only caller that supplies this
+    # coherent true-stall receipt.
+    if not deterministic_actionable:
         return None
-    primary = findings[0] if findings else {
+    primary = {
         "code": "stale_l1_l2_cycle",
         "layer": "superfixer_custody",
-        "recommendation": "meta_repair.repair_attempt",
+        "recommendation": "deep_superfixer_repair",
         "message": (
             "Accepted-unclaimed/exhausted L1 custody, a dead runner, an incomplete "
             "chain, and absent or stale L2 evidence require control-plane repair."
@@ -155,7 +168,13 @@ def enqueue_audit_repair_request(
             if str(value).strip()
         }
     )
-    root_cause_identity = "audit:" + sha256(
+    escalation_id = str(escalation_gate.get("escalation_id") or "").strip()
+    if not escalation_id:
+        raise ValueError("six-hour audit repair request requires an escalation identity")
+    root_cause_identity = escalation_id
+    retry_ordinal = max(1, int(audit_item.get("l3_retry_ordinal") or 1))
+    retry_identity = f"{root_cause_identity}:attempt:{retry_ordinal}"
+    legacy_root_cause_identity = "audit:" + sha256(
         json.dumps(
             {
                 "session": session,
@@ -176,6 +195,9 @@ def enqueue_audit_repair_request(
         "accepted_request_ids": accepted_request_ids,
         "layer": layer,
         "code": code,
+        "audit_escalation_id": escalation_id,
+        "finding_evidence_digest": escalation_gate.get("evidence_digest"),
+        "legacy_root_cause_identity": legacy_root_cause_identity,
     }
     retry_budget = (
         dict(deterministic.get("retry_budget") or {})
@@ -193,8 +215,8 @@ def enqueue_audit_repair_request(
         "phase_or_step": layer,
         "milestone_or_plan": plan,
         "gate_recommendation": "",
-        "blocked_task_id": root_cause_identity,
-        "event_signature": f"six_hour_auditor:{layer}:{code}",
+        "blocked_task_id": retry_identity,
+        "event_signature": f"six_hour_auditor:{layer}:{code}:attempt:{retry_ordinal}",
     }
     diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
     return enqueue_repair_request(
@@ -214,10 +236,17 @@ def enqueue_audit_repair_request(
             "problem_id": problem_id,
             "workspace": workspace,
             "root_cause_identity": root_cause_identity,
+            "retry_ordinal": retry_ordinal,
+            "retry_of_run_id": str(audit_item.get("l3_retry_of_run_id") or ""),
             "evidence_cursor": evidence_cursor,
             "retry_budget": retry_budget,
-            "retry_strategy": "meta_repair",
-            "deterministic_superfixer_evidence": deterministic if deterministic_actionable else {},
+            "retry_strategy": "deep_superfixer_repair",
+            "dispatch_intent": "deep_superfixer_repair",
+            "deterministic_superfixer_evidence": deterministic,
+            "l3_escalation_gate": escalation_gate,
+            "repair_context_path": str(audit_item.get("l3_repair_context_path") or ""),
+            "repair_context_digest": str(audit_item.get("l3_repair_context_digest") or ""),
+            "route": escalation_gate.get("route") or {},
         },
         workspace=workspace,
         run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
@@ -286,6 +315,11 @@ def audit_projection_input(
         _stale_claim_finding(brief),
         _missing_evidence_finding(brief, incident, snapshot),
         _recurrence_finding(incident, problem),
+        *_semantic_custody_findings(
+            snapshot,
+            now=effective_now,
+            config=cfg,
+        ),
     ]
     recursion_finding = _auditor_recursion_finding(
         brief=brief,
@@ -1232,6 +1266,212 @@ def _recurrence_finding(
     )
 
 
+
+# ── S4 semantic/custody auditor reason codes ───────────────────────────
+# These consume pre-computed semantic-health and custody facts from the
+# status snapshot; they never recompute findings or custody independently.
+
+_SEMANTIC_CUSTODY_LAYER = "semantic_custody"
+_AUDITOR_CUSTODY_DISAGREEMENT_CODE = "custody_disagreement"
+_AUDITOR_UNRESOLVED_SEMANTIC_CODE = "unresolved_semantic_findings"
+_AUDITOR_STALE_ACTIVE_STEP_CODE = "stale_active_step_worker"
+_AUDITOR_UNMANAGED_PROCESS_CODE = "unmanaged_live_process"
+_AUDITOR_REPAIR_SUCCESS_NO_CUSTODY_CODE = "repair_success_without_custody"
+
+_CUSTODY_MANAGED_STATES: frozenset[str] = frozenset({"managed-running", "complete"})
+_CUSTODY_UNMANAGED_STATES: frozenset[str] = frozenset(
+    {"unmanaged-running-with-warning", "blocked-relaunch-failure"}
+)
+_REPAIR_SUCCESS_STATES: frozenset[str] = frozenset({"recovered", "completed", "fixed", "verified_recovered"})
+
+
+def _semantic_custody_findings(
+    snapshot: dict[str, Any],
+    *,
+    now: str | None,
+    config: AuditorConfig,
+) -> list[dict[str, Any]]:
+    """Gather all semantic/custody findings, consuming snapshot facts only."""
+    findings: list[dict[str, Any]] = []
+
+    unresolved = _unresolved_semantic_finding(snapshot)
+    if unresolved is not None:
+        findings.append(unresolved)
+
+    stale_worker = _stale_active_step_worker_finding(snapshot, now=now, config=config)
+    if stale_worker is not None:
+        findings.append(stale_worker)
+
+    unmanaged = _unmanaged_live_process_finding(snapshot)
+    if unmanaged is not None:
+        findings.append(unmanaged)
+
+    repair_no_custody = _repair_success_without_custody_finding(snapshot)
+    if repair_no_custody is not None:
+        findings.append(repair_no_custody)
+
+    disagreement = _custody_disagreement_finding(snapshot)
+    if disagreement is not None:
+        findings.append(disagreement)
+
+    # Emit a healthy ok when all sub-checks pass.
+    if not findings:
+        findings.append(
+            _finding(
+                "semantic_custody_clear",
+                layer=_SEMANTIC_CUSTODY_LAYER,
+                status="ok",
+                severity="ok",
+                message="Semantic-health and custody facts are consistent and clear.",
+                recommendation=None,
+            )
+        )
+
+    return findings
+
+
+def _unresolved_semantic_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect unresolved semantic findings from the status snapshot.
+
+    Consumes the pre-computed ``semantic_health`` summary (produced by
+    :func:`cloud_counts_summary`) -- never recomputes findings independently.
+    """
+    semantic_health = snapshot.get("semantic_health")
+    if not isinstance(semantic_health, dict):
+        return None
+    total_count = semantic_health.get("total_count", 0)
+    if not isinstance(total_count, int) or total_count <= 0:
+        return None
+    return _finding(
+        _AUDITOR_UNRESOLVED_SEMANTIC_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="error",
+        severity="error",
+        message=f"Status snapshot reports {total_count} unresolved semantic finding(s).",
+        recommendation="immediate_repair.repair_attempt",
+        total_count=total_count,
+        fingerprint=semantic_health.get("fingerprint"),
+        counts_by_kind=semantic_health.get("counts_by_kind"),
+        counts_by_boundary=semantic_health.get("counts_by_boundary"),
+    )
+
+
+def _stale_active_step_worker_finding(
+    snapshot: dict[str, Any],
+    *,
+    now: str | None,
+    config: AuditorConfig,
+) -> dict[str, Any] | None:
+    """Detect a stale active-step worker from the status snapshot.
+
+    Uses the same staleness threshold as the watchdog
+    (:attr:`AuditorConfig.watchdog_stale_after`).
+    """
+    activity_phase = snapshot.get("activity_phase")
+    if not isinstance(activity_phase, str) or not activity_phase:
+        return None
+    last_activity = snapshot.get("last_activity")
+    if not _is_stale(last_activity, now, config.watchdog_stale_after):
+        return None
+    return _finding(
+        _AUDITOR_STALE_ACTIVE_STEP_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=(
+            f"Active-step worker is in phase '{activity_phase}' but its last "
+            "activity is older than the audit cadence."
+        ),
+        recommendation="watchdog.dispatch",
+        activity_phase=activity_phase,
+        last_activity=last_activity,
+    )
+
+
+def _unmanaged_live_process_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect an unmanaged live process from custody state in the snapshot."""
+    custody_state = snapshot.get("custody_state")
+    if not isinstance(custody_state, str) or not custody_state:
+        return None
+    if custody_state not in _CUSTODY_UNMANAGED_STATES:
+        return None
+    return _finding(
+        _AUDITOR_UNMANAGED_PROCESS_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=f"Session custody is '{custody_state}' -- the process is live but not under managed supervision.",
+        recommendation="watchdog.dispatch",
+        custody_state=custody_state,
+    )
+
+
+def _repair_success_without_custody_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect repair-success claims without corroborating managed custody."""
+    repair_state = snapshot.get("repair_state")
+    custody_state = snapshot.get("custody_state")
+    if not isinstance(repair_state, str) or not repair_state:
+        return None
+    if repair_state not in _REPAIR_SUCCESS_STATES:
+        return None
+    if isinstance(custody_state, str) and custody_state in _CUSTODY_MANAGED_STATES:
+        return None
+    return _finding(
+        _AUDITOR_REPAIR_SUCCESS_NO_CUSTODY_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="warn",
+        severity="warn",
+        message=(
+            f"Repair state '{repair_state}' indicates success but custody "
+            f"is '{custody_state or 'unknown'}' -- not under managed supervision."
+        ),
+        recommendation="watchdog.dispatch",
+        repair_state=repair_state,
+        custody_state=custody_state or "",
+    )
+
+
+def _custody_disagreement_finding(
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect watchdog/status custody disagreement from snapshot facts.
+
+    Compares the watchdog's recorded custody kind against the status
+    snapshot's custody_state.  Both must be present and disagree for
+    a finding to be emitted.
+    """
+    status_custody = snapshot.get("custody_state")
+    watchdog = snapshot.get("watchdog")
+    if not isinstance(watchdog, dict):
+        return None
+    watchdog_custody = watchdog.get("custody_state")
+    if not isinstance(status_custody, str) or not status_custody:
+        return None
+    if not isinstance(watchdog_custody, str) or not watchdog_custody:
+        return None
+    if status_custody == watchdog_custody:
+        return None
+    return _finding(
+        _AUDITOR_CUSTODY_DISAGREEMENT_CODE,
+        layer=_SEMANTIC_CUSTODY_LAYER,
+        status="error",
+        severity="error",
+        message=(
+            f"Watchdog custody '{watchdog_custody}' disagrees with "
+            f"status snapshot custody '{status_custody}'."
+        ),
+        recommendation="auditor_escalate_to_human",
+        watchdog_custody=watchdog_custody,
+        status_custody=status_custody,
+    )
+
+
 def _auditor_recursion_finding(
     *,
     brief: dict[str, Any],
@@ -1365,16 +1605,17 @@ def _primary_finding(findings: list[dict[str, Any]]) -> dict[str, Any] | None:
         "reconciler": 1,
         "resolver_confidence": 2,
         "resolver_semantics": 3,
-        "watchdog": 4,
-        "stale_claim": 5,
-        "missing_evidence": 6,
-        "meta_repair": 7,
-        "immediate_repair": 8,
-        "install_sync": 9,
-        "github_sync": 10,
-        "recurrence": 11,
-        "project_progress": 12,
-        "live_process": 13,
+        "semantic_custody": 4,
+        "watchdog": 5,
+        "stale_claim": 6,
+        "missing_evidence": 7,
+        "meta_repair": 8,
+        "immediate_repair": 9,
+        "install_sync": 10,
+        "github_sync": 11,
+        "recurrence": 12,
+        "project_progress": 13,
+        "live_process": 14,
     }
     return sorted(
         findings,
@@ -1554,9 +1795,362 @@ def _finding(
     return finding
 
 
+# ── Auditor completion evidence ───────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SixHourAuditorCompletionEvidence:
+    """Structured 6h auditor completion evidence.
+
+    Captures the audited window, findings, next expected event,
+    repair dispatch refs, escalation verdicts, and structured
+    findings for missing repair verdicts or stale repair-data
+    in auditor inputs.
+
+    Downstream custody/status consumers use this evidence to decide
+    whether the 6h audit cycle produced a trustworthy completion.
+    """
+
+    contract_id: str = _AUDITOR_6H_COMPLETION_ROW_ID
+    boundary_id: str = _AUDITOR_6H_COMPLETION_BOUNDARY_ID
+    audited_window_hours: float = 6.0
+    audit_timestamp: str = ""
+    finding_count: int = 0
+    highest_severity: str = "ok"
+    next_expected_event: str = ""
+    outcome: str = ""
+    repair_dispatch_count: int = 0
+    repair_dispatch_refs: tuple[str, ...] = ()
+    escalation_verdict_count: int = 0
+    escalation_verdict_refs: tuple[str, ...] = ()
+    missing_repair_verdict_findings: tuple[dict[str, Any], ...] = ()
+    stale_repair_data_findings: tuple[dict[str, Any], ...] = ()
+    evidence_timestamp: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_id": self.contract_id,
+            "boundary_id": self.boundary_id,
+            "audited_window_hours": self.audited_window_hours,
+            "audit_timestamp": self.audit_timestamp,
+            "finding_count": self.finding_count,
+            "highest_severity": self.highest_severity,
+            "next_expected_event": self.next_expected_event,
+            "outcome": self.outcome,
+            "repair_dispatch_count": self.repair_dispatch_count,
+            "repair_dispatch_refs": list(self.repair_dispatch_refs),
+            "escalation_verdict_count": self.escalation_verdict_count,
+            "escalation_verdict_refs": list(self.escalation_verdict_refs),
+            "missing_repair_verdict_findings": [
+                dict(finding) for finding in self.missing_repair_verdict_findings
+            ],
+            "stale_repair_data_findings": [
+                dict(finding) for finding in self.stale_repair_data_findings
+            ],
+            "evidence_timestamp": self.evidence_timestamp,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> "SixHourAuditorCompletionEvidence":
+        return cls(
+            contract_id=_auditor_evidence_text(
+                payload.get("contract_id")
+            )
+            or _AUDITOR_6H_COMPLETION_ROW_ID,
+            boundary_id=_auditor_evidence_text(
+                payload.get("boundary_id")
+            )
+            or _AUDITOR_6H_COMPLETION_BOUNDARY_ID,
+            audited_window_hours=float(payload.get("audited_window_hours", 6.0)),
+            audit_timestamp=_auditor_evidence_text(payload.get("audit_timestamp")),
+            finding_count=int(payload.get("finding_count", 0)),
+            highest_severity=_auditor_evidence_text(payload.get("highest_severity"))
+            or "ok",
+            next_expected_event=_auditor_evidence_text(
+                payload.get("next_expected_event")
+            ),
+            outcome=_auditor_evidence_text(payload.get("outcome")),
+            repair_dispatch_count=int(payload.get("repair_dispatch_count", 0)),
+            repair_dispatch_refs=tuple(
+                _auditor_evidence_text(item)
+                for item in _auditor_evidence_list(payload.get("repair_dispatch_refs"))
+                if _auditor_evidence_text(item)
+            ),
+            escalation_verdict_count=int(
+                payload.get("escalation_verdict_count", 0)
+            ),
+            escalation_verdict_refs=tuple(
+                _auditor_evidence_text(item)
+                for item in _auditor_evidence_list(
+                    payload.get("escalation_verdict_refs")
+                )
+                if _auditor_evidence_text(item)
+            ),
+            missing_repair_verdict_findings=tuple(
+                dict(item)
+                for item in _auditor_evidence_list(
+                    payload.get("missing_repair_verdict_findings")
+                )
+                if isinstance(item, dict)
+            ),
+            stale_repair_data_findings=tuple(
+                dict(item)
+                for item in _auditor_evidence_list(
+                    payload.get("stale_repair_data_findings")
+                )
+                if isinstance(item, dict)
+            ),
+            evidence_timestamp=_auditor_evidence_text(
+                payload.get("evidence_timestamp")
+            ),
+        )
+
+
+def _auditor_evidence_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _auditor_evidence_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _auditor_evidence_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _auditor_utc_now_iso() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _primary_severity(findings: list[dict[str, Any]]) -> str:
+    rank = {"error": 0, "warn": 1, "ok": 2}
+    best = "ok"
+    best_rank = 99
+    for finding in findings:
+        severity = _auditor_evidence_text(finding.get("severity")) or "ok"
+        r = rank.get(severity, 99)
+        if r < best_rank:
+            best_rank = r
+            best = severity
+    return best
+
+
+def _extract_missing_repair_verdict_findings(
+    audit_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract structured findings for missing repair verdicts in auditor inputs.
+
+    A missing repair verdict means the auditor's input layer (immediate_repair
+    or meta_repair) produced a non-ok finding whose code indicates missing
+    evidence — the repair system did not produce a verdict the auditor can trust.
+    """
+    extracted: list[dict[str, Any]] = []
+    for finding in audit_findings:
+        if not isinstance(finding, dict):
+            continue
+        layer = _auditor_evidence_text(finding.get("layer"))
+        status = _auditor_evidence_text(finding.get("status"))
+        code = _auditor_evidence_text(finding.get("code"))
+        if status == "ok":
+            continue
+        if layer not in ("immediate_repair", "meta_repair"):
+            continue
+        if "missing" not in code and layer not in (
+            "immediate_repair",
+            "meta_repair",
+        ):
+            continue
+        # Only treat as missing-verdict when the finding explicitly
+        # indicates missing evidence or missing activity.
+        if "missing" in code or "absent" in code:
+            extracted.append(
+                {
+                    "layer": layer,
+                    "code": code,
+                    "status": status,
+                    "severity": _auditor_evidence_text(finding.get("severity")),
+                    "message": _auditor_evidence_text(finding.get("message")),
+                    "recommendation": _auditor_evidence_text(
+                        finding.get("recommendation")
+                    ),
+                    "finding_kind": "missing_repair_verdict",
+                }
+            )
+    return extracted
+
+
+def _extract_stale_repair_data_findings(
+    audit_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract structured findings for stale repair-data in auditor inputs.
+
+    Stale repair-data means the repair layer produced a finding indicating
+    the repair process itself has been running too long or its data is
+    older than the configured threshold.
+    """
+    extracted: list[dict[str, Any]] = []
+    for finding in audit_findings:
+        if not isinstance(finding, dict):
+            continue
+        layer = _auditor_evidence_text(finding.get("layer"))
+        status = _auditor_evidence_text(finding.get("status"))
+        code = _auditor_evidence_text(finding.get("code"))
+        if status == "ok":
+            continue
+        if layer not in ("immediate_repair", "meta_repair"):
+            continue
+        if "stale" in code or "running_stale" in code:
+            extracted.append(
+                {
+                    "layer": layer,
+                    "code": code,
+                    "status": status,
+                    "severity": _auditor_evidence_text(finding.get("severity")),
+                    "message": _auditor_evidence_text(finding.get("message")),
+                    "recommendation": _auditor_evidence_text(
+                        finding.get("recommendation")
+                    ),
+                    "finding_kind": "stale_repair_data",
+                    "observed_at": _auditor_evidence_text(finding.get("observed_at")),
+                }
+            )
+    return extracted
+
+
+def build_auditor_completion_evidence(
+    *,
+    audit_findings: list[dict[str, Any]] | None = None,
+    audit_outcome: str = "",
+    next_expected_event: str = "",
+    audited_window_hours: float = 6.0,
+    repair_dispatch_refs: tuple[str, ...] = (),
+    timestamp: str | None = None,
+) -> SixHourAuditorCompletionEvidence:
+    """Build structured 6h auditor completion evidence from audit output.
+
+    Parameters
+    ----------
+    audit_findings:
+        The per-incident/per-plan audit findings produced by
+        :func:`audit_projection_input` or equivalent.
+    audit_outcome:
+        The canonical audit outcome (``audit_cycle_complete``,
+        ``escalated``, ``auditor_human_escalation``).
+    next_expected_event:
+        The next expected event after audit completion.
+    audited_window_hours:
+        Size of the audit window in hours.
+    repair_dispatch_refs:
+        Paths/refs to repair requests dispatched by the auditor.
+    timestamp:
+        ISO-8601 evidence timestamp (defaults to now).
+    """
+    findings = list(audit_findings) if audit_findings is not None else []
+    evidence_ts = timestamp or _auditor_utc_now_iso()
+
+    missing_repair_verdict = _extract_missing_repair_verdict_findings(findings)
+    stale_repair_data = _extract_stale_repair_data_findings(findings)
+
+    return SixHourAuditorCompletionEvidence(
+        audited_window_hours=audited_window_hours,
+        audit_timestamp=evidence_ts,
+        finding_count=len(findings),
+        highest_severity=_primary_severity(findings),
+        next_expected_event=next_expected_event or "",
+        outcome=audit_outcome or "",
+        repair_dispatch_count=len(repair_dispatch_refs),
+        repair_dispatch_refs=repair_dispatch_refs,
+        escalation_verdict_count=sum(
+            1
+            for finding in findings
+            if _auditor_evidence_text(finding.get("recommendation"))
+            == "auditor_escalate_to_human"
+        ),
+        escalation_verdict_refs=tuple(
+            f"{_auditor_evidence_text(finding.get('layer',''))}:"
+            f"{_auditor_evidence_text(finding.get('code',''))}"
+            for finding in findings
+            if _auditor_evidence_text(finding.get("recommendation"))
+            == "auditor_escalate_to_human"
+        ),
+        missing_repair_verdict_findings=tuple(missing_repair_verdict),
+        stale_repair_data_findings=tuple(stale_repair_data),
+        evidence_timestamp=evidence_ts,
+    )
+
+
+def save_auditor_completion_evidence(
+    path: str | Path,
+    evidence: SixHourAuditorCompletionEvidence,
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Validate, redact, and persist auditor completion evidence to *path*.
+
+    The evidence is written as a JSON artifact so downstream custody/status
+    consumers can read it without recomputing the audit mapping.
+    """
+    prepared = evidence.to_dict()
+    if redactor is not None:
+        prepared = _redact_auditor_evidence_payload(prepared, redactor)
+    _auditor_atomic_write_json(path, prepared)
+    return prepared
+
+
+def _redact_auditor_evidence_payload(
+    payload: dict[str, Any],
+    redactor: Callable[[str], str],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, str):
+            result[key] = redactor(value)
+        elif isinstance(value, list):
+            result[key] = [
+                redactor(item) if isinstance(item, str) else item for item in value
+            ]
+        elif isinstance(value, dict):
+            result[key] = _redact_auditor_evidence_payload(value, redactor)
+        else:
+            result[key] = value
+    return result
+
+
+def _auditor_atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
+    """Write *payload* to *path* atomically (write-then-rename)."""
+    import tempfile
+
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        suffix=".json", prefix="auditor-evidence-", dir=str(dest.parent)
+    )
+    try:
+        with open(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        Path(tmp).rename(dest)
+    except Exception:
+        try:
+            Path(tmp).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 __all__ = [
     "AuditorConfig",
+    "SixHourAuditorCompletionEvidence",
     "audit_incident",
     "audit_projection_input",
     "build_audit_input",
+    "build_auditor_completion_evidence",
+    "save_auditor_completion_evidence",
 ]

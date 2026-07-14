@@ -795,7 +795,7 @@ def test_reconcile_clears_stale_active_state_when_completed_milestone_is_termina
     assert saved.last_state == "done"
 
 
-def test_reconcile_appends_missing_completed_record_for_terminal_merged_pr_plan(
+def test_reconcile_rejects_terminal_merged_pr_plan_without_completion_evidence(
     tmp_path: Path,
 ) -> None:
     spec_path = _write_chain_spec(tmp_path)
@@ -822,26 +822,19 @@ def test_reconcile_appends_missing_completed_record_for_terminal_merged_pr_plan(
         )
 
     saved = load_chain_state(spec_path)
-    assert reconciled.current_milestone_index == 1
-    assert reconciled.current_plan_name is None
-    assert reconciled.last_state == "done"
-    assert reconciled.completed == [
-        {
-            "label": "m7",
-            "plan": "m7-plan",
-            "status": "done",
-            "pr_number": 122,
-            "pr_state": "merged",
-        }
-    ]
-    assert saved.current_milestone_index == 1
-    assert saved.current_plan_name is None
-    assert saved.last_state == "done"
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.last_state == "authority_divergence"
+    assert reconciled.completed == []
+    assert saved.current_milestone_index == 0
+    assert saved.current_plan_name == "m7-plan"
+    assert saved.last_state == "authority_divergence"
     assert saved.completed == reconciled.completed
-    assert any("reconciled terminal plan m7-plan into completed milestone m7" in msg for msg in messages)
+    assert any("reconciliation completion guard blocked m7" in msg for msg in messages)
+    assert not saved.has_milestone_evidence("m7")
 
 
-def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
+def test_reconcile_rejects_terminal_local_plan_without_completion_evidence(
     tmp_path: Path,
 ) -> None:
     spec_path = _write_chain_spec(tmp_path)
@@ -854,32 +847,27 @@ def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
         completed=[],
     )
 
+    messages: list[str] = []
     reconciled = _reconcile_chain_from_ground_truth(
         tmp_path,
         spec_path,
         spec,
         state,
-        writer=lambda _message: None,
+        writer=messages.append,
         push_enabled=False,
     )
 
     saved = load_chain_state(spec_path)
-    assert reconciled.current_milestone_index == 1
-    assert reconciled.current_plan_name is None
-    assert reconciled.last_state == "done"
-    assert reconciled.completed == [
-        {
-            "label": "m7",
-            "plan": "m7-plan",
-            "status": "done",
-            "pr_number": None,
-            "pr_state": None,
-        }
-    ]
-    assert saved.current_milestone_index == 1
-    assert saved.current_plan_name is None
-    assert saved.last_state == "done"
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.last_state == "authority_divergence"
+    assert reconciled.completed == []
+    assert saved.current_milestone_index == 0
+    assert saved.current_plan_name == "m7-plan"
+    assert saved.last_state == "authority_divergence"
     assert saved.completed == reconciled.completed
+    assert any("reconciliation completion guard blocked m7" in msg for msg in messages)
+    assert not saved.has_milestone_evidence("m7")
 
 
 def test_reconcile_rewinds_branch_completion_missing_pr_context(

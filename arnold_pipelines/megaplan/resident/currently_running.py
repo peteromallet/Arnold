@@ -27,6 +27,8 @@ _TERMINAL_AGENT_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
 )
 _MAX_LABEL_CHARS = 140
+_EPICS_SECTION_ICON = "⛓️"
+_AGENTS_SECTION_ICON = "🤖"
 _OPAQUE_AGENT_LABELS = frozenset(
     {
         "handle the delegated resident request",
@@ -159,16 +161,18 @@ def render_currently_running(
             lines.extend((snapshot, ""))
 
     if report.status_error:
-        lines.extend(("**Epics & chains**", f"⚠️ {_safe_label(report.status_error)}."))
+        lines.extend(
+            (_epics_heading(), f"⚠️ {_safe_label(report.status_error)}.")
+        )
     elif stale_banner:
         lines.extend((
-            "**Epics & chains**",
+            _epics_heading(),
             "⚠️ Progress unavailable — the canonical status snapshot is stale.",
         ))
     else:
         degraded = status_node.get("degraded") if isinstance(status_node, Mapping) else None
         sessions = discover_running_sessions(status_node)
-        lines.append(f"**Epics & chains · {len(sessions)} active**")
+        lines.append(_epics_heading(f"{len(sessions)} active"))
         if degraded:
             lines.append(f"⚠️ {_degraded_label(degraded)}")
         if sessions:
@@ -180,13 +184,13 @@ def render_currently_running(
     if report.managed_agents_error:
         lines.extend(
             (
-                "**Resident-managed agents**",
+                _agents_heading(),
                 f"⚠️ {_safe_label(report.managed_agents_error)}.",
             )
         )
     else:
         agents = discover_live_managed_agents(report.managed_agents)
-        lines.append(f"**Resident-managed agents · {len(agents)} live**")
+        lines.append(_agents_heading(f"{len(agents)} live"))
         if agents:
             # Every live agent remains visible. Discord delivery chunks the
             # finished view safely instead of silently hiding active work.
@@ -194,6 +198,23 @@ def render_currently_running(
         else:
             lines.append("_No live resident-managed agents._")
     return "\n".join(lines)
+
+
+def _epics_heading(summary: str | None = None) -> str:
+    """Return the consistent visual heading for canonical chain work."""
+
+    return _section_heading(_EPICS_SECTION_ICON, "Epics & chains", summary)
+
+
+def _agents_heading(summary: str | None = None) -> str:
+    """Return the consistent visual heading for resident-managed work."""
+
+    return _section_heading(_AGENTS_SECTION_ICON, "Resident-managed agents", summary)
+
+
+def _section_heading(icon: str, title: str, summary: str | None = None) -> str:
+    suffix = f" · {summary}" if summary else ""
+    return f"**{icon} {title}{suffix}**"
 
 
 def _render_session(row: Mapping[str, Any]) -> str:
@@ -327,7 +348,7 @@ def _format_token_count(value: int) -> str:
 def _agent_description(row: Mapping[str, Any]) -> str | None:
     """Prefer a purpose-built label, rejecting known opaque launch defaults."""
 
-    for field in ("display_description", "description", "request_summary_line"):
+    for field in ("display_description", "description"):
         candidate = _optional_label(row.get(field))
         if candidate and candidate.casefold().startswith("current request:"):
             candidate = candidate.split(":", 1)[1].strip()

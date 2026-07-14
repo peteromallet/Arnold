@@ -75,25 +75,57 @@ def parse_frontmatter_links(
 ) -> list[TicketEpicLink]:
     """Parse and normalise ``epics`` frontmatter entries into TicketEpicLink rows.
 
-    Legacy entries (no ``kind`` or ``provenance`` key) are normalised:
-    * If ``resolves_on_complete`` is truthy → ``kind='resolves_on_complete'``,
-      ``provenance=None``.
-    * Otherwise → ``kind='associated'``, ``provenance=None``.
+    Entry shapes accepted
+    ---------------------
+    * **Dict entries** (existing and legacy):
+      ``{epic_id, resolves_on_complete?, kind?, provenance?, linked_at?}``.
+      Legacy dicts (no ``kind`` or ``provenance`` key) are normalised:
+      ``resolves_on_complete=True`` → ``kind='resolves_on_complete'``,
+      ``provenance=None``; otherwise → ``kind='associated'``,
+      ``provenance=None``.  New-style dicts preserve their explicit kind
+      and provenance.
 
-    New-style entries preserve their explicit kind and provenance.
+    * **Bare-string entries** (pre-schema legacy):
+      A plain string (e.g. ``"my-epic"``) is treated as a simple associated
+      link: ``kind='associated'``, ``provenance=None``,
+      ``resolves_on_complete=False``.  Auto-address is **never** triggered
+      by a bare-string entry because ``resolves_on_complete`` is the sole
+      gate and bare strings cannot carry that flag.
+
+    * **Invalid entries** (non-string, non-dict, empty-string, None,
+      dict missing ``epic_id``, etc.) are silently skipped so that a single
+      malformed entry does not block parsing of the rest of the list.
     """
     links: list[TicketEpicLink] = []
     for entry in record.get("epics") or []:
-        if not isinstance(entry, Mapping):
-            continue
-        epic_id = entry.get("epic_id")
-        if not isinstance(epic_id, str) or not epic_id:
-            continue
+        resolves: bool
+        epic_id: str | None = None
+        raw_kind: object = None
+        raw_prov: object = None
+        raw_linked_at: object = None
 
-        resolves = bool(entry.get("resolves_on_complete"))
+        if isinstance(entry, str):
+            # --- bare-string legacy entry ---
+            if not entry:
+                continue
+            epic_id = entry
+            resolves = False
+            # bare strings never carry kind/provenance/linked_at
+        elif isinstance(entry, Mapping):
+            # --- dict entry (new-style or legacy) ---
+            _eid = entry.get("epic_id")
+            if not isinstance(_eid, str) or not _eid:
+                continue
+            epic_id = _eid
+            resolves = bool(entry.get("resolves_on_complete"))
+            raw_kind = entry.get("kind")
+            raw_prov = entry.get("provenance")
+            raw_linked_at = entry.get("linked_at")
+        else:
+            # invalid type (None, int, list, …) — skip
+            continue
 
         # Normalise kind for legacy entries that lack it
-        raw_kind = entry.get("kind")
         if isinstance(raw_kind, str) and raw_kind in RELATIONSHIP_KINDS:
             kind = raw_kind
         elif resolves:
@@ -102,14 +134,13 @@ def parse_frontmatter_links(
             kind = KIND_ASSOCIATED
 
         # Normalise provenance
-        raw_prov = entry.get("provenance")
         provenance: str | None
         if isinstance(raw_prov, str) and raw_prov:
             provenance = raw_prov
         else:
             provenance = None
 
-        linked_at = _parse_datetime(entry.get("linked_at")) or utc_now()
+        linked_at = _parse_datetime(raw_linked_at) or utc_now()
 
         links.append(
             TicketEpicLink(

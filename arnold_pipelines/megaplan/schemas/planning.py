@@ -26,6 +26,8 @@ class GatePayload(TypedDict):
     signals_assessment: str
     warnings: list[str]
     settled_decisions: list[SettledDecision]
+    flag_resolutions: list[dict[str, Any]]
+    accepted_tradeoffs: list[dict[str, str]]
     north_star_actions: list[NorthStarAction]
 
 
@@ -39,6 +41,8 @@ class GateArtifact(TypedDict, total=False):
     signals_assessment: str
     warnings: list[str]
     settled_decisions: list[SettledDecision]
+    flag_resolutions: list[dict[str, Any]]
+    accepted_tradeoffs: list[dict[str, str]]
     override_forced: bool
     orchestrator_guidance: str
     robustness: str

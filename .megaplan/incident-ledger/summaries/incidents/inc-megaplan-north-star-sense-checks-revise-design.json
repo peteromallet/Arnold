@@ -6,7 +6,7 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-11T13:41:18.492761+00:00",
+  "generated_at": "2026-07-14T13:45:50.925928+00:00",
   "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
   "kind": "incident_summary",
   "latest_actor": "immediate_repair",
@@ -22,7 +22,7 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
+    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
     "last_seq": 346,
     "projection": "incidents"
   },

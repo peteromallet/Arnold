@@ -1,0 +1,61 @@
+Here is the concrete patch/test checklist.
+
+---
+
+## Root Cause
+
+**The observed argparse error** occurs because the dirty `/workspace/arnold/managed_agent.py` adds four new **required** CLI flags — `--origin-kind`, `--origin-id`, `--origin-component`, `--trigger-id` (lines 1006–1009) — that did not exist in the clean supervisor source (rev 4847a74c6). If a **deployed** wrapper at `/usr/local/bin/` (installed from the clean source) invokes `python3 -m arnold_pipelines.megaplan.managed_agent run` against the dirty PYTHONPATH, argparse fails hard.
+
+## Smallest Source Patch (managed_agent.py argparse)
+
+Make the four provenance flags **optional with safe defaults** instead of `required=True`. This preserves the new guard infrastructure while letting wrappers upgrade asynchronously:
+
+```python
+# Lines 1006–1009: change required=True → default=""
+run.add_argument("--origin-kind", default="")
+run.add_argument("--origin-id", default="")
+run.add_argument("--origin-component", default="")
+run.add_argument("--trigger-id", default="")
+```
+
+In `main()` (lines 1055–1060), gate provenance construction: skip `machine_origin_provenance()` when `args.origin_kind` is empty; pass an empty/sentinel provenance dict instead. `reserve_managed_command` already validates via `normalize_machine_origin_provenance`, which will raise if provenance is missing — the guard remains closed.
+
+## Missed Backstop Patch
+
+`confirm_managed_agent_dispatch()` in `arnold-watchdog` (lines 338–385) already validates manifests via `validate_automatic_managed_manifest`. But the watchdog's **initial dispatch** at line 4389 only calls `confirm_managed_agent_dispatch` *after* the subprocess fork. There is no pre-flight validation that the wrapper's own `managed_agent run` invocation includes the provenance flags. **Add a dry-run validation** before line 4372 that shell-escapes and checks the managed_cmd array for `--origin-kind` presence, refusing to dispatch if absent. This is the backstop that ensures no wrapper shipping from the clean source can silently regress.
+
+## Sibling Launch Sites Needing Provenance & Sealed stdin/Launch Confirmation
+
+All seven sites already have `--origin-kind` in the dirty tree, but only two (`arnold-progress-auditor`, `arnold-watchdog`) have post-launch `confirm_managed_agent_dispatch`/validation. The others that need it added:
+
+| Launch Site | Wrapper | Line | Has provenance? | Needs confirm? |
+|---|---|---|---|---|
+| L1 repair dispatch | arnold-watchdog | 4343 | ✓ | ✓ (has it) |
+| L2 meta-repair dispatch | arnold-watchdog | 4852 | ✓ | ✓ (has it) |
+| Source repair dispatch | arnold-watchdog | 1967 | ✓ | ✗ MISSING |
+| Dev-fix retry | arnold-repair-loop | 5817 | ✓ | ✗ MISSING |
+| Kimi retry | arnold-repair-loop | 5891 | ✓ | ✗ MISSING |
+| Meta-repair worker | arnold-meta-repair-loop | 564 | ✓ | ✗ MISSING |
+| Progress-audit agent | arnold-progress-auditor | 4425 | ✓ | ✓ (has it) |
+| Repair-trigger L1/L2/D9 | arnold-repair-trigger | 537 | ✓ | ✗ MISSING |
+| Legacy Codex repair | arnold-kimi-goal-operator | 230 | ✓ | ✗ MISSING |
+| Legacy Kimi operator | arnold-kimi-goal-operator | 277 | ✓ | ✗ MISSING |
+| Nested research subagent | launch_hermes_agent.py | 327 | ✓ | ✗ MISSING |
+
+The **sealed stdin contract** (`--stdin-file` + `@managed-stdin@` placeholder) is present in progress-auditor, watchdog-source-repair, meta-repair-worker, kimi-goal-operator (both), hermes launcher, and repair-loop (kimi path). The repair-loop dev-fix path (line 5817) uses `--stdin-file` but the worker argv don't use the `@managed-stdin@` placeholder — it passes stdin via Codex's `-` flag. This is correct but should be documented.
+
+## Focused Regression Tests
+
+1. **`test_managed_agent_cli_without_provenance_reports_clear_error`** — invoke `managed_agent run` without `--origin-*` flags; assert non-zero exit + message mentioning provenance, not raw argparse traceback.
+
+2. **`test_every_wrapper_passes_origin_kind_to_managed_agent`** — parse each wrapper's managed_cmd array; assert `--origin-kind` is present (extends existing `test_real_dispatch_seams_use_shared_supervisor`).
+
+3. **`test_watchdog_deployed_wrapper_missing_provenance_fails_before_fork`** — simulate a deployed wrapper without origin flags; assert watchdog refuses dispatch before spawning.
+
+4. **`test_confirm_managed_agent_dispatch_rejects_unsealed_stdin`** — manifests without sealed stdin contract must fail `validate_automatic_managed_manifest`.
+
+5. **`test_launch_contract_changed_detection_preserved`** — `reserve_managed_command` with different spec but same identity must still raise (already covered by `test_same_identity_cannot_change_launch_contract`).
+
+## Concurrent Dirty Changes — Do Not Overwrite
+
+The entire provenance infrastructure is one atomic feature spanning `managed_agent.py` (+410), all 6 wrappers (+54 to +413), `launch_hermes_agent.py` (+122), `subagent.py` (+1523), `repair_contract.py` (+141), and `repair_requests.py`. Cherry-picking only the argparse soft-fail would leave the wrappers in an inconsistent state. The `--require-output`, `--child-difficulty-ceiling`, sealed stdin, `validate_automatic_managed_manifest`, and `MACHINE_ORIGIN_ENV` inheritance chain are all coupled. The smallest deployable unit is the full set. The **argparse optional-default patch** above is the narrowest surgical fix that preserves all guards.

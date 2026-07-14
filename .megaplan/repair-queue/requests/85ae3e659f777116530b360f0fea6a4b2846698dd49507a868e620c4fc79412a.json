@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "85ae3e659f777116530b360f0fea6a4b2846698dd49507a868e620c4fc79412a",
+  "created_at": "2026-07-13T15:55:42Z",
+  "source": "lifecycle_failure",
+  "session": "s2-contract-foundation-and-20260713-1544",
+  "workspace": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/plans/s2-contract-foundation-and-20260713-1544",
+  "queue_dir": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/plans/s2-contract-foundation-and-20260713-1544",
+    "plan_name": "s2-contract-foundation-and-20260713-1544",
+    "workspace_path": "/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "phase_failed",
+    "current_state": "critiqued",
+    "phase_or_step": "gate",
+    "milestone_or_plan": "s2-contract-foundation-and-20260713-1544",
+    "gate_recommendation": "Inspect phase output and resume from the failed phase.",
+    "blocked_task_id": "",
+    "event_signature": ""
+  },
+  "problem_signature_key": "bd77be3f475c57b0fd3c163d3cda43c0d84be06109e829655df04054589692aa",
+  "root_cause_hint_hash": "b090368b1ba787c76c575cf2f07730b8728fe6301c3c381ec5cb62d42a49a5e4",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "applicable",
+    "transport": "discord",
+    "correlation_id": "discord-corr-1c787f6a511f7bd61c881409",
+    "custody_id": "discord-custody-1c787f6a511f7bd61c881409",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "source_record_id": "msg_e1077ab8b985",
+    "conversation_key": "discord:dm:301463647895683072",
+    "discord_message_id": "1526226857782018098",
+    "reply_to_message_id": "1526226857782018098",
+    "guild_id": null,
+    "channel_id": "1451308037074714654",
+    "thread_id": null,
+    "dm_user_id": "301463647895683072",
+    "resident_turn_id": "turn_74851203a73e",
+    "root_run_id": "subagent-20260713-140203-ba91f563",
+    "source_kind": "discord_inbound_message"
+  }
+}

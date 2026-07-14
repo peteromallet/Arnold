@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,13 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     BLOCKER_FINGERPRINT_V1_PREFIX,
     CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
     CUSTODY_BUCKET_REPAIRING,
+    DISPATCH_DECISION_HUMAN_REQUIRED,
+    DISPATCH_DECISION_L1,
+    DISPATCH_DECISION_REPAIRING,
+    DISPATCH_DECISION_TERMINAL,
     BlockerFingerprintV1,
     blocker_id_for_fingerprint,
+    classify_repair_dispatch,
     durable_repair_active,
     normalize_blocker_fingerprint_v1,
     project_repair_custody,
@@ -201,6 +207,135 @@ def test_advisory_sidecar_canonical_label_does_not_create_repair_custody(
     assert durable_repair_active(projection) is False
 
 
+def test_identity_free_legacy_attempt_cannot_own_current_request(tmp_path: Path) -> None:
+    """An S2 requestless sidecar must not suppress ordinary L1 for dead S3."""
+
+    custody = {
+        "custody_bucket": CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
+        "active_request_ids": ["current-s3-request"],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "legacy-s2-attempt",
+                "path": "/tmp/legacy-s2-progress.json",
+                "request_id": "",
+                "blocker_id": "",
+                "source": "repair_progress_sidecar",
+                "terminal": False,
+                "raw": {
+                    "problem_signature": {
+                        "current_state": "",
+                        "failure_kind": "",
+                        "phase_or_step": "",
+                        "milestone_or_plan": "",
+                    }
+                },
+            }
+        ],
+    }
+
+    assert durable_repair_active(custody) is False
+    assert repair_contract._problem_signature_matches_fingerprint(
+        custody["attempts"][0]["raw"]["problem_signature"],
+        {"current_state": "finalized", "milestone_or_plan": "s3"},
+    ) is False
+    assert repair_contract._has_active_repair(
+        lock_evidence=None,
+        process_evidence={},
+        custody=custody,
+    ) is False
+
+
+def test_terminal_attempt_closes_older_immutable_dispatch_receipt() -> None:
+    request_id = "workflow-boundary-request"
+    custody = {
+        "active_request_ids": [request_id],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "dispatch-receipt",
+                "path": "/queue/attempts/dispatch.json",
+                "request_id": request_id,
+                "blocker_id": "blocker:v1:demo",
+                "source": "repair_queue_dispatch_attempt",
+                "terminal": False,
+                "recorded_at": "2026-07-14T00:02:35Z",
+            },
+            {
+                "attempt_id": "66",
+                "path": "/repair-data/workflow-boundary.repair-data.json",
+                "request_id": request_id,
+                "source": "repair_data_snapshot",
+                "terminal": True,
+                "outcome": "partial_liveness",
+                "recorded_at": "2026-07-14T00:08:29Z",
+            },
+        ],
+    }
+
+    assert durable_repair_active(custody) is False
+
+
+def test_new_dispatch_after_terminal_attempt_remains_active() -> None:
+    request_id = "workflow-boundary-request"
+    custody = {
+        "active_request_ids": [request_id],
+        "active_claim_request_ids": [],
+        "attempts": [
+            {
+                "attempt_id": "closed-attempt",
+                "path": "/repair-data/workflow-boundary.repair-data.json",
+                "request_id": request_id,
+                "source": "repair_data_snapshot",
+                "terminal": True,
+                "outcome": "repair_exhausted",
+                "recorded_at": "2026-07-14T00:08:29Z",
+            },
+            {
+                "attempt_id": "new-dispatch-receipt",
+                "path": "/queue/attempts/new-dispatch.json",
+                "request_id": request_id,
+                "blocker_id": "blocker:v1:demo",
+                "source": "repair_queue_dispatch_attempt",
+                "terminal": False,
+                "recorded_at": "2026-07-14T00:09:00Z",
+            },
+        ],
+    }
+
+    assert durable_repair_active(custody) is True
+
+
+def test_live_execute_worker_is_not_a_finalized_state_contradiction() -> None:
+    target = {
+        "authoritative_source": "chain_state",
+        "current_refs": {"current_plan_name": "s3-boundary-coverage"},
+        "plan_state": {"present": True, "fingerprint": "sha256:live-plan"},
+        "active_step_heartbeat": {
+            "active": True,
+            "worker_pid": "1004788",
+            "pid_live": True,
+        },
+    }
+
+    assert repair_contract._has_terminality_contradiction(target) is False
+
+
+def test_dead_execute_worker_still_reopens_finalized_state_custody() -> None:
+    target = {
+        "authoritative_source": "chain_state",
+        "current_refs": {"current_plan_name": "s3-boundary-coverage"},
+        "plan_state": {"present": True, "fingerprint": "sha256:dead-plan"},
+        "active_step_heartbeat": {
+            "active": True,
+            "worker_pid": "3136480",
+            "pid_live": False,
+        },
+    }
+
+    assert repair_contract._has_terminality_contradiction(target) is True
+
+
 def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcomes(
     tmp_path: Path,
 ) -> None:
@@ -314,6 +449,8 @@ def test_custody_projection_reads_immutable_queue_dispatch_attempt(
         repair_layer="l1",
         command="managed repair",
         child_pid=4242,
+        managed_run_id="managed-1",
+        managed_manifest_path="/durable/managed-1/manifest.json",
     )
 
     projection = project_repair_custody(
@@ -360,6 +497,17 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
     request_id = queued["request"]["request_id"]
     expected_blocker_id = blocker_id_for_fingerprint(_fingerprint())
     manifest_path = managed_dir / "manifest.json"
+    stdin_path = managed_dir / "stdin.bin"
+    stdin_path.write_bytes(b"x")
+    provenance = {
+        "schema_version": "arnold-machine-origin-provenance-v1",
+        "applicability": "not_applicable",
+        "transport": "automatic_system",
+        "origin_kind": "watchdog_repair",
+        "origin_id": request_id,
+        "component": "test_repair_custody",
+        "trigger_id": request_id,
+    }
     manifest_path.write_text(
         json.dumps(
             {
@@ -371,6 +519,25 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
                 "terminal_outcome": "completed",
                 "created_at": "2026-07-04T01:05:00Z",
                 "updated_at": "2026-07-04T01:06:00Z",
+                "task_kind": "autonomous",
+                "difficulty": 8,
+                "model": "control-plane",
+                "route_class": "test",
+                "backend": "repair-loop",
+                "log_path": str(managed_dir / "run.log"),
+                "result_path": str(managed_dir / "result.json"),
+                "launch_contract_sha256": "a" * 64,
+                "launch_provenance": provenance,
+                "provenance_sha256": hashlib.sha256(
+                    json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "stdin": {
+                    "kind": "sealed_file",
+                    "sealed": True,
+                    "path": str(stdin_path),
+                    "sha256": hashlib.sha256(b"x").hexdigest(),
+                    "size_bytes": 1,
+                },
                 "links": {
                     "repair_request_id": request_id,
                     "blocker_id": expected_blocker_id,
@@ -463,3 +630,294 @@ def test_custody_projection_drops_stale_request_from_advanced_plan_target(tmp_pa
 
     assert projection["active_request_ids"] == []
     assert all(request["request_id"] != stale["request"]["request_id"] for request in projection["requests"])
+
+
+# ---------------------------------------------------------------------------
+# classify_repair_dispatch — recovery-view integration
+# ---------------------------------------------------------------------------
+
+
+def _recovery_dict(
+    *,
+    custody_bucket: str = "repairable",
+    status: str = "repairable",
+    recovery_needed: bool = True,
+    permitted_actions: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "status": status,
+        "recovery_needed": recovery_needed,
+        "custody_bucket": custody_bucket,
+        "observations": [],
+        "permitted_actions": permitted_actions or [],
+        "source_paths": ["recovery://custody-test"],
+        "diagnostics": [],
+        "view_hash": "test-hash",
+        "shadow": True,
+        "read_only": True,
+    }
+
+
+def test_recovery_view_repairable_with_active_request_dispatches_l1() -> None:
+    """Recovery view repairable + active request → L1 dispatch."""
+    recovery = _recovery_dict(
+        custody_bucket="repairable",
+        permitted_actions=[{"action_type": "repair_dispatch", "rationale": "ready", "source": "test"}],
+    )
+    decision = classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.custody_bucket == "repairable"
+
+
+def test_recovery_view_repairing_custody_is_no_dispatch() -> None:
+    """Recovery view repairing → REPAIRING, no L1 dispatch."""
+    recovery = _recovery_dict(custody_bucket="repairing")
+    decision = classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairing",
+            "active_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == DISPATCH_DECISION_REPAIRING
+    assert decision.dispatch_intent == "queue_only"
+
+
+def test_recovery_view_human_required_trumps_legacy_repairable() -> None:
+    """Recovery view human_required overrides legacy repairable custody."""
+    recovery = _recovery_dict(custody_bucket="human_required")
+    decision = classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={"current_state": "blocked", "resume_cursor": {"retry_strategy": "manual_review"}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
+    assert decision.custody_bucket == "human_required"
+
+
+def test_recovery_view_healthy_with_terminal_state() -> None:
+    """Recovery view healthy + terminal state → TERMINAL."""
+    recovery = _recovery_dict(custody_bucket="healthy", recovery_needed=False)
+    decision = classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "done",
+            "failure_kind": "",
+            "terminal_outcomes": ["complete"],
+        },
+        plan_state={"current_state": "done", "resume_cursor": {}},
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == DISPATCH_DECISION_TERMINAL
+
+
+def test_recovery_view_legacy_fallback_preserved() -> None:
+    """When recovery_view is absent, legacy classify_repair_dispatch works unchanged."""
+    decision = classify_repair_dispatch(
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {"kind": "execution_blocked", "phase": "execute"},
+        },
+        current_target={
+            "current_refs": {
+                "current_plan_name": "test-plan",
+                "plan_current_state": "blocked",
+            },
+            "plan_state": {"fingerprint": "sha256:proof"},
+        },
+    )
+    assert decision.decision == DISPATCH_DECISION_L1
+
+
+# ---------------------------------------------------------------------------
+# T15: Repair verdict evidence in custody projection
+# ---------------------------------------------------------------------------
+
+
+def test_custody_projection_includes_verdict_evidence_when_present(
+    tmp_path: Path,
+) -> None:
+    """Custody projection surfaces verdict evidence when repair verdict is saved."""
+    queue_root = tmp_path / ".megaplan" / repair_requests.QUEUE_DIR_NAME
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+
+    # Enqueue a request using queue_root
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="needs verdict",
+        created_at="2026-07-04T01:00:00Z",
+    )
+
+    # Save a cleared verdict into the repair data
+    verdict_path = repair_data_dir / "verdict.json"
+    verdict = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_CLEARED,
+        blocker_id="blocker-42",
+        session="demo-session",
+        request_id=queued["request"]["request_id"],
+        outcome="complete",
+        evidence_timestamp="2026-07-04T02:00:00Z",
+    )
+    repair_contract.save_repair_verdict(verdict_path, verdict)
+
+    projection = project_repair_custody(
+        plan_state={
+            "name": "agentic-replay-viewer",
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "blocked_recovery_not_resolved",
+                "phase": "execute",
+                "metadata": {"blocked_task_id": "T1"},
+            },
+        },
+        current_target={
+            "current_refs": {
+                "current_plan_name": "agentic-replay-viewer",
+                "plan_current_state": "blocked",
+            },
+            "event_cursors": {"resume_retry_strategy": "manual_review"},
+            "plan_state": {"fingerprint": "sha256:target-proof"},
+        },
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    # Custody projection should still work — request is present
+    assert len(projection["requests"]) >= 1
+    assert projection["custody_bucket"] == "repairable_not_repairing"
+
+
+def test_custody_rejects_liveness_only_repair_outcome(tmp_path: Path) -> None:
+    """When repair data has only liveness outcome, custody treats it as non-terminal."""
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+
+    # Write repair data with liveness-only outcome
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            repair_contract.merge_additive_fields(
+                {
+                    "session": "demo-session",
+                    "workspace": "/tmp/ws",
+                    "run_kind": "chain",
+                    "plan_name": "agentic-replay-viewer",
+                    "attempts": [
+                        {"attempt_id": 1, "mechanical_launch": "running"}
+                    ],
+                    "current_attempt_id": 1,
+                    "outcome": "partial_liveness",
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    projection = project_repair_custody(
+        plan_state={
+            "name": "agentic-replay-viewer",
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "blocked_recovery_not_resolved",
+                "phase": "execute",
+                "metadata": {"blocked_task_id": "T1"},
+            },
+        },
+        current_target={
+            "current_refs": {
+                "current_plan_name": "agentic-replay-viewer",
+                "plan_current_state": "blocked",
+            },
+            "event_cursors": {"resume_retry_strategy": "manual_review"},
+            "plan_state": {"fingerprint": "sha256:target-proof"},
+        },
+        repair_data_dir=repair_data_dir,
+    )
+
+    # Liveness-only outcome does not produce a cleared/success outcome
+    assert "complete" not in projection["terminal_outcomes"]
+    # Liveness without a current request/claim does not own durable custody.
+    assert projection["attempts"] == []
+    assert projection["custody_bucket"] != CUSTODY_BUCKET_REPAIRING
+
+
+def test_custody_verdict_distinguishes_cleared_from_escalated(tmp_path: Path) -> None:
+    """Repair verdicts of different kinds produce distinct custody signals."""
+    # Simulate a verdict dict to check how the verdict kind propagates
+    verdict_cleared = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_CLEARED,
+        blocker_id="blocker-cleared",
+        evidence_timestamp="2026-07-10T10:00:00Z",
+    )
+    verdict_escalated = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_ESCALATED,
+        blocker_id="blocker-esc",
+        evidence_timestamp="2026-07-10T10:00:00Z",
+    )
+    verdict_no_fix = repair_contract.RepairVerdict(
+        verdict_kind=repair_contract.REPAIR_VERDICT_NO_FIX,
+        blocker_id="blocker-nofix",
+        evidence_timestamp="2026-07-10T10:00:00Z",
+    )
+
+    # Each verdict kind is distinguishable
+    assert verdict_cleared.verdict_kind == "cleared"
+    assert verdict_escalated.verdict_kind == "escalated"
+    assert verdict_no_fix.verdict_kind == "no_fix"
+
+    # Cleared is different from escalated
+    assert verdict_cleared.verdict_kind != verdict_escalated.verdict_kind
+    # No-fix is different from cleared
+    assert verdict_no_fix.verdict_kind != verdict_cleared.verdict_kind

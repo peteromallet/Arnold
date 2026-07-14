@@ -29,23 +29,17 @@ class _Response:
         self.events.append(("response", content))
 
 
-class _Followup:
-    def __init__(self, events: list[tuple[str, str]]) -> None:
-        self.events = events
-
-    async def send(self, content: str, **kwargs) -> None:
-        assert kwargs == {"ephemeral": True}
-        self.events.append(("followup", content))
-
-
 def _interaction(events: list[tuple[str, str]]) -> SimpleNamespace:
+    async def edit_original_response(*, content: str) -> None:
+        events.append(("edit_original", content))
+
     return SimpleNamespace(
         user=SimpleNamespace(id=42),
         guild_id=7,
         channel=None,
         channel_id=9,
         response=_Response(events),
-        followup=_Followup(events),
+        edit_original_response=edit_original_response,
     )
 
 
@@ -115,7 +109,7 @@ def test_acknowledgement_is_confirmed_before_canonical_restart_invocation() -> N
     assert "detached agents" in events[0][1]
     assert "tmux-backed Megaplan/cloud chains are preserved" in events[0][1]
     assert events[1] == ("operation", "agentbox-discord-resident")
-    assert events[2][0] == "followup"
+    assert events[2][0] == "edit_original"
     assert "guarded resident restart was accepted" in events[2][1]
     assert "replacement health is verified" in events[2][1]
 
@@ -137,7 +131,7 @@ def test_fail_closed_result_is_reported_without_claiming_restart() -> None:
 
     assert events[0] == ("response", RESTART_RESIDENT_ACKNOWLEDGEMENT)
     assert events[1] == (
-        "followup",
+        "edit_original",
         "The resident restart was refused safely: installed service state is stale. "
         "No restart was performed.",
     )
@@ -161,7 +155,7 @@ def test_restart_exception_fails_closed_after_acknowledgement() -> None:
 
     assert events[0] == ("response", RESTART_RESIDENT_ACKNOWLEDGEMENT)
     assert events[1] == (
-        "followup",
+        "edit_original",
         "The resident restart did not return a confirmed acceptance. "
         "No restart outcome is being claimed; check the durable lifecycle status.",
     )
@@ -181,7 +175,7 @@ def test_invalid_restart_result_makes_no_outcome_claim() -> None:
 
     assert events[0] == ("response", RESTART_RESIDENT_ACKNOWLEDGEMENT)
     assert events[1] == (
-        "followup",
+        "edit_original",
         "The resident restart returned no valid lifecycle result. "
         "No restart outcome is being claimed; check the durable lifecycle status.",
     )

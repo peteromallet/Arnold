@@ -278,7 +278,7 @@ class TestStrategyCLIParserRegistration:
         )
 
     def test_strategy_subcommands_registered(self) -> None:
-        """All 8 strategy subcommands are registered under 'strategy'."""
+        """All 10 strategy subcommands are registered under 'strategy'."""
         parser = build_parser()
         subparsers_action = next(
             action for action in parser._actions if action.dest == "command"
@@ -290,7 +290,7 @@ class TestStrategyCLIParserRegistration:
             for action in strategy_parser._actions
             if action.dest == "strategy_action"
         )
-        expected = {"init", "validate", "show", "list", "project", "add", "remove", "move"}
+        expected = {"init", "validate", "show", "list", "project", "add", "remove", "move", "doctor", "migrate"}
         assert set(strategy_subs.choices) == expected, (
             f"Expected subcommands {sorted(expected)}, got {sorted(strategy_subs.choices)}"
         )

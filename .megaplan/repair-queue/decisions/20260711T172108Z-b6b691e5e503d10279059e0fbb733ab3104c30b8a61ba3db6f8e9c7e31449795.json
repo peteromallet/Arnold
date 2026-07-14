@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request_decision",
+  "decision_id": "b6b691e5e503d10279059e0fbb733ab3104c30b8a61ba3db6f8e9c7e31449795",
+  "request_id": "25c54cc08fc103e023229020ac666cc5d687561098fd0bd3c0498dad70a68a64",
+  "decision": "coalesced",
+  "reason": "request marker already exists",
+  "related_request_id": "25c54cc08fc103e023229020ac666cc5d687561098fd0bd3c0498dad70a68a64",
+  "created_at": "2026-07-11T17:21:08Z"
+}

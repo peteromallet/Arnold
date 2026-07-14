@@ -36,7 +36,7 @@ Arnold builds intelligent pipelines out of many coordinated models. Its first to
 
 ## Now
 
-- [epic:repository-strategy-roadmap] Repository strategy roadmap
+- [epic:repository-strategy-roadmap] Repository Strategy Roadmap
 
 ## Next
 

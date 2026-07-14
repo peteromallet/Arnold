@@ -13,6 +13,35 @@ ideas coexist with legacy writers/readers, independently refreshed snapshots,
 process-based liveness, repair sidecars and delivery outboxes that are not one
 causal history.
 
+## 2026-07-13 ownership reconciliation
+
+Run Authority's implementation is landed through three merged milestones, but
+its current proof is not accepted: all three completion receipts are false and
+canonical verification reports three divergences. The receipts cite stale or
+missing phase evidence, landed-diff/content-address mismatches, and structural
+collection/import failures. M3's reducer suite now passes 12/12, but that result
+is not yet bound into its canonical phase/suite/completion evidence. M5 owns
+this reconciliation and canonical retirement proof before adoption proceeds.
+
+WBC owns the broad boundary/attempt/effect ledger and supported-runtime
+conformance portions of the original migration design. A later read-only audit
+on 2026-07-14 found completed candidate `cbe69337…`; it subsequently landed by
+audited no-ff merge `24afce006b9ad20391ac7af10ef67ea0b1774f9f`:
+its attempt ledger is explicitly schema-only and its producer inventory remains
+partially declared/unknown. The old four-milestone cloud terminal state is not
+accepted completion for the current six-milestone corrective chain. M6 validates
+the final landed/runtime proof and generates
+the boundary inventory; M6A operationalizes the WBC-owned ledger/API; M8 adopts
+every producer without changing ownership. M6A-M11 remain blocked until M5/M6
+handoffs plus the human approval record pass. No competing Custody ledger,
+renamed WBC contract, or manually asserted support is allowed.
+
+The residual gap is operational storage, universal integration and retirement:
+transactional WBC writes/queries, controlled authoritative writers, exact-version adoption across the complete WBC set,
+rebuildable projections and pure observers, effect-safe retry/recovery with
+independent verification, cross-system conformance, and legacy deletion only
+after parity/proof.
+
 ## Delivered substrate
 
 - Native runtime work established compiled workflow/manifest identities,
@@ -35,9 +64,11 @@ causal history.
 - Control bindings and transition APIs exist (`control_interface.py`,
   `planning/control_binding.py`), as do plan event journals, effect ledgers,
   receipts, incident events and resident managed-run manifests.
-- WBC is actively defining exact boundary declarations, execution-attempt and
-  effect evidence, semantic findings and broad runtime conformance. Its C1-C6
-  identities and runtime must remain untouched by this plan.
+- WBC defines exact boundary declarations, execution-attempt/effect schemas,
+  semantic findings and broad runtime conformance at the audited landed merge.
+  Its C1-C6 identities remain prerequisite intent; this initiative explicitly
+  operationalizes the schema-only substrate and skipped adoption without
+  rewriting WBC ownership.
 
 ## What was not migrated
 
@@ -79,5 +110,5 @@ remain unresolved.
 Repository evidence uses `pc` for the native program counter; portfolio language
 also plausibly abbreviates Parity Corrective or control plane. No distinct
 canonical “PC” initiative was found. This ambiguity is material because a
-separate PC workstream could own cursor/checkpoint or parity surfaces. M5
+separate PC workstream could own cursor/checkpoint or parity surfaces. M6
 therefore requires a human `PC_SCOPE_DECISION` before enforcement.

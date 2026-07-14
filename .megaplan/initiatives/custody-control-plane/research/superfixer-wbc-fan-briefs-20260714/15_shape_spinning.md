@@ -1,0 +1,3 @@
+Follow the full megaplan-cloud skill at `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md`; read-only.
+
+For `workflow-boundary-contracts-corrective-20260710`, test specifically for SPINNING FIXER / deterministic-budget failure. Quantify repeated signatures and repair dispatches separately for historical S2 gate failure and current S3/T18 failure. Establish whether current chain is productively advancing, whether L1/L2/L3 budgets behaved, and whether a circuit breaker should have fired. Return YES/NO for current incident plus historical verdict, exact counts/timestamps, under 400 words.

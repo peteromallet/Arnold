@@ -1,0 +1,3 @@
+Read-only forensic probe. Do not edit files, launch/kill processes, or send messages.
+
+Audit L2 meta-repair for agent-edit-verifiable-transaction-spine. Inspect watchdog/meta wrapper code (deployed and current source), watchdog log and reports after L1 launch failure at 2026-07-14T00:20:48Z, marker/repair artifacts, processes, and meta-repair logs/markers if any. Assess TRACKED/FIXED/INTENT/CONTEXT. Decide why L2 did or did not receive custody after the L1 launch-confirmation failure, and whether it would suffer the same managed-agent provenance mismatch. Identify the specific backstop behavior that must change and sibling-hunt scope. Firm verdict with paths/lines/events, under 500 words.

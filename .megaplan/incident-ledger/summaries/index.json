@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-14T07:41:54.663696+00:00",
-  "incident_count": 6,
+  "generated_at": "2026-07-14T13:45:50.952021+00:00",
+  "incident_count": 9,
   "incidents": [
     {
       "incident_id": "inc-canonical-run-state-control-plane",
@@ -15,20 +15,52 @@
       "path": ".megaplan/incident-ledger/summaries/incidents/inc-demo-session.json"
     },
     {
+      "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-megaplan-north-star-sense-checks-revise-design.json"
+    },
+    {
       "incident_id": "inc-repository-strategy-roadmap",
       "path": ".megaplan/incident-ledger/summaries/incidents/inc-repository-strategy-roadmap.json"
+    },
+    {
+      "incident_id": "inc-runauthority-epic-cloud",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-runauthority-epic-cloud.json"
     },
     {
       "incident_id": "inc-superfixer-alive-but-failed-recovery",
       "path": ".megaplan/incident-ledger/summaries/incidents/inc-superfixer-alive-but-failed-recovery.json"
     },
     {
+      "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-workflow-boundary-contracts-corrective-20260710.json"
+    },
+    {
       "incident_id": "incident-42",
       "path": ".megaplan/incident-ledger/summaries/incidents/incident-42.json"
     }
   ],
-  "problem_count": 9,
+  "problem_count": 21,
   "problems": [
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-3bc7a5eaa27e.json",
+      "problem_id": "problem-3bc7a5eaa27e"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-3c52277cbfc5.json",
+      "problem_id": "problem-3c52277cbfc5"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-461ac04158b3.json",
+      "problem_id": "problem-461ac04158b3"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-51b6859a7c76.json",
+      "problem_id": "problem-51b6859a7c76"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "problem_id": "problem-67a765759422"
+    },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-68a048c70af7.json",
       "problem_id": "problem-68a048c70af7"
@@ -46,8 +78,24 @@
       "problem_id": "problem-6eaee57d9632"
     },
     {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-72932d0eb948.json",
+      "problem_id": "problem-72932d0eb948"
+    },
+    {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-72f87afd3954.json",
       "problem_id": "problem-72f87afd3954"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-8628c3b9c119.json",
+      "problem_id": "problem-8628c3b9c119"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-8f475cf8e677.json",
+      "problem_id": "problem-8f475cf8e677"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-90fb37f640af.json",
+      "problem_id": "problem-90fb37f640af"
     },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-9e338df241c5.json",
@@ -58,12 +106,24 @@
       "problem_id": "problem-b3c4cc0b2599"
     },
     {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-bca9d501eede.json",
+      "problem_id": "problem-bca9d501eede"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-bd43205325d0.json",
+      "problem_id": "problem-bd43205325d0"
+    },
+    {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
       "problem_id": "problem-bef9405c197d"
     },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-c7e2d7ad616b.json",
       "problem_id": "problem-c7e2d7ad616b"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-e20c45ae0eb0.json",
+      "problem_id": "problem-e20c45ae0eb0"
     }
   ],
   "schema_version": 1

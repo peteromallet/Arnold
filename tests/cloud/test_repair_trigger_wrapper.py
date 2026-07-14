@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import runpy
 import stat
 import subprocess
 import sys
@@ -255,7 +256,10 @@ def test_trigger_observes_without_dispatch_when_disabled(tmp_path: Path) -> None
     assert "dispatched" not in {item["decision"] for item in _decisions(marker_dir)}
     assert str(spec) in result.stdout
     observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
-    assert observe["dispatch_decision"] == "broken_superfixer"
+    # The merged boundary contract treats an explicit manual-review cursor as
+    # human-required; merely disabling dispatch cannot relabel that custody as
+    # a broken superfixer.
+    assert observe["dispatch_decision"] == "human_required"
     assert observe["custody_bucket"] == "repairable_not_repairing"
     assert any(
         event["status"] == "no_actionable_requests"
@@ -295,6 +299,15 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stderr
     assert "repair_trigger_dispatch" in result.stdout
+    dispatch_event = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
+    )
+    managed_manifest = Path(dispatch_event["managed_manifest_path"])
+    managed = _read_json_eventually(managed_manifest)
+    assert managed["run_id"] == dispatch_event["managed_run_id"]
+    assert managed["schema_version"] == "arnold-managed-agent-run-v2"
+    assert managed["launch_provenance"]["transport"] == "automatic_system"
+    assert managed["links"]["repair_request_id"] == queued["request"]["request_id"]
     dispatched = [item for item in _decisions(marker_dir) if item["decision"] == "dispatched"]
     assert len(dispatched) == 1
     payload = _read_json_eventually(tmp_path / "repair-args.json")
@@ -303,6 +316,29 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert payload["claim_owner_pid"].isdigit()
     assert payload["queue_root"] == str(_queue_root(workspace))
     assert not (marker_dir.parent / "repair-queue").exists()
+
+
+def test_trigger_suppresses_dispatch_claim_when_worker_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    queued = _enqueue(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+
+    result = _run_trigger(marker_dir, tmp_path / "missing-repair-loop", enabled=True)
+
+    assert result.returncode == 0, result.stderr
+    event = next(item for item in _events(result) if item["event"] == "repair_trigger")
+    assert event["status"] == "repair_unavailable"
+    decisions = [
+        item["decision"]
+        for item in _decisions(marker_dir)
+        if item["request_id"] == queued["request"]["request_id"]
+    ]
+    assert "dispatched" not in decisions
+    assert repair_requests.iter_repair_attempts(_queue_root(workspace)) == []
 
 
 def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
@@ -327,6 +363,13 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
                     "remaining_attempts": 2,
                     "claim_max_retries": 3,
                 },
+            },
+            "l3_escalation_gate": {
+                "eligible": True,
+                "decision": "true_stall",
+                "escalation_id": "l3-escalation-demo-m3",
+                "evidence_digest": "a" * 64,
+                "route": {"promotion_reason": "exhausted_l1_l2_custody"},
             },
         },
         queue_root=_queue_root(workspace),
@@ -367,8 +410,14 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
     dispatch_event = next(
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
-    assert dispatch_event["repair_layer"] == "l2"
-    assert attempt["argv"] == ["demo", "l1_custody_failure"]
+    assert dispatch_event["repair_layer"] == "l3"
+    assert attempt["argv"] == ["demo", "l3_progress_auditor"]
+    managed = _read_json_eventually(Path(dispatch_event["managed_manifest_path"]))
+    assert managed["run_kind"] == "automatic_root_cause_repair"
+    assert managed["model"] == "gpt-5.6-sol"
+    assert managed["difficulty"] == 9
+    assert managed["authority"]["child_difficulty_ceiling"] == 9
+    assert managed["links"]["audit_escalation_id"] == "l3-escalation-demo-m3"
     claim_path = repair_requests.active_repair_claim_lock_dir(
         _queue_root(workspace), attempt["blocker_id"]
     ) / "owner.json"
@@ -385,8 +434,10 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
     assert len(custody_attempts) == 1
     assert custody_attempts[0]["request_id"] == request["request_id"]
     assert custody_attempts[0]["blocker_id"] == attempt["blocker_id"]
-    assert custody_attempts[0]["repair_layer"] == "l2"
+    assert custody_attempts[0]["repair_layer"] == "l3"
     assert custody_attempts[0]["status"] == "launched"
+    assert custody_attempts[0]["managed_run_id"] == dispatch_event["managed_run_id"]
+    assert custody_attempts[0]["managed_manifest_path"] == dispatch_event["managed_manifest_path"]
     attempt_history = [
         json.loads(line)
         for line in (tmp_path / "repair-attempts.jsonl").read_text(encoding="utf-8").splitlines()
@@ -510,6 +561,70 @@ def test_trigger_does_not_launch_when_request_claim_is_already_held(tmp_path: Pa
     claim_event = next(event for event in _events(result) if event["event"] == "repair_trigger_claim")
     assert claim_event["status"] == "already_claimed"
     assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
+
+
+def test_trigger_skips_actionable_head_without_blocker_id_and_dispatches_next(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = runpy.run_path(str(TRIGGER))
+    bad = {
+        "request_id": "000-bad",
+        "session": "legacy-bad",
+        "problem_signature_key": "legacy-bad-signature",
+    }
+    good = {
+        "request_id": "001-good",
+        "session": "workflow-boundary-contracts",
+        "problem_signature_key": "workflow-boundary-signature",
+    }
+    records = [bad, good]
+    emitted: list[dict[str, Any]] = []
+    retries: list[tuple[str, str]] = []
+    dispatched: list[dict[str, Any]] = []
+    trigger_globals = namespace["_scan_under_lock"].__globals__
+
+    monkeypatch.setattr(repair_requests, "iter_repair_requests", lambda *_args, **_kwargs: records)
+    monkeypatch.setattr(
+        repair_requests,
+        "record_unclaimed_request_failure",
+        lambda _queue, *, request_id, reason: (
+            retries.append((request_id, reason)) or {"status": "retryable", "retry_count": 1}
+        ),
+    )
+    trigger_globals["_terminal_request_ids"] = lambda _queue: set()
+    trigger_globals["_resolve_target"] = lambda record, **_kwargs: {"target_session": record["session"]}
+    trigger_globals["_classify_request"] = lambda record, _target, **_kwargs: {
+        "decision": "actionable",
+        "reason": "dead runner",
+        "dispatch_decision": "dispatch_l1_repair",
+        "dispatch_intent": "dispatch_l1",
+        "custody_bucket": "repairable_not_repairing",
+        "blocker_id": "" if record["request_id"] == "000-bad" else "blocker-good",
+        "blocker_fingerprint": {},
+    }
+    trigger_globals["_emit"] = lambda payload: emitted.append(dict(payload))
+    trigger_globals["_dispatch"] = lambda **kwargs: dispatched.append(dict(kwargs["request"])) or 0
+
+    result = namespace["_scan_under_lock"](
+        marker_dir=tmp_path / "markers",
+        queue_dir=tmp_path / ".megaplan" / "repair-queue",
+        repair_data_dir=None,
+        repair_bin=tmp_path / "repair",
+        meta_repair_bin=tmp_path / "meta-repair",
+        enabled=True,
+        authorized=True,
+    )
+
+    assert result == 0
+    assert retries == [("000-bad", "canonical blocker_id missing")]
+    assert dispatched[0]["request_id"] == "001-good"
+    assert any(
+        event.get("event") == "repair_trigger_claim"
+        and event.get("request_id") == "000-bad"
+        and event.get("status") == "missing_blocker_id"
+        for event in emitted
+    )
 
 
 def test_trigger_keeps_accepted_request_visible_until_dispatchable(tmp_path: Path) -> None:

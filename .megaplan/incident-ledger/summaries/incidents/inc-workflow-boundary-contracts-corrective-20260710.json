@@ -1,0 +1,281 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 258,
+  "evidence_refs": [
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 214,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/214#issuecomment-4964635342"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 215,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/215#issuecomment-4962012949"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 216,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/216#issuecomment-4964635452"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 220,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/220#issuecomment-4964635854"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 214,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/214"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 215,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/215"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 216,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/216"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 223,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/223"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 233,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/233"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 234,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/234"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 235,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/235"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 246,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/246"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-14T13:45:50.936559+00:00",
+  "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
+  "kind": "incident_summary",
+  "latest_actor": "six_hour_auditor",
+  "next_expected_event": null,
+  "omitted_evidence_ref_count": 194,
+  "outcome": "auditor_human_escalation",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-3bc7a5eaa27e",
+    "problem-3c52277cbfc5",
+    "problem-461ac04158b3",
+    "problem-51b6859a7c76",
+    "problem-67a765759422",
+    "problem-72932d0eb948",
+    "problem-72f87afd3954",
+    "problem-8628c3b9c119",
+    "problem-8f475cf8e677",
+    "problem-90fb37f640af",
+    "problem-bca9d501eede",
+    "problem-bd43205325d0",
+    "problem-e20c45ae0eb0"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
+    "last_seq": 515,
+    "projection": "incidents"
+  },
+  "state": "six_hour_auditor.audit_complete",
+  "summary_text": "inc-workflow-boundary-contracts-corrective-20260710: Audit found 1 blocking layer(s) for inc-workflow-boundary-contracts-corrective-20260710: resolver_confidence:resolver_low_confidence."
+}

@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-14T13:45:50.950027+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-workflow-boundary-contracts-corrective-20260710"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 3,
+  "owner_actor": "github_sync",
+  "problem_id": "problem-90fb37f640af",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
+    "last_seq": 485,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-90fb37f640af: progress_stall:s2-contract-foundation-and-20260713-1544:iteration=1:attempt=20:plan_v_count=1:active_step.attempt=20>=10"
+}

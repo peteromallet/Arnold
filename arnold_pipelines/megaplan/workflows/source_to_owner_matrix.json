@@ -1,0 +1,625 @@
+{
+  "meta": {
+    "schema_version": "wbc.matrix.v1",
+    "matrix_id": "source_to_owner_matrix",
+    "description": "C1 source-to-owner matrix assigning exactly one mutating owner per shared surface, listing compatibility readers, Run Authority surface categories, and WBC access levels. Deterministic ordering by surface_id.",
+    "generated_by": "C1 Contract Reality Reconciliation",
+    "timestamp_utc": "2026-07-11T18:48:00Z",
+    "owner_domains": {
+      "run_authority": {
+        "description": "Run Authority owns authority facts, views, routing decisions, and execution verdicts.",
+        "mutating_scope": "authority_facts_views"
+      },
+      "maintenance": {
+        "description": "Maintenance owns lifecycle/status/repair mutation: repair queues, incident ledger, watchdog, cloud status.",
+        "mutating_scope": "lifecycle_status_repair"
+      },
+      "wbc": {
+        "description": "WBC owns declarations, evidence profiles, findings, schema contracts, and boundary matrices.",
+        "mutating_scope": "declarations_evidence_profiles_findings"
+      }
+    },
+    "run_authority_categories": {
+      "observation": "Read-only surfaces that observe current state without claiming authority.",
+      "claim": "Surfaces that claim ownership or declare authoritative facts.",
+      "decision": "Surfaces that make routing, gating, or outcome decisions affecting workflow advancement.",
+      "projection": "Surfaces that project future state, plan execution views, or terminal outcomes."
+    },
+    "wbc_access_levels": {
+      "declare": "Schema/contract declarations defining structure and vocabulary.",
+      "emit": "Event/record emission producing persistent history entries.",
+      "evaluate": "Conformance evaluation checking boundaries, evidence, or compatibility.",
+      "adapt": "Compatibility adaptation bridging legacy and current schemas.",
+      "consume": "Reading and using declarations without mutating them."
+    }
+  },
+  "surfaces": [
+    {
+      "surface_id": "atomicity_failure_table",
+      "surface_name": "Atomicity Failure Table",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "c2_migration_gate"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Documentation of crash points and deterministic reconciliation for each atomicity boundary.",
+      "evidence_ref": "docs/workflow-boundary-contracts/c1/atomicity_failure_table.md"
+    },
+    {
+      "surface_id": "authority_dispatch_grants",
+      "surface_name": "Authority Dispatch Grants",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "execute_policy"
+      ],
+      "wbc_access_level": null,
+      "description": "Grants authority for dispatch decisions including rubber-stamp classification and contract error handling.",
+      "evidence_ref": "arnold_pipelines.megaplan.authority.binding"
+    },
+    {
+      "surface_id": "authority_routes",
+      "surface_name": "Authority Route Inventory",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "chain_authority_shadow",
+        "contract_reality_validator",
+        "authority_views"
+      ],
+      "wbc_access_level": null,
+      "description": "Inventory of every production site that reads task status and can increase authority (execute, resume, chain, supervisor, status, timeout).",
+      "evidence_ref": "arnold_pipelines.megaplan.orchestration.authority_readers:AUTHORITY_ROUTES"
+    },
+    {
+      "surface_id": "batch_scope",
+      "surface_name": "Batch Authority Scope",
+      "category": "claim",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "execute_policy"
+      ],
+      "wbc_access_level": null,
+      "description": "Resolves batch authority metadata including task claims and validation decisions.",
+      "evidence_ref": "arnold_pipelines.megaplan.authority.batch_scope"
+    },
+    {
+      "surface_id": "boundary_contract_registry",
+      "surface_name": "Boundary Contract Registry",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "semantic_health_checker",
+        "boundary_evidence_checker",
+        "receipt_dispatcher",
+        "contract_reality_validator"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Immutable registry of 35 boundary contracts covering S2-S6 workflow boundaries. Defined in arnold_pipelines/megaplan/workflows/boundary_contracts.py.",
+      "evidence_ref": "arnold_pipelines.megaplan.workflows.boundary_contracts:BOUNDARY_CONTRACTS"
+    },
+    {
+      "surface_id": "boundary_evidence_checker",
+      "surface_name": "Boundary Evidence Checker",
+      "category": "observation",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "semantic_health_checker"
+      ],
+      "wbc_access_level": "evaluate",
+      "description": "Read-only checker that validates boundary evidence against contract requirements without mutating state.",
+      "evidence_ref": "arnold.workflow.boundary_evidence"
+    },
+    {
+      "surface_id": "boundary_receipts",
+      "surface_name": "Boundary Receipt Dispatch",
+      "category": "observation",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "boundary_evidence_checker",
+        "contract_reality_validator"
+      ],
+      "wbc_access_level": "evaluate",
+      "description": "Emission and validation of boundary crossing receipts against contract requirements.",
+      "evidence_ref": "arnold_pipelines.megaplan.boundary_receipts"
+    },
+    {
+      "surface_id": "c1_handoff_record",
+      "surface_name": "C1 Handoff Record",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "c2_migration_gate"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Handoff record with base SHA, Run Authority manifest hash, fixture schema versions, matrix versions, and C2 integration seams.",
+      "evidence_ref": "docs/workflow-boundary-contracts/c1/handoff.md"
+    },
+    {
+      "surface_id": "chain_authority_shadow",
+      "surface_name": "Chain Authority Shadow",
+      "category": "observation",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "cloud_status_authority_shadow"
+      ],
+      "wbc_access_level": null,
+      "description": "Shadow mode that runs authority diagnostics alongside legacy chain without behavioural change.",
+      "evidence_ref": "arnold_pipelines.megaplan.orchestration.authority_readers:SHADOW_ONLY"
+    },
+    {
+      "surface_id": "chain_launch_preconditions",
+      "surface_name": "Chain Launch Preconditions",
+      "category": "observation",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "run_authority_manifest",
+        "chain_milestone_validation"
+      ],
+      "wbc_access_level": null,
+      "description": "Precondition checks before chain launch including manifest/base SHA validation.",
+      "evidence_ref": "arnold_pipelines.megaplan.chain.launch_preconditions"
+    },
+    {
+      "surface_id": "chain_milestone_validation",
+      "surface_name": "Chain Milestone Validation",
+      "category": "observation",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "chain_launch_preconditions",
+        "support_manifest"
+      ],
+      "wbc_access_level": null,
+      "description": "Validation that chain advancement respects declared migration milestones.",
+      "evidence_ref": "arnold_pipelines.megaplan.chain.milestone_validation"
+    },
+    {
+      "surface_id": "chain_worktree_safety",
+      "surface_name": "Chain Worktree Safety",
+      "category": "observation",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "engine_fix_ports",
+        "chain_pr_platform_conformance"
+      ],
+      "wbc_access_level": null,
+      "description": "Safety checks ensuring chain operations respect worktree isolation boundaries.",
+      "evidence_ref": "arnold_pipelines.megaplan.chain.worktree_safety"
+    },
+    {
+      "surface_id": "cloud_status",
+      "surface_name": "Cloud Status Authority Shadow",
+      "category": "observation",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "chain_authority_shadow",
+        "watchdog"
+      ],
+      "wbc_access_level": null,
+      "description": "Shadow authority for cloud-deployed plan status visibility without behavioural change.",
+      "evidence_ref": "arnold_pipelines.megaplan.cloud_status"
+    },
+    {
+      "surface_id": "completion_verdict",
+      "surface_name": "Completion Verdict",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "plan_execution_view",
+        "chain_advancement"
+      ],
+      "wbc_access_level": null,
+      "description": "Typed completion verdict read from plan state determining workflow advancement or termination.",
+      "evidence_ref": "arnold_pipelines.megaplan.orchestration.completion_io"
+    },
+    {
+      "surface_id": "contract_error_handling",
+      "surface_name": "Contract Error Handling",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "authority_dispatch_grants"
+      ],
+      "wbc_access_level": null,
+      "description": "Run Authority contract error classification and handling for authority reduction failures.",
+      "evidence_ref": "arnold_pipelines.run_authority:ContractError"
+    },
+    {
+      "surface_id": "contract_reality_diagnostics",
+      "surface_name": "Contract Reality Diagnostics",
+      "category": "observation",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "c1_preflight_runner",
+        "c2_migration_gate"
+      ],
+      "wbc_access_level": "evaluate",
+      "description": "C1 preflight validators and stable diagnostic codes for prerequisite gates. Observe-only, emits diagnostics without mutating lifecycle.",
+      "evidence_ref": "arnold_pipelines.megaplan.workflows.contract_reality:C1_DIAGNOSTIC_SPECS"
+    },
+    {
+      "surface_id": "contract_to_producer_matrix",
+      "surface_name": "Contract-to-Producer Matrix",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "c2_migration_gate"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Matrix mapping all 35 boundary contracts to real producer paths, handlers, applicability, invocation identity, artifact patterns, and authority references.",
+      "evidence_ref": "arnold_pipelines.megaplan.workflows.contract_to_producer_matrix.json"
+    },
+    {
+      "surface_id": "control_binding",
+      "surface_name": "Control Binding",
+      "category": "decision",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "repair_queue",
+        "execute_policy"
+      ],
+      "wbc_access_level": null,
+      "description": "Binds control-plane decisions (profile, model, vendor, robustness) to workflow execution.",
+      "evidence_ref": "arnold_pipelines.megaplan.control_binding"
+    },
+    {
+      "surface_id": "durable_ref_schema",
+      "surface_name": "DurableRef Schema",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "execution_attempt_ledger",
+        "payload_policy",
+        "fixture_replay"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Schema-only DurableRef dataclasses, enums, and validators for required durable object reference fields including retrievability, digest handling, encryption/access scope, privacy class, and secret exclusion.",
+      "evidence_ref": "arnold.workflow.durable_refs"
+    },
+    {
+      "surface_id": "editor_setup",
+      "surface_name": "Editor Setup",
+      "category": "claim",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "control_binding"
+      ],
+      "wbc_access_level": null,
+      "description": "Editor environment setup and configuration for plan authoring workflows.",
+      "evidence_ref": "arnold_pipelines.megaplan.editor_setup"
+    },
+    {
+      "surface_id": "engine_fix_ports",
+      "surface_name": "Engine Fix Ports",
+      "category": "claim",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "control_binding",
+        "chain_worktree_safety"
+      ],
+      "wbc_access_level": null,
+      "description": "Engine port management for editable installs and worktree isolation.",
+      "evidence_ref": "arnold_pipelines.megaplan.engine_fix_ports"
+    },
+    {
+      "surface_id": "evidence_status",
+      "surface_name": "Evidence Status Classification",
+      "category": "observation",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "receipt_dispatcher",
+        "contract_reality_validator"
+      ],
+      "wbc_access_level": null,
+      "description": "Classifies evidence as satisfied, waived, not_applicable, or pending for gating decisions.",
+      "evidence_ref": "arnold_pipelines.megaplan.orchestration.evidence_contract:EvidenceStatus"
+    },
+    {
+      "surface_id": "execute_policy",
+      "surface_name": "Execute Policy",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "batch_scope",
+        "control_binding"
+      ],
+      "wbc_access_level": null,
+      "description": "Policy controlling batch execution including approval gates, retry anchors, and aggregate promotion.",
+      "evidence_ref": "arnold_pipelines.megaplan.execute_policy"
+    },
+    {
+      "surface_id": "execution_attempt_ledger_schema",
+      "surface_name": "Execution Attempt Ledger Schema",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "fixture_replay",
+        "contract_reality_validator",
+        "c2_migration_gate"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Schema-only validation for attempt identity, ordering (LedgerPosition with monotonic per-attempt sequence), provenance, runtime adapter, version anchoring, grant/decision references, 11 event types, 9 typed payload refs, and persistence-failure/reconciliation diagnostics.",
+      "evidence_ref": "arnold.workflow.execution_attempt_ledger"
+    },
+    {
+      "surface_id": "fixture_replay",
+      "surface_name": "Fixture Replay Compatibility",
+      "category": "observation",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "semantic_health_checker"
+      ],
+      "wbc_access_level": "evaluate",
+      "description": "Read-only fixture replay returning typed compatible/incompatible/unknown/non_conformant results without rewriting fixtures or normalizing legacy schema.",
+      "evidence_ref": "arnold.workflow.boundary_compatibility"
+    },
+    {
+      "surface_id": "golden_diagnostics",
+      "surface_name": "Golden Diagnostics",
+      "category": "observation",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "fixture_replay",
+        "contract_reality_validator"
+      ],
+      "wbc_access_level": "evaluate",
+      "description": "Stable compatibility diagnostics for schema golden cases ensuring no fixture relies on non-retrievable hashes.",
+      "evidence_ref": "tests/fixtures/workflow_boundary_contracts/golden_diagnostics.json"
+    },
+    {
+      "surface_id": "human_gate_view",
+      "surface_name": "Human Gate View",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "plan_execution_view"
+      ],
+      "wbc_access_level": null,
+      "description": "Authority view for human-gate override actions requiring explicit operator approval with actor, role, and scope records.",
+      "evidence_ref": "arnold_pipelines.megaplan.authority.views:HumanGateView"
+    },
+    {
+      "surface_id": "incident_ledger",
+      "surface_name": "Incident Ledger",
+      "category": "claim",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "watchdog",
+        "repair_queue",
+        "control_binding"
+      ],
+      "wbc_access_level": null,
+      "description": "Durable ledger of incidents, problems, and summaries for operational visibility.",
+      "evidence_ref": ".megaplan/incident-ledger"
+    },
+    {
+      "surface_id": "override_authority_matrix",
+      "surface_name": "Override Authority Matrix",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "control_binding",
+        "authority_readers",
+        "contract_reality_validator"
+      ],
+      "wbc_access_level": null,
+      "description": "Matrix of canonical override actions (abort, force-proceed, replan, recover-blocked, resume-clarify, adopt-execution, suspension, human-gate) with route/effect dispatch surfaces.",
+      "evidence_ref": "arnold_pipelines.megaplan.workflows.override_matrix"
+    },
+    {
+      "surface_id": "payload_policy_schema",
+      "surface_name": "Payload Policy Schema (wbc.inline.v1, wbc.retention.v1)",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "execution_attempt_ledger",
+        "fixture_replay",
+        "contract_reality_validator"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Schema validation for inline/reference payload classification (16 KiB canonical JSON threshold), retention/redaction/tombstone/legal-hold rules, access-audit requirements, and digest-only preservation rejection.",
+      "evidence_ref": "arnold.workflow.payload_policy"
+    },
+    {
+      "surface_id": "plan_execution_view",
+      "surface_name": "Plan Execution View",
+      "category": "projection",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "chain_authority_shadow",
+        "human_gate_view"
+      ],
+      "wbc_access_level": null,
+      "description": "Derived projection of plan execution state including legacy task labels and current phase.",
+      "evidence_ref": "arnold_pipelines.megaplan.authority.views:PlanExecutionView"
+    },
+    {
+      "surface_id": "producer_driven_fixtures",
+      "surface_name": "Producer-Driven Boundary Fixtures",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "fixture_replay",
+        "semantic_health_checker"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Real producer-driven healthy and broken cases per phase family extracted without mutating source plan directories.",
+      "evidence_ref": "tests/fixtures/workflow_boundary_contracts/real_producer_cases.bundle.json"
+    },
+    {
+      "surface_id": "query_replay_audit_conformance",
+      "surface_name": "Query/Replay/Audit Conformance Plan",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "c2_migration_gate"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Plan naming machine-produced evidence artifacts, required indexes, authorization checks, read-only constraints, and non-replayable effect behavior.",
+      "evidence_ref": "docs/workflow-boundary-contracts/c1/query_replay_audit_conformance_plan.md"
+    },
+    {
+      "surface_id": "repair_queue",
+      "surface_name": "Repair Queue",
+      "category": "decision",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "watchdog",
+        "incident_ledger",
+        "control_binding"
+      ],
+      "wbc_access_level": null,
+      "description": "Queue of repair decisions for blocked or failed workflow states requiring operator intervention.",
+      "evidence_ref": "arnold_pipelines.megaplan.repair"
+    },
+    {
+      "surface_id": "rubber_stamp_classification",
+      "surface_name": "Rubber Stamp Classification",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "authority_dispatch_grants"
+      ],
+      "wbc_access_level": null,
+      "description": "Classifies task completion as rubber-stamp (auto-satisfied without evidence) or requiring explicit evidence evaluation.",
+      "evidence_ref": "arnold_pipelines.megaplan.orchestration.rubber_stamp"
+    },
+    {
+      "surface_id": "run_authority_manifest",
+      "surface_name": "Run Authority Completion Manifest",
+      "category": "claim",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "c1_preflight_runner",
+        "chain_launch_preconditions"
+      ],
+      "wbc_access_level": null,
+      "description": "Run Authority completion manifest hash and base SHA pinned as C1 prerequisites.",
+      "evidence_ref": "c1.handoff.run_authority.manifest_hash"
+    },
+    {
+      "surface_id": "schema_golden_fixtures",
+      "surface_name": "Schema Golden Fixtures",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "fixture_replay",
+        "golden_diagnostics"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Compact deterministic schema fixture cases for every ledger event type, identity/order rules, inline/reference payload modes, retention/redaction classes, legal hold, and persistence-failure states.",
+      "evidence_ref": "tests/fixtures/workflow_boundary_contracts/schema_golden_cases.json"
+    },
+    {
+      "surface_id": "semantic_evidence_rows",
+      "surface_name": "Semantic Evidence Row IDs",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "boundary_evidence_checker",
+        "row_evidence_checker",
+        "semantic_health_checker"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Stable row ID namespace for S2-S5 semantic evidence constructs. Defined in arnold/workflow/semantic_evidence.py.",
+      "evidence_ref": "arnold.workflow.semantic_evidence"
+    },
+    {
+      "surface_id": "semantic_health",
+      "surface_name": "Semantic Health Checker",
+      "category": "observation",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "boundary_evidence_checker",
+        "contract_reality_validator"
+      ],
+      "wbc_access_level": "evaluate",
+      "description": "Read-only semantic inspection producing SemanticFinding diagnostics for boundary contract compliance.",
+      "evidence_ref": "arnold_pipelines.megaplan.semantic_health"
+    },
+    {
+      "surface_id": "source_to_owner_matrix",
+      "surface_name": "Source-to-Owner Matrix",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "c2_migration_gate"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Machine-readable matrix assigning exactly one mutating owner per shared surface with Run Authority categories and WBC access levels.",
+      "evidence_ref": "arnold_pipelines.megaplan.workflows.source_to_owner_matrix.json"
+    },
+    {
+      "surface_id": "support_manifest",
+      "surface_name": "Support Manifest",
+      "category": "claim",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "c2_migration_gate"
+      ],
+      "wbc_access_level": "declare",
+      "description": "Machine-readable manifest enumerating every supported step/attempt transition with owner, support status, and C2-C6 migration milestones.",
+      "evidence_ref": "arnold_pipelines.megaplan.workflows.support_manifest.json"
+    },
+    {
+      "surface_id": "task_satisfaction",
+      "surface_name": "Task Satisfaction Evaluation",
+      "category": "decision",
+      "mutating_owner": "run_authority",
+      "compatibility_readers": [
+        "authority_readers",
+        "chain_advancement",
+        "batch_scope"
+      ],
+      "wbc_access_level": null,
+      "description": "Determines whether evidence satisfies task completion criteria, gating workflow advancement.",
+      "evidence_ref": "arnold_pipelines.megaplan.orchestration.task_satisfaction"
+    },
+    {
+      "surface_id": "watchdog",
+      "surface_name": "Watchdog Supervisor",
+      "category": "observation",
+      "mutating_owner": "maintenance",
+      "compatibility_readers": [
+        "incident_ledger",
+        "repair_queue",
+        "cloud_status"
+      ],
+      "wbc_access_level": null,
+      "description": "Live watchdog supervisor that monitors plan health and emits diagnostic outcomes.",
+      "evidence_ref": "arnold_pipelines.megaplan.watchdog"
+    },
+    {
+      "surface_id": "zero_write_mutation_gate",
+      "surface_name": "Zero-Write Mutation Gate",
+      "category": "observation",
+      "mutating_owner": "wbc",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "c1_acceptance_gate"
+      ],
+      "wbc_access_level": "evaluate",
+      "description": "Proof that C1 observe-only operations perform zero lifecycle, queue, source, commit, push, status, repair, or audited-input writes.",
+      "evidence_ref": "tests/arnold_pipelines/megaplan/test_zero_write_mutation_gate.py"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+## Verdict: Attempt 66 — Accounting Inflation, Not 66 Genuine Repairs; Partial Recovery With Broken Custody
+
+### What "attempt 66" actually is
+
+`/workspace/.megaplan/cloud-sessions/repair-data/workflow-boundary-contracts-corrective-20260710.repair-data.json` records `attempt_counter: 66` but **only one attempt** in the `attempts` array (`attempt_id: 1`) and **empty `attempt_ids: []`**. The counter was inflated without corresponding attempt records — an accounting/custody defect, not evidence of 65 prior repair cycles.
+
+### The one real repair: genuine and necessary
+
+The sole recorded attempt (dispatched **2026-07-11T15:37:09Z**) was a valid Kimi→Codex repair:
+
+- **Kimi (L1)** diagnosed the `c1-contract-reality-20260711-1433` gate-loop: `invalid_gate` / `additional_property at /north_star_actions: unexpected property` — scratch-file vs. inline normalization drift in `model_seam.py`.
+- **Codex (L2)** patched `arnold_pipelines/megaplan/model_seam.py`, added regression test `test_model_seam_recovery.py`, and pushed fix **`3ff595994e`** to `origin/editible-install` (confirmed on branch at line 79 of `git log origin/editible-install`).
+
+### Recovery: genuine but partial
+
+The fix **did unblock the gate loop**. Evidence from the **20260713T193411Z auditor report** (lines 73-99):
+
+- c1 state: `done`, iteration 4
+- Chain advanced: S2 completed at log line L8311, S3 started at L8322
+- Current: `s3-megaplan-boundary-coverage-20260713-1934`, 2/4 milestones complete, progress 73%
+
+However, the chain is **now stalled again**: plan `finalized`, liveness `stalled` (last event **2026-07-13T22:04:47Z**, ~8,560s ago at observation time), `execute_empty_batch` on T18. Recovery was genuine but incomplete — it broke the gate loop but didn't achieve terminal chain completion.
+
+### Custody: terminal outcome not recorded
+
+- `repair-progress.json`: `custody_unavailable` — "no repair custody projection available"
+- `permitted: no_action` — can't classify recovery because custody is absent
+- **Incident ledger is stuck**: seq 474 records `outcome=stopped`, `next_expected_event=watchdog.dispatch`, yet watchdog reports `session already alive` at 18:41 and 19:35 — **no reconciliation event was emitted**
+- The **20260713T193411Z auditor** explicitly flagged this gap (line 99): *"fix incident/reconciler custody so a post-stop `alive` observation plus plan or milestone advancement emits a bounded recovery/progress ledger event"*
+
+### Live contradictions
+
+| Source | Observation | Contradicts |
+|--------|------------|-------------|
+| Cloud status | `[repairing]`, runner `live` | Watchdog says `alive` |
+| Chain-health | liveness `progressing` | Repair-progress: liveness `stalled`, 8560s since last event |
+| Incident ledger | `stopped`, awaiting `watchdog.dispatch` | Watchdog: `session already alive` |
+
+### Decisive finding
+
+**The attempt-66 label is misleading accounting inflation.** The one substantiated repair (`3ff595994e`) genuinely recovered the chain from the c1 gate-loop and enabled advancement through s2 into s3. However, custody failed to record the terminal outcome, the incident ledger remains unreconciled, and the chain is now stalled at s3 with a new blockage (empty execute batch T18). The repair was **genuine but partial**, and the custody gap means the fixer stack cannot self-certify completion.

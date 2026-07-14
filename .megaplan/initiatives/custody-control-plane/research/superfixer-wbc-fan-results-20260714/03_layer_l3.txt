@@ -1,0 +1,43 @@
+I now have all the evidence needed. Here is the complete audit:
+
+---
+
+## L3 Progress-Auditor Audit: `workflow-boundary-contracts-corrective-20260710`
+
+### ACT (Does L3 operate?)
+
+**PRE-FIX: NO.** The `superfixer-custody-recovery-20260713.md` handoff (lines 38–42) records: *"L3 auditor: incident audits were written to a workspace-local queue that no consumer owned. The auditor trampoline also placed the invoking checkout ahead of the deployed source and used an obsolete current-target call, so it could neither project custody nor deterministically escalate the broken L1/L2 cycle."* The wrapper resolved the wrong Python source tree and routed findings to a dead queue. The 1h watchdog's early-return bug (line 21–22 of same doc) prevented L2 trigger evaluation, so L3 had no upstream custody signal to work with.
+
+**POST-FIX: YES.** The post-fix L3 report `/workspace/audit-reports/20260713T155345Z-audit.json` (handoff lines 111–118) resolves the live target correctly, reports `RUNNING`/`human_required=false`, no dead active step, and no accepted-unclaimed current request. Test `test_gather_flags_wbc_accepted_unclaimed_exhausted_cycle_for_l3` (test_progress_auditor.py:3026–3117) proves L3 detects `stale_l1_l2_cycle` with exact evidence, producing actionable `deterministic_superfixer_evidence` including `accepted_unclaimed_count=1`, `claim_count=0`, `attempt_count=0`, `repair_outcome=repair_exhausted`, `runner_dead=True`, `absent_or_stale_l2=True`. **Verdict: ACT=YES (post-fix).**
+
+---
+
+### TRACKED (Does L3 observe the right things?)
+
+**Historical gate spin:** Post-fix L3 *can* track it — the test proves detection of the exact accepted-unclaimed/exhausted/dead-runner pattern. Pre-fix L3 could not because of the queue and source-resolution bugs.
+
+**Stale incident/recovery drift:** The post-fix L3 report *retains* the historical incident and escalates the unreconciled external publication handoff (handoff line 114–118), appending incident event 457 and opening GitHub issue 214. Pre-fix L3's `DRIFT_DETECTED` flag was correct in direction but empty-handed — it detected drift generically without structured custody evidence. **Verdict: TRACKED=PARTIAL (post-fix yes, pre-fix no).**
+
+---
+
+### FIXED (Were L3 defects repaired?)
+
+The custody recovery commits (`598f6ce059`, `52c764ce45`, `c89c3d6516`, `25b8181395`, `2165aa2f62`, `5a522e4e7a`, `43efef0058`) plus `editible-install` head at `91a33dab28` fix:
+1. L3 now uses the canonical global queue and deployed source (`six_hour_auditor.py:104–247`).
+2. `enqueue_audit_repair_request` requires `deterministic_actionable` triad (actionable=True, eligible=True, decision="true_stall") — returns `None` otherwise (line 137–138).
+3. Actionable findings carry stable root-cause identity, evidence cursor, and retry budget (`enqueue_audit_repair_request` lines 140–247).
+4. Installed wrapper SHA-256 matches source; post-deploy sweep exited successfully (handoff lines 120–128). **Verdict: FIXED=YES.**
+
+---
+
+### INTENT (Does L3 correctly authorize/escalate?)
+
+The `progress_auditor_escalation.py` header (lines 1–9) explicitly separates report findings from repair authority: *"No function in this module launches a process or mutates plan/chain truth. That separation is deliberate: a report finding is not repair authority."* Only `classify_true_stall` → `plan_dispatch` → `enqueue_audit_repair_request` → `enqueue_repair_request` can create a queued request routed to L2 meta-repair (`broken_superfixer` custody). This respects the intended boundary. **Verdict: INTENT=YES.**
+
+---
+
+### CONTEXT (S3 request and custody mismatch)
+
+**2026-07-13 19:48 UTC S3 request (17854062…):** The `tmp-superfixer-wbc/briefs/04_l3_auditor.md` records it had `DRIFT_DETECTED` with `deterministic_superfixer_evidence={}` and was never claimed. **This request was inappropriate.** It detected drift but produced zero actionable evidence — the auditor emitted a request no repair agent could meaningfully claim. Under the fixed code, `enqueue_audit_repair_request` would return `None` for this case (empty evidence → `deterministic_actionable` is False → early return at line 137). The watchdog subsequently froze (PyYAML import failure at 20:44:47Z per `01_watchdog_detect.md`) and the chain died. The S3 request was a symptom, not a solution.
+
+**Recurrence of "request attempt launched" vs "managed repair completed":** The fixed L3 would catch this through `_stale_claim_finding` (six_hour_auditor.py:309) and `_repair_layer_finding` (line 304–305), which check claim age, missing evidence, and dead processes. However, the catch requires structured deterministic evidence. The test at `test_six_hour_auditor.py:340–389` proves the full path: evidence with accepted request IDs, claim count, attempt count → `enqueue_audit_repair_request` → queued with `failure_kind: stale_l1_l2_cycle` and `dispatch_intent: deep_superfixer_repair`. If the evidence is empty (`{}`), L3 still detects drift generically (`DRIFT_DETECTED`) but cannot produce an actionable repair request — the same gap that made the 19:48 S3 request inappropriate. **Verdict: CONTEXT=MIXED. L3 catches the mismatch IF structured evidence is present; if evidence is empty, L3 detects the problem but cannot route repair.**

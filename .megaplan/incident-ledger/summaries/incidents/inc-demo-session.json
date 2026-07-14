@@ -1,7 +1,49 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 330,
+  "evidence_ref_count": 358,
   "evidence_refs": [
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 218,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/218#issuecomment-4962013288"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 240,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/240#issuecomment-4966662089"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 218,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/218"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 219,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/219"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 221,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/221"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 222,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/222"
+    },
     {
       "action": "created",
       "kind": "github.issue",
@@ -63,7 +105,16 @@
       "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "managed_agent_execution"
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
     },
     {
       "kind": "managed_agent_execution"
@@ -75,6 +126,24 @@
       "kind": "managed_agent_execution"
     },
     {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
       "kind": "github_sync.publication_payload"
     },
     {
@@ -93,52 +162,7 @@
       "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -219,12 +243,12 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-14T07:41:54.653684+00:00",
+  "generated_at": "2026-07-14T13:45:50.921778+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
   "latest_actor": "github_sync",
   "next_expected_event": "six_hour_auditor.diagnosis",
-  "omitted_evidence_ref_count": 266,
+  "omitted_evidence_ref_count": 294,
   "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
@@ -241,10 +265,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
-    "last_seq": 360,
+    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
+    "last_seq": 516,
     "projection": "incidents"
   },
   "state": "github_sync.issue_published",
-  "summary_text": "inc-demo-session: Published persistent problem problem-c7e2d7ad616b to GitHub as a new issue"
+  "summary_text": "inc-demo-session: Published persistent problem problem-6e386e382223 update to GitHub issue #240"
 }

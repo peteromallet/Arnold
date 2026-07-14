@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Atomically prepare the immutable Python environment used by cloud supervisors.
+set -euo pipefail
+
+ROOT="${MEGAPLAN_SUPERVISOR_RUNTIME_ROOT:-/workspace/.megaplan/supervisor-python}"
+SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+BASE_PYTHON="${MEGAPLAN_SUPERVISOR_BASE_PYTHON:-$(command -v python3)}"
+ACTION="${1:---prepare}"
+
+BASE_PYTHON="$(readlink -f "$BASE_PYTHON")"
+CURRENT="$ROOT/current"
+RECEIPT="$ROOT/last-prepare.json"
+mkdir -p "$ROOT/runtimes"
+
+runtime_ready() {
+  local python="$1"
+  [[ -x "$python" ]] || return 1
+  PYTHONSAFEPATH=1 "$python" -P -c \
+    'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
+    >/dev/null 2>&1
+}
+
+case "$ACTION" in
+  --check)
+    runtime_ready "$CURRENT/bin/python3"
+    printf '%s\n' "$(readlink -f "$CURRENT/bin/python3")"
+    exit 0
+    ;;
+  --python)
+    runtime_ready "$CURRENT/bin/python3"
+    readlink -f "$CURRENT/bin/python3"
+    exit 0
+    ;;
+  --prepare) ;;
+  *) printf 'usage: arnold-supervisor-runtime [--prepare|--check|--python]\n' >&2; exit 64 ;;
+esac
+
+[[ -x "$BASE_PYTHON" ]] || { printf 'base Python unavailable: %s\n' "$BASE_PYTHON" >&2; exit 78; }
+[[ -f "$SOURCE/pyproject.toml" ]] || { printf 'Arnold source unavailable: %s\n' "$SOURCE" >&2; exit 78; }
+
+exec 9>"$ROOT/prepare.lock"
+flock 9
+
+fingerprint="$({
+  sha256sum "$SOURCE/pyproject.toml"
+  [[ ! -f "$SOURCE/uv.lock" ]] || sha256sum "$SOURCE/uv.lock"
+  git -C "$SOURCE" rev-parse HEAD 2>/dev/null || true
+  git -C "$SOURCE" diff --no-ext-diff --binary HEAD 2>/dev/null | sha256sum
+} | sha256sum | cut -d' ' -f1)"
+runtime="$ROOT/runtimes/$fingerprint"
+if ! runtime_ready "$runtime/bin/python3"; then
+  stage="$(mktemp -d "$ROOT/.staging.XXXXXX")"
+  cleanup() { rm -rf "$stage"; }
+  trap cleanup EXIT
+  "$BASE_PYTHON" -m venv --copies "$stage"
+  "$stage/bin/python3" -m pip install --no-cache-dir "$SOURCE" >/dev/null
+  runtime_ready "$stage/bin/python3"
+  if [[ -e "$runtime" ]]; then
+    rm -rf "$runtime"
+  fi
+  mv "$stage" "$runtime"
+  trap - EXIT
+fi
+
+link_tmp="$ROOT/.current.$$.tmp"
+ln -s "$runtime" "$link_tmp"
+mv -Tf "$link_tmp" "$CURRENT"
+
+"$CURRENT/bin/python3" - "$RECEIPT" "$runtime" "$SOURCE" "$BASE_PYTHON" "$fingerprint" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import sys
+import tempfile
+
+path, runtime, source, base_python, fingerprint = sys.argv[1:]
+target = pathlib.Path(path)
+payload = {
+    "base_python": base_python,
+    "fingerprint": fingerprint,
+    "prepared_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "runtime": runtime,
+    "schema_version": "arnold-supervisor-runtime-receipt-v1",
+    "source": source,
+    "status": "ready",
+}
+fd, tmp = tempfile.mkstemp(prefix=target.name + ".", dir=str(target.parent))
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True)
+    handle.write("\n")
+os.replace(tmp, target)
+print(json.dumps(payload, sort_keys=True))
+PY

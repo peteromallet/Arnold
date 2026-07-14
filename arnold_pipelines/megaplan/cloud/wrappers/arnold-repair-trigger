@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/workspace/.megaplan/supervisor-python/current/bin/python3
 """Scan queued failure markers and optionally dispatch the bounded repair loop."""
 
 from __future__ import annotations
@@ -9,20 +9,86 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold_pipelines.megaplan.cloud import feature_flags, repair_requests
-from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
-from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
-from arnold_pipelines.megaplan.cloud.redact import redact_payload
-from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
-from arnold_pipelines.megaplan.cloud.repair_lock import (
-    acquire_repair_lock,
-    inspect_repair_lock,
-    release_repair_lock,
-)
-from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+def _runtime_failure(reason: str) -> None:
+    status_dir = Path(
+        os.environ.get(
+            "MEGAPLAN_SUPERVISOR_STATUS_DIR",
+            os.environ.get("CLOUD_WATCHDOG_STATUS_DIR", "/workspace/.megaplan/status"),
+        )
+    )
+    status_dir.mkdir(parents=True, exist_ok=True)
+    target = status_dir / "repair-trigger.supervisor-runtime-failure.json"
+    payload = {
+        "component": "repair-trigger",
+        "reason": reason,
+        "schema_version": "arnold-supervisor-runtime-failure-v1",
+        "status": "failed",
+    }
+    fd, tmp = tempfile.mkstemp(prefix=target.name + ".", dir=str(status_dir))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, target)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
+def _select_supervisor_interpreter() -> None:
+    preferred = Path(
+        os.environ.get(
+            "MEGAPLAN_SUPERVISOR_PYTHON",
+            "/workspace/.megaplan/supervisor-python/current/bin/python3",
+        )
+    )
+    required = os.environ.get("MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED", "0") == "1"
+    if not preferred.is_file() or not os.access(preferred, os.X_OK):
+        if required:
+            _runtime_failure("dedicated_interpreter_missing")
+            raise SystemExit(78)
+        return
+    current = Path(sys.executable).resolve()
+    target = preferred.resolve()
+    if current == target:
+        return
+    env = os.environ.copy()
+    env["MEGAPLAN_SUPERVISOR_PYTHON"] = str(target)
+    os.execve(str(target), [str(target), str(Path(__file__).resolve()), *sys.argv[1:]], env)
+
+
+if __name__ == "__main__":
+    _select_supervisor_interpreter()
+
+try:
+    import yaml  # noqa: F401
+    from arnold_pipelines.megaplan.cloud import feature_flags, repair_requests
+    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+    from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
+    from arnold_pipelines.megaplan.cloud.redact import redact_payload
+    from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
+    from arnold_pipelines.megaplan.cloud.repair_lock import (
+        acquire_repair_lock,
+        inspect_repair_lock,
+        release_repair_lock,
+    )
+    from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+    from arnold_pipelines.megaplan.managed_agent import (
+        MANAGED_AGENT_CUSTODIAN,
+        MANAGED_AGENT_SCHEMA,
+        stable_managed_run_id,
+        validate_automatic_managed_manifest,
+    )
+except Exception:
+    _runtime_failure("readiness_import_failed")
+    raise SystemExit(78)
 
 TERMINAL_DECISIONS = {"coalesced", "stale", "superseded", "dispatched"}
 STALE_EVIDENCE_KINDS = {
@@ -74,12 +140,30 @@ def main(argv: list[str] | None = None) -> int:
     repair_bin = Path(args.repair_bin)
     meta_repair_bin = Path(args.meta_repair_bin)
     enabled = feature_flags.repair_trigger_enabled()
-    authorized = feature_flags.mutation_authorized(feature_flags.MUTATION_PATH_L1)
+    requested_request_id = str(args.request_id or "").strip()
 
     request_records = repair_requests.iter_repair_requests(
         queue_dir,
         include_malformed=True,
     )
+    if requested_request_id:
+        request_records = [
+            record
+            for record in request_records
+            if str(record.get("request_id") or "") == requested_request_id
+        ]
+    requested_deep = any(
+        isinstance(record.get("target"), Mapping)
+        and str(record["target"].get("dispatch_intent") or "")
+        == "deep_superfixer_repair"
+        for record in request_records
+    )
+    authorization_path = (
+        feature_flags.MUTATION_PATH_L3
+        if requested_deep
+        else feature_flags.MUTATION_PATH_L1
+    )
+    authorized = feature_flags.mutation_authorized(authorization_path)
     if not request_records:
         _emit(
             {
@@ -104,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
             meta_repair_bin=meta_repair_bin,
             enabled=enabled,
             authorized=False,
+            request_id=requested_request_id,
         )
 
     lock = acquire_repair_lock(
@@ -135,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             meta_repair_bin=meta_repair_bin,
             enabled=enabled,
             authorized=True,
+            request_id=requested_request_id,
         )
     finally:
         release_repair_lock(lock_dir, owner=lock.owner)
@@ -149,12 +235,20 @@ def _scan_under_lock(
     meta_repair_bin: Path,
     enabled: bool,
     authorized: bool,
+    request_id: str = "",
 ) -> int:
+    requested_request_id = request_id
     terminal_request_ids = _terminal_request_ids(queue_dir)
     selected_by_signature: dict[str, dict[str, Any]] = {}
     dispatch_candidate: dict[str, Any] | None = None
 
-    for record in repair_requests.iter_repair_requests(queue_dir, include_malformed=True):
+    records = list(repair_requests.iter_repair_requests(queue_dir, include_malformed=True))
+    # Preserve the earliest accepted request as the canonical duplicate owner;
+    # file-name ordering is unrelated to custody chronology.
+    records.sort(key=lambda item: str(item.get("created_at") or ""))
+    for record in records:
+        if requested_request_id and str(record.get("request_id") or "") != requested_request_id:
+            continue
         if record.get("kind") == "malformed_repair_request":
             if authorized:
                 decision = repair_requests.record_malformed_file(queue_dir, record["path"], record["reason"])
@@ -250,6 +344,25 @@ def _scan_under_lock(
                 "target": _target_summary(target),
             }
         )
+        if (
+            authorized
+            and disposition["decision"] == "actionable"
+            and not str(disposition.get("blocker_id") or "").strip()
+        ):
+            retry = repair_requests.record_unclaimed_request_failure(
+                queue_dir,
+                request_id=request_id,
+                reason="canonical blocker_id missing",
+            )
+            _emit(
+                {
+                    "event": "repair_trigger_claim",
+                    "status": "missing_blocker_id",
+                    "request_id": request_id,
+                    "evidence": retry,
+                }
+            )
+            continue
         if dispatch_candidate is None and disposition["decision"] == "actionable":
             dispatch_candidate = {**record, **disposition, "_resolved_target": target}
         elif authorized and disposition["dispatch_decision"] == "repairing" and disposition.get("blocker_id"):
@@ -281,7 +394,11 @@ def _scan_under_lock(
                 "status": "blocked",
                 "enabled": enabled,
                 "authorized": False,
-                "reason": "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED",
+                "reason": (
+                    "L3 mutation requires ARNOLD_AUTONOMY and ARNOLD_AUDIT_AUTOFIX_ENABLED"
+                    if request_id
+                    else "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED"
+                ),
             }
         )
         return 0
@@ -315,9 +432,17 @@ def _dispatch(
         else {}
     )
     dispatch_intent = str(request.get("dispatch_intent") or "")
+    deep_dispatch = dispatch_intent == "deep_superfixer_repair"
     l2_dispatch = dispatch_intent == "broken_superfixer"
-    selected_bin = meta_repair_bin if l2_dispatch else repair_bin
-    mutation_path = feature_flags.MUTATION_PATH_L2 if l2_dispatch else feature_flags.MUTATION_PATH_L1
+    meta_dispatch = l2_dispatch or deep_dispatch
+    selected_bin = meta_repair_bin if meta_dispatch else repair_bin
+    mutation_path = (
+        feature_flags.MUTATION_PATH_L3
+        if deep_dispatch
+        else feature_flags.MUTATION_PATH_L2
+        if l2_dispatch
+        else feature_flags.MUTATION_PATH_L1
+    )
 
     if not session or not workspace or not remote_spec:
         decision = repair_requests.write_decision(
@@ -332,7 +457,7 @@ def _dispatch(
         retry = repair_requests.record_unclaimed_request_failure(
             queue_dir,
             request_id=request_id,
-            reason=("meta-repair executable unavailable" if l2_dispatch else "repair executable unavailable"),
+            reason=("meta-repair executable unavailable" if meta_dispatch else "repair executable unavailable"),
         )
         _emit(
             {
@@ -368,7 +493,13 @@ def _dispatch(
         retry = repair_requests.record_unclaimed_request_failure(
             queue_dir,
             request_id=request_id,
-            reason=("L2 mutation authorization changed before claim" if l2_dispatch else "L1 mutation authorization changed before claim"),
+            reason=(
+                "L3 mutation authorization changed before claim"
+                if deep_dispatch
+                else "L2 mutation authorization changed before claim"
+                if l2_dispatch
+                else "L1 mutation authorization changed before claim"
+            ),
         )
         _emit(
             {
@@ -376,15 +507,23 @@ def _dispatch(
                 "status": "blocked",
                 "request_id": request_id,
                 "authorized": False,
-                "reason": ("L2 mutation authorization changed before claim" if l2_dispatch else "L1 mutation authorization changed before claim"),
+                "reason": (
+                    "L3 mutation authorization changed before claim"
+                    if deep_dispatch
+                    else "L2 mutation authorization changed before claim"
+                    if l2_dispatch
+                    else "L1 mutation authorization changed before claim"
+                ),
                 "custody_retry": retry,
             }
         )
         return 0
 
-    repair_layer = "l2" if l2_dispatch else "l1"
+    repair_layer = "l3" if deep_dispatch else "l2" if l2_dispatch else "l1"
     child_command = (
-        f"{selected_bin} {session} l1_custody_failure"
+        f"{selected_bin} {session} l3_progress_auditor"
+        if deep_dispatch
+        else f"{selected_bin} {session} l1_custody_failure"
         if l2_dispatch
         else f"{selected_bin} {session} {workspace} {remote_spec}"
     )
@@ -392,7 +531,13 @@ def _dispatch(
         queue_dir,
         blocker_id=blocker_id,
         request_id=request_id,
-        actor="arnold-repair-trigger-l2" if l2_dispatch else "arnold-repair-trigger",
+        actor=(
+            "arnold-repair-trigger-l3"
+            if deep_dispatch
+            else "arnold-repair-trigger-l2"
+            if l2_dispatch
+            else "arnold-repair-trigger"
+        ),
         session=session,
         blocker_fingerprint=blocker_fingerprint,
         pid=os.getpid(),
@@ -427,14 +572,131 @@ def _dispatch(
     env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
     env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(queue_dir)
     env["ARNOLD_REPAIR_TRIGGER_DISPATCHED"] = "1"
+    request_target = request.get("target") if isinstance(request.get("target"), Mapping) else {}
+    escalation_gate = (
+        request_target.get("l3_escalation_gate")
+        if isinstance(request_target.get("l3_escalation_gate"), Mapping)
+        else {}
+    )
+    escalation_id = str(escalation_gate.get("escalation_id") or "")
+    context_path = str(request_target.get("repair_context_path") or "")
+    context_digest = str(request_target.get("repair_context_digest") or "")
+    retry_of_run_id = str(request_target.get("retry_of_run_id") or "")
+    outcome_path = str(Path(context_path).with_name("repair-outcome.json")) if context_path else ""
+    if deep_dispatch:
+        env["ARNOLD_L3_DEEP_REPAIR"] = "1"
+        env["ARNOLD_L3_ESCALATION_ID"] = escalation_id
+        env["ARNOLD_L3_REPAIR_CONTEXT_PATH"] = context_path
+        env["ARNOLD_L3_REPAIR_CONTEXT_DIGEST"] = context_digest
+        env["ARNOLD_L3_REPAIR_OUTCOME_PATH"] = outcome_path
+        env["ARNOLD_META_REPAIR_DIFFICULTY"] = "9"
+        env["ARNOLD_META_REPAIR_CHILD_DIFFICULTY_CEILING"] = "9"
+    run_kind = (
+        "automatic_root_cause_repair"
+        if deep_dispatch
+        else "automatic_meta_repair"
+        if l2_dispatch
+        else "automatic_repair"
+    )
+    identity_key = f"repair-trigger:{request_id}:{repair_layer}"
+    managed_run_id = stable_managed_run_id(run_kind, identity_key)
+    managed_project = Path(workspace).resolve()
+    managed_manifest = (
+        managed_project
+        / ".megaplan"
+        / "plans"
+        / "resident-subagents"
+        / managed_run_id
+        / "manifest.json"
+    )
     try:
         child_argv = (
-            [str(selected_bin), session, "l1_custody_failure"]
+            [str(selected_bin), session, "l3_progress_auditor"]
+            if deep_dispatch
+            else [str(selected_bin), session, "l1_custody_failure"]
             if l2_dispatch
             else [str(selected_bin), session, workspace, remote_spec]
         )
+        manager_argv = [
+            sys.executable,
+            "-m",
+            "arnold_pipelines.megaplan.managed_agent",
+            "run",
+            "--run-kind",
+            run_kind,
+            "--identity-key",
+            identity_key,
+            "--project-dir",
+            str(managed_project),
+            "--task-kind",
+            "root_cause" if meta_dispatch else "autonomous",
+            "--difficulty",
+            "9" if deep_dispatch else "10" if l2_dispatch else "8",
+            "--child-difficulty-ceiling",
+            "9" if deep_dispatch else "10" if l2_dispatch else "8",
+            "--model",
+            "gpt-5.6-sol" if deep_dispatch else "control-plane",
+            "--reasoning-effort",
+            "high" if meta_dispatch else "bounded",
+            "--route-class",
+            "progress_auditor_d9_repair"
+            if deep_dispatch
+            else "repair_trigger_l2"
+            if l2_dispatch
+            else "repair_trigger_l1",
+            "--backend",
+            "meta-repair-loop" if meta_dispatch else "repair-loop",
+            "--command-display",
+            child_command,
+            "--origin-kind",
+            "periodic_progress_auditor"
+            if deep_dispatch
+            else "watchdog_meta_repair"
+            if l2_dispatch
+            else "watchdog_repair",
+            "--origin-id",
+            request_id,
+            "--origin-component",
+            "arnold-repair-trigger",
+            "--trigger-id",
+            blocker_id,
+            "--lineage-key",
+            f"repair-request:{request_id}",
+            "--link",
+            f"repair_request_id={request_id}",
+            "--link",
+            f"blocker_id={blocker_id}",
+            "--link",
+            f"repair_queue_dir={queue_dir}",
+            "--link",
+            f"incident_id={request.get('incident_id') or f'inc-{session}'}",
+            "--link",
+            f"cloud_session={session}",
+            "--link",
+            f"chain={remote_spec}",
+            "--link",
+            f"phase=repair_trigger_{repair_layer}",
+            "--link",
+            f"audit_escalation_id={escalation_id}",
+            "--link",
+            f"finding_evidence_digest={escalation_gate.get('evidence_digest') or ''}",
+            "--link",
+            f"repair_context_path={context_path}",
+            "--link",
+            f"repair_context_digest={context_digest}",
+            "--link",
+            f"repair_outcome_path={outcome_path}",
+            "--",
+            *child_argv,
+        ]
+        if retry_of_run_id:
+            separator_index = manager_argv.index("--")
+            manager_argv[separator_index:separator_index] = [
+                "--retry-of-run-id",
+                retry_of_run_id,
+            ]
         proc = subprocess.Popen(
-            child_argv,
+            manager_argv,
             cwd=workspace if Path(workspace).exists() else None,
             env=env,
             start_new_session=True,
@@ -454,25 +716,98 @@ def _dispatch(
             reason="repair subprocess launch failed",
         )
         raise
+    manifest_payload: dict[str, Any] | None = None
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            candidate = json.loads(managed_manifest.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            candidate = None
+        if isinstance(candidate, dict):
+            if candidate.get("status") == "failed":
+                break
+            claim_record = candidate.get("repair_claim")
+            try:
+                validate_automatic_managed_manifest(
+                    candidate,
+                    manifest_path=managed_manifest,
+                )
+            except (TypeError, ValueError):
+                canonical_contract = False
+            else:
+                canonical_contract = True
+            if (
+                candidate.get("schema_version") == MANAGED_AGENT_SCHEMA
+                and candidate.get("custodian") == MANAGED_AGENT_CUSTODIAN
+                and candidate.get("run_id") == managed_run_id
+                and canonical_contract
+                and isinstance(claim_record, Mapping)
+                and claim_record.get("request_id") == request_id
+                and claim_record.get("blocker_id") == blocker_id
+                and candidate.get("incident_attempt_event_id")
+            ):
+                manifest_payload = candidate
+                break
+        if proc.poll() is not None and not managed_manifest.exists():
+            break
+        time.sleep(0.02)
+    if manifest_payload is None:
+        released = repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            expected_pid=proc.pid,
+        )
+        if not released:
+            repair_requests.release_active_repair_request_claim(
+                queue_dir,
+                blocker_id=blocker_id,
+                expected_pid=os.getpid(),
+            )
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="canonical managed-agent launch evidence was not established",
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "launch_failed",
+                "request_id": request_id,
+                "managed_run_id": managed_run_id,
+                "managed_manifest_path": str(managed_manifest),
+                "custody_retry": retry,
+            }
+        )
+        return 0
     attempt = repair_requests.write_dispatch_attempt(
         queue_dir,
         request_id=request_id,
         blocker_id=blocker_id,
-        actor="arnold-repair-trigger-l2" if l2_dispatch else "arnold-repair-trigger",
+        actor=(
+            "arnold-repair-trigger-l3"
+            if deep_dispatch
+            else "arnold-repair-trigger-l2"
+            if l2_dispatch
+            else "arnold-repair-trigger"
+        ),
         repair_layer=repair_layer,
         command=child_command,
         child_pid=proc.pid,
+        managed_run_id=managed_run_id,
+        managed_manifest_path=str(managed_manifest),
     )
     decision = repair_requests.write_decision(
         queue_dir,
         request_id=request_id,
         decision="dispatched",
         reason=(
-            "dispatched existing bounded meta-repair loop"
+            "dispatched canonical D9 root-cause repair loop"
+            if deep_dispatch
+            else "dispatched existing bounded meta-repair loop"
             if l2_dispatch
             else "dispatched existing bounded repair loop"
         ),
-        related_request_id=str(proc.pid),
+        related_request_id=managed_run_id,
     )
     _emit(
         {
@@ -480,6 +815,8 @@ def _dispatch(
             "status": "dispatched",
             "request_id": request_id,
             "pid": proc.pid,
+            "managed_run_id": managed_run_id,
+            "managed_manifest_path": str(managed_manifest),
             "session": session,
             "workspace": workspace,
             "remote_spec": remote_spec,
@@ -642,6 +979,15 @@ def _classify_request(
     l2_actionable = decision.decision == "broken_superfixer" and deterministic_l3 and bool(
         projection.get("blocker_id")
     )
+    requested_deep = bool(
+        deterministic_l3
+        and request_target.get("dispatch_intent") == "deep_superfixer_repair"
+        and request_target.get("retry_strategy") == "deep_superfixer_repair"
+        and isinstance(request_target.get("l3_escalation_gate"), Mapping)
+        and request_target["l3_escalation_gate"].get("eligible") is True
+        and request_target["l3_escalation_gate"].get("decision") == "true_stall"
+    )
+    deep_actionable = bool(requested_deep and l2_actionable)
     return {
         "decision": (
             "actionable"
@@ -650,7 +996,9 @@ def _classify_request(
         ),
         "reason": "; ".join(decision.rationale) or "shared custody classifier did not allow dispatch",
         "dispatch_decision": decision.decision,
-        "dispatch_intent": decision.dispatch_intent,
+        "dispatch_intent": (
+            "deep_superfixer_repair" if deep_actionable else decision.dispatch_intent
+        ),
         "custody_bucket": decision.custody_bucket,
         "blocker_id": projection.get("blocker_id", ""),
         "blocker_fingerprint": projection.get("blocker_fingerprint") or {},
@@ -758,6 +1106,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--lock-dir", default=os.getenv("ARNOLD_REPAIR_TRIGGER_LOCK_DIR", ""))
+    parser.add_argument(
+        "--request-id",
+        default="",
+        help="process only the exact correlated repair request",
+    )
     return parser.parse_args(argv)
 
 

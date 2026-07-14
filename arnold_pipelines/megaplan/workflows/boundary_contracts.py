@@ -19,7 +19,28 @@ semantic-health work.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from arnold.workflow.boundary_evidence import BoundaryContract, BoundaryPhase
+from arnold.workflow.boundary_templates import (
+    BoundaryTemplateKind,
+    REQUIRED_FIELDS_APPROVAL_BOUNDARY,
+    REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY,
+    REQUIRED_FIELDS_ARTIFACT_PROMOTION,
+    REQUIRED_FIELDS_EXECUTION_CUSTODY,
+    REQUIRED_FIELDS_EXTERNAL_EFFECT,
+    REQUIRED_FIELDS_EXTERNAL_WITNESS,
+    REQUIRED_FIELDS_GRAPH_JOIN_FANOUT,
+    REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER,
+    REQUIRED_FIELDS_REVISION_BOUNDARY,
+    REQUIRED_FIELDS_VALIDATION_BOUNDARY,
+    check_contract_conformance as _generic_check_contract_conformance,
+    classify_boundary_kind,
+    get_required_fields,
+    get_template,
+    list_template_kinds,
+    select_template,
+)
 from arnold.workflow.semantic_evidence import (
     S2_CRITIQUE_ROW_ID,
     S2_GATE_ROW_ID,
@@ -34,6 +55,14 @@ from arnold.workflow.semantic_evidence import (
     S3_TIEBREAKER_SYNTHESIS_ROW_ID,
     S4_EXECUTE_ROW_ID,
 )
+
+# ── Re-export generic template/profile surface symbols ──────────────────────
+# These are imported from arnold.workflow.boundary_templates and re-exported
+# so that Megaplan consumers can use the same stable identifiers without
+# importing from arnold.workflow directly.  The registry below extends them
+# with Megaplan-adapter-specific kinds and templates.
+
+__all__: list[str] = []
 
 # ── S5 review/finalize stable row ID namespace ─────────────────────────────
 # These rows remain local to the registry until the downstream checker adds
@@ -60,27 +89,89 @@ S6_OVERRIDE_ADOPT_EXECUTION_ROW_ID = "s6.override.adopt_execution.1"
 S6_OVERRIDE_SUSPENSION_ROW_ID = "s6.override.suspension.1"
 S6_OVERRIDE_HUMAN_GATE_ROW_ID = "s6.override.human_gate.1"
 
+# ── Chain milestone stable row ID namespace ─────────────────────────────
+
+CHAIN_MILESTONE_START_ROW_ID = "chain.milestone.start.1"
+CHAIN_MILESTONE_COMPLETION_ROW_ID = "chain.milestone.complete.1"
+CHAIN_COMPLETE_ROW_ID = "chain.complete.1"
+
+# ── PR/CI transition stable row ID namespace ────────────────────────────
+
+PR_READY_ROW_ID = "pr.ready.1"
+PR_MERGED_ROW_ID = "pr.merged.1"
+
+# ── Repair verdict stable row ID namespace ──────────────────────────────
+
+REPAIR_CLOUD_DISPATCH_ROW_ID = "repair.cloud_dispatch.1"
+REPAIR_ORDINARY_COMPLETE_ROW_ID = "repair.ordinary_complete.1"
+REPAIR_META_COMPLETE_ROW_ID = "repair.meta_complete.1"
+
+# ── Auditor completion stable row ID namespace ──────────────────────────
+
+AUDITOR_6H_COMPLETE_ROW_ID = "auditor.6h_complete.1"
+
+# ── Cloud custody stable row ID namespace ───────────────────────────────
+
+CUSTODY_MANAGED_RUNNING_ROW_ID = "custody.managed_running.1"
+CUSTODY_COMPLETE_ROW_ID = "custody.complete.1"
+CUSTODY_UNMANAGED_WARNING_ROW_ID = "custody.unmanaged_warning.1"
+CUSTODY_BLOCKED_RELAUNCH_ROW_ID = "custody.blocked_relaunch.1"
+CUSTODY_ESCALATED_UNCHANGED_ROW_ID = "custody.escalated_unchanged.1"
+
+# ── Adapter-specific template kind identifiers ─────────────────────────────
+# BoundaryTemplateKind (imported from arnold.workflow.boundary_templates)
+# provides 10 generic kinds.  The Megaplan adapter adds 7 more for
+# domain-specific boundary shapes that are not part of the generic surface.
+# Physical/external evidence and partial acceptance remain adapter details
+# — they are NOT promoted into the generic BoundaryTemplateKind enum.
+
+
+class AdapterTemplateKind(StrEnum):
+    """Megaplan-adapter-specific template kind identifiers.
+
+    These extend the generic :class:`BoundaryTemplateKind` with shapes that
+    are specific to the Megaplan workflow model: lifecycle transitions,
+    reducer fan-in, chain milestones, PR/CI transitions, repair verdicts,
+    auditor completions, and cloud custody classifications.
+
+    Physical/external evidence keys (e.g. ``physical_evidence_ref``,
+    ``external_artifact_ref``) and partial-acceptance metadata stay in
+    adapter ``details`` mappings — they are never promoted into generic
+    template profile fields.
+    """
+
+    LIFECYCLE_TRANSITION = "lifecycle_transition"
+    """Lifecycle transition boundary: phase→phase durable transition."""
+
+    REDUCER = "reducer"
+    """Reducer boundary: fan-in aggregation into canonical payload."""
+
+    CHAIN_MILESTONE = "chain_milestone"
+    """Chain milestone boundary: milestone start→completion transition."""
+
+    PR_TRANSITION = "pr_transition"
+    """PR/CI transition boundary: PR ready→merged durable evidence."""
+
+    REPAIR_VERDICT = "repair_verdict"
+    """Repair verdict boundary: cleared/no-fix/escalation verdict."""
+
+    AUDITOR_COMPLETION = "auditor_completion"
+    """Auditor completion boundary: auditor verdict set produced."""
+
+    CLOUD_CUSTODY = "cloud_custody"
+    """Cloud custody classification boundary: custody classification."""
+
+
 # ── Required-field profiles ────────────────────────────────────────────────
+# The 10 generic profiles are imported from arnold.workflow.boundary_templates
+# and re-exported above (REQUIRED_FIELDS_REVISION_BOUNDARY, etc.).
+#
+# The 7 adapter-specific profiles below cover Megaplan-only boundary shapes.
 # Each frozenset enumerates the BoundaryContract top-level fields *and*
 # detail keys that must be populated for a contract of that shape.
 # Field names prefixed with ``details.`` refer to keys nested inside the
 # ``details`` mapping.  Profiles are declarative: they do not route or
 # dispatch.
-
-REQUIRED_FIELDS_ARTIFACT_PROMOTION: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "expected_state_delta",
-        "phase_result_required",
-        "receipt_required",
-        "details.effect_id",
-        "details.artifact_policy_ref",
-        "details.promotion_kind",
-    }
-)
 
 REQUIRED_FIELDS_LIFECYCLE_TRANSITION: frozenset[str] = frozenset(
     {
@@ -109,112 +200,73 @@ REQUIRED_FIELDS_REDUCER: frozenset[str] = frozenset(
     }
 )
 
-REQUIRED_FIELDS_EXTERNAL_EFFECT: frozenset[str] = frozenset(
+REQUIRED_FIELDS_CHAIN_MILESTONE: frozenset[str] = frozenset(
     {
         "boundary_id",
         "workflow_id",
         "row_id",
-        "required_artifacts",
-        "details.effect_kind",
-        "details.effect_id",
-    }
-)
-
-REQUIRED_FIELDS_EXECUTION_CUSTODY: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "phase",
-        "required_artifacts",
-        "authority_required",
-        "details.custody_scope",
-        "details.fresh_session",
-    }
-)
-
-REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "authority_required",
-        "details.approval_scope",
-        "details.suspension_route_id",
-        "details.resume_policy_ref",
-    }
-)
-
-REQUIRED_FIELDS_GRAPH_JOIN_FANOUT: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "details.fan_out_refs",
-        "details.fan_in_ref",
-        "details.join_requirements",
-    }
-)
-
-REQUIRED_FIELDS_EXTERNAL_WITNESS: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "required_artifacts",
-        "details.witness_ref",
-        "details.witness_kind",
-    }
-)
-
-REQUIRED_FIELDS_REVISION_BOUNDARY: frozenset[str] = frozenset(
-    {
-        "boundary_id",
-        "workflow_id",
-        "row_id",
-        "phase",
         "required_artifacts",
         "expected_state_delta",
-        "details.revision_kind",
-        "details.revision_log_ref",
+        "expected_history_entry",
+        "phase_result_required",
+        "receipt_required",
+        "details.milestone_kind",
+        "details.chain_ref",
     }
 )
 
-REQUIRED_FIELDS_VALIDATION_BOUNDARY: frozenset[str] = frozenset(
+REQUIRED_FIELDS_PR_TRANSITION: frozenset[str] = frozenset(
     {
         "boundary_id",
         "workflow_id",
         "row_id",
-        "phase",
+        "required_artifacts",
+        "expected_state_delta",
+        "expected_history_entry",
+        "receipt_required",
+        "details.pr_kind",
+        "details.branch_ref",
+    }
+)
+
+REQUIRED_FIELDS_REPAIR_VERDICT: frozenset[str] = frozenset(
+    {
+        "boundary_id",
+        "workflow_id",
+        "row_id",
         "required_artifacts",
         "expected_state_delta",
         "phase_result_required",
         "receipt_required",
-        "details.validation_kind",
+        "details.verdict_kind",
+        "details.repair_ref",
     }
 )
 
-REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY: frozenset[str] = frozenset(
+REQUIRED_FIELDS_AUDITOR_COMPLETION: frozenset[str] = frozenset(
     {
         "boundary_id",
         "workflow_id",
         "row_id",
         "required_artifacts",
-        "details.handoff_from",
-        "details.handoff_to",
-        "details.artifact_policy_ref",
+        "phase_result_required",
+        "receipt_required",
+        "details.auditor_kind",
+        "details.time_window",
+        "details.verdict_refs",
     }
 )
 
-REQUIRED_FIELDS_APPROVAL_BOUNDARY: frozenset[str] = frozenset(
+REQUIRED_FIELDS_CLOUD_CUSTODY: frozenset[str] = frozenset(
     {
         "boundary_id",
         "workflow_id",
         "row_id",
         "required_artifacts",
         "authority_required",
-        "details.approval_scope",
+        "details.custody_scope",
+        "details.custody_classification",
+        "details.fresh_session",
     }
 )
 
@@ -430,6 +482,94 @@ ApprovalBoundary = BoundaryContract(
     },
 )
 
+chain_milestone_template = BoundaryContract(
+    boundary_id="template.chain_milestone",
+    workflow_id="megaplan-review",
+    row_id="template.chain_milestone.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={"milestone_stage": "<stage>"},
+    expected_history_entry="<milestone_event>",
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Chain milestone boundary template: milestone start → completion durable transition.",
+        "milestone_kind": "chain_milestone",
+        "chain_ref": "<chain_ref>",
+    },
+)
+
+pr_transition_template = BoundaryContract(
+    boundary_id="template.pr_transition",
+    workflow_id="megaplan-review",
+    row_id="template.pr_transition.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={"pr_stage": "<stage>"},
+    expected_history_entry="<pr_event>",
+    phase_result_required=False,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "PR/CI transition boundary template: PR ready → merged durable evidence.",
+        "pr_kind": "pr_transition",
+        "branch_ref": "<branch_ref>",
+    },
+)
+
+repair_verdict_template = BoundaryContract(
+    boundary_id="template.repair_verdict",
+    workflow_id="megaplan-review",
+    row_id="template.repair_verdict.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={"repair_stage": "<verdict>"},
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Repair verdict boundary template: cleared / no-fix / escalation verdict tied to original finding.",
+        "verdict_kind": "repair_verdict",
+        "repair_ref": "<repair_ref>",
+    },
+)
+
+auditor_completion_template = BoundaryContract(
+    boundary_id="template.auditor_completion",
+    workflow_id="megaplan-review",
+    row_id="template.auditor_completion.1",
+    phase=None,
+    required_artifacts=(),
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Auditor completion boundary template: 6h auditor verdict set produced.",
+        "auditor_kind": "auditor_completion",
+        "time_window": "6h",
+        "verdict_refs": (),
+    },
+)
+
+cloud_custody_template = BoundaryContract(
+    boundary_id="template.cloud_custody",
+    workflow_id="megaplan-review",
+    row_id="template.cloud_custody.1",
+    phase=None,
+    required_artifacts=(),
+    expected_state_delta={},
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": "Cloud custody classification boundary template: custody classification as declarative contract.",
+        "custody_scope": "cloud:custody",
+        "custody_classification": "<classification>",
+        "fresh_session": True,
+    },
+)
+
 # ── Template registry ──────────────────────────────────────────────────────
 
 TYPED_BOUNDARY_TEMPLATES: tuple[BoundaryContract, ...] = (
@@ -445,25 +585,53 @@ TYPED_BOUNDARY_TEMPLATES: tuple[BoundaryContract, ...] = (
     ValidationBoundary,
     ArtifactHandoffBoundary,
     ApprovalBoundary,
+    chain_milestone_template,
+    pr_transition_template,
+    repair_verdict_template,
+    auditor_completion_template,
+    cloud_custody_template,
 )
 
 TYPED_BOUNDARY_TEMPLATES_BY_ID: dict[str, BoundaryContract] = {
     t.boundary_id: t for t in TYPED_BOUNDARY_TEMPLATES
 }
 
-REQUIRED_FIELD_PROFILES: tuple[tuple[str, frozenset[str]], ...] = (
-    ("artifact_promotion", REQUIRED_FIELDS_ARTIFACT_PROMOTION),
+# ── Combined required-field profiles registry ─────────────────────────────
+# The 10 generic profiles from arnold.workflow.boundary_templates PLUS the
+# 7 adapter-specific profiles below.  All 17 are presented through the same
+# (kind_label, frozenset) tuple shape as before for backward compatibility.
+#
+# ADAPTER_REQUIRED_FIELD_PROFILES and ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND
+# expose only the 7 adapter-specific kinds keyed by AdapterTemplateKind values.
+
+ADAPTER_REQUIRED_FIELD_PROFILES: tuple[tuple[str, frozenset[str]], ...] = (
     ("lifecycle_transition", REQUIRED_FIELDS_LIFECYCLE_TRANSITION),
     ("reducer", REQUIRED_FIELDS_REDUCER),
-    ("external_effect", REQUIRED_FIELDS_EXTERNAL_EFFECT),
+    ("chain_milestone", REQUIRED_FIELDS_CHAIN_MILESTONE),
+    ("pr_transition", REQUIRED_FIELDS_PR_TRANSITION),
+    ("repair_verdict", REQUIRED_FIELDS_REPAIR_VERDICT),
+    ("auditor_completion", REQUIRED_FIELDS_AUDITOR_COMPLETION),
+    ("cloud_custody", REQUIRED_FIELDS_CLOUD_CUSTODY),
+)
+
+ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND: dict[str, frozenset[str]] = {
+    kind: fields for kind, fields in ADAPTER_REQUIRED_FIELD_PROFILES
+}
+
+REQUIRED_FIELD_PROFILES: tuple[tuple[str, frozenset[str]], ...] = (
+    # ── Generic profiles (from boundary_templates) ─────────────────────
+    ("artifact_promotion", REQUIRED_FIELDS_ARTIFACT_PROMOTION),
     ("execution_custody", REQUIRED_FIELDS_EXECUTION_CUSTODY),
-    ("human_approval_waiver", REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER),
-    ("graph_join_fanout", REQUIRED_FIELDS_GRAPH_JOIN_FANOUT),
+    ("external_effect", REQUIRED_FIELDS_EXTERNAL_EFFECT),
     ("external_witness", REQUIRED_FIELDS_EXTERNAL_WITNESS),
+    ("graph_join_fanout", REQUIRED_FIELDS_GRAPH_JOIN_FANOUT),
+    ("human_approval_waiver", REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER),
     ("revision_boundary", REQUIRED_FIELDS_REVISION_BOUNDARY),
     ("validation_boundary", REQUIRED_FIELDS_VALIDATION_BOUNDARY),
     ("artifact_handoff_boundary", REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY),
     ("approval_boundary", REQUIRED_FIELDS_APPROVAL_BOUNDARY),
+    # ── Adapter-specific profiles ──────────────────────────────────────
+    *ADAPTER_REQUIRED_FIELD_PROFILES,
 )
 
 REQUIRED_FIELD_PROFILES_BY_KIND: dict[str, frozenset[str]] = {
@@ -1271,6 +1439,427 @@ override_human_gate_authority = BoundaryContract(
     },
 )
 
+# ── Chain milestone boundary contracts ──────────────────────────────────
+
+chain_milestone_start = BoundaryContract(
+    boundary_id="chain_milestone_start",
+    workflow_id="megaplan-review",
+    row_id=CHAIN_MILESTONE_START_ROW_ID,
+    required_artifacts=("milestone_start.json",),
+    expected_state_delta={"milestone_stage": "started"},
+    expected_history_entry="chain_milestone_started",
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Chain milestone start boundary: durable start-of-milestone evidence.",
+        "milestone_kind": "chain_milestone",
+        "chain_ref": "chain:milestone",
+        "profile_kind": "chain_milestone",
+        "template_ref": "template.chain_milestone",
+    },
+)
+
+chain_milestone_completion = BoundaryContract(
+    boundary_id="chain_milestone_completion",
+    workflow_id="megaplan-review",
+    row_id=CHAIN_MILESTONE_COMPLETION_ROW_ID,
+    required_artifacts=("milestone_complete.json",),
+    expected_state_delta={"milestone_stage": "completed"},
+    expected_history_entry="chain_milestone_completed",
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Chain milestone completion boundary: durable end-of-milestone evidence.",
+        "milestone_kind": "chain_milestone",
+        "chain_ref": "chain:milestone",
+        "profile_kind": "chain_milestone",
+        "template_ref": "template.chain_milestone",
+    },
+)
+
+chain_complete = BoundaryContract(
+    boundary_id="chain_complete",
+    workflow_id="megaplan-review",
+    row_id=CHAIN_COMPLETE_ROW_ID,
+    required_artifacts=("chain_complete.json",),
+    expected_state_delta={"chain_stage": "complete"},
+    expected_history_entry="chain_completed",
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Chain complete boundary: full chain execution finished with durable evidence.",
+        "milestone_kind": "chain_complete",
+        "chain_ref": "chain:complete",
+        "profile_kind": "chain_milestone",
+        "template_ref": "template.chain_milestone",
+    },
+)
+
+# ── PR/CI transition boundary contracts ────────────────────────────────
+
+pr_ready = BoundaryContract(
+    boundary_id="pr_ready",
+    workflow_id="megaplan-review",
+    row_id=PR_READY_ROW_ID,
+    required_artifacts=("pr_ready.json",),
+    expected_state_delta={"pr_stage": "ready"},
+    expected_history_entry="pr_ready",
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "PR ready boundary: PR branch is ready for merge, CI checks passed.",
+        "pr_kind": "pr_ready",
+        "branch_ref": "pr:ready",
+        "profile_kind": "pr_transition",
+        "template_ref": "template.pr_transition",
+    },
+)
+
+pr_merged = BoundaryContract(
+    boundary_id="pr_merged",
+    workflow_id="megaplan-review",
+    row_id=PR_MERGED_ROW_ID,
+    required_artifacts=("pr_merged.json",),
+    expected_state_delta={"pr_stage": "merged"},
+    expected_history_entry="pr_merged",
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "PR merged boundary: PR successfully merged with tip containment evidence.",
+        "pr_kind": "pr_merged",
+        "branch_ref": "pr:merged",
+        "profile_kind": "pr_transition",
+        "template_ref": "template.pr_transition",
+    },
+)
+
+# ── Repair verdict boundary contracts ───────────────────────────────────
+
+cloud_repair_dispatch = BoundaryContract(
+    boundary_id="cloud_repair_dispatch",
+    workflow_id="megaplan-review",
+    row_id=REPAIR_CLOUD_DISPATCH_ROW_ID,
+    required_artifacts=("repair_dispatch.json",),
+    expected_state_delta={"repair_stage": "dispatched"},
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "Cloud repair dispatch boundary: repair dispatched from cloud to worker.",
+        "verdict_kind": "cloud_repair_dispatch",
+        "repair_ref": "repair:cloud_dispatch",
+        "profile_kind": "repair_verdict",
+        "template_ref": "template.repair_verdict",
+    },
+)
+
+ordinary_repair_completion = BoundaryContract(
+    boundary_id="ordinary_repair_completion",
+    workflow_id="megaplan-review",
+    row_id=REPAIR_ORDINARY_COMPLETE_ROW_ID,
+    required_artifacts=("repair_verdict.json",),
+    expected_state_delta={"repair_stage": "completed", "verdict": "cleared"},
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": (
+            "Ordinary repair completion boundary: cleared/no-fix/escalation "
+            "verdict tied to original finding with structured evidence."
+        ),
+        "verdict_kind": "ordinary_repair",
+        "repair_ref": "repair:ordinary",
+        "profile_kind": "repair_verdict",
+        "template_ref": "template.repair_verdict",
+    },
+)
+
+meta_repair_completion = BoundaryContract(
+    boundary_id="meta_repair_completion",
+    workflow_id="megaplan-review",
+    row_id=REPAIR_META_COMPLETE_ROW_ID,
+    required_artifacts=("meta_repair_verdict.json",),
+    expected_state_delta={"repair_stage": "completed", "meta_verdict": "cleared"},
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": (
+            "Meta-repair completion boundary: meta-level repair verdict "
+            "(e.g. self-repair on repair loop) tied to original finding."
+        ),
+        "verdict_kind": "meta_repair",
+        "repair_ref": "repair:meta",
+        "profile_kind": "repair_verdict",
+        "template_ref": "template.repair_verdict",
+    },
+)
+
+# ── Auditor completion boundary contracts ───────────────────────────────
+
+auditor_6h_completion = BoundaryContract(
+    boundary_id="auditor_6h_completion",
+    workflow_id="megaplan-review",
+    row_id=AUDITOR_6H_COMPLETE_ROW_ID,
+    required_artifacts=("auditor_verdict.json",),
+    phase_result_required=True,
+    receipt_required=True,
+    authority_required=True,
+    details={
+        "description": "6h auditor completion boundary: auditor produces verdict set within 6h window.",
+        "auditor_kind": "six_hour_auditor",
+        "time_window": "6h",
+        "verdict_refs": ("auditor_verdict.json",),
+        "profile_kind": "auditor_completion",
+        "template_ref": "template.auditor_completion",
+    },
+)
+
+# ── Cloud custody classification boundary contracts ─────────────────────
+
+cloud_custody_managed_running = BoundaryContract(
+    boundary_id="cloud_custody_managed_running",
+    workflow_id="megaplan-review",
+    row_id=CUSTODY_MANAGED_RUNNING_ROW_ID,
+    required_artifacts=("custody_snapshot.json",),
+    authority_required=True,
+    details={
+        "description": (
+            "Managed-running custody classification: cloud-managed process "
+            "confirmed running with fresh session markers."
+        ),
+        "custody_scope": "cloud:custody",
+        "custody_classification": "managed-running",
+        "fresh_session": True,
+        "profile_kind": "cloud_custody",
+        "template_ref": "template.cloud_custody",
+    },
+)
+
+cloud_custody_complete = BoundaryContract(
+    boundary_id="cloud_custody_complete",
+    workflow_id="megaplan-review",
+    row_id=CUSTODY_COMPLETE_ROW_ID,
+    required_artifacts=("custody_snapshot.json",),
+    authority_required=True,
+    details={
+        "description": (
+            "Complete custody classification: process completed successfully, "
+            "custody evidence is final."
+        ),
+        "custody_scope": "cloud:custody",
+        "custody_classification": "complete",
+        "fresh_session": False,
+        "profile_kind": "cloud_custody",
+        "template_ref": "template.cloud_custody",
+    },
+)
+
+cloud_custody_unmanaged_running_warning = BoundaryContract(
+    boundary_id="cloud_custody_unmanaged_running_warning",
+    workflow_id="megaplan-review",
+    row_id=CUSTODY_UNMANAGED_WARNING_ROW_ID,
+    required_artifacts=("custody_snapshot.json",),
+    authority_required=True,
+    details={
+        "description": (
+            "Unmanaged-running-with-warning custody classification: process "
+            "is running but not under cloud management — warning-level finding."
+        ),
+        "custody_scope": "cloud:custody",
+        "custody_classification": "unmanaged-running-with-warning",
+        "fresh_session": False,
+        "profile_kind": "cloud_custody",
+        "template_ref": "template.cloud_custody",
+    },
+)
+
+cloud_custody_blocked_relaunch_failure = BoundaryContract(
+    boundary_id="cloud_custody_blocked_relaunch_failure",
+    workflow_id="megaplan-review",
+    row_id=CUSTODY_BLOCKED_RELAUNCH_ROW_ID,
+    required_artifacts=("custody_snapshot.json",),
+    authority_required=True,
+    details={
+        "description": (
+            "Blocked relaunch failure custody classification: worker/process "
+            "is blocked and relaunch attempts have failed."
+        ),
+        "custody_scope": "cloud:custody",
+        "custody_classification": "blocked-relaunch-failure",
+        "fresh_session": False,
+        "profile_kind": "cloud_custody",
+        "template_ref": "template.cloud_custody",
+    },
+)
+
+cloud_custody_escalated_repeated_unchanged = BoundaryContract(
+    boundary_id="cloud_custody_escalated_repeated_unchanged",
+    workflow_id="megaplan-review",
+    row_id=CUSTODY_ESCALATED_UNCHANGED_ROW_ID,
+    required_artifacts=("custody_snapshot.json",),
+    authority_required=True,
+    details={
+        "description": (
+            "Escalated repeated unchanged custody classification: repeated "
+            "findings with no change — escalated for human intervention."
+        ),
+        "custody_scope": "cloud:custody",
+        "custody_classification": "escalated-repeated-unchanged-findings",
+        "fresh_session": False,
+        "profile_kind": "cloud_custody",
+        "template_ref": "template.cloud_custody",
+    },
+)
+
+# ── Phase-family coverage matrix ───────────────────────────────────────────
+# Each entry maps a phase-family label to one or more ``boundary_id`` values
+# that are expected to cover it in :data:`BOUNDARY_CONTRACTS`.  A family is
+# *covered* when every listed contract exists in the registry OR when the
+# family has a tested exemption in :data:`EXEMPTION_REGISTRY`.
+#
+# This matrix is declarative and read-only — it documents coverage expectations
+# so that semantic-health checks and downstream evaluators can detect gaps
+# without hunting through the registry by hand.
+
+PHASE_FAMILY_COVERAGE_MATRIX: dict[str, tuple[str, ...]] = {
+    # ── S2 front-half ─────────────────────────────────────────────────
+    "s2_prep": ("prep_to_plan",),
+    "s2_plan": ("plan_to_critique",),
+    "s2_critique": ("critique_to_gate",),
+    "s2_gate": ("gate_to_revise",),
+    "s2_revise": ("revise_to_critique",),
+    # ── S3 tiebreaker / replan ─────────────────────────────────────────
+    "s3_tiebreaker_researcher": ("tiebreaker_researcher_to_challenger",),
+    "s3_tiebreaker_challenger": ("tiebreaker_challenger_to_synthesis",),
+    "s3_tiebreaker_synthesis": ("tiebreaker_synthesis_to_decision",),
+    "s3_tiebreaker_decision": ("tiebreaker_decision_to_parent",),
+    "s3_replan": ("replan_authority",),
+    "s3_parent_rejoin": ("parent_rejoin_promotion",),
+    # ── S4 execute ─────────────────────────────────────────────────────
+    "s4_execute_approval": ("execute_approval", "execute_approval_denial"),
+    "s4_execute_checkpoint": (
+        "execute_batch_checkpoint",
+        "execute_partial_failure",
+    ),
+    "s4_execute_retry": ("execute_blocked_anchor", "execute_resume_anchor"),
+    "s4_execute_promotion": ("execute_aggregate_promotion",),
+    "s4_execute_terminal": ("execute_no_review_terminal",),
+    # ── S5 review / finalize ───────────────────────────────────────────
+    "s5_review_child_outputs": ("review_child_outputs",),
+    "s5_review_reducer_promotion": ("review_reducer_promotion",),
+    "s5_review_rework_effects": ("review_rework_effects",),
+    "s5_review_cap_authority": ("review_cap_authority",),
+    "s5_review_human_verification": ("review_human_verification",),
+    "s5_finalize_artifacts": ("finalize_artifacts",),
+    "s5_finalize_fallback": ("finalize_fallback",),
+    "s5_finalize_projection": ("final_projection",),
+    # ── S6 override authority ──────────────────────────────────────────
+    "s6_override_abort": ("override_abort_authority",),
+    "s6_override_force_proceed": ("override_force_proceed_authority",),
+    "s6_override_replan": ("override_replan_authority",),
+    "s6_override_recover_blocked": ("override_recover_blocked_authority",),
+    "s6_override_resume_clarify": ("override_resume_clarify_authority",),
+    "s6_override_adopt_execution": ("override_adopt_execution_authority",),
+    "s6_override_suspension": ("override_suspension_authority",),
+    "s6_override_human_gate": ("override_human_gate_authority",),
+    # ── Chain milestone ────────────────────────────────────────────────
+    "chain_milestone": (
+        "chain_milestone_start",
+        "chain_milestone_completion",
+    ),
+    "chain_complete": ("chain_complete",),
+    # ── PR / CI transition ─────────────────────────────────────────────
+    "pr_ready": ("pr_ready",),
+    "pr_merged": ("pr_merged",),
+    # ── Repair verdicts ────────────────────────────────────────────────
+    "repair_cloud_dispatch": ("cloud_repair_dispatch",),
+    "repair_ordinary_completion": ("ordinary_repair_completion",),
+    "repair_meta_completion": ("meta_repair_completion",),
+    # ── Auditor ────────────────────────────────────────────────────────
+    "auditor_6h_completion": ("auditor_6h_completion",),
+    # ── Cloud custody ──────────────────────────────────────────────────
+    "custody_managed_running": ("cloud_custody_managed_running",),
+    "custody_complete": ("cloud_custody_complete",),
+    "custody_unmanaged_warning": ("cloud_custody_unmanaged_running_warning",),
+    "custody_blocked_relaunch": ("cloud_custody_blocked_relaunch_failure",),
+    "custody_escalated_unchanged": (
+        "cloud_custody_escalated_repeated_unchanged",
+    ),
+}
+
+# ── Exemption registry ─────────────────────────────────────────────────────
+# Each exemption documents a phase-family that is intentionally absent from
+# :data:`BOUNDARY_CONTRACTS`.  Exemptions are metadata, not hidden comments:
+# they are visible to semantic-health checks, tests, and downstream
+# evaluators so that coverage gaps are explicit and auditable.
+#
+# Every entry is a :class:`dict` with the keys:
+#
+# * ``family`` — the phase-family label (must match a key in
+#   :data:`PHASE_FAMILY_COVERAGE_MATRIX`).
+# * ``reason`` — a human-readable justification for the exemption.
+# * ``reference`` — a pointer to the decision artifact (e.g. Epic North Star
+#   item, sprint OUT section, design doc anchor).
+
+EXEMPTION_REGISTRY: tuple[dict[str, str], ...] = (
+    # No exemptions at this time — every covered family has a contract.
+    # Exemptions are added here when a family is intentionally uncovered
+    # (e.g. a future family that has not yet been implemented, or a
+    # family whose coverage is deferred by an explicit Epic decision).
+)
+
+# ── Coverage matrix helpers ────────────────────────────────────────────────
+
+
+def _resolve_covered_families() -> dict[str, tuple[str, ...]]:
+    """Return a copy of :data:`PHASE_FAMILY_COVERAGE_MATRIX`.
+
+    This indirection exists so that future versions can merge additional
+    coverage sources without changing the public API shape.
+    """
+    return dict(PHASE_FAMILY_COVERAGE_MATRIX)
+
+
+def _resolve_exemptions_by_family() -> dict[str, dict[str, str]]:
+    """Return exemptions keyed by ``family`` for O(1) lookup."""
+    return {entry["family"]: entry for entry in EXEMPTION_REGISTRY}
+
+
+def families_without_coverage() -> tuple[dict[str, object], ...]:
+    """Return every covered family that lacks a contract *and* an exemption.
+
+    Each returned dict has ``family``, ``expected_contracts`` (the IDs the
+    matrix declares), ``missing_contracts`` (those not found in the
+    registry), and ``exempted`` (whether an exemption exists).
+
+    A family with an exemption is *never* reported as uncovered, even if
+    its declared contracts are missing.
+    """
+    exemptions = _resolve_exemptions_by_family()
+    covered = _resolve_covered_families()
+    registry_ids = {c.boundary_id for c in BOUNDARY_CONTRACTS}
+
+    gaps: list[dict[str, object]] = []
+    for family, expected_ids in covered.items():
+        if family in exemptions:
+            continue
+        missing = [cid for cid in expected_ids if cid not in registry_ids]
+        if missing:
+            gaps.append(
+                {
+                    "family": family,
+                    "expected_contracts": expected_ids,
+                    "missing_contracts": tuple(missing),
+                    "exempted": False,
+                }
+            )
+    return tuple(gaps)
+
+
 # ── Registry ───────────────────────────────────────────────────────────────
 
 BOUNDARY_CONTRACTS: tuple[BoundaryContract, ...] = (
@@ -1309,6 +1898,20 @@ BOUNDARY_CONTRACTS: tuple[BoundaryContract, ...] = (
     override_adopt_execution_authority,
     override_suspension_authority,
     override_human_gate_authority,
+    chain_milestone_start,
+    chain_milestone_completion,
+    chain_complete,
+    pr_ready,
+    pr_merged,
+    cloud_repair_dispatch,
+    ordinary_repair_completion,
+    meta_repair_completion,
+    auditor_6h_completion,
+    cloud_custody_managed_running,
+    cloud_custody_complete,
+    cloud_custody_unmanaged_running_warning,
+    cloud_custody_blocked_relaunch_failure,
+    cloud_custody_escalated_repeated_unchanged,
 )
 
 OVERRIDE_AUTHORITY_CONTRACTS: tuple[BoundaryContract, ...] = (
@@ -1326,12 +1929,12 @@ BOUNDARY_CONTRACTS_BY_ID: dict[str, BoundaryContract] = {
     c.boundary_id: c for c in BOUNDARY_CONTRACTS
 }
 
-# Ensure the registry has exactly thirty-five entries with no duplicates.
-assert len(BOUNDARY_CONTRACTS) == 35, (
-    f"BOUNDARY_CONTRACTS must have exactly 35 entries, got {len(BOUNDARY_CONTRACTS)}"
+# Ensure the registry has exactly forty-nine entries with no duplicates.
+assert len(BOUNDARY_CONTRACTS) == 49, (
+    f"BOUNDARY_CONTRACTS must have exactly 49 entries, got {len(BOUNDARY_CONTRACTS)}"
 )
-assert len(BOUNDARY_CONTRACTS_BY_ID) == 35, (
-    "BOUNDARY_CONTRACTS_BY_ID must have exactly 35 entries "
+assert len(BOUNDARY_CONTRACTS_BY_ID) == 49, (
+    "BOUNDARY_CONTRACTS_BY_ID must have exactly 49 entries "
     "(duplicate boundary_id detected)"
 )
 
@@ -1364,10 +1967,15 @@ def get_template_by_id(template_id: str) -> BoundaryContract | None:
 def get_profile_by_kind(kind: str) -> frozenset[str] | None:
     """Look up a required-field profile by its kind label.
 
-    Profiles are stored in :data:`REQUIRED_FIELD_PROFILES_BY_KIND`.
-    Returns ``None`` when *kind* is not a registered profile.
+    Checks both generic (from :mod:`arnold.workflow.boundary_templates`)
+    and adapter-specific profiles.  Returns ``None`` when *kind* is not
+    a registered profile.
     """
-    return REQUIRED_FIELD_PROFILES_BY_KIND.get(kind)
+    # Try combined registry first, then adapter-only
+    profile = REQUIRED_FIELD_PROFILES_BY_KIND.get(kind)
+    if profile is not None:
+        return profile
+    return ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND.get(kind)
 
 
 def list_template_ids() -> tuple[str, ...]:
@@ -1376,8 +1984,52 @@ def list_template_ids() -> tuple[str, ...]:
 
 
 def list_profile_kinds() -> tuple[str, ...]:
-    """Return all registered profile kind labels."""
+    """Return all registered profile kind labels (generic + adapter)."""
     return tuple(REQUIRED_FIELD_PROFILES_BY_KIND.keys())
+
+
+# ── Boundary conformance bridge ────────────────────────────────────────────
+# Delegates to the generic check_contract_conformance from boundary_templates
+# for generic kinds, and falls back to adapter-specific profile checking for
+# Megaplan-only kinds.  Physical/external evidence and partial acceptance
+# remain in adapter details — they are not validated through the generic path.
+
+
+def check_contract_conformance(
+    contract: BoundaryContract,
+    kind: BoundaryTemplateKind | AdapterTemplateKind | str,
+) -> tuple[str, ...]:
+    """Check which required fields are missing from *contract* for *kind*.
+
+    For generic :class:`BoundaryTemplateKind` values this delegates to
+    :func:`arnold.workflow.boundary_templates.check_contract_conformance`.
+    For adapter-specific :class:`AdapterTemplateKind` values it uses the
+    adapter profile registry.
+
+    Args:
+        contract: The concrete :class:`BoundaryContract` to check.
+        kind: A :class:`BoundaryTemplateKind`, :class:`AdapterTemplateKind`,
+              or string kind label.
+
+    Returns:
+        Tuple of missing field paths (empty if fully conformant).
+    """
+    kind_str = kind.value if hasattr(kind, "value") else kind
+
+    # Try generic path first
+    try:
+        return _generic_check_contract_conformance(contract, kind_str)
+    except (KeyError, ValueError):
+        pass
+
+    # Fall back to adapter-specific
+    profile = ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND.get(kind_str)
+    if profile is None:
+        raise KeyError(f"Unknown template kind: {kind_str!r}")
+
+    # Use local contract_satisfies_profile for adapter-specific kinds
+    _, missing = contract_satisfies_profile(contract, profile)
+    return missing
 
 
 # ── Structural diff helpers ────────────────────────────────────────────────
@@ -1515,23 +2167,34 @@ def _is_empty_value(value: object) -> bool:
 
 
 __all__ = [
+    "AdapterTemplateKind",
+    "ADAPTER_REQUIRED_FIELD_PROFILES",
+    "ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND",
     "ApprovalBoundary",
     "ArtifactHandoffBoundary",
     "BOUNDARY_CONTRACTS",
     "BOUNDARY_CONTRACTS_BY_ID",
+    "BoundaryTemplateKind",
+    "EXEMPTION_REGISTRY",
     "OVERRIDE_AUTHORITY_CONTRACTS",
+    "PHASE_FAMILY_COVERAGE_MATRIX",
     "REQUIRED_FIELD_PROFILES",
     "REQUIRED_FIELD_PROFILES_BY_KIND",
     "REQUIRED_FIELDS_APPROVAL_BOUNDARY",
     "REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY",
     "REQUIRED_FIELDS_ARTIFACT_PROMOTION",
+    "REQUIRED_FIELDS_AUDITOR_COMPLETION",
+    "REQUIRED_FIELDS_CHAIN_MILESTONE",
+    "REQUIRED_FIELDS_CLOUD_CUSTODY",
     "REQUIRED_FIELDS_EXECUTION_CUSTODY",
     "REQUIRED_FIELDS_EXTERNAL_EFFECT",
     "REQUIRED_FIELDS_EXTERNAL_WITNESS",
     "REQUIRED_FIELDS_GRAPH_JOIN_FANOUT",
     "REQUIRED_FIELDS_HUMAN_APPROVAL_WAIVER",
     "REQUIRED_FIELDS_LIFECYCLE_TRANSITION",
+    "REQUIRED_FIELDS_PR_TRANSITION",
     "REQUIRED_FIELDS_REDUCER",
+    "REQUIRED_FIELDS_REPAIR_VERDICT",
     "REQUIRED_FIELDS_REVISION_BOUNDARY",
     "REQUIRED_FIELDS_VALIDATION_BOUNDARY",
     "RevisionBoundary",
@@ -1539,7 +2202,22 @@ __all__ = [
     "TYPED_BOUNDARY_TEMPLATES_BY_ID",
     "ValidationBoundary",
     "artifact_promotion_template",
+    "auditor_6h_completion",
+    "auditor_completion_template",
+    "chain_complete",
+    "chain_milestone_completion",
+    "chain_milestone_start",
+    "chain_milestone_template",
     "challenger_to_synthesis",
+    "check_contract_conformance",
+    "classify_boundary_kind",
+    "cloud_custody_blocked_relaunch_failure",
+    "cloud_custody_complete",
+    "cloud_custody_escalated_repeated_unchanged",
+    "cloud_custody_managed_running",
+    "cloud_custody_template",
+    "cloud_custody_unmanaged_running_warning",
+    "cloud_repair_dispatch",
     "contract_satisfies_profile",
     "critique_to_gate",
     "decision_to_parent",
@@ -1555,23 +2233,33 @@ __all__ = [
     "execution_custody_template",
     "external_effect_template",
     "external_witness_template",
+    "families_without_coverage",
     "final_projection",
     "finalize_artifacts",
     "finalize_fallback",
     "gate_to_revise",
     "get_contract_by_id",
     "get_profile_by_kind",
+    "get_required_fields",
+    "get_template",
     "get_template_by_id",
     "graph_join_fanout_template",
     "human_approval_waiver_template",
     "lifecycle_transition_template",
     "list_profile_kinds",
     "list_template_ids",
+    "list_template_kinds",
+    "meta_repair_completion",
+    "ordinary_repair_completion",
     "parent_rejoin_promotion",
     "plan_to_critique",
+    "pr_merged",
+    "pr_ready",
+    "pr_transition_template",
     "prep_lifecycle_rule",
     "prep_to_plan",
     "reducer_template",
+    "repair_verdict_template",
     "replan_authority",
     "override_abort_authority",
     "override_adopt_execution_authority",
@@ -1588,5 +2276,6 @@ __all__ = [
     "review_rework_effects",
     "researcher_to_challenger",
     "revise_to_critique",
+    "select_template",
     "synthesis_to_decision",
 ]

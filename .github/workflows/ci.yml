@@ -16,7 +16,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install -U pip
-          python -m pip install -e '.[agent]' pytest
+          python -m pip install -e '.[agent]'
       - name: Validate strategy and rebuild projection
         run: |
           python -m arnold_pipelines.megaplan.cli strategy validate
@@ -29,7 +29,7 @@ jobs:
       - name: Validate M7 default-off and export regressions
         run: |
           unset MEGAPLAN_M7_SINKS
-          MEGAPLAN_MOCK_WORKERS=1 pytest tests/test_chain_epic_briefs_lint.py tests/store/test_capsule_storage.py tests/store/test_warrant_sources.py -q
+          MEGAPLAN_MOCK_WORKERS=1 python -m pytest tests/test_chain_epic_briefs_lint.py tests/store/test_capsule_storage.py tests/store/test_warrant_sources.py -q
       - name: Test
         run: python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_chain_done_gate.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/cli/test_m5_workflow_cli.py tests/arnold/conformance -q
 
@@ -44,7 +44,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install -U pip
-          python -m pip install -e '.[agent]' pytest
+          python -m pip install -e '.[agent]'
       - name: Run Docker-dependent tests (best-effort)
         continue-on-error: true
         run: python -m pytest -m slow tests/test_cloud_docker_build.py -q
@@ -60,7 +60,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install -U pip
-          python -m pip install -e '.[agent]' pytest build
+          python -m pip install -e '.[agent]' build
       - name: Check generated assets and package disposition
         run: |
           python scripts/generate_arnold_docs.py --check

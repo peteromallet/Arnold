@@ -1,6 +1,6 @@
 # Editable auto-repair runtime verification — 2026-07-11
 
-Session: `workflow-boundary-contracts-corrective-20260710`  
+Session: `workflow-boundary-contracts-corrective-20260710`
 Plan: `c1-contract-reality-20260711-1433`
 
 ## Outcome

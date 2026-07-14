@@ -920,3 +920,80 @@ def test_enqueue_with_workspace_and_run_kind_stored(tmp_path: Path) -> None:
     payload = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
     assert payload["workspace"] == "/tmp/ws"
     assert payload["run_kind"] == "execute"
+
+
+# ---------------------------------------------------------------------------
+# T15: Repair verdict decision records
+# ---------------------------------------------------------------------------
+
+
+def test_write_repair_verdict_decision_for_cleared(tmp_path: Path) -> None:
+    """write_repair_verdict_decision records a dispatched decision for cleared verdict."""
+    queue_dir = _queue_root(tmp_path)
+    decision = repair_requests.write_repair_verdict_decision(
+        queue_dir,
+        request_id="req-cleared-001",
+        verdict_kind="cleared",
+        verdict_path="/tmp/verdicts/cleared-001.json",
+        blocker_id="blocker-42",
+        reason="repair loop completed successfully",
+    )
+    assert decision["decision"] == "dispatched"
+    assert decision["request_id"] == "req-cleared-001"
+    assert "repair_verdict: cleared" in decision["reason"]
+    assert "blocker=blocker-42" in decision["reason"]
+    assert "path=/tmp/verdicts/cleared-001.json" in decision["reason"]
+    assert "repair loop completed successfully" in decision["reason"]
+
+    # Decision file exists
+    decision_path = Path(decision["_path"])
+    assert decision_path.exists()
+    payload = json.loads(decision_path.read_text(encoding="utf-8"))
+    assert payload["decision"] == "dispatched"
+    assert payload["request_id"] == "req-cleared-001"
+
+
+def test_write_repair_verdict_decision_for_no_fix(tmp_path: Path) -> None:
+    """write_repair_verdict_decision records dispatched for no_fix verdict."""
+    queue_dir = _queue_root(tmp_path)
+    decision = repair_requests.write_repair_verdict_decision(
+        queue_dir,
+        request_id="req-nofix-001",
+        verdict_kind="no_fix",
+        blocker_id="blocker-nofix",
+        reason="all repair strategies exhausted",
+    )
+    assert decision["decision"] == "dispatched"
+    assert "repair_verdict: no_fix" in decision["reason"]
+    assert "blocker=blocker-nofix" in decision["reason"]
+    assert "all repair strategies exhausted" in decision["reason"]
+
+
+def test_write_repair_verdict_decision_for_escalated(tmp_path: Path) -> None:
+    """write_repair_verdict_decision records dispatched for escalated verdict."""
+    queue_dir = _queue_root(tmp_path)
+    decision = repair_requests.write_repair_verdict_decision(
+        queue_dir,
+        request_id="req-esc-001",
+        verdict_kind="escalated",
+        blocker_id="blocker-human",
+        reason="human intervention required",
+    )
+    assert decision["decision"] == "dispatched"
+    assert "repair_verdict: escalated" in decision["reason"]
+    assert "human intervention required" in decision["reason"]
+
+
+def test_write_repair_verdict_decision_minimal_fields(tmp_path: Path) -> None:
+    """write_repair_verdict_decision works with only required fields."""
+    queue_dir = _queue_root(tmp_path)
+    decision = repair_requests.write_repair_verdict_decision(
+        queue_dir,
+        request_id="req-minimal-001",
+        verdict_kind="stale",
+    )
+    assert decision["decision"] == "dispatched"
+    assert "repair_verdict: stale" in decision["reason"]
+    # No blocker/path fields when not provided
+    assert "blocker=" not in decision["reason"]
+    assert "path=" not in decision["reason"]

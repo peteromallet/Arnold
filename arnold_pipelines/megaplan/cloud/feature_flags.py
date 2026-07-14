@@ -28,7 +28,7 @@ repair-request-queue  ARNOLD_REPAIR_REQUEST_QUEUE   1 (on)     Persist observe-o
 repair-trigger        ARNOLD_REPAIR_TRIGGER_ENABLED 1 (on)     L1 path gate;
                                                                 mutation still
                                                                 requires autonomy.
-autonomy              ARNOLD_AUTONOMY               1 (on)     Enable autonomous
+autonomy              ARNOLD_AUTONOMY               0 (off)    Enable autonomous
                                                                 trigger / meta /
                                                                 auditor actions.
 meta-repair           ARNOLD_META_REPAIR_ENABLED    1 (on)     L2 path gate;
@@ -153,13 +153,13 @@ def escalation_ledger_enabled() -> bool:
 def autonomy_enabled() -> bool:
     """Return ``True`` when autonomous trigger / meta / auditor actions are permitted.
 
-    Controlled by ``ARNOLD_AUTONOMY`` — defaults to ON (``"1"``).
+    Controlled by ``ARNOLD_AUTONOMY`` — defaults to OFF (``"0"``).
 
     When disabled, trigger dispatch, meta-launch decisions, and auditor
     autonomous intervention are all suppressed.  Only observe-only evidence
     capture is allowed.
     """
-    return _is_enabled("ARNOLD_AUTONOMY", True)
+    return _is_enabled("ARNOLD_AUTONOMY", False)
 
 
 def repair_trigger_enabled() -> bool:

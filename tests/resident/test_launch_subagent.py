@@ -87,10 +87,14 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     captured: dict = {}
 
     def fake_run(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["kwargs"] = kwargs
-        qf = argv[argv.index("--query-file") + 1]
-        captured["query"] = Path(qf).read_text()
+        # Cloud-status collection can issue an unrelated ``ps`` while this
+        # process-wide subprocess monkeypatch is active. Capture only the
+        # Hermes launcher invocation owned by this test.
+        if "--query-file" in argv:
+            captured["argv"] = list(argv)
+            captured["kwargs"] = kwargs
+            qf = argv[argv.index("--query-file") + 1]
+            captured["query"] = Path(qf).read_text()
         return _Completed(stdout="FINAL ANSWER\n", stderr="diag", returncode=0)
 
     monkeypatch.setattr(subagent_module.subprocess, "run", fake_run)
@@ -121,7 +125,6 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     assert "--project-dir" in argv and str(tmp_path) in argv
     assert "--query-file" in argv
     assert captured["query"].startswith(
-        "Current request: unavailable from the authoritative inbound request\n\n"
         "hello\nworld\n\n[Completion delivery contract]"
     )
     assert FINAL_SUMMARY_INSTRUCTION in captured["query"]
@@ -249,7 +252,6 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert Path(manifest["result_path"]).is_file()
     prompt = Path(manifest["prompt_path"]).read_text()
     assert prompt.startswith(
-        "Current request: Handle the delegated resident request.\n\n"
         "do the work\n\n[Completion delivery contract]"
     )
     assert "[Delegated context directory]" in prompt
@@ -785,9 +787,7 @@ def test_completion_sweep_replies_once_and_persists_evidence(tmp_path) -> None:
     assert first.delivered == 1
     assert second.delivered == 0
     assert len(outbound.sent) == 1
-    assert outbound.sent[0].content == (
-        "Current request: must not be copied to run provenance\n\nDone safely."
-    )
+    assert outbound.sent[0].content == "Done safely."
     assert outbound.sent[0].metadata["discord_reply_to_message_id"] == "1001"
     assert outbound.sent[0].metadata["discord_processing_message_ids"] == ["1001"]
     manifest = json.loads(manifest_path.read_text())
@@ -822,6 +822,9 @@ def test_terminal_run_triggers_verified_resident_turn_and_exact_reply(
             assert "never proof" in request.system_prompt
             assert "must begin with exactly" not in request.system_prompt
             assert "begin with what happened" in request.system_prompt
+            assert "sole current request" in request.system_prompt
+            assert "must not be copied to run provenance" in request.system_prompt
+            assert "summary_line" not in request.hot_context["current_request"]
             assert str(manifest_path.resolve()) in request.messages[-1]["content"]
             return AgentResponse(final_text=summary)
 
@@ -856,9 +859,7 @@ def test_terminal_run_triggers_verified_resident_turn_and_exact_reply(
     persisted = json.loads(manifest_path.read_text())
     assert result.delivered == 1
     assert len(runner.requests) == 1
-    assert outbound.sent[0].content == (
-        "Current request: must not be copied to run provenance\n\n" + summary
-    )
+    assert outbound.sent[0].content == summary
     assert not outbound.sent[0].content.lower().startswith("verification outcome:")
     assert outbound.sent[0].metadata["discord_reply_to_message_id"] == "1001"
     assert persisted["launch_provenance"] == original["launch_provenance"]
@@ -1371,7 +1372,7 @@ def test_newer_run_supersedes_duplicate_completion_for_same_original_request(tmp
     newer = json.loads(newer_path.read_text())["completion_delivery"]
     assert result.delivered == 1
     assert [message.content for message in outbound.sent] == [
-        "Current request: must not be copied to run provenance\n\ncurrent completion"
+        "current completion"
     ]
     assert outbound.sent[0].metadata["discord_reply_to_message_id"] == original_discord_id
     assert older["status"] == "superseded"
@@ -1471,9 +1472,7 @@ def test_completion_delivery_failure_is_persisted_and_retried(tmp_path) -> None:
     assert final_manifest["completion_delivery"]["status"] == "delivered"
     assert final_manifest["completion_delivery"]["attempt_count"] == 2
     assert len(final_manifest["completion_delivery"]["error_history"]) == 1
-    assert final_manifest["completion_delivery"]["payload"]["content"] == (
-        "Current request: must not be copied to run provenance\n\nDone safely."
-    )
+    assert final_manifest["completion_delivery"]["payload"]["content"] == "Done safely."
 
 
 def test_completion_delivery_persists_redacted_discord_http_evidence(tmp_path) -> None:

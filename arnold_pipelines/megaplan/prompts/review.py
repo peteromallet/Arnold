@@ -24,6 +24,8 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.orchestration.completion_contract import CompletionSubject
 from arnold_pipelines.megaplan.orchestration.review_evidence import collect_review_evidence
 from arnold_pipelines.megaplan.types import PlanState
+from arnold_pipelines.megaplan.schema_projection import schema_template_payload
+from arnold_pipelines.megaplan.schemas import SCHEMAS
 
 from ._projection import (
     PromptProjectionCapabilities,
@@ -465,16 +467,17 @@ def _review_template_payload(plan_dir: Path, state: PlanState | None = None) -> 
 
     criteria = _criteria_from_plan_artifacts(plan_dir, state)
 
-    return {
-        "review_verdict": "",
+    template = schema_template_payload(
+        SCHEMAS["review.json"],
+        contract="review scratch template",
+    )
+    template.update({
         "review_completion_status": "",
         "criteria": criteria,
-        "issues": [],
-        "rework_items": [],
-        "summary": "",
         "task_verdicts": task_verdicts,
         "sense_check_verdicts": sense_check_verdicts,
-    }
+    })
+    return template
 
 
 def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]:
@@ -1198,39 +1201,7 @@ def _write_review_template(plan_dir: Path, state: PlanState) -> Path:
     the same pattern used for critique templates and fixes MiniMax-M2.7's
     tendency to return empty verdict arrays.
     """
-    finalize_data = read_json(plan_dir / "finalize.json")
-
-    task_verdicts = []
-    for task in finalize_data.get("tasks", []):
-        task_id = task.get("id", "")
-        if task_id:
-            task_verdicts.append({
-                "task_id": task_id,
-                "reviewer_verdict": "",
-                "evidence_files": [],
-            })
-
-    sense_check_verdicts = []
-    for sc in finalize_data.get("sense_checks", []):
-        sc_id = sc.get("id", "")
-        if sc_id:
-            sense_check_verdicts.append({
-                "sense_check_id": sc_id,
-                "verdict": "",
-            })
-
-    criteria = _criteria_from_plan_artifacts(plan_dir, state)
-
-    template = {
-        "review_verdict": "",
-        "review_completion_status": "",
-        "criteria": criteria,
-        "issues": [],
-        "rework_items": [],
-        "summary": "",
-        "task_verdicts": task_verdicts,
-        "sense_check_verdicts": sense_check_verdicts,
-    }
+    template = _review_template_payload(plan_dir, state)
 
     output_path = plan_dir / "review_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")

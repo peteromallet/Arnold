@@ -1,0 +1,42 @@
+---
+
+## External Publication Truth: `workflow-boundary-contracts-corrective-20260710`
+
+### Target Repo State (from `repair-progress.json` external git check)
+
+| Field | Value |
+|---|---|
+| **Branch** | `editible-install` (marker `editable_source_branch`) |
+| **HEAD** | `0211937ea056109454f99bb5ca6592a5ef7f15af` |
+| **Base ref** | `432760d13abb69a32a77e7bb1e79c1136d4ce533` ("m3-consumers: megaplan milestone #212") |
+| **Ahead count** | 2 (`9a1d3f0216` c1 auto-publish, `0211937ea0` s2 auto-publish) |
+| **PR** | **None** — `pr.available: false`, reason `no_pr_number` |
+| **Dirty state** | Unknown (SSH down; publication observations all `unknown`) |
+
+**Critical finding**: HEAD `0211937ea0` and its child `3e788c90` live exclusively on `remotes/origin/megaplan/s2-contract-foundation-and-20260713-1544`. **Neither is on `editible-install` or `origin/editible-install`.** The target clone is tracking the S2 auto-publish branch, not the canonical `editible-install` source.
+
+### Commit `3e788c90717be970af8945b3739cca40ee1e5894`
+
+- **Message**: "Add meta-repair verdict coverage tests"
+- **Content**: single file `tests/cloud/test_meta_repair.py`, 298 insertions
+- **Author**: Codex Agent, 2026-07-14T00:04:25Z
+- **Location**: only on `remotes/origin/megaplan/s2-contract-foundation-and-20260713-1544`
+- **On `editible-install`?** **NO**
+- **On `origin/editible-install`?** **NO**
+- **On `main`?** **NO**
+
+### Repair Claim vs. Reality
+
+The repair-data contains **two** attempt records (not 66 — `attempt_counter: 66` is accounting inflation with `attempt_ids: []`):
+
+1. **Attempt 1** (2026-07-11): real fix `3ff595994e` ("Harden gate inline payload normalization"), pushed to `origin/editible-install` — **genuinely unblocked** the c1 gate-loop. This commit IS ancestor of `origin/editible-install` and `main`.
+
+2. **Second attempt** (≈2026-07-14, the "attempt 66"): claims fix `3e788c90`, pushed with hypothesis *"T18 coverage added but uncommitted"*. Claims 191 pytest passes and "committed and pushed the recovered T18 test coverage."
+
+### Did Attempt 66's Fix Actually Land?
+
+**No.** The target repo HEAD is `0211937ea0` — the **parent** of `3e788c90`. The push landed on `megaplan/s2-contract-foundation-and-20260713-1544` but **never reached `editible-install`**, which is the branch the target clone is configured to track. The `cloud-status.json` execution environment snapshot (`target_head: 3e788c90`) reflects what the plan *believed* it was running against, but the external git check proves the actual HEAD never advanced past `0211937ea0`. The repair-data itself records `mechanical_launch: "failed:stopped"` — the chain did not resume after this "fix."
+
+### Does Any Repair Claim Falsely Rely on Unavailable PR Evidence?
+
+**No PR claim is made.** `pr.available: false` is explicit across all evidence (repair-data, repair-progress, chain-health). The second attempt references only the pushed commit `3e788c90`. The falsehood is elsewhere: the claim that `3e788c90` was pushed to the target's branch (`editible-install`) is untrue — it landed on an unrelated auto-publish branch invisible to the target clone. The `attempt_counter: 66` claim (with empty `attempt_ids: []`) is also an accounting fabrication.

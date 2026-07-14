@@ -15,7 +15,7 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-14T07:41:54.659106+00:00",
+  "generated_at": "2026-07-14T13:45:50.929927+00:00",
   "incident_id": "inc-superfixer-alive-but-failed-recovery",
   "kind": "incident_summary",
   "latest_actor": "immediate_repair",
@@ -32,7 +32,7 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
+    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
     "last_seq": 202,
     "projection": "incidents"
   },

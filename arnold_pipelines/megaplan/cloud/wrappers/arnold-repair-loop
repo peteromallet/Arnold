@@ -29,9 +29,19 @@ SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"
 FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
 FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
 ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+fi
+if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+fi
+# shellcheck disable=SC1090
+. "$SUPERVISOR_RUNTIME_LIB"
+arnold_supervisor_runtime_init repair-loop "$ARNOLD_SRC" || exit $?
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
-HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
+HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
@@ -62,7 +72,7 @@ REPAIR_LOCK_DIR="${CLOUD_WATCHDOG_REPAIR_LOCK_DIR:-$MARKER_DIR/${SAFE_SESSION}.r
 
 load_resident_delegation_context() {
   local encoded rc
-  encoded="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_PATH" <<'PY'
+  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$MARKER_PATH" <<'PY'
 import json
 import os
 import sys
@@ -3039,6 +3049,20 @@ if plan_state_path is not None:
     }
     plan_dir = plan_state_path.parent
     execute_attempt_context = _collect_execute_attempt_context(plan_dir, plan_state)
+    try:
+        from arnold_pipelines.megaplan.cloud.repair_contract import build_repair_semantic_context
+        from arnold_pipelines.megaplan.semantic_health import inspect_semantic_health, project_semantic_findings
+        findings = inspect_semantic_health(plan_dir)
+        semantic_health = project_semantic_findings(findings, session_id=session, plan_dir=plan_dir)
+        semantic_context = build_repair_semantic_context(
+            findings=findings,
+            session_id=session,
+        )
+        custody_projection = semantic_context.get("custody_projection") or {}
+    except Exception:
+        semantic_health = None
+        semantic_context = None
+        custody_projection = {}
     resume_cursor = plan_state.get("resume_cursor") if isinstance(plan_state.get("resume_cursor"), dict) else {}
     meta = plan_state.get("meta") if isinstance(plan_state.get("meta"), dict) else {}
     clarification = plan_state.get("clarification") if isinstance(plan_state.get("clarification"), dict) else {}
@@ -3147,6 +3171,9 @@ else:
     latest_failure = {}
     execute_attempt_context = {}
     last_gate = {}
+    semantic_health = None
+    semantic_context = None
+    custody_projection = {}
 
 state_mismatch = _state_mismatch_analysis(plan_latest_failure, chain_state_summary)
 raw_failure_signals = _unique_strings(
@@ -3327,6 +3354,9 @@ payload = {
     "provider_profile_viability": provider_profile_viability,
 }
 payload["resolver_output"] = resolver_output
+payload["semantic_health"] = semantic_health
+payload["semantic_context"] = semantic_context
+payload["custody_projection"] = custody_projection
 print(json.dumps(payload, sort_keys=True))
 PY
 }
@@ -4117,6 +4147,10 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     merge_additive_fields,
     save_repair_data,
 )
+from arnold_pipelines.megaplan.managed_agent import (
+    is_managed_manifest,
+    normalize_machine_origin_provenance,
+)
 
 (
     path,
@@ -4165,6 +4199,29 @@ incident_id = str(existing.get("incident_id") or "").strip() or f"inc-{session}"
 # Preserve dispatch-level request/blocker identity from triggering env.
 dispatch_request_id = str(request_id or existing.get("request_id") or "").strip()
 dispatch_blocker_id = str(blocker_id or existing.get("blocker_id") or "").strip()
+managed_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip()
+managed_manifest = str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or "").strip()
+managed_launch_verified = False
+if managed_run_id and managed_manifest:
+    try:
+        managed_payload = json.loads(pathlib.Path(managed_manifest).read_text(encoding="utf-8"))
+        normalize_machine_origin_provenance(managed_payload.get("launch_provenance") or {})
+        managed_links = managed_payload.get("links") if isinstance(managed_payload.get("links"), dict) else {}
+        request_matches = not dispatch_request_id or managed_links.get("repair_request_id") == dispatch_request_id
+        blocker_matches = not dispatch_blocker_id or managed_links.get("blocker_id") == dispatch_blocker_id
+        managed_launch_verified = bool(
+            is_managed_manifest(managed_payload)
+            and managed_payload.get("run_id") == managed_run_id
+            and request_matches
+            and blocker_matches
+            and any(
+                item.get("status") == "running"
+                for item in managed_payload.get("status_history") or []
+                if isinstance(item, dict)
+            )
+        )
+    except (OSError, ValueError, TypeError):
+        managed_launch_verified = False
 
 payload = {
     "session": session,
@@ -4216,13 +4273,11 @@ payload = {
     "current_failure_context": failure_context_payload,
     "run_recurrence_detected": False,
     "iterations": [],
-    "outcome": "repairing",
+    "outcome": "repairing" if managed_launch_verified else "repair_launch_unverified",
     "request_id": dispatch_request_id,
     "blocker_id": dispatch_blocker_id,
 }
-managed_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip()
-managed_manifest = str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or "").strip()
-if managed_run_id:
+if managed_launch_verified:
     payload["managed_agent_run_id"] = managed_run_id
     payload["managed_agent_manifest_path"] = managed_manifest
     managed_runs = [
@@ -4241,6 +4296,9 @@ if managed_run_id:
     payload["managed_agent_runs"] = managed_runs
 resolver_output = failure_context_payload.get("resolver_output")
 payload["initial_facts"]["resolver_output"] = resolver_output or {}
+payload["initial_facts"]["semantic_health"] = failure_context_payload.get("semantic_health") or {}
+payload["initial_facts"]["semantic_context"] = failure_context_payload.get("semantic_context") or {}
+payload["initial_facts"]["custody_projection"] = failure_context_payload.get("custody_projection") or {}
 payload = merge_additive_fields(payload, target=resolver_output or {}, incident_id=incident_id)
 save_repair_data(data_path, payload)
 PY
@@ -4686,6 +4744,97 @@ if is_success_outcome(outcome):
     payload["last_success_outcome"] = outcome
     payload["run_recurrence_detected"] = False
 save_repair_data(pathlib.Path(path), payload)
+PY
+  repair_save_verdict_evidence
+}
+
+repair_save_verdict_evidence() {
+  # best-effort: do not require the repair lock (the data file has already
+  # been written by repair_data_set_outcome or save_repair_data). If the
+  # data file is missing or unreadable, skip quietly.
+  local verdict_path="${DATA_FILE%.repair-data.json}.repair-verdict.json"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$verdict_path" "$SESSION" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" <<'PY'
+import pathlib
+import sys
+
+data_path_raw, verdict_path_raw, session, blocker_id, request_id = sys.argv[1:]
+data_path = pathlib.Path(data_path_raw)
+verdict_path = pathlib.Path(verdict_path_raw)
+
+try:
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        build_ordinary_repair_verdict,
+        load_json,
+        save_repair_verdict,
+    )
+except Exception:
+    raise SystemExit(0)
+
+payload = load_json(data_path, default=None)
+if payload is None:
+    raise SystemExit(0)
+
+verdict = build_ordinary_repair_verdict(
+    repair_data_payload=payload,
+    session=session,
+    request_id=request_id or payload.get("request_id", ""),
+    blocker_id=blocker_id or payload.get("blocker_id", ""),
+    attempted_actions=tuple(payload.get("attempted_actions") or ()),
+    before_evidence_refs=tuple(payload.get("before_evidence_refs") or ()),
+    after_evidence_refs=tuple(payload.get("after_evidence_refs") or ()),
+    durable_refs=tuple(payload.get("durable_refs") or ()),
+)
+save_repair_verdict(verdict_path, verdict)
+
+# --- repair success without custody check ---
+# When the repair verdict indicates success (cleared), verify that custody
+# evidence exists for this session.  If custody is missing or shows an
+# unmanaged/blocked state, the repair success cannot be fully trusted and
+# should be flagged.
+if verdict.verdict_kind == "cleared":
+    import json as _json
+    _snapshot_path = pathlib.Path("/workspace/.megaplan/status/cloud-status.json")
+    try:
+        _snapshot = _json.loads(_snapshot_path.read_text(encoding="utf-8"))
+    except Exception:
+        _snapshot = None
+    if isinstance(_snapshot, dict):
+        _sessions = _snapshot.get("sessions")
+        if isinstance(_sessions, list):
+            _custody_kind = ""
+            for _entry in _sessions:
+                if isinstance(_entry, dict) and _entry.get("session") == session:
+                    _cc = _entry.get("cloud_custody")
+                    if isinstance(_cc, dict):
+                        _custody_kind = _cc.get("custody_kind", "")
+                    break
+            # Managed-running or complete custody backs the repair success.
+            # Any other custody state (unmanaged-warning, blocked-relaunch,
+            # escalated-unchanged, or missing) indicates the repair success
+            # should not be fully trusted without custody evidence.
+            if _custody_kind not in ("managed-running", "complete", ""):
+                # Write a custody-gap sidecar so S4 consumers can find it.
+                _gap_path = pathlib.Path(
+                    "/workspace/.megaplan/cloud-sessions/repair-data"
+                ) / f"{session}.repair-custody-gap.json"
+                try:
+                    _gap_path.parent.mkdir(parents=True, exist_ok=True)
+                    _gap_payload = {
+                        "session": session,
+                        "verdict_kind": verdict.verdict_kind,
+                        "custody_kind": _custody_kind,
+                        "evidence_timestamp": verdict.evidence_timestamp,
+                        "message": (
+                            f"repair verdict cleared but custody is {_custody_kind or 'missing'}; "
+                            f"repair success not backed by managed custody evidence"
+                        ),
+                    }
+                    _gap_path.write_text(
+                        _json.dumps(_gap_payload, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
 PY
 }
 
@@ -5785,7 +5934,7 @@ run_dev_fix_turn() {
   prepare_repair_agent_exec_env
   run_id_file="$RUN_DIR/iter${iteration}-dev-fix-managed-run-id"
   if [[ "$dispatch_kind" == "hermes" ]]; then
-    worker_cmd=(timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file="$prompt_path" --project_dir="$repair_workdir")
+    worker_cmd=(timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file=@managed-stdin@ --project_dir="$repair_workdir")
   else
     worker_cmd=(timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec --sandbox danger-full-access -c model="$dispatch_model" -c model_reasoning_effort="$reasoning_effort" -)
   fi
@@ -5801,6 +5950,11 @@ run_dev_fix_turn() {
     --route-class "repair_${dispatch_kind}${fallback_reason:+_fallback}"
     --backend "$dispatch_kind"
     --command-display "automatic repair dev-fix iteration $iteration"
+    --origin-kind repair_loop_worker
+    --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
+    --origin-component arnold-repair-loop
+    --trigger-id "$attempt_id"
+    --require-output
     --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:dev"
     --run-id-file "$run_id_file"
     --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
@@ -5814,9 +5968,7 @@ run_dev_fix_turn() {
   if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
     managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
   fi
-  if [[ "$dispatch_kind" != "hermes" ]]; then
-    managed_cmd+=(--stdin-file "$prompt_path")
-  fi
+  managed_cmd+=(--stdin-file "$prompt_path")
   managed_cmd+=(-- "${worker_cmd[@]}")
   (cd "$repair_workdir" && "${managed_cmd[@]}") >> "$LOG" 2>&1 &
   local child_pid=$!
@@ -5851,8 +6003,8 @@ run_kimi_launch_turn() {
   run_id_file="$RUN_DIR/iter${iteration}-kimi-managed-run-id"
   worker_cmd=(
     env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"
-    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent
-    --query_file="$prompt_path"
+    PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent
+    --query_file=@managed-stdin@
     --model="$KIMI_MODEL"
     --api_key="${KIMI_API_KEY:-}"
     --base_url="$KIMI_BASE_URL"
@@ -5872,6 +6024,12 @@ run_kimi_launch_turn() {
     --route-class repair_kimi_recovery
     --backend kimi
     --command-display "automatic repair Kimi recovery iteration $iteration"
+    --origin-kind repair_loop_worker
+    --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
+    --origin-component arnold-repair-loop
+    --trigger-id "$CURRENT_ATTEMPT_ID"
+    --require-output
+    --stdin-file "$prompt_path"
     --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:kimi"
     --run-id-file "$run_id_file"
     --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"

@@ -1,20 +1,23 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-14T07:41:54.662432+00:00",
+  "generated_at": "2026-07-14T13:45:50.949185+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
+    "inc-megaplan-north-star-sense-checks-revise-design",
     "inc-repository-strategy-roadmap",
-    "inc-superfixer-alive-but-failed-recovery"
+    "inc-runauthority-epic-cloud",
+    "inc-superfixer-alive-but-failed-recovery",
+    "inc-workflow-boundary-contracts-corrective-20260710"
   ],
   "next_review_ts": null,
-  "occurrence_count": 7,
-  "owner_actor": "immediate_repair",
+  "occurrence_count": 15,
+  "owner_actor": "github_sync",
   "problem_id": "problem-72f87afd3954",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
-    "last_seq": 362,
+    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
+    "last_seq": 517,
     "projection": "problems"
   },
   "status": "open",

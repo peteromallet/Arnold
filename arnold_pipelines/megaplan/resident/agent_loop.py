@@ -19,7 +19,6 @@ from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, re
 
 from .config import ResidentConfig
 from .provenance import environment_with_provenance
-from .request_summary import current_request_summary_line
 from .tool_schemas import ToolCallAuditRecord, ToolResult
 from .tool_registry import ToolRegistry
 
@@ -318,25 +317,11 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
     def _messages(self, request: AgentRequest) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [{"role": "system", "content": request.system_prompt}]
         if request.hot_context:
-            current_request = request.hot_context.get("current_request")
-            summary_line = (
-                current_request.get("summary_line")
-                if isinstance(current_request, Mapping)
-                else None
-            )
             messages.append(
                 {
                     "role": "system",
-                    "content": (
-                        current_request_summary_line(
-                            summary_line.removeprefix("Current request: ")
-                            if isinstance(summary_line, str)
-                            and summary_line.startswith("Current request: ")
-                            else None
-                        )
-                        + "\nHot context JSON:\n"
-                        + json.dumps(request.hot_context, sort_keys=True, default=str)
-                    ),
+                    "content": "Hot context JSON:\n"
+                    + json.dumps(request.hot_context, sort_keys=True, default=str),
                 }
             )
         for message in request.messages:

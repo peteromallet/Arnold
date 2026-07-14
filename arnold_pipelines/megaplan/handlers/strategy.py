@@ -60,6 +60,18 @@ from arnold_pipelines.megaplan.strategy.contract import (
     StrategyDiagnostic,
     StrategyIdentity,
 )
+from arnold_pipelines.megaplan.strategy.migration import (
+    MigrationReport,
+    inspect_strategy_migration,
+)
+from arnold_pipelines.megaplan.strategy.apply_migration import (
+    apply_strategy_migration,
+    compute_apply_plan,
+)
+from arnold_pipelines.megaplan.strategy.versions import (
+    CURRENT_SCHEMA_VERSION,
+    inspect_strategy_file,
+)
 from arnold_pipelines.megaplan.types import CliError, StepResponse
 
 
@@ -457,6 +469,36 @@ def handle_strategy_project(
             "No strategy file found. Run 'strategy init' first.",
         )
 
+    # Fail closed: a document that parsed only with error diagnostics (for
+    # example an unsupported schema version) is not a valid authority
+    # document. Strict authoritative commands must refuse rather than emit
+    # partial projection JSON that merely embeds the diagnostics.
+    _raw_diags = (
+        getattr(document, "error_diagnostics", None)
+        or getattr(document, "diagnostics", None)
+        or []
+    )
+    _error_diags = []
+    for _d in _raw_diags:
+        # StrategyDiagnostic exposes the level on the ``level`` attribute
+        # (``DiagnosticLevel`` = Literal["error", "warning"]); the older
+        # ``severity`` spelling is not present, so reading it never detected
+        # error-level diagnostics and let invalid authority through.
+        _sev = _d.get("level", "") if isinstance(_d, dict) else getattr(_d, "level", "")
+        if str(_sev).lower() == "error":
+            _error_diags.append(_d)
+    if _error_diags:
+        _first = _error_diags[0]
+        _msg = (
+            _first.get("message", "invalid strategy")
+            if isinstance(_first, dict)
+            else getattr(_first, "message", "invalid strategy")
+        )
+        raise CliError(
+            "strategy_invalid",
+            "Strategy file is not a valid authority document: " + str(_msg),
+        )
+
     projection_json = project_to_json(document)
 
     if output_path:
@@ -572,6 +614,11 @@ def handle_strategy_add(
             "No strategy file found. Run 'strategy init' first.",
         )
 
+    # Fail closed: a strategy that only parsed with hard diagnostics (e.g. an
+    # unsupported schema_version) is not a valid authority document. Strict
+    # write commands must reject it before mutating the file.
+    _require_valid_authority(repo_root, document)
+
     # ---- Preflight: reject unknown artifact references -----------------------
     _validate_artifact_exists(item_type, ref, repo_root)
 
@@ -668,6 +715,10 @@ def handle_strategy_remove(
             "No strategy file found. Run 'strategy init' first.",
         )
 
+    # Fail closed: refuse to mutate an invalid strategy authority document
+    # (e.g. unsupported schema_version) before any write.
+    _require_valid_authority(repo_root, document)
+
     new_document = remove_roadmap_entry(document, identity)
 
     # Detect whether anything was actually removed.
@@ -762,6 +813,10 @@ def handle_strategy_move(
             "No strategy file found. Run 'strategy init' first.",
         )
 
+    # Fail closed: refuse to mutate an invalid strategy authority document
+    # (e.g. unsupported schema_version) before any write.
+    _require_valid_authority(repo_root, document)
+
     new_document = move_roadmap_entry(document, identity, horizon)  # type: ignore[arg-type]
 
     # Detect missing entry: move_roadmap_entry returns unchanged document
@@ -815,6 +870,58 @@ def handle_strategy_move(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _require_valid_authority(
+    repo_root: str | Path,
+    document: "StrategyDocument",
+) -> None:
+    """Fail closed: refuse to mutate an invalid strategy authority document.
+
+    Strict write commands (add/move/remove/project) must not act on a strategy
+    file whose authority is not currently valid. Two independent gates:
+
+    1. **Version status must be ``current``.** The tolerant inspection surface
+       (doctor/migrate) classifies legacy / missing-version / unsupported-old /
+       unsupported-new / malformed states, but those are *not* valid authority
+       for strict commands. The explicit version check closes this gap
+       regardless of the diagnostic level the parser assigns to the version.
+    2. **No hard ``error``-level diagnostics** from parsing/validation
+       (``StrategyDiagnostic.level == 'error'``).
+
+    A no-op for clean, current documents.
+    """
+    version_status = inspect_strategy_file(repo_root)
+    if version_status != "current":
+        raise CliError(
+            "strategy_invalid",
+            "Strategy file is not a valid current authority document "
+            f"(version status: '{version_status}', current version: "
+            f"'{CURRENT_SCHEMA_VERSION}'). Run 'strategy doctor' to inspect or "
+            f"'strategy migrate --apply' to upgrade before editing.",
+        )
+
+    raw_diags = (
+        getattr(document, "error_diagnostics", None)
+        or getattr(document, "diagnostics", None)
+        or []
+    )
+    for diag in raw_diags:
+        sev = (
+            diag.get("level", "")
+            if isinstance(diag, dict)
+            else getattr(diag, "level", "")
+        )
+        if str(sev).lower() == "error":
+            msg = (
+                diag.get("message", "invalid strategy")
+                if isinstance(diag, dict)
+                else getattr(diag, "message", "invalid strategy")
+            )
+            raise CliError(
+                "strategy_invalid",
+                "Strategy file is not a valid authority document: " + str(msg),
+            )
 
 
 def _validate_artifact_exists(
@@ -871,6 +978,230 @@ def _roadmap_unchanged(
 
 
 # ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+def handle_strategy_doctor(
+    repo_root: Path,
+    args: argparse.Namespace,
+) -> StepResponse:
+    """Inspect the repository and return structured migration diagnostics.
+
+    Tolerates absent ``.megaplan/STRATEGY.md`` — reports ``status='ok'``
+    and ``safe_to_apply=False`` without raising an error.
+
+    Parameters
+    ----------
+    repo_root:
+        Repository root directory.
+    args:
+        Parsed CLI arguments.  ``--json`` (optional) returns the full
+        machine-readable :class:`MigrationReport` dictionary including
+        findings, blockers, proposed actions, and ``safe_to_apply``.
+
+    Returns
+    -------
+    StepResponse
+        A structured response.  When ``--json`` is passed the response is
+        the full serialized report dictionary; otherwise a compact summary
+        with status, version_status, counts, and safe_to_apply.
+    """
+    json_flag = bool(getattr(args, "json", False))
+
+    report = inspect_strategy_migration(repo_root)
+
+    if json_flag:
+        return _migration_report_to_dict(report)
+
+    error_count = sum(1 for f in report.findings if f.severity == "error")
+    warning_count = sum(1 for f in report.findings if f.severity == "warning")
+    info_count = sum(1 for f in report.findings if f.severity == "info")
+
+    return {
+        "success": True,
+        "step": "strategy",
+        "action": "doctor",
+        "status": report.status,
+        "version_status": report.version_status,
+        "schema_version": report.schema_version,
+        "current_version": report.current_version,
+        "safe_to_apply": report.safe_to_apply,
+        "blockers": report.blockers,
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "info_count": info_count,
+        "proposed_action_count": len(report.proposed_actions),
+        "tickets_dir_exists": report.tickets_dir_exists,
+        "strategy_file_path": report.strategy_file_path,
+    }
+
+
+# ---------------------------------------------------------------------------
+# migrate (dry-run by default)
+# ---------------------------------------------------------------------------
+
+
+def handle_strategy_migrate(
+    repo_root: Path,
+    args: argparse.Namespace,
+) -> StepResponse:
+    """Dry-run strategy migration — inspect and report without mutating.
+
+    By default this is a dry-run: it calls
+    :func:`inspect_strategy_migration` and returns machine-readable
+    diagnostics, proposed actions, blockers, backup paths that would be
+    used, and ``safe_to_apply``.  No files are written.
+
+    The ``--apply`` flag performs the supported reversible rewrites (eligible
+    strategy version upgrade and ticket epics normalisation) with byte-for-byte
+    backups, a SHA-256 manifest, and atomic writes — never renaming ticket
+    files or inventing IDs.  Without ``--apply`` the command stays read-only.
+
+    Parameters
+    ----------
+    repo_root:
+        Repository root directory.
+    args:
+        Parsed CLI arguments.  ``args.apply`` (``--apply``) enables writes.
+
+    Returns
+    -------
+    StepResponse
+        With ``--apply``: the :func:`apply_strategy_migration` result
+        describing what was applied and where backups were written.
+        Without ``--apply``: a full machine-readable report as a dictionary
+        with findings, blockers, proposed actions, backup paths, and
+        ``safe_to_apply``.
+    """
+    if getattr(args, "apply", False):
+        return apply_strategy_migration(repo_root)
+
+    report = inspect_strategy_migration(repo_root)
+
+    # Preview the exact apply layout with an explicit timestamp placeholder.
+    backup_paths, manifest_path = _compute_backup_paths(repo_root)
+
+    return _migration_report_to_dict(
+        report,
+        backup_paths=backup_paths,
+        manifest_path=manifest_path,
+        action="migrate",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Serialization helpers
+# ---------------------------------------------------------------------------
+
+
+def _migration_report_to_dict(
+    report: MigrationReport,
+    backup_paths: list[str] | None = None,
+    manifest_path: str | None = None,
+    action: str = "doctor",
+) -> dict[str, Any]:
+    """Serialize a :class:`MigrationReport` to a stable JSON-serializable dict.
+
+    Parameters
+    ----------
+    report:
+        The migration report to serialize.
+    backup_paths:
+        Optional list of backup file paths that would be created if the
+        proposed actions were applied.  Used by the ``migrate`` handler.
+    action:
+        Label for the ``action`` field in the output (``"doctor"`` or
+        ``"migrate"``).
+
+    Returns
+    -------
+    dict
+        A stable dictionary with all report fields and serialized findings,
+        blockers, proposed actions, and optional backup paths.
+    """
+    serialized_findings: list[dict[str, Any]] = []
+    for f in report.findings:
+        d: dict[str, Any] = {
+            "kind": f.kind,
+            "severity": f.severity,
+            "message": f.message,
+        }
+        if f.source is not None:
+            d["source"] = f.source
+        serialized_findings.append(d)
+
+    serialized_actions: list[dict[str, Any]] = []
+    for a in report.proposed_actions:
+        ad: dict[str, Any] = {
+            "action_id": a.action_id,
+            "kind": a.kind,
+            "description": a.description,
+            "safe": a.safe,
+        }
+        if a.target is not None:
+            ad["target"] = a.target
+        serialized_actions.append(ad)
+
+    # Serialize ticket inventory summary (avoid full entry detail).
+    inventory_summary: dict[str, Any] | None = None
+    if report.ticket_inventory is not None:
+        inv = report.ticket_inventory
+        inventory_summary = {
+            "total_files": inv.total_files,
+            "total_with_id": inv.total_with_id,
+            "total_valid_ulid": inv.total_valid_ulid,
+            "total_roadmap_eligible": inv.total_roadmap_eligible,
+            "total_parse_errors": inv.total_with_parse_errors,
+            "total_duplicate_ids": len(inv.duplicate_ids),
+        }
+
+    result: dict[str, Any] = {
+        "success": True,
+        "step": "strategy",
+        "action": action,
+        "status": report.status,
+        "version_status": report.version_status,
+        "schema_version": report.schema_version,
+        "current_version": report.current_version,
+        "safe_to_apply": report.safe_to_apply,
+        "findings": serialized_findings,
+        "blockers": report.blockers,
+        "proposed_actions": serialized_actions,
+        "tickets_dir_exists": report.tickets_dir_exists,
+        "strategy_file_path": report.strategy_file_path,
+        "ticket_inventory_summary": inventory_summary,
+    }
+
+    if backup_paths is not None:
+        result["backup_paths"] = backup_paths
+    if manifest_path is not None:
+        result["manifest_path"] = manifest_path
+
+    return result
+
+
+def _compute_backup_paths(
+    repo_root: Path,
+) -> tuple[list[str], str | None]:
+    """Preview the backup and manifest paths used by migration apply.
+
+    The real timestamp is chosen only when ``--apply`` begins.  Dry-run uses
+    the literal ``<timestamp>`` segment while preserving every other path
+    component from the apply plan.
+    """
+    plan = compute_apply_plan(repo_root)
+    if plan.blocked or not plan.rewrites:
+        return [], None
+
+    preview_root = (
+        Path(".megaplan") / "backups" / "strategy-migration" / "<timestamp>"
+    )
+    backup_paths = [str(preview_root / rewrite.path) for rewrite in plan.rewrites]
+    return backup_paths, str(preview_root / "manifest.json")
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher (for CLI wiring convenience)
 # ---------------------------------------------------------------------------
 
@@ -883,6 +1214,8 @@ _STRATEGY_HANDLERS: dict[str, Any] = {
     "add": handle_strategy_add,
     "remove": handle_strategy_remove,
     "move": handle_strategy_move,
+    "doctor": handle_strategy_doctor,
+    "migrate": handle_strategy_migrate,
 }
 
 
@@ -899,7 +1232,8 @@ def handle_strategy(
     args:
         Parsed CLI arguments.  Must carry a ``strategy_action`` attribute
         set to one of ``init``, ``validate``, ``show``, ``list``,
-        ``project``, ``add``, ``remove``, or ``move``.
+        ``project``, ``add``, ``remove``, ``move``, ``doctor``, or
+        ``migrate``.
 
     Returns
     -------

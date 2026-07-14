@@ -25,6 +25,8 @@ goes to stderr so callers can pipe the output cleanly.
 from __future__ import annotations
 
 import os
+import hashlib
+import subprocess
 import sys
 import time
 import traceback
@@ -193,7 +195,7 @@ def _import_runtime():
         from megaplan.runtime.key_pool import resolve_model
         return AIAgent, SessionDB, resolve_model
     except ModuleNotFoundError as legacy_exc:
-        if legacy_exc.name not in {"megaplan", "run_agent", "hermes_state"}:
+        if legacy_exc.name not in {"megaplan", "megaplan.agent", "run_agent", "hermes_state"}:
             raise
     # Try 2: current Arnold editable-install layout.
     try:
@@ -253,10 +255,127 @@ _MODEL_SHORTCUTS = {
 
 _HIGH_TOKEN_STREAM_PROVIDERS = ("fireworks:", "deepseek:", "mimo:")
 _HIGH_TOKEN_STREAM_MAX_TOKENS = 4096
+_NESTED_WORKER_ENV = "ARNOLD_NESTED_MANAGED_AGENT_WORKER"
 
 
 def _resolve_model_shortcut(model: str) -> str:
     return _MODEL_SHORTCUTS.get(str(model).strip(), model)
+
+
+def _automatic_managed_reexec() -> int | None:
+    """Put nested automatic Hermes/DeepSeek work under its own durable run."""
+
+    parent_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip()
+    parent_manifest = str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or "").strip()
+    machine_origin = str(os.environ.get("ARNOLD_MANAGED_AGENT_ORIGIN") or "").strip()
+    if not parent_run_id or not parent_manifest or not machine_origin:
+        return None
+    if os.environ.get(_NESTED_WORKER_ENV) == "1":
+        return None
+    try:
+        from arnold_pipelines.megaplan.managed_agent import (
+            normalize_machine_origin_provenance,
+            validate_automatic_managed_manifest,
+        )
+
+        parent_manifest_path = Path(parent_manifest).resolve()
+        parent_payload = json.loads(parent_manifest_path.read_text(encoding="utf-8"))
+        validate_automatic_managed_manifest(
+            parent_payload,
+            manifest_path=parent_manifest_path,
+        )
+        inherited_origin = normalize_machine_origin_provenance(json.loads(machine_origin))
+        if parent_payload.get("run_id") != parent_run_id:
+            raise ValueError("parent run id disagrees with manifest")
+        if inherited_origin != parent_payload.get("launch_provenance"):
+            raise ValueError("parent machine origin disagrees with manifest")
+        if not any(
+            item.get("status") == "running"
+            for item in parent_payload.get("status_history") or []
+            if isinstance(item, dict)
+        ):
+            raise ValueError("parent managed run never reached running")
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError("automatic nested launcher inherited invalid managed custody") from exc
+
+    model = "deepseek:deepseek-v4-pro"
+    project_dir = str(Path.cwd())
+    query_file = ""
+    child_args: list[str] = []
+    for argument in sys.argv[1:]:
+        if argument.startswith(("--model=",)):
+            model = argument.split("=", 1)[1]
+        elif argument.startswith(("--project_dir=", "--project-dir=")):
+            project_dir = argument.split("=", 1)[1]
+        elif argument.startswith(("--query_file=", "--query-file=")):
+            query_file = argument.split("=", 1)[1]
+            option = argument.split("=", 1)[0]
+            child_args.append(f"{option}=@managed-stdin@")
+            continue
+        elif argument.startswith("--query="):
+            raise RuntimeError("automatic nested agent requires sealed --query-file input")
+        child_args.append(argument)
+    if not query_file:
+        raise RuntimeError("automatic nested agent requires --query-file")
+    query_path = Path(query_file).expanduser().resolve()
+    identity_material = json.dumps(
+        [parent_run_id, model, child_args, hashlib.sha256(query_path.read_bytes()).hexdigest()],
+        separators=(",", ":"),
+    )
+    identity_digest = hashlib.sha256(identity_material.encode("utf-8")).hexdigest()[:24]
+    identity = f"nested-research:{parent_run_id}:{identity_digest}"
+    command = [
+        sys.executable,
+        "-m",
+        "arnold_pipelines.megaplan.managed_agent",
+        "run",
+        "--run-kind",
+        "automatic_research_subagent",
+        "--identity-key",
+        identity,
+        "--project-dir",
+        str(Path(project_dir).expanduser().resolve()),
+        "--task-kind",
+        "research",
+        "--difficulty",
+        "8",
+        "--model",
+        model,
+        "--reasoning-effort",
+        "high",
+        "--route-class",
+        "managed_parent_research",
+        "--backend",
+        "hermes",
+        "--command-display",
+        f"nested managed research subagent model={model}",
+        "--origin-kind",
+        "managed_parent_agent",
+        "--origin-id",
+        parent_run_id,
+        "--origin-component",
+        "launch_hermes_agent",
+        "--trigger-id",
+        identity_digest,
+        "--parent-run-id",
+        parent_run_id,
+        "--lineage-key",
+        f"nested-research:{parent_run_id}",
+        "--stdin-file",
+        str(query_path),
+        "--require-output",
+        "--link",
+        f"parent_manifest={parent_manifest}",
+        "--link",
+        "phase=nested_research",
+        "--",
+        sys.executable,
+        str(Path(__file__).resolve()),
+        *child_args,
+    ]
+    env = dict(os.environ)
+    env[_NESTED_WORKER_ENV] = "1"
+    return subprocess.run(command, env=env, check=False).returncode
 
 
 def _requires_streaming(model: str, max_tokens: int) -> bool:
@@ -495,6 +614,9 @@ def run(
 
 
 def main() -> None:
+    nested_returncode = _automatic_managed_reexec()
+    if nested_returncode is not None:
+        raise SystemExit(nested_returncode)
     _check_codex_network_sandbox()
     try:
         import fire

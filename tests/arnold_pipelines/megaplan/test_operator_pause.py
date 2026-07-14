@@ -134,7 +134,24 @@ def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, 
     )
     assert calls == [
         ["tmux", "has-session", "-t", "demo"],
-        ["tmux", "new-session", "-d", "-s", "demo", "-c", str(tmp_path), "safe command"],
+        [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            "demo",
+            "-c",
+            str(tmp_path),
+            "-e",
+            f"ARNOLD_REPAIR_QUEUE_ROOT={tmp_path / 'repair-queue'}",
+            "-e",
+            f"ARNOLD_REPAIR_MARKER_DIR={tmp_path / 'markers'}",
+            "-e",
+            "ARNOLD_REPAIR_SESSION=demo",
+            "-e",
+            "ARNOLD_REPAIR_RUN_KIND=chain",
+            "safe command",
+        ],
     ]
     assert resumed["runner_started"] is True
     assert json.loads(marker.read_text())["should_run"] is True
