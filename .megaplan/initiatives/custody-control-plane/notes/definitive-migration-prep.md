@@ -23,13 +23,13 @@ of completed candidate `cbe69337…` found the ledger is explicitly schema-only,
 with no production store/API, and only 5 auto-matched plus 8 manual-emission
 contracts versus 13 declared-only and 9 unknown. The support manifest cannot be
 treated as universal adoption proof.
-The user is merging WBC separately and this checkout has no WBC completion
-manifest. The chain therefore requires current WBC completion proof but does not
-guess the final merge revision. M5 remains semantically independent of WBC and
-may start with rejected Run Authority receipts, but this canonical chain admits
-it only after the WBC launch precondition passes. M6 consumes M5's accepted
-evidence and binds the exact operator-supplied WBC merge commit to its current
-manifest/support/runtime proof while generating a call-site/runtime boundary
+Candidate `cbe69337…` is landed by audited no-ff merge `24afce00…`. The old
+four-milestone cloud terminal state is not a completion manifest for the current
+C1-C6 chain, so the custody chain never claims it as such. M5 remains
+semantically independent of WBC and may start with rejected Run Authority
+receipts after the audited merge launch precondition passes. M6 consumes M5's
+accepted evidence and binds the exact merge to current ancestry/support/runtime
+proof while generating a call-site/runtime boundary
 inventory. M6A then implements the WBC-owned transactional store/API and
 migration/data-policy substrate; M8 adopts every producer. M6A and later
 implementation also require the accepted approval record. The epic preserves
@@ -72,10 +72,13 @@ can create or certify production-incident-class authority failures.
 ## Fail-closed posture
 
 The serial chain uses manual milestone review/merge and `auto_approve: false`.
-Chain entry first requires current WBC completion proof. M5 is then admitted
+Chain entry first requires the audited WBC merge evidence and immutable
+initiative/runtime binding; it explicitly rejects old S1-S4 terminal state as
+current C1-C6 completion. M5 is then admitted
 without accepted Run Authority receipts; it cannot hand off
 until all three are accepted, canonical verification has zero divergences, and
-retirement is content-addressed. M6 requires that handoff and current WBC proof.
+retirement is content-addressed. M6 requires that handoff and current WBC
+ancestry/support/runtime proof.
 M6A, M7-M11 and M8A also require the accepted approval record. Chain failure, escalation,
 stale evidence, or hash mismatch stops progression. Production enforcement,
 mutating repair, provider effects, deployment, and deletion remain action-off

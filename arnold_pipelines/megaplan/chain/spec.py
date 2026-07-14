@@ -966,6 +966,117 @@ class ChainSpec:
         )
 
 
+@dataclass(frozen=True)
+class MilestoneBoundaryEvidence:
+    """Durable evidence record for a completed chain milestone.
+
+    Carries the contract ID, milestone identity, plan name, state snapshot ref,
+    commit/tip refs, and PR refs needed to satisfy chain milestone boundary
+    contracts.  This is a structured record — not a loose dict — so consumers
+    can rely on stable field names.
+    """
+
+    milestone_label: str
+    milestone_index: int
+    plan_name: str
+    contract_id: str
+    contract_boundary_id: str
+    state_snapshot_ref: str | None = None
+    commit_ref: str | None = None
+    tip_ref: str | None = None
+    branch_head: str | None = None
+    pr_head: str | None = None
+    pr_number: int | None = None
+    pr_state: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "milestone_label": self.milestone_label,
+            "milestone_index": self.milestone_index,
+            "plan_name": self.plan_name,
+            "contract_id": self.contract_id,
+            "contract_boundary_id": self.contract_boundary_id,
+        }
+        if self.state_snapshot_ref is not None:
+            payload["state_snapshot_ref"] = self.state_snapshot_ref
+        if self.commit_ref is not None:
+            payload["commit_ref"] = self.commit_ref
+        if self.tip_ref is not None:
+            payload["tip_ref"] = self.tip_ref
+        if self.branch_head is not None:
+            payload["branch_head"] = self.branch_head
+        if self.pr_head is not None:
+            payload["pr_head"] = self.pr_head
+        if self.pr_number is not None:
+            payload["pr_number"] = self.pr_number
+        if self.pr_state is not None:
+            payload["pr_state"] = self.pr_state
+        return payload
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "MilestoneBoundaryEvidence":
+        return cls(
+            milestone_label=raw.get("milestone_label", ""),
+            milestone_index=int(raw.get("milestone_index", -1)),
+            plan_name=raw.get("plan_name", ""),
+            contract_id=raw.get("contract_id", ""),
+            contract_boundary_id=raw.get("contract_boundary_id", ""),
+            state_snapshot_ref=raw.get("state_snapshot_ref"),
+            commit_ref=raw.get("commit_ref"),
+            tip_ref=raw.get("tip_ref"),
+            branch_head=raw.get("branch_head"),
+            pr_head=raw.get("pr_head"),
+            pr_number=int(raw["pr_number"]) if raw.get("pr_number") is not None else None,
+            pr_state=raw.get("pr_state"),
+        )
+
+
+def build_milestone_boundary_evidence(
+    *,
+    milestone_label: str,
+    milestone_index: int,
+    plan_name: str,
+    contract_id: str,
+    contract_boundary_id: str,
+    state: "ChainState | None" = None,
+    state_snapshot_ref: str | None = None,
+    commit_ref: str | None = None,
+    tip_ref: str | None = None,
+) -> MilestoneBoundaryEvidence:
+    """Construct a milestone boundary evidence record.
+
+    When *state* is provided, commit/tip/PR refs are drawn from the current
+    chain state.  Explicit keyword overrides take precedence.
+    """
+    branch_head: str | None = None
+    pr_head: str | None = None
+    pr_number: int | None = None
+    pr_state: str | None = None
+    if state is not None:
+        if commit_ref is None:
+            commit_ref = state.current_milestone_base_sha
+        if tip_ref is None:
+            tip_ref = state.target_base_ref
+        branch_head = state.branch_head
+        pr_head = state.pr_head
+        pr_number = state.pr_number
+        pr_state = state.pr_state
+    return MilestoneBoundaryEvidence(
+        milestone_label=milestone_label,
+        milestone_index=milestone_index,
+        plan_name=plan_name,
+        contract_id=contract_id,
+        contract_boundary_id=contract_boundary_id,
+        state_snapshot_ref=state_snapshot_ref,
+        commit_ref=commit_ref,
+        tip_ref=tip_ref,
+        branch_head=branch_head,
+        pr_head=pr_head,
+        pr_number=pr_number,
+        pr_state=pr_state,
+    )
+
+
 @dataclass
 class ChainState:
     """Persisted progress for a chain run."""
@@ -997,6 +1108,7 @@ class ChainState:
     enforce_revise_counts: dict[str, int] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     schema_version: int = 0
+    milestone_boundary_evidence: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1027,6 +1139,7 @@ class ChainState:
             "depth_bumps": dict(self.depth_bumps),
             "enforce_revise_counts": dict(self.enforce_revise_counts),
             "metadata": dict(self.metadata),
+            "milestone_boundary_evidence": dict(self.milestone_boundary_evidence),
         }
 
     @classmethod
@@ -1089,6 +1202,15 @@ class ChainState:
         metadata = raw.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
+
+        milestone_boundary_evidence_raw = raw.get("milestone_boundary_evidence")
+        if not isinstance(milestone_boundary_evidence_raw, dict):
+            milestone_boundary_evidence_raw = {}
+        milestone_boundary_evidence: dict[str, dict[str, Any]] = {}
+        for key, val in milestone_boundary_evidence_raw.items():
+            if isinstance(key, str) and isinstance(val, dict):
+                milestone_boundary_evidence[key] = val
+
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
@@ -1116,7 +1238,77 @@ class ChainState:
             depth_bumps=_str_str_map(raw.get("depth_bumps")),
             enforce_revise_counts=_str_int_map(raw.get("enforce_revise_counts")),
             metadata=dict(metadata),
+            milestone_boundary_evidence=milestone_boundary_evidence,
         )
+
+    # ── Milestone boundary evidence helpers ──────────────────────────────
+
+    def get_milestone_evidence(
+        self, label: str,
+    ) -> MilestoneBoundaryEvidence | None:
+        """Return the structured evidence record for *label*, or ``None``."""
+        raw = self.milestone_boundary_evidence.get(label)
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return MilestoneBoundaryEvidence.from_dict(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def has_milestone_evidence(self, label: str) -> bool:
+        """Return ``True`` when durable boundary evidence exists for *label*."""
+        return label in self.milestone_boundary_evidence
+
+    def set_milestone_evidence(
+        self, evidence: MilestoneBoundaryEvidence,
+    ) -> None:
+        """Record durable boundary evidence keyed by milestone label."""
+        self.milestone_boundary_evidence[evidence.milestone_label] = evidence.to_dict()
+
+    def completed_milestone_contract_ids(self) -> dict[str, str]:
+        """Return ``{milestone_label: contract_id}`` for every completed milestone with evidence."""
+        result: dict[str, str] = {}
+        for label, raw in self.milestone_boundary_evidence.items():
+            if isinstance(raw, dict) and isinstance(raw.get("contract_id"), str):
+                result[label] = raw["contract_id"]
+        return result
+
+    def enrich_completed_record(
+        self,
+        record: dict[str, Any],
+        *,
+        contract_id: str,
+        contract_boundary_id: str,
+    ) -> dict[str, Any]:
+        """Return *record* with milestone boundary evidence fields attached.
+
+        The returned dict is a shallow copy of *record* augmented with
+        ``milestone_index``, ``contract_id``, ``contract_boundary_id``,
+        ``commit_ref``, ``tip_ref``, ``branch_head``, ``pr_head``, and
+        ``state_snapshot_ref`` drawn from current chain state.
+
+        This is safe to call on records that already carry evidence fields
+        (they will be overwritten with fresh values).
+        """
+        enriched = dict(record)
+        enriched.setdefault("milestone_index", self.current_milestone_index)
+        enriched["contract_id"] = contract_id
+        enriched["contract_boundary_id"] = contract_boundary_id
+        if self.current_milestone_base_sha:
+            enriched["commit_ref"] = self.current_milestone_base_sha
+        if self.target_base_ref:
+            enriched["tip_ref"] = self.target_base_ref
+        if self.branch_head:
+            enriched["branch_head"] = self.branch_head
+        if self.pr_head:
+            enriched["pr_head"] = self.pr_head
+        if self.pr_number is not None:
+            enriched["pr_number"] = self.pr_number
+        if self.pr_state:
+            enriched["pr_state"] = self.pr_state
+        # state_snapshot_ref is intentionally None here — it is filled in
+        # by the caller when a plan state snapshot path is available.
+        return enriched
 
 
 def _state_path_for(spec_path: Path) -> Path:
@@ -1175,8 +1367,8 @@ def load_chain_state(
             operation="chain state load/resume",
         )
     else:
-        # Observe-only callers (notably status) must not normalize or save a
-        # cursor while presenting a binding mismatch.
+        # Observe-only callers must not normalize or save a cursor while
+        # presenting a binding mismatch.
         return best_state
     original_state = best_state.to_dict()
     best_state = _normalize_stale_current_plan_reference(best_state)

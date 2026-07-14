@@ -19,9 +19,11 @@ residual migration design.
 - Workflow Boundary Contracts (WBC) owns versioned boundary declarations, the
   durable execution-attempt/external-effect evidence ledger, provenance,
   payload/reference policy, semantic findings, and WBC supported-runtime
-  conformance. Its merge is in progress outside this task. This initiative does
-  not guess or claim the final merge commit; M6 binds the exact operator-supplied
-  merge result to its generated proof/support manifests before implementation.
+  conformance. Candidate `cbe69337d6f469fd7ae12f1fd0a51007d93b5d70`
+  landed through audited no-ff merge
+  `24afce006b9ad20391ac7af10ef67ea0b1774f9f`; that consolidation evidence is a
+  launch prerequisite. The old cloud session's four-milestone terminal label is
+  not completion proof for the current six-milestone corrective chain.
   Read-only audit of the completed candidate found that its attempt ledger is
   schema-only and its producer matrix is only partially implemented, so M6A-M11
   make operational storage and universal adoption separately provable.
@@ -53,8 +55,8 @@ The executable chain now contains nine ordered milestones:
 1. M5 reconciles all three Run Authority receipts, proves zero divergence, then
    writes and attests the metadata-only retirement marker for the exact
    `.megaplan/initiatives/runauthority-epic/` initiative.
-2. M6 accepts the exact WBC merge commit from the operator, verifies it against
-   current completion/support proof, pins the reconciled Run Authority/WBC
+2. M6 validates the exact audited WBC merge against landed ancestry and current
+   support/runtime proof, pins the reconciled Run Authority/WBC
    contract set, and generates the maintained zero-exemption boundary matrix.
 3. M6A implements the WBC-owned transactional attempt/effect store and API,
    start-before-dispatch and terminal-outcome invariants, indeterminate/
@@ -90,16 +92,20 @@ rollout gates, unknowns, and completion contract are in
 The WBC revision/call-site/consumer evidence and maintained row-level proof
 contract are in `research/wbc-adoption-audit-20260714.md` and
 `research/wbc-boundary-adoption-matrix.md`.
+The delivery-level mapping from every missed behavior through call sites,
+milestones, tests, gates, and actual final verification is
+`research/end-state-coverage-matrix-20260714.md`.
 
 ## Launch posture
 
-The chain is deliberately unlaunched and fail-closed. Chain entry requires a
-generic immutable execution-binding guard and its content-addressed prelaunch
-receipt, plus a current content-addressed WBC completion manifest. The guard
-must bind local/normalized-remote chain bytes, ordered briefs and anchors,
-source/tree and installed/editable/runtime provenance; launch, handoff, resume,
-restart and reconciliation stop on drift. The planning assets do not name a
-guessed WBC merge revision. M5 does not require already-accepted Run
+The chain is deliberately unlaunched and fail-closed until its revision pin is
+landed. Generic chain control now binds the chain bytes, ordered milestone
+sequence, briefs, North Star, intended initiative revision, and resolved
+source/editable runtime into immutable chain-state metadata before the first
+milestone. Load/resume and reconciliation stop before normalization on drift,
+and status exposes expected versus active identities. The audited WBC merge
+evidence—not the invalid old four-milestone terminal label—is the WBC launch
+input. M5 does not require already-accepted Run
 Authority receipts or the later migration approval: producing genuine Run
 Authority completion/retirement evidence is its purpose. The Run Authority
 entry checks preserve source lineage and a manifest claim as inputs to
@@ -107,16 +113,17 @@ reconcile; they do not assert acceptance. The
 serial chain and manual milestone merge gate block M6 until M5 has
 three accepted receipts, zero canonical verification divergences, a regenerated
 manifest, the canonical `runauthority-epic/.retired` marker, and its
-content-addressed retirement attestation. M6 must then obtain the exact merged
-WBC commit from the operator and prove the manifest/support/runtime identity
-matches it. M6A and every later implementation milestone remain blocked until
+content-addressed retirement attestation. M6 must then prove the audited WBC
+merge is contained by the exact landed/runtime vector and reconcile its
+support/runtime evidence honestly. M6A and every later implementation milestone remain blocked until
 M6's ownership handoff and the approval record are accepted. Planning completion grants no authority to start,
 resume, execute, merge, deploy, restart, or delete anything.
 
 Every milestone handoff additionally requires a cumulative North Star receipt
 proving the immutable launch bundle still matches, predecessor obligations still
 hold, matrix rows moved only on machine-derived evidence, and blocking suites
-ran in enforce mode. This external chain-control guard must exist before M5; a
-later milestone cannot circularly protect the chain that selects it. The
+ran in enforce mode. The immutable selector guard exists before M5; later
+milestones add plan/review and runtime-trace proof without circularly protecting
+the chain that selected them. The
 blocking rationale is in
 `handoff/wbc-adoption-adversarial-review-20260714.md`.

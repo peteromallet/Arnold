@@ -25,10 +25,12 @@ this reconciliation and canonical retirement proof before adoption proceeds.
 
 WBC owns the broad boundary/attempt/effect ledger and supported-runtime
 conformance portions of the original migration design. A later read-only audit
-on 2026-07-14 found completed candidate `cbe69337…` but no final landed revision:
+on 2026-07-14 found completed candidate `cbe69337…`; it subsequently landed by
+audited no-ff merge `24afce006b9ad20391ac7af10ef67ea0b1774f9f`:
 its attempt ledger is explicitly schema-only and its producer inventory remains
-partially declared/unknown. The current checkout still has no accepted WBC
-completion manifest. M6 validates the final landed/runtime proof and generates
+partially declared/unknown. The old four-milestone cloud terminal state is not
+accepted completion for the current six-milestone corrective chain. M6 validates
+the final landed/runtime proof and generates
 the boundary inventory; M6A operationalizes the WBC-owned ledger/API; M8 adopts
 every producer without changing ownership. M6A-M11 remain blocked until M5/M6
 handoffs plus the human approval record pass. No competing Custody ledger,
@@ -62,9 +64,11 @@ after parity/proof.
 - Control bindings and transition APIs exist (`control_interface.py`,
   `planning/control_binding.py`), as do plan event journals, effect ledgers,
   receipts, incident events and resident managed-run manifests.
-- WBC is actively defining exact boundary declarations, execution-attempt and
-  effect evidence, semantic findings and broad runtime conformance. Its C1-C6
-  identities and runtime must remain untouched by this plan.
+- WBC defines exact boundary declarations, execution-attempt/effect schemas,
+  semantic findings and broad runtime conformance at the audited landed merge.
+  Its C1-C6 identities remain prerequisite intent; this initiative explicitly
+  operationalizes the schema-only substrate and skipped adoption without
+  rewriting WBC ownership.
 
 ## What was not migrated
 

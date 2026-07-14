@@ -10,8 +10,8 @@ created_at: '2026-07-13T00:00:00+00:00'
 
 ## Outcome
 
-Verify M5's reconciled Run Authority evidence and the operator-supplied exact
-WBC merge revision by content address, freeze their exact ownership/version
+Verify M5's reconciled Run Authority evidence and audited exact WBC merge
+revision by content address, freeze their exact ownership/version
 contract, and produce a machine-readable residual
 inventory of every pipeline writer, reader, projection, liveness, recovery,
 effect, and compatibility path not already proven by those prerequisites.
@@ -25,10 +25,12 @@ This is an observe-only milestone sized to no more than two weeks.
 - Validate prerequisite chain state, chain/North Star/brief hashes, merged
   publication evidence, completion manifests, proof maps, support manifests,
   installed/editable/runtime revisions, and ownership declarations.
-- Record the exact WBC merge commit supplied after the user's merge completes.
-  Prove the WBC manifest, support map, installed/editable runtime, and generated
-  schemas bind that commit. Topic-branch tips, working-tree bytes, `latest`, and
-  inferred ancestry are not substitutes; absent or mismatched evidence blocks.
+- Record audited WBC merge
+  `24afce006b9ad20391ac7af10ef67ea0b1774f9f` and its exact parents. Prove current
+  main contains it and that the support map, installed/editable runtime, and
+  generated schemas bind the declared vector. Topic-branch tips, working-tree
+  bytes, `latest`, the old S1-S4 terminal label, and inferred ancestry are not
+  substitutes; absent or mismatched evidence blocks.
 - Reconcile the existing lineage audit and migration matrix against current
   code and prerequisite proof, marking each row prerequisite-satisfied,
   residual, blocked, retired, or out of supported scope with evidence.
@@ -91,8 +93,8 @@ mutation outside this milestone's normal reviewed execution lifecycle.
 
 ## Open questions
 
-- Does the operator-supplied WBC merge commit match its manifest, support map,
-  generated schemas, and landed/running source revisions?
+- Does the audited WBC merge match its support map, generated schemas, current
+  main ancestry, and landed/running source revisions?
 - Which matrix rows are genuinely proven by implementation plus captured
   runtime traces, and which remain schema-only, declared-only, manual-emission,
   best-effort, compatibility-only, shadow-only, or unknown despite the WBC
@@ -114,7 +116,7 @@ or notification mutation. Preserve immutable resident delegation provenance.
 
 - M5's three accepted receipts, zero-divergence verification, regenerated Run
   Authority manifest, and retirement attestation validate unchanged. The exact
-  operator-supplied WBC merge commit, current manifest/support proof,
+  audited WBC merge commit, current ancestry/support proof,
   landed/runtime revisions, and generated schema set also validate, or M6 fails
   with an exact evidence gap and no downstream handoff.
 - Every matrix row has a unique owner, exact current/target contract, status,
@@ -169,8 +171,9 @@ blocked and no runtime behavior changes.
 ## Handoff and dependencies
 
 Dependencies: M5's accepted Run Authority reconciliation/retirement handoff,
-the operator-supplied WBC merge commit plus current content-addressed WBC
-completion/support evidence, and the top-level North Star. Handoff to M6A:
+the audited WBC merge plus current content-addressed support/runtime evidence,
+explicit rejection of old S1-S4 completion as C1-C6 proof, and the top-level
+North Star. Handoff to M6A:
 exact contract/version bundle,
   proof index, residual zero-exemption matrix, generated WBC boundary inventory,
   controlled-writer/reader registries,

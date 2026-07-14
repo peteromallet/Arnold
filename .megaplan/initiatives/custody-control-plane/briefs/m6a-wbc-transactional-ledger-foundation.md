@@ -106,9 +106,9 @@ matrix, and M11 owns integrated conformance and retirement.
 Start only after M6 has bound the exact final landed WBC revision, proven the
 landed/source/editable/runtime identity current, generated the zero-exemption
 inventory, and recorded accepted human approval. Do not infer that revision
-from the audited candidate (`cbe69337…`) or in-progress consolidation merge
-(`24afce00…`). Production enforcement, deployment, restart, and external
-effects remain disabled.
+from the topic-branch candidate alone: verify audited merge `24afce00…`, current
+main containment, and the separately recorded runtime vector. Production
+enforcement, deployment, restart, and external effects remain disabled.
 
 ## Done criteria
 

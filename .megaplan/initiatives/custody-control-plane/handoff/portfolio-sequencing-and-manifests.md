@@ -21,8 +21,8 @@ date: 2026-07-13
    failures, reach zero canonical verification divergences, regenerate the
    content-addressed proof/manifest, and attest canonical retirement.
 4. Admit M6 only after manual review/merge verifies M5's exact handoff. Bind the
-   operator-supplied WBC merge commit to WBC's completion manifest, deliberate
-   proof map, support/conformance manifest, and installed/runtime revision. Do
+   audited WBC merge commit to its consolidation evidence, deliberate proof map,
+   support/conformance manifest, landed ancestry, and installed/runtime revision. Do
    not change WBC's C1-C6 identities, source, active state, process, branch,
    gates, or owned contracts from this epic. Generate the exact WBC boundary
    inventory; do not accept the support manifest as runtime adoption proof.
@@ -44,16 +44,17 @@ only as pinned evidence/adopters.
 
 ## Staged admission evidence
 
-- Chain/M5 entry: a current immutable execution-binding receipt, current WBC
-  completion manifest plus the landed three-
+- Chain/M5 entry: a current immutable execution binding, audited WBC merge
+  evidence plus the landed three-
   milestone Run Authority history, canonical plan/chain state, and constrained
   retirement record. Already-accepted Run Authority receipts are deliberately
-  not required, and the WBC manifest grants no action authority.
+  not required, and the WBC evidence grants no action authority. The old
+  four-milestone cloud terminal state is explicitly not current C1-C6 completion.
 - M6 entry: M5's three accepted current receipts, zero-divergence verification,
   regenerated proof map/manifest, canonical
   `.megaplan/initiatives/runauthority-epic/.retired` marker, and its retirement
-  attestation. The exact operator-supplied WBC merge commit must match WBC's
-  current manifest/support proof and runtime before M6 can complete.
+  attestation. The exact audited WBC merge commit must match landed ancestry,
+  current support proof and runtime before M6 can complete.
 - M6A entry: M6's immutable ownership/residual handoff, exact final landed WBC
   and runtime vector, generated boundary inventory, and accepted decision record.
 - M7 entry: M6A's transactional store/API, migrations and accepted fault/data-

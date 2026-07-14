@@ -3,10 +3,10 @@ type: decision
 slug: single-authoritative-runtime-history
 status: proposed-human-gate
 approval_record: pending
-wbc_merge_commit: pending-operator-supplied-after-merge
-wbc_completion_manifest_digest: pending-verified-after-merge
+wbc_merge_commit: 24afce006b9ad20391ac7af10ef67ea0b1774f9f
+wbc_completion_manifest_digest: not-claimed-old-s1-s4-is-not-current-c1-c6
 wbc_substrate_revision: pending-m6a-owner-handoff
-chain_execution_binding_receipt: pending-external-prelaunch-proof
+chain_execution_binding_receipt: required-in-chain-state-at-launch
 date: 2026-07-13
 ---
 
@@ -56,7 +56,7 @@ bearer grant or lease.
 - The WBC North Star and
   `decisions/2026-07-11-kernel-execution-attempt-ledger.md` define
   `BoundaryContract`, `BoundaryReceipt`/`BoundaryEvidence`, `SemanticFinding`,
-  and `ExecutionAttemptLedger`. The available in-progress integration line adds
+  and `ExecutionAttemptLedger`. The audited integration line adds
   `arnold/workflow/execution_attempt_ledger.py` with `GrantRef` references and
   external-effect intent/outcome events. Read-only remote-tracking evidence at
   `0211937ea0`, `599cd2faf9`, and `cbe69337d6` shows foundation, Megaplan/cloud
@@ -65,11 +65,11 @@ bearer grant or lease.
   `cbe69337d6f469fd7ae12f1fd0a51007d93b5d70` found
   `ExecutionAttemptLedger` explicitly schema-only and no production store/API;
   its 35-contract matrix has 5 auto-matched, 8 manual-emission, 13 declared-
-  only, and 9 unknown rows despite a broader support manifest. The in-progress
-  consolidation merge `24afce006b9ad20391ac7af10ef67ea0b1774f9f` is likewise
-  not the final landed revision. These observations require M6 inventory, M6A
+  only, and 9 unknown rows despite a broader support manifest. Audited no-ff
+  consolidation merge `24afce006b9ad20391ac7af10ef67ea0b1774f9f` landed the
+  candidate on canonical main. These observations require M6 inventory, M6A
   substrate, and M8-M11 adoption proof; they do not change WBC ownership. The
-  final merge commit is intentionally not guessed.
+  exact landed/runtime vector is verified separately from the WBC merge commit.
 - `arnold_pipelines/megaplan/cloud/repair_requests.py` currently provides
   blocker-scoped atomic claims and managed-run binding, while
   `cloud/repair_contract.py` builds custody/dispatch projections. The residual
@@ -157,26 +157,26 @@ M8 or M10 would make those custody milestones oversized.
 
 ## Immutable chain execution binding
 
-This initiative is not launchable until generic chain control, outside this
-milestone sequence, writes a content-addressed
-`arnold.megaplan.chain_execution_binding.v1` receipt. It binds canonical local
-and normalized remote chain bytes; ordered milestone labels/indices/brief
-hashes; North Star hashes; source commit/tree/dirty digest; workspace/session;
-engine source; import-resolved editable/install/module path; wrapper/config/
-template/schema hashes; and running process provenance.
+Generic chain control now writes an immutable
+`arnold.megaplan.chain_execution_binding.v1` identity into chain state before
+the first milestone. It binds chain bytes, ordered milestone labels/indices and
+brief hashes, North Star hash, intended initiative revision, and resolved
+source/editable runtime identity. The remote launch must execute this same guard
+after upload; a path or marker alone is not authority.
 
 Launch-bound fields are immutable. Later observations are recorded separately.
-Launch, milestone handoff, pause/resume, restart, repair/relaunch and
-reconciliation recompute observed identity and fail with typed
-`CHAIN_EXECUTION_BINDING_DRIFT` on mismatch. Rebinding requires an explicit
+Load/resume and reconciliation recompute observed identity before compatibility
+normalization and fail with typed `chain_execution_binding_drift` on mismatch;
+status exposes expected and active bundles. Rebinding requires an explicit
 operator-approved, content-addressed migration event.
 
 Before milestone N closes or N+1 initializes, the guard also requires a
 cumulative North Star receipt proving the expected brief/anchor drove the plan
 and review, predecessor obligations remain satisfied, matrix rows advanced only
 on machine-derived evidence, prior conformance did not regress, and blocking
-suites ran in enforce mode. This guard is an external prelaunch dependency
-because M5 cannot protect the chain selector that decides whether M6A-M11 run.
+suites ran in enforce mode. The prelaunch selector binding exists outside the
+milestone sequence because M5 cannot protect the chain selector that decides
+whether M6A-M11 run.
 
 ## Locked invariants
 
@@ -261,7 +261,7 @@ user's phrase "port excipation suit." Repository search found established
 7. Persistence fault, process crash, restart, replay, projection deletion/
    rebuild, missed event, six-hour reconciliation, and independent-verification
    tests with no false success or orphan custody.
-8. Installed-runtime and mixed-version tests against the operator-supplied WBC
+8. Installed-runtime and mixed-version tests against the audited landed WBC
    merge commit and generated support manifest, followed by static/runtime
    zero-bypass scans and rollback proof.
 9. Generated semantic call-site set equality plus captured success/failure/
