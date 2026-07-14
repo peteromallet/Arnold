@@ -12,7 +12,7 @@ import argparse
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
@@ -23,6 +23,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -45,6 +46,14 @@ from .provenance import (
     provenance_from_environment,
     stable_identity,
 )
+from .request_summary import (
+    REQUEST_DESCRIPTION_MAX_CHARS,
+    canonical_request_description,
+    content_with_request_summary,
+    current_request_summary_line,
+    source_request_fallback_line,
+)
+from .query_relationship import relationship_from_environment_or_project
 
 LOGGER = logging.getLogger(__name__)
 MANAGED_RUN_SCHEMA = MANAGED_AGENT_SCHEMA
@@ -97,6 +106,23 @@ _DELIVERY_MAX_ATTEMPTS = 8
 _MAX_COMPLETION_DELIVERY_CHARS = 7_600
 MAX_DELEGATED_TASK_CHARS = 32_000
 MAX_DELEGATED_PROMPT_CHARS = 40_000
+MAX_FOLLOWUP_MESSAGE_CHARS = 32_000
+MAX_AGENT_DESCRIPTION_CHARS = REQUEST_DESCRIPTION_MAX_CHARS
+FOLLOWUP_SCHEMA = "arnold-resident-agent-followup-v1"
+AGGREGATION_SCHEMA = "arnold-resident-agent-aggregation-v1"
+AGGREGATION_ROLES = frozenset({"synthesis_delivery_owner", "internal_contributor"})
+DISCORD_FOLLOWUP_WINDOW = timedelta(minutes=15)
+_RUN_ID_RE = re.compile(r"^subagent-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{8}$")
+_FOLLOWUP_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+_SYNTHESIS_GROUP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
+_CODEX_SESSION_RE = re.compile(
+    r"(?im)^session id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$"
+)
+_CODEX_JSON_SESSION_RE = re.compile(
+    r'"(?:thread_id|session_id)"\s*:\s*"'
+    r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"',
+    re.IGNORECASE,
+)
 FINAL_SUMMARY_INSTRUCTION = (
     "Your FINAL response will be sent directly to the user as a Discord reply. "
     "Make it a concise, user-facing summary that stands on its own. State the outcome, "
@@ -125,6 +151,40 @@ class SubagentResult:
     log_path: str | None = None
     result_path: str | None = None
     pid: int | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class SubagentFollowupResult:
+    """Durable acceptance evidence for one resident-managed follow-up."""
+
+    ok: bool
+    followup_id: str
+    target_run_id: str
+    parent_run_id: str
+    lineage_root_run_id: str
+    continuation_run_id: str
+    status: str
+    evidence_path: str
+    message_path: str
+    continuation_manifest_path: str
+    model_session_id: str | None = None
+    idempotent_replay: bool = False
+
+
+class SubagentFollowupError(ValueError):
+    """A follow-up target or custody/session binding is unsafe or ambiguous."""
+
+
+@dataclass(frozen=True)
+class DiscordFollowupTarget:
+    """One unambiguous managed lineage launched from an exact Discord source."""
+
+    run_id: str
+    lineage_root_run_id: str
+    manifest_path: str
+    launch_anchor: str
+    launch_anchor_field: str
 
 
 @dataclass(frozen=True)
@@ -144,6 +204,7 @@ class ManagedCompletionTurnResult:
     verification_outcome: str
     turn_id: str | None = None
     outbound_message_id: str | None = None
+    request_summary_line: str | None = None
 
 
 class _ProviderAcceptanceEvidenceMissing(RuntimeError):
@@ -207,6 +268,82 @@ def route_delegated_task(
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def concise_agent_description(description: object, task: str) -> str:
+    """Return one durable human-readable launch line.
+
+    Callers should supply the purpose-built description. The deterministic
+    fallback keeps legacy/direct callers compatible while ensuring every new
+    manifest still has a useful description.
+    """
+
+    supplied = canonical_request_description(description)
+    if supplied is not None:
+        return supplied
+    # Compatibility callers may predate semantic descriptions.  Never turn a
+    # truncated raw task into a fake summary; use an explicit generic fallback.
+    return "Handle the delegated resident request."
+
+
+def _request_ref(
+    relationship: Mapping[str, Any] | None, key: str
+) -> Mapping[str, Any] | None:
+    value = relationship.get(key) if isinstance(relationship, Mapping) else None
+    return value if isinstance(value, Mapping) else None
+
+
+def _aggregation_key(
+    provenance: Mapping[str, Any],
+    *,
+    synthesis_group: str | None,
+    task_digest: str,
+    description: str,
+    request_id: str | None,
+) -> str:
+    current_source = str(
+        provenance.get("source_record_id")
+        or provenance.get("custody_id")
+        or "not-applicable"
+    )
+    if synthesis_group:
+        return stable_identity(
+            "resident-synthesis-group",
+            provenance.get("resident_conversation_id") or "not-applicable",
+            current_source,
+            synthesis_group,
+        )
+    return stable_identity(
+        "resident-single-delivery",
+        provenance.get("resident_conversation_id") or "not-applicable",
+        current_source,
+        task_digest,
+        description,
+        request_id or "",
+    )
+
+
+def _render_query_relationship(relationship: Mapping[str, Any] | None) -> str:
+    if not isinstance(relationship, Mapping):
+        return ""
+    root = _request_ref(relationship, "root_request") or {}
+    current = _request_ref(relationship, "current_request") or {}
+    earlier = _request_ref(relationship, "earlier_request") or {}
+    return (
+        "[Query relationship and delivery ownership]\n"
+        f"- classification: {relationship.get('classification') or 'independent'}\n"
+        f"- root request source/message: {root.get('source_record_id') or 'n/a'} / "
+        f"{root.get('discord_message_id') or 'n/a'}\n"
+        f"- root semantic description: {root.get('description') or 'unavailable'}\n"
+        f"- earlier request source/message: {earlier.get('source_record_id') or 'n/a'} / "
+        f"{earlier.get('discord_message_id') or 'n/a'}\n"
+        f"- current follow-up source/message: {current.get('source_record_id') or 'n/a'} / "
+        f"{current.get('discord_message_id') or 'n/a'}\n"
+        f"- current semantic description: {current.get('description') or 'unavailable'}\n"
+        "The current/newer request is the sole delivery and aggregation target. Consolidate relevant "
+        "earlier work into one reply; internal reviewers report through the synthesis owner and must "
+        "not emit independent user-facing completions.\n"
+    )
 
 
 def _delivery_transition_now(fixed_now: datetime | None) -> datetime:
@@ -316,9 +453,13 @@ def _delivery_prompt(
     task: str,
     timezone_name: str = "UTC",
     *,
+    request_summary_line: str | None = None,
     context_directory: Mapping[str, Any] | None = None,
+    query_relationship: Mapping[str, Any] | None = None,
+    contributors: list[Mapping[str, Any]] | None = None,
 ) -> str:
     prompt = (
+        f"{request_summary_line or current_request_summary_line(None)}\n\n"
         f"{task.rstrip()}\n\n"
         "[Completion delivery contract]\n"
         "[User-time presentation rule]\n"
@@ -328,6 +469,17 @@ def _delivery_prompt(
     )
     if context_directory is not None:
         prompt += _render_delegated_context_directory(context_directory) + "\n"
+    relationship_context = _render_query_relationship(query_relationship)
+    if relationship_context:
+        prompt += relationship_context + "\n"
+    if contributors:
+        prompt += (
+            "[Internal contributor evidence to synthesize]\n"
+            + json.dumps(contributors, sort_keys=True)
+            + "\nWait for every listed contributor manifest to become terminal, then read and "
+            "consolidate its durable result. They are evidence inputs, not independent "
+            "user-facing delivery owners.\n\n"
+        )
     prompt += f"{FINAL_SUMMARY_INSTRUCTION}\n"
     if len(prompt) > MAX_DELEGATED_PROMPT_CHARS:
         raise ValueError(
@@ -693,6 +845,7 @@ def _result_from_manifest(manifest_path: Path, payload: Mapping[str, Any]) -> Su
         log_path=str(payload.get("log_path") or manifest_path.parent / "run.log"),
         result_path=str(payload.get("result_path") or manifest_path.parent / "result.md"),
         pid=payload.get("pid") if isinstance(payload.get("pid"), int) else None,
+        description=str(payload.get("description") or "") or None,
     )
 
 
@@ -707,9 +860,701 @@ def _existing_idempotent_launch(root: Path, launch_key: str) -> tuple[Path, dict
     return None
 
 
+def _manifest_aggregation_key(payload: Mapping[str, Any]) -> str | None:
+    aggregation = payload.get("aggregation")
+    if isinstance(aggregation, Mapping) and aggregation.get("key"):
+        return str(aggregation["key"])
+    # Legacy manifests did not declare an explicit synthesis group.  Never
+    # retroactively collapse them merely because they share a request root.
+    return None
+
+
+def _transfer_aggregation_delivery_ownership(
+    root: Path,
+    *,
+    aggregation_key: str,
+    new_owner_run_id: str,
+    at: str,
+) -> None:
+    """Make one newest run the synthesis/delivery owner for a logical query."""
+
+    for path in root.glob("*/manifest.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict) or not _is_managed_manifest(payload):
+            continue
+        if _manifest_aggregation_key(payload) != aggregation_key:
+            continue
+        prior_run_id = str(payload.get("run_id") or path.parent.name)
+        aggregation = dict(payload.get("aggregation") or {})
+        aggregation.update(
+            {
+                "schema_version": AGGREGATION_SCHEMA,
+                "key": aggregation_key,
+                "role": "internal_contributor",
+                "delivery_owner_run_id": new_owner_run_id,
+                "superseded_at": at,
+            }
+        )
+        payload["aggregation"] = aggregation
+        delivery = payload.get("completion_delivery")
+        if isinstance(delivery, dict) and delivery.get("status") not in {
+            "delivered",
+            "failed",
+            "not_applicable",
+            "superseded",
+            "suppressed",
+            "unknown",
+        }:
+            delivery.update(
+                {
+                    "status": "superseded",
+                    "superseded_at": at,
+                    "superseded_by_run_id": new_owner_run_id,
+                    "superseded_reason": "new_synthesis_delivery_owner_for_logical_request",
+                    "updated_at": at,
+                }
+            )
+            history = list(delivery.get("state_history") or [])
+            history.append(
+                {
+                    "status": "superseded",
+                    "at": at,
+                    "evidence": "single_logical_request_delivery_owner_transferred",
+                    "delivery_owner_run_id": new_owner_run_id,
+                }
+            )
+            delivery["state_history"] = history[-20:]
+            payload["completion_delivery"] = delivery
+        _atomic_json(path, payload)
+
+
+def _aggregation_contributor_refs(
+    root: Path, *, aggregation_key: str
+) -> list[dict[str, Any]]:
+    """Return bounded durable inputs that the synthesis owner must consume."""
+
+    contributors: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*/manifest.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        if (
+            not isinstance(payload, dict)
+            or not _is_managed_manifest(payload)
+            or _manifest_aggregation_key(payload) != aggregation_key
+        ):
+            continue
+        result_path = Path(str(payload.get("result_path") or "result.md"))
+        if not result_path.is_absolute():
+            result_path = path.parent / result_path
+        contributors.append(
+            {
+                "run_id": str(payload.get("run_id") or path.parent.name),
+                "description": str(payload.get("description") or ""),
+                "status": str(payload.get("status") or "unknown"),
+                "aggregation_role": str(
+                    (payload.get("aggregation") or {}).get("role") or "unknown"
+                ),
+                "delivery_status": str(
+                    (payload.get("completion_delivery") or {}).get("status")
+                    or "not_applicable"
+                ),
+                "manifest_path": str(path.resolve()),
+                "result_path": str(result_path.resolve()),
+            }
+        )
+    return contributors[-20:]
+
+
+def _read_managed_resident_manifest(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise SubagentFollowupError(f"cannot read managed run manifest: {path}") from exc
+    if not isinstance(payload, dict) or not _is_managed_manifest(payload):
+        raise SubagentFollowupError(f"target is not a resident-managed agent run: {path}")
+    run_id = str(payload.get("run_id") or path.parent.name)
+    if run_id != path.parent.name:
+        raise SubagentFollowupError("managed run manifest identity does not match its directory")
+    return payload
+
+
+def _find_managed_run(
+    run_id: str,
+    *,
+    project_root: Path,
+    workspace_root: str | Path | None,
+) -> tuple[Path, dict[str, Any], tuple[Path, ...]]:
+    if not _RUN_ID_RE.fullmatch(run_id):
+        raise SubagentFollowupError("run_id is malformed")
+    roots = tuple(
+        sorted(
+            _managed_run_roots(project_root=project_root, workspace_root=workspace_root),
+            key=str,
+        )
+    )
+    matches = [
+        root / run_id / "manifest.json"
+        for root in roots
+        if (root / run_id / "manifest.json").is_file()
+    ]
+    if not matches:
+        raise SubagentFollowupError(f"unknown resident-managed run_id: {run_id}")
+    unique = {path.resolve() for path in matches}
+    if len(unique) != 1:
+        raise SubagentFollowupError(f"run_id has ambiguous workspace ownership: {run_id}")
+    manifest_path = unique.pop()
+    return manifest_path, _read_managed_resident_manifest(manifest_path), roots
+
+
+def find_discord_followup_target(
+    *,
+    source_record_id: str,
+    discord_message_id: str,
+    resident_conversation_id: str,
+    conversation_key: str,
+    reply_received_at: datetime,
+    project_root: str | Path,
+    workspace_root: str | Path | None = "/workspace",
+) -> DiscordFollowupTarget | None:
+    """Find the sole recent lineage launched from an exact Discord message.
+
+    The launch anchor is the managed supervisor's ``started_at`` timestamp,
+    falling back to the pre-launch manifest ``created_at`` timestamp for legacy
+    records.  A reply is eligible when its durable resident ``sent_at`` is on
+    or after that anchor and no later than exactly 15 minutes after it.  More
+    than one matching lineage, duplicated run ownership across roots, malformed
+    provenance, or a non-UTC/unparseable timestamp fails closed.
+    """
+
+    received = reply_received_at
+    if received.tzinfo is None:
+        received = received.replace(tzinfo=timezone.utc)
+    received = received.astimezone(timezone.utc)
+    candidates: list[tuple[datetime, str, str, Path, str]] = []
+    seen_run_paths: dict[str, Path] = {}
+    for manifest_path in _managed_manifest_paths(
+        project_root=project_root,
+        workspace_root=workspace_root,
+    ):
+        try:
+            manifest = _read_managed_resident_manifest(manifest_path)
+            provenance = normalize_delegation_provenance(
+                manifest.get("launch_provenance") or {}
+            )
+        except (SubagentFollowupError, DelegationProvenanceError):
+            continue
+        if provenance.get("applicability") != "applicable":
+            continue
+        if any(
+            (
+                provenance.get("source_record_id") != source_record_id,
+                provenance.get("discord_message_id") != discord_message_id,
+                provenance.get("reply_to_message_id") != discord_message_id,
+                provenance.get("resident_conversation_id")
+                != resident_conversation_id,
+                provenance.get("conversation_key") != conversation_key,
+            )
+        ):
+            continue
+        run_id = str(manifest.get("run_id") or manifest_path.parent.name)
+        resolved_path = manifest_path.resolve()
+        prior_path = seen_run_paths.get(run_id)
+        if prior_path is not None and prior_path != resolved_path:
+            return None
+        seen_run_paths[run_id] = resolved_path
+        anchor_field = "started_at" if manifest.get("started_at") else "created_at"
+        anchor = _parse_timestamp(manifest.get(anchor_field))
+        if anchor is None:
+            continue
+        anchor = anchor.astimezone(timezone.utc)
+        age = received - anchor
+        if age < timedelta(0) or age > DISCORD_FOLLOWUP_WINDOW:
+            continue
+        candidates.append(
+            (
+                anchor,
+                run_id,
+                _lineage_root_id(manifest, manifest_path),
+                resolved_path,
+                anchor_field,
+            )
+        )
+    if not candidates:
+        return None
+    lineages = {candidate[2] for candidate in candidates}
+    if len(lineages) != 1:
+        # A Discord reply contains no run selector. Guessing between two agent
+        # conversations launched from one source would cross session custody.
+        return None
+    anchor, run_id, lineage_root_run_id, manifest_path, anchor_field = max(
+        candidates, key=lambda item: (item[0], item[1])
+    )
+    return DiscordFollowupTarget(
+        run_id=run_id,
+        lineage_root_run_id=lineage_root_run_id,
+        manifest_path=str(manifest_path),
+        launch_anchor=anchor.isoformat(),
+        launch_anchor_field=anchor_field,
+    )
+
+
+def _manifest_session_ids(
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    *,
+    allow_multiple: bool = False,
+) -> set[str]:
+    found: set[str] = set()
+    model_session = manifest.get("model_session")
+    if isinstance(model_session, Mapping):
+        session_id = str(model_session.get("session_id") or "").strip().lower()
+        if session_id:
+            if not re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                session_id,
+            ):
+                raise SubagentFollowupError("managed run has a malformed model session id")
+            found.add(session_id)
+    log_path = Path(str(manifest.get("log_path") or manifest_path.parent / "run.log"))
+    try:
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        log_text = ""
+    # Only the first CLI header/event owns this run. Later tool output may quote
+    # another run's log verbatim and must not become session-ownership evidence.
+    text_matches = _CODEX_SESSION_RE.findall(log_text)
+    json_matches = _CODEX_JSON_SESSION_RE.findall(log_text)
+    if text_matches:
+        found.add(text_matches[0].lower())
+    elif json_matches:
+        found.add(json_matches[0].lower())
+    if len(found) > 1 and not allow_multiple:
+        raise SubagentFollowupError("managed run exposes multiple model session ids")
+    return found
+
+
+def _lineage_root_id(manifest: Mapping[str, Any], manifest_path: Path) -> str:
+    return str(
+        manifest.get("lineage_root_run_id")
+        or manifest.get("root_run_id")
+        or manifest.get("run_id")
+        or manifest_path.parent.name
+    )
+
+
+def _lineage_manifests(
+    root: Path, lineage_root_run_id: str
+) -> dict[str, tuple[Path, dict[str, Any]]]:
+    rows: dict[str, tuple[Path, dict[str, Any]]] = {}
+    for path in root.glob("*/manifest.json"):
+        try:
+            payload = _read_managed_resident_manifest(path)
+        except SubagentFollowupError:
+            continue
+        run_id = str(payload.get("run_id") or path.parent.name)
+        claimed_root = _lineage_root_id(payload, path)
+        if run_id == lineage_root_run_id or claimed_root == lineage_root_run_id:
+            rows[run_id] = (path, payload)
+    return rows
+
+
+def _lineage_tip(
+    rows: Mapping[str, tuple[Path, dict[str, Any]]],
+) -> tuple[Path, dict[str, Any]]:
+    parent_ids = {
+        str(payload.get("parent_run_id"))
+        for _, payload in rows.values()
+        if payload.get("parent_run_id")
+    }
+    leaves = [entry for run_id, entry in rows.items() if run_id not in parent_ids]
+    if len(leaves) != 1:
+        raise SubagentFollowupError("managed model session lineage has ambiguous branch ownership")
+    return leaves[0]
+
+
+def _compatible_followup_provenance(
+    target: Mapping[str, Any], caller: Mapping[str, Any]
+) -> None:
+    target_normalized = normalize_delegation_provenance(target)
+    caller_normalized = normalize_delegation_provenance(caller)
+    if target_normalized["applicability"] != caller_normalized["applicability"]:
+        raise SubagentFollowupError("follow-up provenance transport conflicts with target custody")
+    if target_normalized["applicability"] != "applicable":
+        return
+    for field in (
+        "resident_conversation_id",
+        "conversation_key",
+        "guild_id",
+        "channel_id",
+        "thread_id",
+        "dm_user_id",
+    ):
+        if target_normalized.get(field) != caller_normalized.get(field):
+            raise SubagentFollowupError(
+                f"follow-up provenance {field} conflicts with target session ownership"
+            )
+
+
+def _session_owner_lineage(
+    session_id: str,
+    *,
+    roots: tuple[Path, ...],
+) -> str | None:
+    owners: set[str] = set()
+    for root in roots:
+        for path in root.glob("*/manifest.json"):
+            try:
+                payload = _read_managed_resident_manifest(path)
+            except SubagentFollowupError:
+                continue
+            try:
+                ids = _manifest_session_ids(path, payload, allow_multiple=True)
+            except SubagentFollowupError:
+                # An unrelated malformed legacy record must not deny service.
+                # If it contains the requested session identity, however, safe
+                # ownership cannot be established and continuation fails closed.
+                log_path = Path(str(payload.get("log_path") or path.parent / "run.log"))
+                try:
+                    raw = json.dumps(payload, sort_keys=True) + log_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    raw = json.dumps(payload, sort_keys=True)
+                if session_id in raw.lower():
+                    raise SubagentFollowupError(
+                        "model session id has ambiguous malformed ownership evidence"
+                    )
+                continue
+            if session_id in ids:
+                if len(ids) > 1:
+                    raise SubagentFollowupError(
+                        "model session id appears in a multi-session managed run"
+                    )
+                owners.add(_lineage_root_id(payload, path))
+    if len(owners) > 1:
+        raise SubagentFollowupError("model session id has ambiguous managed-run ownership")
+    return next(iter(owners), None)
+
+
+def _followup_result(
+    record: Mapping[str, Any], *, idempotent_replay: bool
+) -> SubagentFollowupResult:
+    return SubagentFollowupResult(
+        ok=True,
+        followup_id=str(record["followup_id"]),
+        target_run_id=str(record["target_run_id"]),
+        parent_run_id=str(record["parent_run_id"]),
+        lineage_root_run_id=str(record["lineage_root_run_id"]),
+        continuation_run_id=str(record["continuation_run_id"]),
+        status=str(record.get("status") or "continuation_started"),
+        evidence_path=str(record["evidence_path"]),
+        message_path=str(record["message_path"]),
+        continuation_manifest_path=str(record["continuation_manifest_path"]),
+        model_session_id=(
+            str(record["model_session_id"])
+            if record.get("model_session_id")
+            else None
+        ),
+        idempotent_replay=idempotent_replay,
+    )
+
+
+def follow_up_managed_subagent(
+    *,
+    run_id: str,
+    message: str,
+    project_dir: str | Path | None = None,
+    idempotency_key: str | None = None,
+    workspace_root: str | Path | None = "/workspace",
+    caller_provenance: Mapping[str, Any] | None = None,
+    expected_target_source_record_id: str | None = None,
+    expected_target_discord_message_id: str | None = None,
+    query_relationship: Mapping[str, Any] | None = None,
+) -> SubagentFollowupResult:
+    """Durably append ``message`` to the unique persistent session lineage.
+
+    A continuation supervisor is created for both active and terminal parents.
+    An active parent is interrupted only through its exact manifest-bound
+    resident supervisor, after a unique persistent session is proven; the
+    continuation waits for that parent to become terminal before resuming the
+    same session.  The caller's validated resident provenance is the
+    continuation's provenance; target provenance is used only to authorize the
+    same immutable conversation ownership.
+    """
+
+    message = message.strip()
+    if not message:
+        raise SubagentFollowupError("follow-up message must not be empty")
+    if len(message) > MAX_FOLLOWUP_MESSAGE_CHARS:
+        raise SubagentFollowupError(
+            f"follow-up message exceeds {MAX_FOLLOWUP_MESSAGE_CHARS} characters"
+        )
+    if idempotency_key is not None and not _FOLLOWUP_KEY_RE.fullmatch(idempotency_key):
+        raise SubagentFollowupError("idempotency_key is malformed")
+    inherited_provenance = (
+        normalize_delegation_provenance(caller_provenance)
+        if caller_provenance is not None
+        else provenance_from_environment(strict=True)
+    )
+    if inherited_provenance is None:
+        raise SubagentFollowupError(
+            "resident follow-up requires inherited delegation provenance"
+        )
+    caller_provenance = inherited_provenance
+
+    project_root = Path(project_dir or Path.cwd()).resolve()
+    target_path, target, roots = _find_managed_run(
+        run_id, project_root=project_root, workspace_root=workspace_root
+    )
+    target_provenance = target.get("launch_provenance")
+    if not isinstance(target_provenance, Mapping):
+        raise SubagentFollowupError("target run has no canonical launch provenance")
+    try:
+        _compatible_followup_provenance(target_provenance, caller_provenance)
+        normalized_target_provenance = normalize_delegation_provenance(
+            target_provenance
+        )
+    except DelegationProvenanceError as exc:
+        raise SubagentFollowupError("target run provenance is malformed") from exc
+    if (
+        expected_target_source_record_id is not None
+        and normalized_target_provenance.get("source_record_id")
+        != expected_target_source_record_id
+    ):
+        raise SubagentFollowupError(
+            "target run source custody changed after Discord reply matching"
+        )
+    if (
+        expected_target_discord_message_id is not None
+        and normalized_target_provenance.get("discord_message_id")
+        != expected_target_discord_message_id
+    ):
+        raise SubagentFollowupError(
+            "target run Discord message custody changed after reply matching"
+        )
+
+    lineage_root_run_id = _lineage_root_id(target, target_path)
+    root = target_path.parent.parent
+    followups_dir = root / lineage_root_run_id / "followups"
+    followups_dir.mkdir(parents=True, exist_ok=True)
+    message_sha256 = hashlib.sha256(message.encode("utf-8")).hexdigest()
+    selector = idempotency_key or message_sha256
+    caller_sha256 = hashlib.sha256(
+        json.dumps(caller_provenance, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    followup_id = stable_identity(
+        "followup",
+        lineage_root_run_id,
+        caller_provenance.get("custody_id") or caller_provenance.get("source_record_id"),
+        selector,
+    )
+    evidence_path = followups_dir / f"{followup_id}.json"
+    message_path = followups_dir / f"{followup_id}.md"
+
+    with (root / ".followup.lock").open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        existing: dict[str, Any] | None = None
+        if evidence_path.is_file():
+            try:
+                loaded = json.loads(evidence_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError) as exc:
+                raise SubagentFollowupError("existing follow-up evidence is unreadable") from exc
+            if not isinstance(loaded, dict):
+                raise SubagentFollowupError("existing follow-up evidence is malformed")
+            if (
+                loaded.get("message_sha256") != message_sha256
+                or loaded.get("requester_provenance_sha256") != caller_sha256
+            ):
+                raise SubagentFollowupError(
+                    "idempotency key is already bound to different follow-up content or custody"
+                )
+            existing = loaded
+            if existing.get("continuation_run_id"):
+                return _followup_result(existing, idempotent_replay=True)
+
+        rows = _lineage_manifests(root, lineage_root_run_id)
+        if run_id not in rows:
+            raise SubagentFollowupError("target run is not in its claimed lineage")
+        for lineage_run_id, (_lineage_path, lineage_manifest) in rows.items():
+            lineage_provenance = lineage_manifest.get("launch_provenance")
+            if not isinstance(lineage_provenance, Mapping):
+                raise SubagentFollowupError(
+                    "managed model session lineage contains missing provenance"
+                )
+            try:
+                _compatible_followup_provenance(
+                    target_provenance, lineage_provenance
+                )
+            except DelegationProvenanceError as exc:
+                raise SubagentFollowupError(
+                    "managed model session lineage contains malformed provenance"
+                ) from exc
+            parent_id = str(lineage_manifest.get("parent_run_id") or "")
+            if (
+                lineage_run_id != lineage_root_run_id
+                and (not parent_id or parent_id not in rows)
+            ):
+                raise SubagentFollowupError(
+                    "managed model session lineage contains an orphaned continuation"
+                )
+        tip_path, tip = _lineage_tip(rows)
+        parent_run_id = str(
+            (existing or {}).get("parent_run_id")
+            or tip.get("run_id")
+            or tip_path.parent.name
+        )
+        if existing and parent_run_id not in rows:
+            raise SubagentFollowupError("recorded follow-up parent is missing from lineage")
+        if existing:
+            tip_path, tip = rows[parent_run_id]
+
+        parent_status = str(tip.get("status") or "unknown")
+        parent_live = (
+            parent_status in _ACTIVE_STATUSES
+            and isinstance(tip.get("pid"), int)
+            and _pid_matches_manifest(int(tip["pid"]), tip_path)
+        )
+        if parent_status in _ACTIVE_STATUSES and not parent_live:
+            raise SubagentFollowupError(
+                "target lineage tip claims an active state without a matching supervisor"
+            )
+        if parent_status not in _ACTIVE_STATUSES and parent_status not in {
+            "completed",
+            "failed",
+            "interrupted",
+        }:
+            raise SubagentFollowupError(
+                f"target lineage tip has unsafe non-continuable status: {parent_status}"
+            )
+
+        parent_session_ids = _manifest_session_ids(tip_path, tip)
+        model_session_id = next(iter(parent_session_ids), None)
+        if model_session_id is None:
+            raise SubagentFollowupError(
+                f"{('active' if parent_live else 'terminal')} target has no uniquely "
+                "recoverable persistent model session"
+            )
+        if model_session_id is not None:
+            owner = _session_owner_lineage(model_session_id, roots=roots)
+            if owner is not None and owner != lineage_root_run_id:
+                raise SubagentFollowupError("model session is owned by another managed-run lineage")
+
+        if existing is None:
+            accepted_at = _utc_now()
+            record = {
+                "schema_version": FOLLOWUP_SCHEMA,
+                "followup_id": followup_id,
+                "target_run_id": run_id,
+                "parent_run_id": parent_run_id,
+                "lineage_root_run_id": lineage_root_run_id,
+                "message_path": str(message_path),
+                "message_sha256": message_sha256,
+                "idempotency_key": selector,
+                "requester_provenance": caller_provenance,
+                "requester_provenance_sha256": caller_sha256,
+                "query_relationship": (
+                    dict(query_relationship)
+                    if isinstance(query_relationship, Mapping)
+                    else None
+                ),
+                "parent_status_at_acceptance": parent_status,
+                "status": "accepted",
+                "accepted_at": accepted_at,
+                "updated_at": accepted_at,
+                "evidence_path": str(evidence_path),
+                "state_history": [
+                    {
+                        "status": "accepted",
+                        "at": accepted_at,
+                        "evidence": "followup_message_and_custody_committed",
+                    }
+                ],
+            }
+            message_path.write_text(message + "\n", encoding="utf-8")
+            _atomic_json(evidence_path, record)
+        else:
+            record = existing
+
+        try:
+            continuation = launch_codex_subagent_detached(
+                task=message,
+                description=(
+                    f"Follow up on {str(tip.get('description') or target.get('description')).rstrip('.')}"
+                    if tip.get("description") or target.get("description")
+                    else None
+                ),
+                project_dir=str(
+                    tip.get("project_dir")
+                    or target.get("project_dir")
+                    or project_root
+                ),
+                model=str(tip.get("model") or target.get("model") or "gpt-5.6-terra"),
+                reasoning_effort=str(
+                    tip.get("reasoning_effort") or target.get("reasoning_effort") or "medium"
+                ),
+                task_kind=str(tip.get("task_kind") or target.get("task_kind") or "routine"),
+                difficulty=int(tip.get("difficulty") or target.get("difficulty") or 4),
+                route_class="resident_followup_continuation",
+                run_root=root,
+                launch_origin=caller_provenance,
+                parent_run_id=parent_run_id,
+                lineage_root_run_id=lineage_root_run_id,
+                continued_session_id=model_session_id,
+                followup_id=followup_id,
+                parent_manifest_path=tip_path,
+                interrupt_parent=parent_live,
+                query_relationship=query_relationship,
+            )
+        except Exception as exc:
+            failed_at = _utc_now()
+            record["status"] = "launch_failed"
+            record["updated_at"] = failed_at
+            record["error_class"] = exc.__class__.__name__
+            record["state_history"] = list(record.get("state_history") or []) + [
+                {
+                    "status": "launch_failed",
+                    "at": failed_at,
+                    "evidence": "continuation_supervisor_launch_failed",
+                }
+            ]
+            _atomic_json(evidence_path, record)
+            raise
+
+        started_at = _utc_now()
+        record.update(
+            {
+                "status": "continuation_started",
+                "updated_at": started_at,
+                "continuation_run_id": continuation.run_id,
+                "continuation_manifest_path": continuation.manifest_path,
+                "model_session_id": model_session_id,
+            }
+        )
+        record["state_history"] = list(record.get("state_history") or []) + [
+            {
+                "status": "continuation_started",
+                "at": started_at,
+                "evidence": (
+                    "continuation_queued_to_interrupt_active_parent"
+                    if parent_live
+                    else "terminal_lineage_continuation_supervisor_started"
+                ),
+                "continuation_run_id": continuation.run_id,
+            }
+        ]
+        _atomic_json(evidence_path, record)
+        return _followup_result(record, idempotent_replay=False)
+
+
 def launch_codex_subagent_detached(
     *,
     task: str,
+    description: str | None = None,
     project_dir: str | None = None,
     model: str = "gpt-5.6-terra",
     reasoning_effort: str = "medium",
@@ -720,6 +1565,15 @@ def launch_codex_subagent_detached(
     request_id: str | None = None,
     launch_origin: Mapping[str, Any] | None = None,
     retry_of_run_id: str | None = None,
+    parent_run_id: str | None = None,
+    lineage_root_run_id: str | None = None,
+    continued_session_id: str | None = None,
+    followup_id: str | None = None,
+    parent_manifest_path: str | Path | None = None,
+    interrupt_parent: bool = False,
+    query_relationship: Mapping[str, Any] | None = None,
+    aggregation_role: str = "synthesis_delivery_owner",
+    synthesis_group: str | None = None,
 ) -> SubagentResult:
     """Launch a durable, fully-permissioned Codex worker managed by Arnold.
 
@@ -738,6 +1592,30 @@ def launch_codex_subagent_detached(
         request_id=request_id,
     )
     is_discord = provenance["applicability"] == "applicable"
+    agent_description = concise_agent_description(description, task)
+    if aggregation_role not in AGGREGATION_ROLES:
+        raise ValueError(
+            "aggregation_role must be synthesis_delivery_owner or internal_contributor"
+        )
+    synthesis_group = str(synthesis_group or "").strip() or None
+    if synthesis_group is not None and not _SYNTHESIS_GROUP_RE.fullmatch(synthesis_group):
+        raise ValueError("synthesis_group must be a stable 1..80 character identifier")
+    if aggregation_role == "internal_contributor" and synthesis_group is None:
+        raise ValueError("internal_contributor launches require an explicit synthesis_group")
+    if query_relationship is None and is_discord:
+        query_relationship = relationship_from_environment_or_project(
+            str(provenance.get("source_record_id") or "") or None,
+            project_root=project_root,
+        )
+    if isinstance(query_relationship, Mapping):
+        current_ref = _request_ref(query_relationship, "current_request") or {}
+        if (
+            str(current_ref.get("source_record_id") or "")
+            != str(provenance.get("source_record_id") or "")
+        ):
+            raise DelegationProvenanceError(
+                "query relationship current request conflicts with launch provenance"
+            )
     origin = discord_origin_projection(provenance) if is_discord else None
     requested_root = Path(run_root)
     root = (
@@ -747,6 +1625,13 @@ def launch_codex_subagent_detached(
     )
     root.mkdir(parents=True, exist_ok=True)
     task_digest = hashlib.sha256(task.encode("utf-8")).hexdigest()
+    relationship_digest = hashlib.sha256(
+        json.dumps(
+            dict(query_relationship) if isinstance(query_relationship, Mapping) else None,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     # Discord launch identity is owned by the inbound source record.  A model
     # or compatibility caller may still provide request_id, but it cannot
     # sever custody or turn the same inbound request into duplicate workers.
@@ -760,7 +1645,15 @@ def launch_codex_subagent_detached(
         provenance.get("correlation_id") or "not-applicable",
         launch_selector,
         task_digest,
+        agent_description,
+        aggregation_role,
+        synthesis_group or "",
+        relationship_digest,
         retry_of_run_id or "",
+        parent_run_id or "",
+        lineage_root_run_id or "",
+        continued_session_id or "",
+        followup_id or "",
     )
     launch_lock = root / ".launch.lock"
     launch_handle = launch_lock.open("a+b")
@@ -770,6 +1663,31 @@ def launch_codex_subagent_detached(
         fcntl.flock(launch_handle.fileno(), fcntl.LOCK_UN)
         launch_handle.close()
         return _result_from_manifest(*existing)
+    created_at = _utc_now()
+    aggregation_key = (
+        _aggregation_key(
+            provenance,
+            synthesis_group=synthesis_group,
+            task_digest=task_digest,
+            description=agent_description,
+            request_id=request_id,
+        )
+        if is_discord
+        else stable_identity("resident-single-delivery", launch_key)
+    )
+    contributors = (
+        _aggregation_contributor_refs(root, aggregation_key=aggregation_key)
+        if aggregation_role == "synthesis_delivery_owner"
+        else []
+    )
+    if aggregation_role == "synthesis_delivery_owner" and any(
+        contributor.get("aggregation_role") == "synthesis_delivery_owner"
+        and contributor.get("delivery_status") == "delivered"
+        for contributor in contributors
+    ):
+        fcntl.flock(launch_handle.fileno(), fcntl.LOCK_UN)
+        launch_handle.close()
+        raise ValueError("synthesis_group already has a delivered owner")
     run_id = f"subagent-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     run_dir = root / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -781,14 +1699,24 @@ def launch_codex_subagent_detached(
         project_root=project_root,
         provenance=provenance,
     )
+    request_summary_line = current_request_summary_line(agent_description)
     prompt = _delivery_prompt(
         task,
         str(provenance.get("timezone_name") or "UTC"),
+        request_summary_line=request_summary_line,
         context_directory=context_directory,
+        query_relationship=query_relationship,
+        contributors=contributors,
     )
     prompt_path.write_text(prompt, encoding="utf-8")
     result_path.touch()
-    created_at = _utc_now()
+    if aggregation_role == "synthesis_delivery_owner":
+        _transfer_aggregation_delivery_ownership(
+            root,
+            aggregation_key=aggregation_key,
+            new_owner_run_id=run_id,
+            at=created_at,
+        )
     manifest: dict[str, object] = {
         "schema_version": MANAGED_RUN_SCHEMA,
         "run_kind": MANAGED_RUN_KIND,
@@ -798,6 +1726,8 @@ def launch_codex_subagent_detached(
         "model": model,
         "reasoning_effort": reasoning_effort,
         "task_kind": task_kind,
+        "description": agent_description,
+        "request_summary_line": request_summary_line,
         "difficulty": difficulty,
         "route_class": route_class,
         "sandbox": "danger-full-access",
@@ -814,6 +1744,18 @@ def launch_codex_subagent_detached(
         "correlation_id": provenance.get("correlation_id") or run_id,
         "custody_id": provenance.get("custody_id") or stable_identity("resident-custody", run_id),
         "launch_provenance": provenance,
+        "query_relationship": dict(query_relationship) if isinstance(query_relationship, Mapping) else None,
+        "aggregation": {
+            "schema_version": AGGREGATION_SCHEMA,
+            "key": aggregation_key,
+            "synthesis_group": synthesis_group,
+            "role": aggregation_role,
+            "delivery_owner_run_id": (
+                run_id if aggregation_role == "synthesis_delivery_owner" else None
+            ),
+            "delivery_target_source_record_id": provenance.get("source_record_id"),
+            "contributors": contributors,
+        },
         "status": "launching",
         "created_at": created_at,
         "updated_at": created_at,
@@ -827,6 +1769,28 @@ def launch_codex_subagent_detached(
     }
     if retry_of_run_id:
         manifest["retry_of_run_id"] = retry_of_run_id
+    if parent_run_id:
+        manifest["parent_run_id"] = parent_run_id
+    if lineage_root_run_id:
+        manifest["lineage_root_run_id"] = lineage_root_run_id
+        manifest["lineage_key"] = stable_identity(
+            "resident-session-lineage", lineage_root_run_id
+        )
+    if followup_id:
+        manifest["followup_id"] = followup_id
+        manifest["run_mode"] = "session_continuation"
+    if continued_session_id:
+        manifest["continued_session_id"] = continued_session_id
+    if parent_manifest_path:
+        manifest["parent_manifest_path"] = str(Path(parent_manifest_path).resolve())
+        manifest["continuation_wait"] = {
+            "status": "pending_parent_terminal",
+            "parent_run_id": parent_run_id,
+            "parent_manifest_path": str(Path(parent_manifest_path).resolve()),
+            "committed_at": created_at,
+        }
+        if interrupt_parent:
+            manifest["continuation_wait"]["interrupt_parent_on_session_ready"] = True
     if is_discord:
         manifest["request_id"] = provenance["source_record_id"]
         if request_id and request_id != provenance["source_record_id"]:
@@ -839,10 +1803,16 @@ def launch_codex_subagent_detached(
         manifest["discord_origin"] = origin
         manifest["completion_delivery"] = {
             "transport": "discord",
-            "status": "pending",
+            "status": (
+                "pending"
+                if aggregation_role == "synthesis_delivery_owner"
+                else "suppressed"
+            ),
             "attempt_count": 0,
             "custody_id": manifest["custody_id"],
             "outbox_id": stable_identity("discord-outbox", run_id, origin["reply_to_message_id"]),
+            "aggregation_key": aggregation_key,
+            "aggregation_role": aggregation_role,
             "idempotency_key": f"resident-subagent-completion:{run_id}",
             "reply_target": {
                 "conversation_key": origin["conversation_key"],
@@ -850,7 +1820,19 @@ def launch_codex_subagent_detached(
                 "source_record_id": provenance["source_record_id"],
             },
             "state_history": [
-                {"status": "pending", "at": manifest["created_at"], "evidence": "outbox_committed_before_launch"}
+                {
+                    "status": (
+                        "pending"
+                        if aggregation_role == "synthesis_delivery_owner"
+                        else "suppressed"
+                    ),
+                    "at": manifest["created_at"],
+                    "evidence": (
+                        "outbox_committed_before_launch"
+                        if aggregation_role == "synthesis_delivery_owner"
+                        else "internal_contributor_reports_to_synthesis_owner"
+                    ),
+                }
             ],
         }
     else:
@@ -919,27 +1901,201 @@ def launch_codex_subagent_detached(
         log_path=str(log_path),
         result_path=str(result_path),
         pid=process.pid,
+        description=agent_description,
     )
+
+
+def _interrupt_parent_for_followup(
+    *,
+    parent_path: Path,
+    continuation_manifest: Mapping[str, Any],
+    session_id: str,
+) -> str:
+    """Request one exact resident supervisor to stop its active model turn.
+
+    This is deliberately narrower than process-group or terminal cleanup: the
+    PID must still execute the resident subagent supervisor with this exact
+    manifest path.  Custody and delivery supersession are committed before the
+    signal so a restart cannot publish a misleading terminal-failure reply for
+    the interrupted turn.
+    """
+
+    with (parent_path.parent / ".followup-interrupt.lock").open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        parent = _read_managed_resident_manifest(parent_path)
+        parent_run_id = str(parent.get("run_id") or parent_path.parent.name)
+        expected_parent = str(continuation_manifest.get("parent_run_id") or "")
+        if parent_run_id != expected_parent:
+            raise SubagentFollowupError("continuation parent identity changed")
+        expected_lineage = str(
+            continuation_manifest.get("lineage_root_run_id") or ""
+        )
+        if _lineage_root_id(parent, parent_path) != expected_lineage:
+            raise SubagentFollowupError("continuation parent lineage ownership changed")
+        status = str(parent.get("status") or "unknown")
+        if status in {"completed", "failed", "interrupted"}:
+            return "parent_already_terminal"
+        if status not in _ACTIVE_STATUSES:
+            raise SubagentFollowupError(
+                f"continuation parent entered unsafe status: {status}"
+            )
+        session_ids = _manifest_session_ids(parent_path, parent)
+        if session_ids != {session_id}:
+            raise SubagentFollowupError(
+                "active parent session evidence changed before interruption"
+            )
+        pid = parent.get("pid")
+        if not isinstance(pid, int) or not _pid_matches_manifest(pid, parent_path):
+            raise SubagentFollowupError(
+                "continuation parent lost its resident-managed supervisor"
+            )
+        requested_at = _utc_now()
+        interrupt = {
+            "schema_version": "arnold-resident-followup-interrupt-v1",
+            "status": "requested",
+            "requested_at": requested_at,
+            "followup_id": continuation_manifest.get("followup_id"),
+            "continuation_run_id": continuation_manifest.get("run_id")
+            or continuation_manifest.get("continuation_run_id"),
+            "session_id": session_id,
+            "signal": "SIGINT",
+            "evidence": "exact_manifest_supervisor_identity_verified",
+        }
+        parent["followup_interrupt"] = interrupt
+        delivery = parent.get("completion_delivery")
+        if isinstance(delivery, dict) and delivery.get("status") != "delivered":
+            delivery.update(
+                {
+                    "status": "superseded",
+                    "superseded_at": requested_at,
+                    "superseded_by_run_id": interrupt["continuation_run_id"],
+                    "superseded_reason": "active_turn_interrupted_for_same_session_followup",
+                    "updated_at": requested_at,
+                }
+            )
+            history = list(delivery.get("state_history") or [])
+            history.append(
+                {
+                    "status": "superseded",
+                    "at": requested_at,
+                    "evidence": "same_session_followup_interrupt_committed",
+                    "continuation_run_id": interrupt["continuation_run_id"],
+                }
+            )
+            delivery["state_history"] = history[-20:]
+            parent["completion_delivery"] = delivery
+        _atomic_json(parent_path, parent)
+        try:
+            os.kill(pid, signal.SIGINT)
+        except ProcessLookupError:
+            latest = _read_managed_resident_manifest(parent_path)
+            if str(latest.get("status") or "") not in {
+                "completed",
+                "failed",
+                "interrupted",
+            }:
+                raise SubagentFollowupError(
+                    "managed supervisor exited before interruption was accepted"
+                )
+            return "parent_became_terminal"
+        return "interrupt_requested"
+
+
+def _await_continuation_parent(
+    manifest_path: Path, manifest: dict[str, Any]
+) -> tuple[dict[str, Any], str]:
+    parent_path = Path(str(manifest.get("parent_manifest_path") or ""))
+    parent_run_id = str(manifest.get("parent_run_id") or "")
+    if not parent_path.is_absolute() or parent_path.name != "manifest.json":
+        raise SubagentFollowupError("continuation parent manifest path is malformed")
+    interrupt_requested = False
+    while True:
+        parent = _read_managed_resident_manifest(parent_path)
+        if str(parent.get("run_id") or parent_path.parent.name) != parent_run_id:
+            raise SubagentFollowupError("continuation parent identity changed")
+        if _lineage_root_id(parent, parent_path) != str(manifest.get("lineage_root_run_id") or ""):
+            raise SubagentFollowupError("continuation parent lineage ownership changed")
+        status = str(parent.get("status") or "unknown")
+        if status in {"completed", "failed", "interrupted"}:
+            ids = _manifest_session_ids(parent_path, parent)
+            expected = str(manifest.get("continued_session_id") or "").strip().lower()
+            if expected:
+                ids.add(expected)
+            if len(ids) != 1:
+                raise SubagentFollowupError(
+                    "continuation parent has no unique persistent model session"
+                )
+            session_id = next(iter(ids))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["continued_session_id"] = session_id
+            manifest["model_session"] = {
+                "provider": "codex",
+                "session_id": session_id,
+                "lineage_root_run_id": manifest.get("lineage_root_run_id"),
+                "evidence": "validated_from_terminal_parent",
+                "source_run_id": parent_run_id,
+                "recorded_at": _utc_now(),
+            }
+            continuation_wait = dict(manifest.get("continuation_wait") or {})
+            continuation_wait.update(
+                {
+                    "status": "parent_terminal",
+                    "parent_status": status,
+                    "resolved_at": _utc_now(),
+                }
+            )
+            manifest["continuation_wait"] = continuation_wait
+            _atomic_json(manifest_path, manifest)
+            return manifest, session_id
+        if status in {"cancelled", "superseded"}:
+            raise SubagentFollowupError(
+                f"continuation parent entered intentionally terminal status: {status}"
+            )
+        if status not in _ACTIVE_STATUSES:
+            raise SubagentFollowupError(
+                f"continuation parent entered unsafe status: {status}"
+            )
+        parent_pid = parent.get("pid")
+        if not isinstance(parent_pid, int) or not _pid_matches_manifest(parent_pid, parent_path):
+            raise SubagentFollowupError(
+                "continuation parent lost its resident-managed supervisor"
+            )
+        continuation_wait = dict(manifest.get("continuation_wait") or {})
+        if (
+            continuation_wait.get("interrupt_parent_on_session_ready")
+            and not interrupt_requested
+        ):
+            expected = str(manifest.get("continued_session_id") or "").strip().lower()
+            if not expected:
+                raise SubagentFollowupError(
+                    "active continuation has no committed session identity"
+                )
+            disposition = _interrupt_parent_for_followup(
+                parent_path=parent_path,
+                continuation_manifest=manifest,
+                session_id=expected,
+            )
+            interrupt_requested = True
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            continuation_wait = dict(manifest.get("continuation_wait") or {})
+            continuation_wait.update(
+                {
+                    "status": disposition,
+                    "interrupt_requested_at": _utc_now(),
+                    "session_id": expected,
+                }
+            )
+            manifest["continuation_wait"] = continuation_wait
+            _atomic_json(manifest_path, manifest)
+        time.sleep(1)
 
 
 def _run_codex_manifest(manifest_path: Path) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     prompt = Path(str(manifest["prompt_path"])).read_text(encoding="utf-8")
     result_path = Path(str(manifest["result_path"]))
-    argv = [
-        "codex",
-        "exec",
-        "--sandbox",
-        "danger-full-access",
-        "-m",
-        str(manifest["model"]),
-        "-c",
-        f"model_reasoning_effort={manifest['reasoning_effort']}",
-        "--output-last-message",
-        str(result_path),
-        prompt,
-    ]
     worker: subprocess.Popen[bytes] | None = None
+    session_id: str | None = None
     interrupted_signal: int | None = None
 
     def _interrupt(signum: int, _frame: object) -> None:
@@ -952,6 +2108,35 @@ def _run_codex_manifest(manifest_path: Path) -> int:
         for signum in (signal.SIGINT, signal.SIGTERM)
     }
     try:
+        if manifest.get("run_mode") == "session_continuation":
+            manifest, session_id = _await_continuation_parent(manifest_path, manifest)
+            argv = [
+                "codex",
+                "exec",
+                "resume",
+                "-m",
+                str(manifest["model"]),
+                "-c",
+                f"model_reasoning_effort={manifest['reasoning_effort']}",
+                "--output-last-message",
+                str(result_path),
+                session_id,
+                prompt,
+            ]
+        else:
+            argv = [
+                "codex",
+                "exec",
+                "--sandbox",
+                "danger-full-access",
+                "-m",
+                str(manifest["model"]),
+                "-c",
+                f"model_reasoning_effort={manifest['reasoning_effort']}",
+                "--output-last-message",
+                str(result_path),
+                prompt,
+            ]
         launch_provenance = manifest.get("launch_provenance")
         worker_env = None
         if isinstance(launch_provenance, Mapping):
@@ -970,13 +2155,39 @@ def _run_codex_manifest(manifest_path: Path) -> int:
         # Reload before updating so the supervisor PID written by the launch
         # process cannot be lost to a parent/child manifest race.
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest.update({"worker_started_at": _utc_now(), "worker_pid": worker.pid})
+        worker_started_at = _utc_now()
+        manifest.update({"worker_started_at": worker_started_at, "worker_pid": worker.pid})
+        manifest["session_dispatch"] = {
+            "status": "accepted",
+            "mode": "resume" if session_id else "new",
+            "session_id": session_id,
+            "accepted_at": worker_started_at,
+            "evidence": (
+                "codex_resume_process_started"
+                if session_id
+                else "codex_session_process_started"
+            ),
+        }
         _atomic_json(manifest_path, manifest)
         returncode = worker.wait()
         # Codex writes the final response to result_path while its complete
         # stream is inherited by the supervisor and appended to run.log.
         result_path.touch(exist_ok=True)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        observed_session_ids = _manifest_session_ids(manifest_path, manifest)
+        if session_id:
+            observed_session_ids.add(session_id)
+        if len(observed_session_ids) == 1:
+            resolved_session_id = next(iter(observed_session_ids))
+            manifest["model_session"] = {
+                "provider": "codex",
+                "session_id": resolved_session_id,
+                "lineage_root_run_id": manifest.get("lineage_root_run_id")
+                or manifest.get("run_id")
+                or manifest_path.parent.name,
+                "evidence": "managed_codex_worker_log_and_dispatch",
+                "recorded_at": _utc_now(),
+            }
         manifest.update(
             {
                 "status": "completed" if returncode == 0 else "failed",
@@ -1018,6 +2229,17 @@ def _run_codex_manifest(manifest_path: Path) -> int:
             }
         )
         manifest["updated_at"] = manifest["finished_at"]
+        dispatch = dict(manifest.get("session_dispatch") or {})
+        if dispatch.get("status") != "accepted":
+            dispatch.update(
+                {
+                    "status": "failed",
+                    "failed_at": manifest["finished_at"],
+                    "evidence": "codex_session_process_not_accepted",
+                    "error_class": exc.__class__.__name__,
+                }
+            )
+            manifest["session_dispatch"] = dispatch
         history = list(manifest.get("status_history") or [])
         history.append(
             {
@@ -1377,6 +2599,9 @@ def _repair_manifest_delivery_provenance(manifest: dict[str, Any]) -> bool:
 
 
 def _delivery_request_identity(manifest: Mapping[str, Any]) -> tuple[str, ...] | None:
+    aggregation = manifest.get("aggregation")
+    if isinstance(aggregation, Mapping) and aggregation.get("key"):
+        return "aggregation_key", str(aggregation["key"])
     launch_key = str(manifest.get("launch_idempotency_key") or "").strip()
     if launch_key:
         return "launch_idempotency_key", launch_key
@@ -1426,6 +2651,99 @@ def _newer_delivery_run(
         if candidate > current_order and (newest is None or candidate > newest):
             newest = candidate
     return newest[1] if newest is not None else None
+
+
+def _authoritative_request_from_manifest(manifest: Mapping[str, Any]) -> str | None:
+    """Load the exact inbound source only for an explicitly labeled fallback."""
+
+    provenance = manifest.get("launch_provenance")
+    if not isinstance(provenance, Mapping):
+        return None
+    source_record_id = str(provenance.get("source_record_id") or "")
+    conversation_id = str(provenance.get("resident_conversation_id") or "")
+    discord_message_id = str(provenance.get("reply_to_message_id") or "")
+    if not _RESIDENT_MESSAGE_ID_RE.fullmatch(source_record_id):
+        return None
+    roots: list[Path] = []
+    configured_root = str(os.environ.get("MEGAPLAN_RESIDENT_STORE_ROOT") or "").strip()
+    if configured_root:
+        roots.append(Path(configured_root).expanduser().resolve())
+    project_dir = str(manifest.get("project_dir") or "").strip()
+    if project_dir:
+        roots.append(Path(project_dir).resolve() / ".megaplan" / "resident")
+    contents: set[str] = set()
+    for root in dict.fromkeys(roots):
+        try:
+            record = json.loads(
+                (root / "messages" / f"{source_record_id}.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, TypeError):
+            continue
+        if (
+            not isinstance(record, Mapping)
+            or str(record.get("id") or "") != source_record_id
+            or str(record.get("direction") or "") != "inbound"
+            or str(record.get("conversation_id") or "") != conversation_id
+            or str(record.get("discord_message_id") or "") != discord_message_id
+        ):
+            continue
+        content = record.get("content")
+        if isinstance(content, str):
+            contents.add(content)
+    return next(iter(contents)) if len(contents) == 1 else None
+
+
+def _completion_payload_with_request_summary(
+    manifest: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    *,
+    summary_line: str | None = None,
+) -> dict[str, Any]:
+    semantic_description = canonical_request_description(manifest.get("description"))
+    authority = "managed_manifest_semantic_description"
+    canonical_line = current_request_summary_line(semantic_description)
+    if semantic_description is None:
+        canonical_line = source_request_fallback_line(
+            _authoritative_request_from_manifest(manifest)
+        )
+        authority = "immutable_inbound_source_fallback"
+    stored_line = manifest.get("request_summary_line")
+    if isinstance(stored_line, str) and stored_line == canonical_line:
+        canonical_line = stored_line
+    if summary_line != canonical_line:
+        summary_line = canonical_line
+    rendered, line = content_with_request_summary(
+        payload.get("content"),
+        summary_line=summary_line,
+        max_chars=_MAX_COMPLETION_DELIVERY_CHARS,
+        trusted_summary_line=True,
+    )
+    relationship = manifest.get("query_relationship")
+    if (
+        isinstance(relationship, Mapping)
+        and relationship.get("classification") == "follow_up"
+    ):
+        root = _request_ref(relationship, "root_request") or {}
+        current = _request_ref(relationship, "current_request") or {}
+        reference_line = (
+            "Related Discord messages: root request "
+            f"{root.get('discord_message_id') or root.get('source_record_id') or 'unknown'}; "
+            "current follow-up and delivery target "
+            f"{current.get('discord_message_id') or current.get('source_record_id') or 'unknown'}."
+        )
+        first, separator, rest = rendered.partition("\n")
+        rendered = (
+            f"{first}\n{reference_line}{separator}{rest}"
+            if separator
+            else f"{first}\n{reference_line}"
+        )[:_MAX_COMPLETION_DELIVERY_CHARS]
+    return {
+        **dict(payload),
+        "content": rendered,
+        "content_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+        "request_summary_line": line,
+        "request_summary_authority": authority,
+    }
 
 
 def _delivery_claim(
@@ -1493,6 +2811,7 @@ def _delivery_claim(
             "failed",
             "not_applicable",
             "superseded",
+            "suppressed",
             "unknown",
         }:
             if provenance_changed:
@@ -1578,12 +2897,36 @@ def _delivery_claim(
                 content,
                 str(launch_provenance.get("timezone_name") or "UTC"),
             )
-            delivery["payload"] = {
+            delivery["payload"] = _completion_payload_with_request_summary(manifest, {
                 "content": content,
-                "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
                 "result_kind": result_kind,
                 "materialized_at": now.isoformat(),
+            })
+        elif (
+            outbox_payload.get("request_summary_authority")
+            not in {
+                "managed_manifest_semantic_description",
+                "immutable_inbound_source_fallback",
+                "immutable_inbound_source_record",
             }
+            or not isinstance(outbox_payload.get("request_summary_line"), str)
+            or str(outbox_payload.get("content") or "").partition("\n")[0]
+            != outbox_payload.get("request_summary_line")
+        ):
+            # Never mutate a previously frozen/retried payload into a different
+            # provider message. New materialization always writes this contract.
+            delivery.update(
+                {
+                    "status": "failed",
+                    "last_error": "Discord delivery failed: durable payload lacks request-summary first line",
+                    "last_error_class": "InvalidCompletionPayload",
+                    "last_error_category": "invalid_completion_payload",
+                    "updated_at": now.isoformat(),
+                }
+            )
+            manifest["completion_delivery"] = delivery
+            _atomic_json(manifest_path, manifest)
+            return None
 
         attempt = int(delivery.get("attempt_count") or 0) + 1
         if attempt > _DELIVERY_MAX_ATTEMPTS:
@@ -1703,11 +3046,23 @@ def _finish_completion_turn(
     safe_text = result.final_text.strip()
     if not safe_text:
         safe_text = (
-            "Verification outcome: unknown. The resident completion turn produced no "
-            "user-facing verification summary, so the delegated result is not being treated as proof."
+            "The verification outcome is unknown because the resident completion turn produced no "
+            "user-facing verification summary; the delegated result is not being treated as proof."
         )
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload = _completion_payload_with_request_summary(
+            manifest,
+            {
+                "content": safe_text,
+                "result_kind": "resident_verified_summary",
+                "verification_outcome": result.verification_outcome,
+                "resident_turn_id": result.turn_id,
+                "materialized_at": now.isoformat(),
+            },
+            summary_line=result.request_summary_line,
+        )
+        safe_text = str(payload["content"])
         completion = dict(manifest.get("resident_completion_turn") or {})
         completion.update(
             {
@@ -1722,14 +3077,7 @@ def _finish_completion_turn(
         )
         manifest["resident_completion_turn"] = completion
         delivery = dict(manifest.get("completion_delivery") or {})
-        delivery["payload"] = {
-            "content": safe_text,
-            "content_sha256": hashlib.sha256(safe_text.encode("utf-8")).hexdigest(),
-            "result_kind": "resident_verified_summary",
-            "verification_outcome": result.verification_outcome,
-            "resident_turn_id": result.turn_id,
-            "materialized_at": now.isoformat(),
-        }
+        delivery["payload"] = payload
         manifest["completion_delivery"] = delivery
         _atomic_json(manifest_path, manifest)
 
@@ -1759,10 +3107,20 @@ def _retry_completion_turn(manifest_path: Path, *, now: datetime, exc: Exception
         if attempt >= _DELIVERY_MAX_ATTEMPTS:
             run_id = str(manifest.get("run_id") or manifest_path.parent.name)
             content = (
-                "Verification outcome: unknown. The resident could not establish an independent "
-                f"verification turn for delegated run {run_id} after bounded retries. The delegated "
-                "terminal result is not being treated as proof; operator inspection is required."
+                "The resident could not establish an independent verification turn for delegated "
+                f"run {run_id} after bounded retries. The verification outcome is unknown, and the "
+                "delegated terminal result is not being treated as proof; operator inspection is required."
             )
+            payload = _completion_payload_with_request_summary(
+                manifest,
+                {
+                    "content": content,
+                    "result_kind": "resident_verification_unavailable",
+                    "verification_outcome": "unknown",
+                    "materialized_at": now.isoformat(),
+                },
+            )
+            content = str(payload["content"])
             completion.update(
                 {
                     "status": "completed",
@@ -1776,13 +3134,7 @@ def _retry_completion_turn(manifest_path: Path, *, now: datetime, exc: Exception
             )
             manifest["resident_completion_turn"] = completion
             delivery = dict(manifest.get("completion_delivery") or {})
-            delivery["payload"] = {
-                "content": content,
-                "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                "result_kind": "resident_verification_unavailable",
-                "verification_outcome": "unknown",
-                "materialized_at": now.isoformat(),
-            }
+            delivery["payload"] = payload
             manifest["completion_delivery"] = delivery
             _atomic_json(manifest_path, manifest)
             return "unknown"
@@ -2304,6 +3656,8 @@ def list_managed_resident_agents(
                     "model": payload.get("model"),
                     "reasoning_effort": payload.get("reasoning_effort"),
                     "task_kind": payload.get("task_kind"),
+                    "description": payload.get("description"),
+                    "request_summary_line": payload.get("request_summary_line"),
                     "difficulty": payload.get("difficulty"),
                     "route_class": payload.get("route_class"),
                     "request_id": payload.get("request_id"),
@@ -2332,6 +3686,8 @@ def list_managed_resident_agents(
                     "parent_run_id": payload.get("parent_run_id"),
                     "lineage_key": payload.get("lineage_key"),
                     "links": payload.get("links"),
+                    "query_relationship": payload.get("query_relationship"),
+                    "aggregation": payload.get("aggregation"),
                 }
             )
     rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
@@ -2373,6 +3729,9 @@ async def launch_subagent_task(
     config: ResidentConfig,
     *,
     task: str,
+    description: str | None = None,
+    aggregation_role: str = "synthesis_delivery_owner",
+    synthesis_group: str | None = None,
     toolsets: str | None = None,
     project_dir: str | None = None,
     backend: str = "codex",
@@ -2384,6 +3743,7 @@ async def launch_subagent_task(
     request_id: str | None = None,
     launch_origin: Mapping[str, Any] | None = None,
     retry_of_run_id: str | None = None,
+    query_relationship: Mapping[str, Any] | None = None,
 ) -> SubagentResult:
     """Dispatch ``task`` through the resident-owned delegated-agent seam.
 
@@ -2410,6 +3770,9 @@ async def launch_subagent_task(
             )
         return launch_codex_subagent_detached(
             task=task,
+            description=description,
+            aggregation_role=aggregation_role,
+            synthesis_group=synthesis_group,
             project_dir=project_dir,
             model=model or route.model,
             reasoning_effort=selected_effort,
@@ -2423,6 +3786,7 @@ async def launch_subagent_task(
             request_id=request_id,
             launch_origin=launch_origin,
             retry_of_run_id=retry_of_run_id,
+            query_relationship=query_relationship,
         )
     if backend != "hermes":
         raise ValueError(f"unsupported subagent backend: {backend}")
@@ -2493,6 +3857,16 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
     task_source = launch.add_mutually_exclusive_group(required=True)
     task_source.add_argument("--task")
     task_source.add_argument("--task-file")
+    launch.add_argument(
+        "--description",
+        help="Concise one-line human-readable description of the delegated work",
+    )
+    launch.add_argument(
+        "--aggregation-role",
+        choices=sorted(AGGREGATION_ROLES),
+        default="synthesis_delivery_owner",
+    )
+    launch.add_argument("--synthesis-group")
     launch.add_argument("--project-dir")
     launch.add_argument("--model")
     launch.add_argument(
@@ -2502,6 +3876,23 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
     launch.add_argument("--difficulty", type=int, default=DEFAULT_DELEGATED_DIFFICULTY)
     launch.add_argument("--request-id")
     launch.add_argument("--retry-of-run-id")
+    followup = sub.add_parser(
+        "follow-up",
+        aliases=["followup"],
+        help=(
+            "Durably continue one resident-managed run lineage; active parents are "
+            "safely interrupted and terminal parents resume their persistent Codex session"
+        ),
+    )
+    followup.add_argument("--run-id", required=True)
+    message_source = followup.add_mutually_exclusive_group(required=True)
+    message_source.add_argument("--message")
+    message_source.add_argument("--message-file")
+    followup.add_argument("--project-dir")
+    followup.add_argument(
+        "--idempotency-key",
+        help="Stable retry key; reuse is allowed only with identical message and custody",
+    )
     return parser
 
 
@@ -2512,6 +3903,15 @@ def _local_launch_task(args: argparse.Namespace) -> str:
         except OSError as exc:
             raise SystemExit(f"cannot read --task-file: {exc}") from exc
     return str(args.task or "")
+
+
+def _local_followup_message(args: argparse.Namespace) -> str:
+    if args.message_file:
+        try:
+            return Path(args.message_file).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            raise SystemExit(f"cannot read --message-file: {exc}") from exc
+    return str(args.message or "")
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -2528,6 +3928,9 @@ def _main(argv: list[str] | None = None) -> int:
             launch_subagent_task(
                 ResidentConfig(),
                 task=task,
+                description=args.description,
+                aggregation_role=args.aggregation_role,
+                synthesis_group=args.synthesis_group,
                 project_dir=args.project_dir,
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
@@ -2539,6 +3942,29 @@ def _main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(result.__dict__, sort_keys=True))
         return 0 if result.ok else 1
+    if args.action in {"follow-up", "followup"}:
+        message = _local_followup_message(args).strip()
+        try:
+            result = follow_up_managed_subagent(
+                run_id=args.run_id,
+                message=message,
+                project_dir=args.project_dir,
+                idempotency_key=args.idempotency_key,
+            )
+        except (SubagentFollowupError, DelegationProvenanceError, OSError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "resident_followup_rejected",
+                        "message": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(result.__dict__, sort_keys=True))
+        return 0
     raise SystemExit(f"unsupported resident subagent action: {args.action}")
 
 
