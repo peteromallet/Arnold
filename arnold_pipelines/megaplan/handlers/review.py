@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from arnold_pipelines.megaplan import handlers as _pkg
@@ -780,7 +781,7 @@ def _merge_review_verdicts(
     return verdict_count, total_tasks, check_count, total_checks, missing_evidence
 
 
-_FAILED_CHECK_STATUSES = {"fail", "failed", "failing", "red", "newly_failing", "unsatisfied"}
+_FAILED_CHECK_STATUSES = {"fail", "failed", "failing", "red", "newly_failing", "unsatisfied", "error"}
 _PASSED_CHECK_STATUSES = {"pass", "passed", "passing", "green", "satisfied"}
 
 
@@ -789,7 +790,7 @@ def _failed_check_status(value: Any) -> bool:
         return True
     if not isinstance(value, str):
         return False
-    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
     return normalized in _FAILED_CHECK_STATUSES or normalized.startswith(
         tuple(f"{status}_" for status in _FAILED_CHECK_STATUSES)
     )
@@ -800,7 +801,7 @@ def _passed_check_status(value: Any) -> bool:
         return True
     if not isinstance(value, str):
         return False
-    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
     return normalized in _PASSED_CHECK_STATUSES or normalized.startswith(
         tuple(f"{status}_" for status in _PASSED_CHECK_STATUSES)
     )
@@ -1010,7 +1011,10 @@ def _deterministic_review_block_evidence(
             command = str(raw.get("command") or "").strip()
             baseline = str(raw.get("baseline_status") or "").strip().lower()
             post = str(raw.get("post_status") or "").strip().lower()
-            if not command or not ({baseline, post} & {"fail", "failed", "error"}):
+            if not command or not (
+                _failed_check_status(raw.get("baseline_status"))
+                or _failed_check_status(raw.get("post_status"))
+            ):
                 continue
             evidence.append(
                 {

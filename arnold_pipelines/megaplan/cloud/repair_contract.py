@@ -20,6 +20,11 @@ from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, Canonic
 
 CURRENT_SCHEMA_VERSION = 1
 
+_DETERMINISTIC_QUALITY_FAILURE_KINDS = frozenset(
+    {"quality_gate_blocked", "deterministic_quality_blocked"}
+)
+_LEGACY_REVIEW_QUALITY_UNKNOWN_KIND = "review_quality_blocked_unknown"
+
 ADDITIVE_FIELD_DEFAULTS: dict[str, Any] = {
     "schema_version": CURRENT_SCHEMA_VERSION,
     "target": {},
@@ -663,10 +668,14 @@ def project_repair_custody(
 
     failure_payload = _as_mapping(plan_payload.get("latest_failure"))
     failure_kind = _as_text(failure_payload.get("kind"))
-    max_attempts = 1 if failure_kind in {
-        "quality_gate_blocked",
-        "deterministic_quality_blocked",
-    } else 3
+    max_attempts = (
+        1
+        if _is_deterministic_quality_budget_kind(
+            failure_kind=failure_kind,
+            current_target=target_payload,
+        )
+        else 3
+    )
     used_attempts = len(attempts)
     remaining_attempts = max(0, max_attempts - used_attempts)
     evidence_cursor = _as_mapping(failure_payload.get("evidence_cursor"))
@@ -1282,6 +1291,20 @@ def _classify_repair_dispatch_legacy(
             rationale=tuple(rationale),
             blocker_id=blocker_id,
             request_id="",
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    if failure_kind == _LEGACY_REVIEW_QUALITY_UNKNOWN_KIND:
+        rationale.append("legacy review-quality unknown lacks current deterministic review evidence")
+        return RepairDispatchDecision(
+            decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+            rationale=tuple(rationale),
+            blocker_id=blocker_id,
+            request_id=request_id,
             custody_bucket=custody_bucket,
             current_state=current_state,
             retry_strategy=retry_strategy,
@@ -3605,8 +3628,15 @@ def _is_known_repairable_shape(
         "blocked_recovery_not_resolved",
         "execution_blocked",
         "no_next_step_state_mapping_failure",
+        *_DETERMINISTIC_QUALITY_FAILURE_KINDS,
     }:
         return _has_current_target_evidence(current_target)
+    if (
+        current_state == "blocked"
+        and retry_strategy == "manual_review"
+        and failure_kind == _LEGACY_REVIEW_QUALITY_UNKNOWN_KIND
+    ):
+        return bool(_legacy_review_quality_block_evidence(current_target))
 
     # --- fallback: semantic findings indicate repairable issues ----------
     if not failure_kind and current_state in {"blocked", "failed", ""}:
@@ -3616,6 +3646,108 @@ def _is_known_repairable_shape(
                 return _has_current_target_evidence(current_target)
 
     return False
+
+
+def _is_deterministic_quality_budget_kind(
+    *,
+    failure_kind: str,
+    current_target: Mapping[str, Any],
+) -> bool:
+    if failure_kind in _DETERMINISTIC_QUALITY_FAILURE_KINDS:
+        return True
+    if failure_kind != _LEGACY_REVIEW_QUALITY_UNKNOWN_KIND:
+        return False
+    return bool(_legacy_review_quality_block_evidence(current_target))
+
+
+def _legacy_review_quality_block_evidence(current_target: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return deterministic review evidence for the one legacy misclassified token.
+
+    This intentionally reads only the authoritative current plan's sibling
+    review artifact.  It is a dispatch/budget compatibility shim; callers must
+    not write the upgraded classification back to plan state.
+    """
+
+    target_payload = _as_mapping(current_target)
+    authoritative_source = _as_text(target_payload.get("authoritative_source"))
+    if authoritative_source not in {"plan_state", "chain_state"}:
+        return []
+    plan_state_ref = _as_mapping(target_payload.get("plan_state"))
+    state_path_text = _as_text(plan_state_ref.get("path"))
+    if not state_path_text:
+        return []
+    state_path = Path(state_path_text)
+    if state_path.name != "state.json" or not state_path.is_file():
+        return []
+    try:
+        state_bytes = state_path.read_bytes()
+        state_payload = _as_mapping(json.loads(state_bytes))
+    except (OSError, ValueError):
+        return []
+    target_fingerprint = _as_text(plan_state_ref.get("fingerprint"))
+    if not target_fingerprint or target_fingerprint != sha256(state_bytes).hexdigest():
+        return []
+    latest_failure = _as_mapping(state_payload.get("latest_failure"))
+    resume_cursor = _as_mapping(state_payload.get("resume_cursor"))
+    if (
+        _as_text(state_payload.get("current_state")) != "blocked"
+        or _as_text(latest_failure.get("kind")) != _LEGACY_REVIEW_QUALITY_UNKNOWN_KIND
+        or _as_text(resume_cursor.get("retry_strategy")) != "manual_review"
+    ):
+        return []
+    persisted_plan_name = _as_text(state_payload.get("name"))
+    current_refs = _as_mapping(target_payload.get("current_refs"))
+    if (
+        not persisted_plan_name
+        or _as_text(plan_state_ref.get("name")) != persisted_plan_name
+        or _as_text(current_refs.get("current_plan_name")) != persisted_plan_name
+    ):
+        return []
+    if authoritative_source == "chain_state":
+        chain_state_ref = _as_mapping(target_payload.get("chain_state"))
+        chain_path_text = _as_text(chain_state_ref.get("path"))
+        chain_fingerprint = _as_text(chain_state_ref.get("fingerprint"))
+        if (
+            not chain_path_text
+            or not chain_fingerprint
+            or _as_text(chain_state_ref.get("current_plan_name")) != persisted_plan_name
+            or _as_text(current_refs.get("chain_current_plan_name")) != persisted_plan_name
+        ):
+            return []
+        try:
+            chain_bytes = Path(chain_path_text).read_bytes()
+        except OSError:
+            return []
+        if chain_fingerprint != sha256(chain_bytes).hexdigest():
+            return []
+    review_path = state_path.with_name("review.json")
+    if not review_path.is_file():
+        return []
+    try:
+        review_bytes = review_path.read_bytes()
+        payload = json.loads(review_bytes)
+    except (OSError, ValueError):
+        return []
+    failure_cursor = _as_mapping(latest_failure.get("evidence_cursor"))
+    if not failure_cursor:
+        failure_cursor = _as_mapping(
+            _as_mapping(latest_failure.get("metadata")).get("evidence_cursor")
+        )
+    expected_review_hash = _as_text(failure_cursor.get("review_artifact_hash"))
+    actual_review_hash = f"sha256:{sha256(review_bytes).hexdigest()}"
+    if expected_review_hash != actual_review_hash:
+        return []
+    review_payload = _as_mapping(payload)
+    rework_items = review_payload.get("blocking_rework_items")
+    if not isinstance(rework_items, list):
+        rework_items = review_payload.get("rework_items")
+    if not isinstance(rework_items, list):
+        return []
+    from arnold_pipelines.megaplan.handlers.review import _deterministic_review_block_evidence
+
+    return _deterministic_review_block_evidence(
+        [item for item in rework_items if isinstance(item, dict)]
+    )
 
 
 def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.human_blockers import (
@@ -55,6 +56,83 @@ def _current_target(**overrides: object) -> dict[str, object]:
     }
     payload.update(overrides)
     return payload
+
+
+def _legacy_quality_plan() -> dict[str, object]:
+    return _plan_state(
+        latest_failure={
+            "kind": "review_quality_blocked_unknown",
+            "phase": "review",
+            "metadata": {"blocked_task_id": "T1"},
+        }
+    )
+
+
+def _write_legacy_review_target(
+    tmp_path: Path,
+    *,
+    review_payload: dict[str, object] | None = None,
+    malformed_review: bool = False,
+    authoritative_source: str = "plan_state",
+) -> dict[str, object]:
+    plan_dir = tmp_path / "workspace" / ".megaplan" / "plans" / "agentic-replay-viewer"
+    plan_dir.mkdir(parents=True)
+    state_path = plan_dir / "state.json"
+    review_path = plan_dir / "review.json"
+    if malformed_review:
+        review_path.write_text("{not-json", encoding="utf-8")
+    elif review_payload is not None:
+        review_path.write_text(json.dumps(review_payload), encoding="utf-8")
+    state = _legacy_quality_plan()
+    if review_path.is_file():
+        review_hash = f"sha256:{sha256(review_path.read_bytes()).hexdigest()}"
+        failure = state["latest_failure"]
+        assert isinstance(failure, dict)
+        failure["evidence_cursor"] = {"review_artifact_hash": review_hash}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    chain_state: dict[str, object] = {"present": False, "fingerprint": ""}
+    if authoritative_source == "chain_state":
+        chain_path = plan_dir.parent / ".chains" / "chain-test.json"
+        chain_path.parent.mkdir(parents=True, exist_ok=True)
+        chain_path.write_text(json.dumps({"last_state": "blocked"}), encoding="utf-8")
+        chain_state = {
+            "present": True,
+            "path": str(chain_path),
+            "fingerprint": sha256(chain_path.read_bytes()).hexdigest(),
+            "current_plan_name": "agentic-replay-viewer",
+        }
+    return _current_target(
+        authoritative_source=authoritative_source,
+        plan_state={
+            "present": True,
+            "path": str(state_path),
+            "name": "agentic-replay-viewer",
+            "fingerprint": sha256(state_path.read_bytes()).hexdigest(),
+        },
+        chain_state=chain_state,
+        current_refs={
+            "current_plan_name": "agentic-replay-viewer",
+            "chain_current_plan_name": "agentic-replay-viewer",
+            "plan_current_state": "blocked",
+        },
+    )
+
+
+def _legacy_quality_request(queue_root: Path) -> dict[str, object]:
+    return enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "review_quality_blocked_unknown",
+            "current_state": "blocked",
+            "phase_or_step": "review",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="legacy deterministic quality block",
+    )
 
 
 def _human_blocker(verdict: BlockerVerdict) -> HumanBlockerClassification:
@@ -271,6 +349,177 @@ def test_classifier_dispatches_failed_rerun_phase_execute_authority_divergence(
     assert decision.current_state == "failed"
     assert decision.retry_strategy == "rerun_phase"
     assert decision.failure_kind == "phase_failed"
+
+
+def test_quality_failure_tokens_dispatch_l1_only_with_current_target_evidence() -> None:
+    for failure_kind in ("quality_gate_blocked", "deterministic_quality_blocked"):
+        plan_state = _plan_state(
+            latest_failure={
+                "kind": failure_kind,
+                "phase": "review",
+                "metadata": {"blocked_task_id": "T1"},
+            }
+        )
+        custody = {
+            "active_request_ids": ["req-quality"],
+            "custody_bucket": CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
+            "failure_kind": failure_kind,
+            "terminal_outcomes": [],
+            "plan_state": plan_state,
+        }
+
+        dispatchable = classify_repair_dispatch(
+            plan_state=plan_state,
+            current_target=_current_target(),
+            custody_projection=custody,
+        )
+        missing_target_evidence = classify_repair_dispatch(
+            plan_state=plan_state,
+            current_target=_current_target(
+                authoritative_source="marker",
+                plan_state={"present": False, "fingerprint": ""},
+            ),
+            custody_projection=custody,
+        )
+        human_gated = classify_repair_dispatch(
+            plan_state=plan_state,
+            current_target=_current_target(),
+            custody_projection=custody,
+            human_blocker_classification=_human_blocker(BlockerVerdict.TRUE_BLOCKER),
+        )
+
+        assert dispatchable.decision == DISPATCH_DECISION_L1
+        assert dispatchable.failure_kind == failure_kind
+        assert missing_target_evidence.decision != DISPATCH_DECISION_L1
+        assert human_gated.decision == DISPATCH_DECISION_HUMAN_REQUIRED
+
+
+def test_legacy_review_quality_unknown_dispatches_only_with_authoritative_review_evidence(
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / "workspace" / ".megaplan" / "repair-queue"
+    target = _write_legacy_review_target(
+        tmp_path,
+        authoritative_source="chain_state",
+        review_payload={
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "green suite remains unsatisfied",
+                    "priority": "must",
+                    "deterministic_check": {
+                        "command": "pytest tests/test_green.py",
+                        "baseline_status": "passed",
+                        "post_status": "failed: green_suite remains unsatisfied",
+                    },
+                }
+            ]
+        },
+    )
+    queued = _legacy_quality_request(queue_root)
+
+    custody = project_repair_custody(
+        plan_state=_legacy_quality_plan(),
+        current_target=target,
+        queue_root=queue_root,
+    )
+    decision = classify_repair_dispatch(
+        plan_state=_legacy_quality_plan(),
+        current_target=target,
+        custody_projection=custody,
+    )
+
+    assert custody["failure_kind"] == "review_quality_blocked_unknown"
+    assert custody["blocker_fingerprint"]["failure_kind"] == "review_quality_blocked_unknown"
+    assert custody["active_request_ids"] == [queued["request"]["request_id"]]
+    assert custody["retry_budget"]["max_attempts"] == 1
+    assert custody["retry_budget"]["remaining_attempts"] == 1
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.failure_kind == "review_quality_blocked_unknown"
+
+    review_path = Path(target["plan_state"]["path"]).with_name("review.json")  # type: ignore[index]
+    review_path.write_text(review_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    stale_custody = project_repair_custody(
+        plan_state=_legacy_quality_plan(),
+        current_target=target,
+        queue_root=queue_root,
+    )
+    stale_decision = classify_repair_dispatch(
+        plan_state=_legacy_quality_plan(),
+        current_target=target,
+        custody_projection=stale_custody,
+    )
+    assert stale_custody["retry_budget"]["max_attempts"] == 3
+    assert stale_decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
+
+
+def test_legacy_review_quality_unknown_without_qualifying_review_evidence_is_broken(
+    tmp_path: Path,
+) -> None:
+    cases: list[tuple[str, dict[str, object] | None, bool]] = [
+        ("missing", None, False),
+        ("malformed", None, True),
+        (
+            "non_failing",
+            {
+                "rework_items": [
+                    {
+                        "task_id": "T1",
+                        "issue": "review concern",
+                        "priority": "must",
+                        "deterministic_check": {
+                            "command": "pytest tests/test_green.py",
+                            "baseline_status": "passed",
+                            "post_status": "passed",
+                        },
+                    }
+                ]
+            },
+            False,
+        ),
+        (
+            "non_executable",
+            {
+                "rework_items": [
+                    {
+                        "task_id": "T1",
+                        "issue": "review concern",
+                        "priority": "must",
+                        "deterministic_check": {
+                            "baseline_status": "passed",
+                            "post_status": "failed: green_suite remains unsatisfied",
+                        },
+                    }
+                ]
+            },
+            False,
+        ),
+    ]
+
+    for name, review_payload, malformed in cases:
+        case_root = tmp_path / name
+        queue_root = case_root / "workspace" / ".megaplan" / "repair-queue"
+        target = _write_legacy_review_target(
+            case_root,
+            review_payload=review_payload,
+            malformed_review=malformed,
+        )
+        _legacy_quality_request(queue_root)
+
+        custody = project_repair_custody(
+            plan_state=_legacy_quality_plan(),
+            current_target=target,
+            queue_root=queue_root,
+        )
+        decision = classify_repair_dispatch(
+            plan_state=_legacy_quality_plan(),
+            current_target=target,
+            custody_projection=custody,
+        )
+
+        assert custody["retry_budget"]["max_attempts"] == 3
+        assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
+        assert decision.dispatch_intent == DISPATCH_INTENT_BROKEN_SUPERFIXER
 
 
 def test_projection_ignores_stale_cross_session_custody_for_execution_blocked(

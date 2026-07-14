@@ -101,6 +101,44 @@ def _enqueue_quality(queue_root: Path, target: dict[str, object]) -> dict[str, o
     )
 
 
+def test_detailed_failed_review_statuses_emit_deterministic_quality_evidence() -> None:
+    state: dict[str, object] = {
+        "name": "c1",
+        "current_state": "blocked",
+        "history": [{"step": "review", "result": "needs_rework"}],
+    }
+
+    failure = _review_quality_block_failure(
+        state=state,  # type: ignore[arg-type]
+        blockers=["unresolved blocking rework: green_suite"],
+        rework_items=[
+            {
+                "task_id": "T1",
+                "issue": "green suite still fails",
+                "priority": "must",
+                "deterministic_check": {
+                    "command": "pytest tests/test_green.py",
+                    "baseline_status": "passed",
+                    "post_status": "failed: green_suite remains unsatisfied",
+                },
+            }
+        ],
+        review_artifact_hash="sha256:review-detail",
+    )
+
+    evidence = failure["metadata"]["deterministic_evidence"]  # type: ignore[index]
+    assert failure["kind"] == "quality_gate_blocked"
+    assert evidence == [
+        {
+            "command": "pytest tests/test_green.py",
+            "baseline_status": "passed",
+            "post_status": "failed: green_suite remains unsatisfied",
+            "task_id": "T1",
+            "issue": "green suite still fails",
+        }
+    ]
+
+
 def test_exhausted_deterministic_quality_dispatches_one_bounded_repair_without_human(
     tmp_path: Path,
 ) -> None:
