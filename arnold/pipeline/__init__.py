@@ -61,6 +61,8 @@ No Megaplan re-exports appear here; this is the neutral surface.
 """
 
 from arnold.pipeline.audit_policy import AuditMode, AuditPolicyHook, select_audit_mode
+from arnold.agent.costing.media_cost import UsageExtraction, normalize_usage_extraction
+from arnold.pipeline.native.decorators import decision, phase, pipeline, step, workflow
 from arnold.pipeline.content_validation import (
     ContentValidator,
     ContentValidatorRegistry,
@@ -219,10 +221,13 @@ from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
 from arnold.execution.driver import AdvanceOutcome, CheckpointOutcome
 from arnold.execution.step_invocation import (
+    MediaUsage,
+    ModelAdapterNotImplementedError,
     StepInvocation,
     StepInvocationAdapter,
     StepInvocationAdapterRegistry,
     StepInvocationResult,
+    unwrap_step_invocation_result,
 )
 from arnold.pipeline.driver import StepwiseDriver
 
@@ -256,6 +261,8 @@ __all__ = [
     "LoopState",
     "Manifest",
     "ManifestError",
+    "MediaUsage",
+    "ModelAdapterNotImplementedError",
     "NativeExecutionResult",
     "NativeProgram",
     "NativeCursorCorruptError",
@@ -295,10 +302,10 @@ __all__ = [
     "StepIOOperation",
     "StepIOPolicy",
     "StepContext",
-    "StepInvocation",
     "StepInvocationAdapter",
     "StepInvocationAdapterRegistry",
     "StepInvocationResult",
+    "unwrap_step_invocation_result",
     "StepResult",
     "StepwiseDriver",
     "Suspension",
@@ -307,6 +314,7 @@ __all__ = [
     "SeamResolution",
     "TrustClass",
     "TrustGrade",
+    "UsageExtraction",
     "ValidationDiagnostic",
     "ValidationResult",
     "apply_delta",
@@ -378,8 +386,14 @@ __all__ = [
     "upgrade_graph_cursor_to_native",
     "validate_contract_result",
     "validate_payload_against_schema",
+    "normalize_usage_extraction",
     "WriteRef",
     "weighted_vote",
+    "decision",
+    "phase",
+    "pipeline",
+    "step",
+    "workflow",
     "policy_for_envelope",
     "write_step_io_policy",
     "STEP_IO_POLICY_FILENAME",

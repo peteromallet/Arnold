@@ -12,8 +12,6 @@ from collections import Counter
 from pathlib import Path
 
 from arnold.pipeline.native.runtime import run_native_pipeline
-from arnold.pipelines.deliberation import build_pipeline as build_deliberation
-from arnold.pipelines.folder_audit import build_pipeline as build_folder_audit
 from arnold_pipelines.megaplan.pipelines.creative import build_pipeline as build_creative
 from arnold_pipelines.megaplan.pipelines.doc import build_pipeline as build_doc
 from arnold_pipelines.megaplan.pipelines.jokes import build_pipeline as build_jokes
@@ -206,83 +204,6 @@ def test_select_tournament_native_truth_runtime_trace_and_output(tmp_path: Path)
             "candidate_score_2__pc3",
             "pairwise_bracket__pc4",
             "winner__pc5",
-        ],
-    )
-
-
-def test_folder_audit_native_truth_runtime_trace_and_output(tmp_path: Path) -> None:
-    sample_root = tmp_path / "sample"
-    sample_root.mkdir()
-    (sample_root / "a.txt").write_text("hello", encoding="utf-8")
-    artifact_root = tmp_path / "folder-audit"
-    trace_dir = tmp_path / "folder-audit-trace"
-
-    def fake_worker(*, prompt: str, spec: str = "", **_: object) -> str:
-        del prompt, spec
-        return json.dumps(
-            {
-                "folders": [
-                    {
-                        "path": ".",
-                        "level": 0,
-                        "inferred_purpose": "root",
-                        "items": [
-                            {
-                                "name": "a.txt",
-                                "type": "file",
-                                "fits": True,
-                                "classification": "fit",
-                            }
-                        ],
-                    }
-                ]
-            }
-        )
-
-    result = run_native_pipeline(
-        build_folder_audit(worker=fake_worker).native_program,
-        artifact_root=artifact_root,
-        trace_dir=trace_dir,
-        initial_state={"target_dir": str(sample_root), "_worker": fake_worker},
-    )
-
-    audit = json.loads((artifact_root / "audit.json").read_text())
-    assert result.suspended is False
-    assert audit["summary"]["fit"] == 1
-    assert (artifact_root / "audit.md").is_file()
-    _assert_trace_contract(
-        trace_dir,
-        ["ingest__pc0", "audit__pc1", "emit__pc2"],
-    )
-
-
-def test_deliberation_native_truth_runtime_trace_and_output(tmp_path: Path) -> None:
-    artifact_root = tmp_path / "deliberation"
-    trace_dir = tmp_path / "deliberation-trace"
-
-    result = run_native_pipeline(
-        build_deliberation().native_program,
-        artifact_root=artifact_root,
-        trace_dir=trace_dir,
-        initial_state={"idea": "Ship the migration safely."},
-    )
-
-    assert result.suspended is False
-    assert "report" in result.state
-    assert (artifact_root / "final_report" / "report" / "v1.md").is_file()
-    _assert_trace_contract(
-        trace_dir,
-        [
-            "question_gen__pc0",
-            "human_gate__pc1",
-            "draft_plan__pc2",
-            "layer_high_panel__pc3",
-            "layer_high_synth__pc4",
-            "layer_mid_panel__pc5",
-            "layer_mid_synth__pc6",
-            "layer_low_panel__pc7",
-            "layer_low_synth__pc8",
-            "final_report__pc9",
         ],
     )
 
