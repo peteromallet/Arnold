@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from arnold_pipelines.megaplan.cli import build_parser
+from arnold_pipelines.megaplan.cli import _resolve_project_root, build_parser
 from arnold_pipelines.megaplan.handlers.strategy import (
     handle_strategy,
     handle_strategy_add,
@@ -394,6 +394,21 @@ class TestStrategyCLIParserRegistration:
 
 class TestStrategyCLIInit:
     """Tests for strategy init command handler."""
+
+    def test_init_resolves_fresh_git_root_before_ancestor_megaplan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ancestor = tmp_path / "ancestor"
+        ancestor_strategy = ancestor / ".megaplan" / "STRATEGY.md"
+        ancestor_strategy.parent.mkdir(parents=True)
+        ancestor_strategy.write_text("unrelated ancestor\n", encoding="utf-8")
+        repo_root = ancestor / "fresh-repo"
+        (repo_root / ".git").mkdir(parents=True)
+        monkeypatch.chdir(repo_root)
+
+        args = build_parser().parse_args(["strategy", "init"])
+
+        assert _resolve_project_root(args) == repo_root.resolve()
 
     def test_init_creates_file(self, tmp_path: Path) -> None:
         """strategy init creates an initiative-root strategy from the template."""
