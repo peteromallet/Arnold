@@ -1,3 +1,5 @@
+"""Archived with the deliberately deleted umbrella ``arnold`` CLI facade."""
+
 from __future__ import annotations
 
 import argparse

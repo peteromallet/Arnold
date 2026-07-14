@@ -1,3 +1,5 @@
+"""Archived legacy umbrella-CLI tests; active argv compatibility lives separately."""
+
 from __future__ import annotations
 
 import json
