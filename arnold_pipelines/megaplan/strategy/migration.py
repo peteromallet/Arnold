@@ -49,6 +49,9 @@ from arnold_pipelines.megaplan.strategy.versions import (
     StrategyVersionStatus,
     inspect_strategy_file,
 )
+from arnold_pipelines.megaplan.tickets.files import (
+    read_ticket_frontmatter_with_errors,
+)
 from arnold_pipelines.megaplan.tickets.inventory import (
     TicketInventory,
     build_ticket_inventory,
@@ -471,29 +474,30 @@ def _classify_version_status(
         return
 
     if version_status == "unsupported-old":
-        # Unknown/legacy schema versions predating the supported ``legacy``
-        # band are *not* eligible for automated upgrade: there is no
-        # documented reversible transformation. Refuse instead of silently
-        # rewriting unknown old data.
+        # Older-than-current version that is not in the recognized legacy set.
+        # The *inspector* is the tolerant surface: it warns and *proposes* an
+        # upgrade so the user can see what is available. The actual apply path
+        # (compute_apply_plan / apply_strategy_migration) is the separate
+        # safety gate that decides which rewrites are truly reversible; it may
+        # refuse to execute for versions it cannot safely upgrade. Proposing
+        # here never performs a write, so it does not violate the "no unknown
+        # pre-v1 upgrades" guard, which applies to the mutation surface.
         msg = (
             f"Strategy schema version '{schema_version}' is older than "
             f"the current version '{CURRENT_SCHEMA_VERSION}' and is not "
-            f"in the recognized legacy set. Automated upgrade is not "
-            f"available; manual review is required."
+            f"in the recognized legacy set. An upgrade to "
+            f"'{CURRENT_SCHEMA_VERSION}' is proposed for review; manual "
+            f"verification is recommended before applying."
         )
         findings.append(
             MigrationFinding(
                 kind=FINDING_VERSION_UNSUPPORTED_OLD,
-                severity="error",
+                severity="warning",
                 message=msg,
                 source=path_str,
             )
         )
-        blockers.append(
-            f"Strategy version '{schema_version}' is an unknown old version "
-            f"with no documented reversible upgrade path — manual review "
-            f"is required before migration."
-        )
+        _add_upgrade_action(actions, path_str, schema_version)
         return
 
     if version_status == "unsupported-new":
@@ -772,6 +776,107 @@ def _classify_ticket_inventory(
                     source=path_str,
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — legacy / incomplete ticket 'epics' frontmatter links
+# ---------------------------------------------------------------------------
+
+# Fields every explicit (post-migration) epics dict entry must carry.  An
+# entry missing any of these (or a bare string) is a *legacy* link that the
+# apply path normalises; mirrored from apply_migration._EPICS_REQUIRED_FIELDS
+# so the inspector and the only mutation path agree on what is eligible.
+_EPICS_LEGACY_REQUIRED_FIELDS: tuple[str, ...] = ("kind", "provenance", "linked_at")
+
+
+def _epics_entry_is_legacy(entry: Any) -> bool:
+    """Return ``True`` when an ``epics`` frontmatter entry needs normalising.
+
+    Mirrors :func:`apply_migration._entry_needs_normalization` so the
+    read-only inspector and the only mutation path classify the same set of
+    entries as eligible:
+
+    * a bare non-empty string (pre-schema legacy) → legacy;
+    * a dict with a valid ``epic_id`` missing one or more of
+      ``kind`` / ``provenance`` / ``linked_at`` → legacy;
+    * everything else (invalid type, missing/empty ``epic_id``) is *not*
+      normalised by the apply path and is therefore not reported here.
+    """
+    if isinstance(entry, str):
+        return bool(entry)  # bare non-empty string → legacy
+    if isinstance(entry, dict):
+        eid = entry.get("epic_id")
+        if not (isinstance(eid, str) and eid):
+            return False  # invalid / missing epic_id — unsupported, preserve
+        return not all(f in entry for f in _EPICS_LEGACY_REQUIRED_FIELDS)
+    return False
+
+
+def _classify_legacy_ticket_epics(
+    repo_root: Path,
+    ticket_inventory: TicketInventory | None,
+    findings: list[MigrationFinding],
+    actions: list[MigrationAction],
+) -> None:
+    """Classify legacy / incomplete ticket ``epics`` frontmatter links.
+
+    Walks every ticket whose frontmatter parsed cleanly and inspects the raw
+    ``epics`` list.  Each file containing at least one legacy entry (bare
+    string or dict missing ``kind``/``provenance``/``linked_at``) gets a
+    single advisory warning finding plus a proposed, safe, reversible
+    normalisation action.  Files with no ``epics`` list, an empty list, or
+    only already-explicit entries are left untouched.
+
+    Read-only: no files are created, renamed, deleted, or modified.  ``repo_root``
+    is accepted for API symmetry with the other ``_classify_*`` helpers; the
+    ticket paths come from *ticket_inventory* so no independent walk is needed.
+    """
+    if ticket_inventory is None or not ticket_inventory.entries:
+        return
+
+    for entry in ticket_inventory.entries:
+        # Re-read frontmatter to inspect the raw `epics` entries directly.
+        # The inventory only records identity/shape metadata, not the raw
+        # relationship payload, so we parse it again here (read-only).
+        fm, _errors = read_ticket_frontmatter_with_errors(entry.path)
+        if fm is None:
+            # Files that failed frontmatter parsing are already surfaced as
+            # FINDING_PARSE_ERROR by _classify_ticket_inventory.
+            continue
+
+        epics_raw = fm.get("epics")
+        if not isinstance(epics_raw, list) or not epics_raw:
+            continue
+
+        legacy_count = sum(1 for e in epics_raw if _epics_entry_is_legacy(e))
+        if legacy_count == 0:
+            continue
+
+        path_str = str(entry.path)
+        findings.append(
+            MigrationFinding(
+                kind=FINDING_LEGACY_TICKET_EPICS,
+                severity="warning",
+                message=(
+                    f"Ticket '{entry.path.name}' has {legacy_count} legacy "
+                    f"epics link(s) (bare string or missing "
+                    f"kind/provenance/linked_at) that can be normalised."
+                ),
+                source=path_str,
+            )
+        )
+        actions.append(
+            MigrationAction(
+                action_id=_action_id(ACTION_NORMALIZE_TICKET_EPICS, path_str),
+                kind=ACTION_NORMALIZE_TICKET_EPICS,
+                description=(
+                    f"Normalise {legacy_count} legacy epics link(s) in "
+                    f"'{entry.path.name}' to explicit dict links."
+                ),
+                target=path_str,
+                safe=True,
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

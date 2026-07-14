@@ -65,6 +65,10 @@ from arnold_pipelines.megaplan.strategy.migration import (
     inspect_strategy_migration,
 )
 from arnold_pipelines.megaplan.strategy.apply_migration import apply_strategy_migration
+from arnold_pipelines.megaplan.strategy.versions import (
+    CURRENT_SCHEMA_VERSION,
+    inspect_strategy_file,
+)
 from arnold_pipelines.megaplan.types import CliError, StepResponse
 
 
@@ -603,6 +607,11 @@ def handle_strategy_add(
             "No strategy file found. Run 'strategy init' first.",
         )
 
+    # Fail closed: a strategy that only parsed with hard diagnostics (e.g. an
+    # unsupported schema_version) is not a valid authority document. Strict
+    # write commands must reject it before mutating the file.
+    _require_valid_authority(repo_root, document)
+
     # ---- Preflight: reject unknown artifact references -----------------------
     _validate_artifact_exists(item_type, ref, repo_root)
 
@@ -699,6 +708,10 @@ def handle_strategy_remove(
             "No strategy file found. Run 'strategy init' first.",
         )
 
+    # Fail closed: refuse to mutate an invalid strategy authority document
+    # (e.g. unsupported schema_version) before any write.
+    _require_valid_authority(repo_root, document)
+
     new_document = remove_roadmap_entry(document, identity)
 
     # Detect whether anything was actually removed.
@@ -793,6 +806,10 @@ def handle_strategy_move(
             "No strategy file found. Run 'strategy init' first.",
         )
 
+    # Fail closed: refuse to mutate an invalid strategy authority document
+    # (e.g. unsupported schema_version) before any write.
+    _require_valid_authority(repo_root, document)
+
     new_document = move_roadmap_entry(document, identity, horizon)  # type: ignore[arg-type]
 
     # Detect missing entry: move_roadmap_entry returns unchanged document
@@ -846,6 +863,59 @@ def handle_strategy_move(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _require_valid_authority(
+    repo_root: str | Path,
+    document: "StrategyDocument",
+) -> None:
+    """Fail closed: refuse to mutate an invalid strategy authority document.
+
+    Strict write commands (add/move/remove/project) must not act on a strategy
+    file whose authority is not currently valid. Two independent gates:
+
+    1. **Version status must be ``current``.** The tolerant inspection surface
+       (doctor/migrate) classifies legacy / missing-version / unsupported-old /
+       unsupported-new / malformed states, but those are *not* valid authority
+       for strict commands. An unsupported ``schema_version`` (e.g. ``999``) is
+       reported by the parser only as a *warning* diagnostic, so a pure
+       severity filter would let it through — the explicit version check closes
+       that gap.
+    2. **No hard ``error``-severity diagnostics** from parsing/validation.
+
+    A no-op for clean, current documents.
+    """
+    version_status = inspect_strategy_file(repo_root)
+    if version_status != "current":
+        raise CliError(
+            "strategy_invalid",
+            "Strategy file is not a valid current authority document "
+            f"(version status: '{version_status}', current version: "
+            f"'{CURRENT_SCHEMA_VERSION}'). Run 'strategy doctor' to inspect or "
+            f"'strategy migrate --apply' to upgrade before editing.",
+        )
+
+    raw_diags = (
+        getattr(document, "error_diagnostics", None)
+        or getattr(document, "diagnostics", None)
+        or []
+    )
+    for diag in raw_diags:
+        sev = (
+            diag.get("severity", "")
+            if isinstance(diag, dict)
+            else getattr(diag, "severity", "")
+        )
+        if str(sev).lower() == "error":
+            msg = (
+                diag.get("message", "invalid strategy")
+                if isinstance(diag, dict)
+                else getattr(diag, "message", "invalid strategy")
+            )
+            raise CliError(
+                "strategy_invalid",
+                "Strategy file is not a valid authority document: " + str(msg),
+            )
 
 
 def _validate_artifact_exists(
