@@ -1061,6 +1061,44 @@ def test_plan_activity_summary_prefers_snapshot_over_no_snapshot():
     assert [e["session"] for e in derived["should_be_working_but_needs_attention"]] == ["a"]
 
 
+def test_completed_session_uses_terminal_event_not_health_refresh(fx):
+    workspace = fx.add_session("completed", plan_name="final-plan")
+    fx.add_chain_health(
+        "completed",
+        chain_complete=True,
+        completed_count=1,
+        current_plan_name="final-plan",
+        last_state="done",
+        updated_at=NOW,
+    )
+    fx.add_plan_state("completed", "final-plan", current_state="done")
+    events_path = workspace / ".megaplan" / "plans" / "final-plan" / "events.ndjson"
+    events_path.write_text(
+        json.dumps(
+            {
+                "kind": "plan_finished",
+                "payload": {"state": "done"},
+                "ts_utc": "2026-07-04T10:13:15.123456+00:00",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "kind": "plan_finished",
+                "payload": {"state": "failed"},
+                "ts_utc": "2026-07-04T22:12:15+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    entry = _by_session(fx.build(), "completed")
+
+    assert entry["completed_at"] == "2026-07-04T10:13:15.123456Z"
+    assert entry["latest_activity"] != entry["completed_at"]
+
+
 def test_snapshot_adds_separate_read_only_shadow_views_without_reclassification(fx):
     workspace = fx.add_session("shadowed", plan_name="plan-a")
     fx.add_chain_health(

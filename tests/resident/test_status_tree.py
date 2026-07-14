@@ -95,6 +95,7 @@ def test_root_exposes_recency_sorted_canonical_completed_sessions_beyond_legacy_
                 "session": "repository-strategy-roadmap",
                 "display_name": "Repository strategy roadmap",
                 "status": "complete",
+                "completed_at": "2026-07-14T17:18:48Z",
                 "latest_activity": "2026-07-14T17:18:48Z",
                 "completed_count": 5,
                 "milestone_count": 5,
@@ -121,8 +122,8 @@ def test_root_only_includes_completed_sessions_within_rolling_twelve_hours() -> 
         "generated_at": "2026-07-14T18:00:00Z",
         "sessions": [
             {"session": "inside", "status": "complete", "completed_at": "2026-07-14T06:00:01Z"},
-            {"session": "boundary", "status": "complete", "latest_activity": "2026-07-14T06:00:00Z"},
-            {"session": "outside", "status": "complete", "latest_activity": "2026-07-14T05:59:59Z"},
+            {"session": "boundary", "status": "complete", "completed_at": "2026-07-14T06:00:00Z"},
+            {"session": "outside", "status": "complete", "completed_at": "2026-07-14T05:59:59Z"},
         ],
     }
 
@@ -130,6 +131,30 @@ def test_root_only_includes_completed_sessions_within_rolling_twelve_hours() -> 
 
     assert [row["session"] for row in root["recently_completed"]] == ["inside", "boundary"]
     assert root["recently_completed_omitted_count"] == 0
+
+
+def test_root_excludes_stale_completion_despite_fresh_watchdog_activity() -> None:
+    snapshot = {
+        "generated_at": "2026-07-14T18:00:00Z",
+        "sessions": [
+            {
+                "session": "old-completion",
+                "status": "complete",
+                "completed_at": "2026-07-08T19:28:14.239295Z",
+                "latest_activity": "2026-07-14T17:59:59Z",
+            },
+            {
+                "session": "missing-terminal-receipt",
+                "status": "complete",
+                "latest_activity": "2026-07-14T17:59:59Z",
+            },
+        ],
+    }
+
+    root = compact_cloud_status_snapshot(snapshot)
+
+    assert root["completed_session_count"] == 2
+    assert root["recently_completed"] == []
 
 
 def test_status_tree_navigates_to_bounded_repair_evidence() -> None:

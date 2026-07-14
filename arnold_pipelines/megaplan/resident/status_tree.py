@@ -37,8 +37,8 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
     active = [item for item in sessions if _root_session_needs_detail(item)]
     completed = [item for item in sessions if _is_completed_session(item)]
     # Completion is a terminal canonical status, not an inference from an idle
-    # process.  Sort by durable activity so a newly completed chain is eligible
-    # for the bounded resident card even when older history is long.
+    # process.  Sort by terminal receipt time so a watchdog refresh cannot make
+    # an old completion eligible for the bounded resident card.
     # Use the snapshot's own observation clock so archived/replayed snapshots
     # retain the truthful rolling window they had when generated.
     snapshot_time = _parse_utc_timestamp(snapshot.get("generated_at"))
@@ -115,10 +115,10 @@ def _is_completed_session(session: Mapping[str, Any]) -> bool:
 
 
 def _completion_sort_key(session: Mapping[str, Any]) -> str:
-    """Sort ISO-like durable activity timestamps newest first without guessing."""
+    """Sort terminal completion timestamps newest first without guessing."""
 
-    latest = session.get("completed_at") or session.get("latest_activity")
-    return str(latest).strip() if latest is not None else ""
+    completed_at = session.get("completed_at")
+    return str(completed_at).strip() if completed_at is not None else ""
 
 
 def _is_within_recent_completion_window(
@@ -126,9 +126,7 @@ def _is_within_recent_completion_window(
 ) -> bool:
     """Accept only durable terminal timestamps in the snapshot's last 12 hours."""
 
-    completed_at = _parse_utc_timestamp(
-        session.get("completed_at") or session.get("latest_activity")
-    )
+    completed_at = _parse_utc_timestamp(session.get("completed_at"))
     return bool(
         snapshot_time is not None
         and completed_at is not None
