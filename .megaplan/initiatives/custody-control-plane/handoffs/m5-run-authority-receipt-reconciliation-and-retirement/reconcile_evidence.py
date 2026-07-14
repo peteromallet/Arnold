@@ -244,7 +244,7 @@ def _sync_handoff_and_attest() -> int:
     retired = initiative / ".retired"
     chain_verify = HANDOFF / "chain-verify-reconciliation.json"
     receipt_reconciliation = HANDOFF / "completion-receipt-reconciliation.json"
-    required = [canonical_manifest, canonical_proof_map, retired, chain_verify, receipt_reconciliation, HANDOFF / "m5-review-suite-reconciliation.json", HANDOFF / "full-suite-reconciliation.json", HANDOFF / "duplicate-session-tombstone.json"]
+    required = [canonical_manifest, canonical_proof_map, retired, chain_verify, receipt_reconciliation, HANDOFF / "m5-review-suite-reconciliation.json", HANDOFF / "full-suite-reconciliation.json", HANDOFF / "selector-path-reconciliation.json", HANDOFF / "duplicate-session-tombstone.json"]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise RuntimeError(f"missing final attestation inputs: {missing}")
@@ -285,6 +285,7 @@ def _sync_handoff_and_attest() -> int:
         "notes": [
             "Receipts were regenerated through completion-contract providers, not edited.",
             "The canonical completion manifest was generated through `megaplan chain manifest` and copied byte-semantically into this handoff.",
+            "Every lifecycle-selected test path is retained; current CLI conformance paths and explicit archived-module retirement skips make the exact M1-M3 selector sets structurally collectible without restoring legacy product code.",
             "Repository-wide failures remain explicitly red; the M5 structural criterion is zero collection/import errors, backed by the exact immutable full-suite run.",
         ],
     }
