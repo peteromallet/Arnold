@@ -1,0 +1,51 @@
+{
+  "evidence": [
+    {
+      "path": ".megaplan/initiatives/custody-control-plane/chain.yaml",
+      "scope": "initiative-repo",
+      "sha256": "7b5a9d568e9e678ec7f047df25e228fb538bdf707cb7af16fda1c7860b99cf4b",
+      "size": 16424
+    },
+    {
+      "path": ".megaplan/initiatives/custody-control-plane/NORTHSTAR.md",
+      "scope": "initiative-repo",
+      "sha256": "315ed6ba4db2323958448db2ec7aa81fa5ddbc140bc05823ec0de322e78c5f45",
+      "size": 14623
+    },
+    {
+      "path": ".megaplan/initiatives/workflow-boundary-contracts/handoff/consolidation-20260714/wbc-merge-evidence.md",
+      "scope": "initiative-repo",
+      "sha256": "a10995219d163cef295db7452cc187f41ffeb986f91d61032d48742f01ed1e01",
+      "size": 3059
+    },
+    {
+      "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml",
+      "scope": "external-control-plane",
+      "sha256": "66e9ac0de6f8416c4d10cee7d591b1eb716cc16b08d51f0416c3f7c00ce9a516",
+      "size": 15212
+    },
+    {
+      "path": "/workspace/.megaplan/cloud-sessions/retired-status/workflow-boundary-contracts-corrective-20260710/ret-f6f816402b3127fd0260/tombstone.json",
+      "scope": "external-control-plane",
+      "sha256": "95d6296cb87c64b038b5c280ff6f0fa16e596f2ac9c77f66c1ebdcfadcd6bf6c",
+      "size": 4758
+    }
+  ],
+  "identity": {
+    "chain_path": ".megaplan/initiatives/workflow-boundary-contracts/chain.yaml",
+    "chain_sha256": "1c7336d4444f89163006c9e69d506b1505ba59d36a9e5cdfb3a54ac9dbbe688d"
+  },
+  "initiative": "workflow-boundary-contracts",
+  "reason": "Retire the unfinished standalone WBC corrective continuation because the live custody-control-plane contract now owns its remaining WBC inventory, transactional-ledger, adoption, conformance, and legacy-retirement work; preserve all WBC history and do not assert completion.",
+  "retired_at": "2026-07-14T18:35:29.779360Z",
+  "retirement_id": "iret-1e005e2065d67300c028e030",
+  "schema_version": "arnold.megaplan.initiative-retirement.v1",
+  "scope": "metadata_only",
+  "status": "retired",
+  "superseded_by": "custody-control-plane",
+  "truthfulness": {
+    "completion_asserted": false,
+    "historical_evidence_deleted": false,
+    "unfinished_milestones_completed": false
+  }
+}
