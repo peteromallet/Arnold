@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import hashlib
@@ -19,11 +20,30 @@ from agentbox.redaction import redact_text
 from arnold_pipelines.megaplan.store import ScheduledJobInput, deterministic_idempotency_key
 
 from .auth import AuthorizationSubject
+from .currently_running import (
+    CURRENTLY_RUNNING_COMMAND,
+    CURRENTLY_RUNNING_DESCRIPTION,
+    collect_currently_running,
+    render_currently_running,
+)
+from .dropped_threads import (
+    DROPPED_THREADS_COMMAND,
+    DROPPED_THREADS_DESCRIPTION,
+    InvalidLookback,
+    dropped_threads_prompt,
+    parse_dropped_threads_lookback,
+)
 from .discord_reactions import DiscordReactionEffectLedger, ReactionEffectSweepResult
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
 from .reply_chain import (
     REPLY_CAPTURE_MAX_ANCESTORS,
     bounded_reply_content,
+)
+from .restart_resident import (
+    RESTART_RESIDENT_ACKNOWLEDGEMENT,
+    RESTART_RESIDENT_COMMAND,
+    RESTART_RESIDENT_DESCRIPTION,
+    restart_discord_resident,
 )
 from .scheduler import ScheduledJobWorker
 from .subagent import sweep_managed_agent_deliveries
@@ -77,6 +97,61 @@ VOICE_FAILURE_ENDPOINT = (
 VOICE_FAILURE_DISABLED = (
     "Voice-message transcription is disabled for this resident. Please send the message as text."
 )
+
+
+@dataclass(frozen=True)
+class DiscordApplicationCommand:
+    name: str
+    description: str
+    handler_name: str
+    has_lookback_option: bool = False
+
+
+DISCORD_APPLICATION_COMMANDS = (
+    DiscordApplicationCommand(
+        name=CURRENTLY_RUNNING_COMMAND,
+        description=CURRENTLY_RUNNING_DESCRIPTION,
+        handler_name="handle_currently_running_interaction",
+    ),
+    DiscordApplicationCommand(
+        name=RESTART_RESIDENT_COMMAND,
+        description=RESTART_RESIDENT_DESCRIPTION,
+        handler_name="handle_restart_resident_interaction",
+    ),
+    DiscordApplicationCommand(
+        name=DROPPED_THREADS_COMMAND,
+        description=DROPPED_THREADS_DESCRIPTION,
+        handler_name="handle_dropped_threads_interaction",
+        has_lookback_option=True,
+    ),
+)
+
+
+def register_discord_application_commands(tree: Any, service: Any) -> tuple[str, ...]:
+    """Register the resident's application-command inventory on one tree."""
+
+    def callback_for(command: DiscordApplicationCommand, handler: Any) -> Any:
+        callback_name = command.name.replace("-", "_")
+        if command.has_lookback_option:
+            async def callback(interaction: Any, lookback: str | None = None) -> None:
+                await handler(interaction, lookback=lookback)
+
+            callback.__name__ = callback_name
+            return callback
+
+        async def callback(interaction: Any) -> None:
+            await handler(interaction)
+
+        callback.__name__ = callback_name
+        return callback
+
+    registered: list[str] = []
+    for command in DISCORD_APPLICATION_COMMANDS:
+        handler = getattr(service, command.handler_name)
+        callback = callback_for(command, handler)
+        tree.command(name=command.name, description=command.description)(callback)
+        registered.append(command.name)
+    return tuple(registered)
 
 
 class AudioTranscriber(Protocol):
@@ -1010,6 +1085,7 @@ class ResidentDiscordService:
         scheduler_interval_s: float = 10.0,
         transcriber: AudioTranscriber | None = None,
         attachment_downloader: AttachmentDownloader | None = None,
+        restart_operation: Callable[[], Mapping[str, Any]] | None = None,
     ) -> None:
         if not token:
             raise ValueError("Discord token is required")
@@ -1019,7 +1095,10 @@ class ResidentDiscordService:
         self.scheduler_interval_s = scheduler_interval_s
         self.transcriber = transcriber or OpenAICompatibleAudioTranscriber(runtime.config)
         self.attachment_downloader = attachment_downloader or DiscordAttachmentDownloader()
+        self.restart_operation = restart_operation or restart_discord_resident
         self._scheduler_task: asyncio.Task[None] | None = None
+        self._command_tree: Any | None = None
+        self._commands_synced = False
 
     async def start(self) -> None:
         try:
@@ -1031,6 +1110,13 @@ class ResidentDiscordService:
         intents = discord.Intents.default()
         intents.message_content = True
         client = discord.Client(intents=intents)
+        app_commands = getattr(discord, "app_commands", None)
+        command_tree_type = getattr(app_commands, "CommandTree", None)
+        if command_tree_type is not None:
+            self._command_tree = command_tree_type(client)
+            register_discord_application_commands(self._command_tree, self)
+        else:  # pragma: no cover - supported discord.py always exposes this
+            LOGGER.warning("discord.py application-command support is unavailable")
 
         @client.event
         async def on_ready() -> None:
@@ -1045,6 +1131,18 @@ class ResidentDiscordService:
             outbound = getattr(self.runtime, "outbound", None)
             if isinstance(outbound, DiscordOutboundSink):
                 outbound.bind_client(client)
+            if self._command_tree is not None and not self._commands_synced:
+                try:
+                    synced = await self._command_tree.sync()
+                except Exception:
+                    LOGGER.exception("Resident Discord application-command sync failed")
+                else:
+                    self._commands_synced = True
+                    LOGGER.info(
+                        "Resident Discord application commands synced count=%s commands=%s",
+                        len(synced),
+                        ",".join(command.name for command in DISCORD_APPLICATION_COMMANDS),
+                    )
             try:
                 process_identity = await asyncio.wait_for(
                     asyncio.to_thread(resident_process_identity), timeout=3.0
@@ -1143,6 +1241,189 @@ class ResidentDiscordService:
             LOGGER.exception("Resident Discord client event failed: %s", event_method)
 
         await client.start(self.token)
+
+    async def handle_currently_running_interaction(self, interaction: Any) -> None:
+        """Serve ``/currently-running`` without invoking the resident model."""
+
+        user_id = _optional_snowflake(
+            getattr(getattr(interaction, "user", None), "id", None)
+        )
+        guild_id = _optional_snowflake(getattr(interaction, "guild_id", None))
+        channel = getattr(interaction, "channel", None)
+        parent = getattr(channel, "parent", None)
+        channel_id = _optional_snowflake(
+            getattr(parent, "id", None)
+            if parent is not None
+            else getattr(interaction, "channel_id", None)
+        )
+        subject = AuthorizationSubject(
+            user_id=user_id or "",
+            guild_id=guild_id,
+            channel_id=channel_id,
+        )
+        authorizer = getattr(self.runtime, "authorizer", None)
+        decision = authorizer.authorize_inbound(subject) if authorizer is not None else None
+        if not user_id or (decision is not None and not decision.allowed):
+            await interaction.response.send_message(
+                "This command is not authorized in this Discord context.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(thinking=True)
+        try:
+            report = await collect_currently_running(self.runtime)
+            rendered = render_currently_running(report)
+        except Exception:
+            LOGGER.exception("Resident currently-running command failed")
+            rendered = (
+                "**Currently running**\n"
+                "⚠️ Canonical status is temporarily unavailable; no running-state claims were made."
+            )
+        for chunk in split_discord_message(rendered):
+            await interaction.followup.send(chunk)
+
+    async def handle_restart_resident_interaction(self, interaction: Any) -> None:
+        """Authorize and hand ``/restart-resident`` to the guarded lifecycle API."""
+
+        user_id = _optional_snowflake(
+            getattr(getattr(interaction, "user", None), "id", None)
+        )
+        guild_id = _optional_snowflake(getattr(interaction, "guild_id", None))
+        channel = getattr(interaction, "channel", None)
+        parent = getattr(channel, "parent", None)
+        channel_id = _optional_snowflake(
+            getattr(parent, "id", None)
+            if parent is not None
+            else getattr(interaction, "channel_id", None)
+        )
+        subject = AuthorizationSubject(
+            user_id=user_id or "",
+            guild_id=guild_id,
+            channel_id=channel_id,
+        )
+        authorizer = getattr(self.runtime, "authorizer", None)
+        decision = (
+            authorizer.authorize_action(subject, "admin")
+            if authorizer is not None and user_id
+            else None
+        )
+        if decision is None or not decision.allowed:
+            await interaction.response.send_message(
+                "This command requires resident administrator authorization.",
+                ephemeral=True,
+            )
+            return
+
+        # Discord confirms this response before the external supervisor is
+        # allowed to replace the resident process.
+        await interaction.response.send_message(
+            RESTART_RESIDENT_ACKNOWLEDGEMENT,
+            ephemeral=True,
+        )
+        operation = getattr(self, "restart_operation", restart_discord_resident)
+        try:
+            result = await asyncio.to_thread(operation)
+        except Exception:
+            LOGGER.exception("Guarded Discord resident restart invocation failed")
+            await interaction.edit_original_response(
+                content=(
+                    "The resident restart did not return a confirmed acceptance. "
+                    "No restart outcome is being claimed; check the durable lifecycle status."
+                )
+            )
+            return
+
+        if not isinstance(result, Mapping):
+            await interaction.edit_original_response(
+                content=(
+                    "The resident restart returned no valid lifecycle result. "
+                    "No restart outcome is being claimed; check the durable lifecycle status."
+                )
+            )
+            return
+
+        if not result.get("ok"):
+            error = redact_text(
+                str(result.get("error") or "restart safety preflight failed")
+            )
+            await interaction.edit_original_response(
+                content=(
+                    f"The resident restart was refused safely: {error}. "
+                    "No restart was performed."
+                )
+            )
+            return
+
+        if result.get("duplicate"):
+            message = (
+                "This restart request was already processed; no second resident "
+                "restart was started."
+            )
+        else:
+            message = (
+                "The guarded resident restart was accepted. Only the Discord resident "
+                "is targeted; replacement health is verified by the durable lifecycle "
+                "supervisor after reconnect."
+            )
+        # Best effort: the acknowledgement is already visible, and the resident
+        # may be replaced before this edit reaches Discord.
+        await interaction.edit_original_response(content=message)
+
+    async def handle_dropped_threads_interaction(
+        self, interaction: Any, *, lookback: str | None = None
+    ) -> None:
+        """Queue a provenance-preserving conversation review as a normal turn."""
+
+        user_id = _optional_snowflake(getattr(getattr(interaction, "user", None), "id", None))
+        guild_id = _optional_snowflake(getattr(interaction, "guild_id", None))
+        channel = getattr(interaction, "channel", None)
+        parent = getattr(channel, "parent", None)
+        channel_id = _optional_snowflake(
+            getattr(parent, "id", None) if parent is not None else getattr(interaction, "channel_id", None)
+        )
+        thread_id = _optional_snowflake(getattr(channel, "id", None)) if parent is not None else None
+        subject = AuthorizationSubject(user_id=user_id or "", guild_id=guild_id, channel_id=channel_id)
+        authorizer = getattr(self.runtime, "authorizer", None)
+        decision = authorizer.authorize_inbound(subject) if authorizer is not None else None
+        if not user_id or not channel_id or (decision is not None and not decision.allowed):
+            await interaction.response.send_message(
+                "This command is not authorized in this Discord context.", ephemeral=True
+            )
+            return
+        try:
+            duration = parse_dropped_threads_lookback(lookback)
+        except InvalidLookback as exc:
+            await interaction.response.send_message(
+                f"Invalid lookback: {exc}. Maximum is `7d`.", ephemeral=True
+            )
+            return
+        interaction_id = _optional_snowflake(getattr(interaction, "id", None))
+        if not interaction_id:
+            await interaction.response.send_message(
+                "I couldn't establish a stable command identity, so no review was started.", ephemeral=True
+            )
+            return
+        # Defer the one interaction response while the standard resident flow owns
+        # persistence, coalescing, model execution, and normal Discord delivery.
+        await interaction.response.defer(thinking=True)
+        event = InboundEvent(
+            idempotency_key=f"discord:interaction:{interaction_id}",
+            conversation_key=DiscordDeliveryTarget(
+                guild_id=guild_id, channel_id=channel_id, thread_id=thread_id,
+                dm_user_id=user_id if guild_id is None else None,
+            ).conversation_key,
+            subject=subject,
+            content=dropped_threads_prompt(duration),
+            raw={
+                "source_kind": "discord_application_command",
+                "discord_interaction_id": interaction_id,
+                "discord_application_command": DROPPED_THREADS_COMMAND,
+                "thread_id": thread_id,
+                "dm_user_id": user_id if guild_id is None else None,
+            },
+        )
+        await self.runtime.receive(event, authorization_decision=decision)
 
     async def handle_message(self, message: Any) -> None:
         """Convert one Discord message into a resident event, transcribing audio first."""

@@ -6,6 +6,9 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from dataclasses import replace
+import importlib.util
+import re
 
 import pytest
 
@@ -14,7 +17,12 @@ from arnold_pipelines.megaplan.incident.projection import rebuild_projections
 from arnold_pipelines.megaplan.managed_agent import (
     MANAGED_AGENT_CUSTODIAN,
     MANAGED_AGENT_SCHEMA,
+    MANAGED_DIFFICULTY_CEILING_ENV,
     ManagedCommandSpec,
+    MACHINE_ORIGIN_SCHEMA,
+    RESIDENT_DELEGATION_ENV,
+    SEALED_STDIN_PLACEHOLDER,
+    machine_origin_provenance,
     reserve_managed_command,
     run_managed_command,
     stable_managed_run_id,
@@ -44,6 +52,12 @@ def spec(
         route_class="test_route",
         backend="codex",
         command_display="fixture managed worker",
+        launch_provenance=machine_origin_provenance(
+            origin_kind="repair_loop_worker",
+            origin_id=identity,
+            component="tests.test_managed_agent",
+            trigger_id=identity,
+        ),
         links=links or {},
         lineage_key=lineage,
         tee_output=False,
@@ -88,6 +102,9 @@ def test_automatic_run_has_full_truthful_lifecycle_and_unified_view(tmp_path: Pa
     assert payload["reasoning_effort"] == "high"
     assert payload["difficulty"] == 8
     assert payload["completion_delivery"]["status"] == "not_applicable"
+    assert payload["launch_provenance"]["schema_version"] == MACHINE_ORIGIN_SCHEMA
+    assert payload["launch_provenance"]["transport"] == "automatic_system"
+    assert payload["stdin"] == {"kind": "devnull", "sealed": True, "size_bytes": 0}
     assert payload["links"]["repair_request_id"] == "request-1"
     assert "managed-ok" in Path(payload["full_log_path"]).read_text()
     result = json.loads(Path(payload["result_path"]).read_text())
@@ -266,6 +283,14 @@ def _cli(root: Path, marker: Path) -> list[str]:
         "fixture",
         "--command-display",
         "duplicate race fixture",
+        "--origin-kind",
+        "repair_loop_worker",
+        "--origin-id",
+        "duplicate-race",
+        "--origin-component",
+        "tests.test_managed_agent",
+        "--trigger-id",
+        "duplicate-race",
         "--",
         sys.executable,
         "-c",
@@ -290,14 +315,289 @@ def test_duplicate_dispatch_race_executes_worker_once(tmp_path: Path) -> None:
     assert len(list(run_root.glob("*/manifest.json"))) == 1
 
 
+def test_sealed_stdin_and_placeholder_are_durable(tmp_path: Path) -> None:
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("sealed prompt\n", encoding="utf-8")
+    item = replace(
+        spec(tmp_path, identity="sealed-stdin"),
+        stdin_path=prompt,
+        argv=(
+            sys.executable,
+            "-c",
+            "import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text(), end='')",
+            SEALED_STDIN_PLACEHOLDER,
+        ),
+        require_output=True,
+    )
+
+    assert run_managed_command(item) == 0
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    sealed = Path(payload["stdin"]["path"])
+    assert sealed.read_text(encoding="utf-8") == "sealed prompt\n"
+    assert sealed.stat().st_mode & 0o777 == 0o400
+    assert "sealed prompt" in Path(payload["log_path"]).read_text(encoding="utf-8")
+    assert payload["launch_contract_sha256"]
+
+
+def test_same_identity_cannot_change_launch_contract(tmp_path: Path) -> None:
+    original = spec(tmp_path, identity="contract-fence")
+    reserve_managed_command(original)
+
+    with pytest.raises(RuntimeError, match="launch contract changed"):
+        reserve_managed_command(replace(original, model="different-model"))
+
+
+def test_tampered_sealed_stdin_is_not_projected_as_canonical(tmp_path: Path) -> None:
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("original", encoding="utf-8")
+    item = replace(
+        spec(tmp_path, identity="tampered-stdin"),
+        stdin_path=prompt,
+    )
+    assert run_managed_command(item) == 0
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    Path(payload["stdin"]["path"]).write_text("tampered", encoding="utf-8")
+
+    row = list_managed_resident_agents(project_root=tmp_path, workspace_root=None)["recent"][0]
+    assert row["evidence_class"] == "legacy_noncanonical"
+    assert row["status"] == "noncanonical_legacy"
+
+
+def test_malformed_or_discord_machine_provenance_fails_closed(tmp_path: Path) -> None:
+    item = spec(tmp_path, identity="bad-provenance")
+    with pytest.raises(ValueError, match="transport must be automatic_system"):
+        reserve_managed_command(
+            replace(
+                item,
+                launch_provenance={
+                    **item.launch_provenance,
+                    "transport": "discord",
+                },
+            )
+        )
+
+
+def test_required_output_failure_is_terminal_and_durable(tmp_path: Path) -> None:
+    item = replace(
+        spec(tmp_path, identity="no-output", code="pass"),
+        require_output=True,
+    )
+
+    assert run_managed_command(item) == 74
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    result = json.loads(Path(payload["result_path"]).read_text())
+    assert payload["status"] == "failed"
+    assert payload["error_class"] == "ManagedAgentNoOutput"
+    assert result["output_size_bytes"] == 0
+
+
+def test_automatic_child_gets_machine_origin_not_resident_reply_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        RESIDENT_DELEGATION_ENV,
+        json.dumps(
+            {
+                "applicability": "not_applicable",
+                "transport": "non_discord",
+                "source_kind": "test_parent",
+            }
+        ),
+    )
+    item = replace(
+        spec(
+            tmp_path,
+            identity="machine-env",
+            code=(
+                "import os; "
+                "print('resident=' + str('ARNOLD_RESIDENT_DELEGATION_CONTEXT' in os.environ)); "
+                "print('machine=' + str('ARNOLD_MANAGED_AGENT_ORIGIN' in os.environ))"
+            ),
+        ),
+        require_output=True,
+    )
+
+    assert run_managed_command(item) == 0
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    output = Path(payload["log_path"]).read_text(encoding="utf-8")
+    assert "resident=False" in output
+    assert "machine=True" in output
+    assert payload["upstream_custody"]["applicability"] == "not_applicable"
+
+
+def test_automatic_v2_without_canonical_contract_is_visible_but_not_live_evidence(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / ".megaplan/plans/resident-subagents/managed-old"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": MANAGED_AGENT_SCHEMA,
+                "custodian": MANAGED_AGENT_CUSTODIAN,
+                "run_id": "managed-old",
+                "run_kind": "automatic_repair",
+                "status": "running",
+                "created_at": "2026-07-13T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    row = list_managed_resident_agents(project_root=tmp_path, workspace_root=None)["recent"][0]
+    assert row["evidence_class"] == "legacy_noncanonical"
+    assert row["status"] == "noncanonical_legacy"
+    assert row["live"] is False
+
+
+def test_nested_hermes_launch_reenters_shared_manager(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = spec(tmp_path, identity="nested-parent")
+    assert run_managed_command(parent) == 0
+    parent_manifest = manifest_path(tmp_path, parent)
+    parent_payload = json.loads(parent_manifest.read_text(encoding="utf-8"))
+    prompt = tmp_path / "nested-prompt.md"
+    prompt.write_text("research this", encoding="utf-8")
+    launcher_path = (
+        Path(__file__).resolve().parents[1]
+        / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+    )
+    module_spec = importlib.util.spec_from_file_location("test_hermes_launcher", launcher_path)
+    assert module_spec and module_spec.loader
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    monkeypatch.setenv("ARNOLD_MANAGED_AGENT_RUN_ID", parent_payload["run_id"])
+    monkeypatch.setenv("ARNOLD_MANAGED_AGENT_MANIFEST", str(parent_manifest))
+    monkeypatch.setenv(
+        "ARNOLD_MANAGED_AGENT_ORIGIN",
+        json.dumps(parent_payload["launch_provenance"]),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(launcher_path),
+            "--model=deepseek:deepseek-v4-pro",
+            f"--project_dir={tmp_path}",
+            f"--query_file={prompt}",
+        ],
+    )
+    launched: list[str] = []
+
+    def fake_run(command, **_kwargs):
+        launched.extend(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    assert module._automatic_managed_reexec() == 0
+    assert "automatic_research_subagent" in launched
+    assert str(parent_payload["run_id"]) in launched
+    assert "@managed-stdin@" in "\n".join(launched)
+
+
+def test_root_authority_ceiling_is_durable_and_inherited_by_child(
+    tmp_path: Path,
+) -> None:
+    item = replace(
+        spec(
+            tmp_path,
+            identity="d9-root-ceiling",
+            run_kind="automatic_root_cause_repair",
+            code=(
+                "import os; "
+                f"print(os.environ[{MANAGED_DIFFICULTY_CEILING_ENV!r}])"
+            ),
+        ),
+        difficulty=9,
+        child_difficulty_ceiling=9,
+        require_output=True,
+    )
+
+    assert run_managed_command(item) == 0
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    assert payload["authority"] == {
+        "root_difficulty": 9,
+        "child_difficulty_ceiling": 9,
+        "inherited_ceiling": None,
+        "self_escalation_allowed": False,
+    }
+    assert Path(payload["log_path"]).read_text().strip() == "9"
+
+
+def test_managed_child_cannot_self_escalate_above_inherited_root_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(MANAGED_DIFFICULTY_CEILING_ENV, "9")
+    item = replace(
+        spec(tmp_path, identity="illegal-d10-child"),
+        difficulty=10,
+        child_difficulty_ceiling=10,
+    )
+
+    with pytest.raises(ValueError, match="exceeds inherited root ceiling"):
+        reserve_managed_command(item)
+
+
+def test_child_ceiling_cannot_exceed_its_own_root_difficulty(tmp_path: Path) -> None:
+    item = replace(
+        spec(tmp_path, identity="illegal-ceiling"),
+        difficulty=8,
+        child_difficulty_ceiling=9,
+    )
+
+    with pytest.raises(ValueError, match="cannot exceed root difficulty"):
+        reserve_managed_command(item)
+
+
 def test_real_dispatch_seams_use_shared_supervisor() -> None:
     root = Path(__file__).resolve().parents[1]
     watchdog = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog").read_text()
     repair = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop").read_text()
     meta = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop").read_text()
+    trigger = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger").read_text()
+    auditor = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor").read_text()
+    legacy = (root / "arnold_pipelines/megaplan/cloud/wrappers/arnold-kimi-goal-operator").read_text()
+    hermes = (
+        root / "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
+    ).read_text()
 
     assert "--run-kind automatic_repair" in watchdog
     assert "--run-kind automatic_meta_repair" in watchdog
     assert repair.count("--run-kind automatic_repair_retry") >= 2
     assert "--run-kind automatic_meta_repair_worker" in meta
     assert "ManagedCommandSpec(" in meta and "meta_repair_retrigger" in meta
+    assert "subprocess.Popen(\n            manager_argv" in trigger
+    assert "subprocess.Popen(cmd" not in trigger
+    assert "--run-kind automatic_progress_audit_agent" in auditor
+    assert "--run-kind automatic_legacy_fixer" in legacy
+    assert "automatic_research_subagent" in hermes
+    assert "_automatic_managed_reexec" in hermes
+
+    # Actual worker commands may remain as argv passed to the manager.  Every
+    # shipped automatic wrapper containing one must also contain the canonical
+    # seam; this catches a future direct subprocess regression deterministically.
+    for source in (watchdog, repair, meta, auditor, legacy):
+        if "codex exec" in source:
+            assert "arnold_pipelines.megaplan.managed_agent run" in source
+
+    for name, source in {
+        "watchdog": watchdog,
+        "repair": repair,
+        "meta": meta,
+        "auditor": auditor,
+        "legacy": legacy,
+    }.items():
+        lines = source.splitlines()
+        launches = [
+            index
+            for index, line in enumerate(lines)
+            if re.search(r"\btimeout\b.*\bcodex exec\b", line)
+        ]
+        assert launches, f"fixture no longer inventories the {name} Codex worker"
+        for index in launches:
+            local_launch_block = "\n".join(lines[max(0, index - 60) : index + 61])
+            assert "arnold_pipelines.megaplan.managed_agent run" in local_launch_block, (
+                f"direct ad-hoc Codex launch escaped the managed seam in {name}:{index + 1}"
+            )

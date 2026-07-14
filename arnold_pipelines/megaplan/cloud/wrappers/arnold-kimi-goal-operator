@@ -20,6 +20,7 @@ BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 TIMEOUT="${KIMI_GOAL_TIMEOUT_SECS:-3600}"
 MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"
 CODEX_TIMEOUT="${KIMI_GOAL_CODEX_TIMEOUT_SECS:-7200}"
+CODEX_MODEL="${KIMI_GOAL_CODEX_MODEL:-gpt-5.6-sol}"
 # Meta-loop repairs run under the validated partnered-5 profile
 # (arnold_pipelines/megaplan/profiles/partnered-5.toml). Propagate it as the
 # default so any megaplan repair subcommand dispatched by this operator's tools
@@ -226,7 +227,29 @@ log "launching Codex repair subagent"
 if command -v codex >/dev/null 2>&1; then
   (
     cd "$ARNOLD_SRC" &&
-    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$CODEX_PROMPT"
+    python3 -m arnold_pipelines.megaplan.managed_agent run \
+      --run-kind automatic_legacy_fixer \
+      --identity-key "legacy-fixer:${SESSION}:${TS}:codex" \
+      --project-dir "$ARNOLD_SRC" \
+      --task-kind root_cause \
+      --difficulty 9 \
+      --model "$CODEX_MODEL" \
+      --reasoning-effort high \
+      --route-class legacy_goal_operator_codex \
+      --backend codex \
+      --command-display "legacy goal operator Codex repair $SESSION" \
+      --origin-kind legacy_fixer_wrapper \
+      --origin-id "$SESSION" \
+      --origin-component arnold-kimi-goal-operator \
+      --trigger-id "$TS" \
+      --stdin-file "$CODEX_PROMPT" \
+      --require-output \
+      --lineage-key "legacy-fixer:$SESSION:codex" \
+      --link "cloud_session=$SESSION" \
+      --link "chain=$REMOTE_SPEC" \
+      --link phase=legacy_codex_repair \
+      -- timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access \
+        -c model="$CODEX_MODEL" -c model_reasoning_effort=high -
   ) > "$CODEX_LOG" 2>&1 &
   CODEX_PID=$!
   CHILD_PIDS+=("$CODEX_PID")
@@ -250,15 +273,37 @@ if [[ ! -d "$RUN_CWD" ]]; then
 fi
 (
   cd "$RUN_CWD" &&
-  PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
-  timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \
-    --query_file="$PROMPT" \
-    --model="$MODEL" \
-    --api_key="$KIMI_API_KEY" \
-    --base_url="$BASE_URL" \
-    --max_turns="$MAX_TURNS" \
-    --enabled_toolsets='"terminal,file,code_execution,todo"' \
-    --save_sample=True
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
+  python3 -m arnold_pipelines.megaplan.managed_agent run \
+    --run-kind automatic_legacy_fixer \
+    --identity-key "legacy-fixer:${SESSION}:${TS}:kimi" \
+    --project-dir "$RUN_CWD" \
+    --task-kind debugging \
+    --difficulty 7 \
+    --model "$MODEL" \
+    --reasoning-effort bounded \
+    --route-class legacy_goal_operator_kimi \
+    --backend kimi \
+    --command-display "legacy Kimi goal operator $SESSION" \
+    --origin-kind legacy_fixer_wrapper \
+    --origin-id "$SESSION" \
+    --origin-component arnold-kimi-goal-operator \
+    --trigger-id "$TS" \
+    --require-output \
+    --stdin-file "$PROMPT" \
+    --lineage-key "legacy-fixer:$SESSION:kimi" \
+    --link "cloud_session=$SESSION" \
+    --link "chain=$REMOTE_SPEC" \
+    --link phase=legacy_kimi_operator \
+    -- env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
+      timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \
+      --query_file=@managed-stdin@ \
+      --model="$MODEL" \
+      --api_key="$KIMI_API_KEY" \
+      --base_url="$BASE_URL" \
+      --max_turns="$MAX_TURNS" \
+      --enabled_toolsets='"terminal,file,code_execution,todo"' \
+      --save_sample=True
 ) >> "$LOG" 2>&1 &
 AGENT_PID=$!
 CHILD_PIDS+=("$AGENT_PID")

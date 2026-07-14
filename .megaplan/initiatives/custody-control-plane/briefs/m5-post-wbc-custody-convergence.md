@@ -3,10 +3,19 @@ type: brief
 slug: m5-post-wbc-custody-convergence
 title: Post-WBC Megaplan cloud custody convergence
 epic: custody-control-plane
+status: superseded-lineage-only
+superseded_by: m5-run-authority-receipt-reconciliation-and-retirement
 created_at: '2026-07-11T00:00:00+00:00'
 ---
 
 # M5: Post-WBC Megaplan cloud custody convergence
+
+> Historical lineage only; this brief is not referenced by `chain.yaml`. Its
+> useful cloud-custody cases are absorbed by M8-M11. The settled split is in
+> `../decisions/single-authoritative-runtime-history.md`: Run Authority owns
+> grants/decisions/coordinator fences, WBC owns boundary and attempt/effect
+> evidence, Custody owns action-target leases/epochs/transfer/recovery, and no
+> projection authorizes action.
 
 **Sizing and dials:** one roughly two-week sprint; overall plan difficulty 5/5;
 `partnered-5/full/high @codex +prep`.

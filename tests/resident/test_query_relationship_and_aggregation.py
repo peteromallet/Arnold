@@ -18,7 +18,7 @@ from arnold_pipelines.megaplan.resident.query_relationship import (
 import pytest
 from arnold_pipelines.megaplan.resident.reply_chain import build_reply_provenance
 from arnold_pipelines.megaplan.resident.subagent import (
-    _completion_payload_with_request_summary,
+    _completion_payload,
     _delivery_claim,
     launch_codex_subagent_detached,
     list_managed_resident_agents,
@@ -203,26 +203,19 @@ def test_newest_launch_is_single_synthesis_delivery_owner_with_descriptions(
     assert rows[second.run_id]["description"] == (
         "Synthesize implementation and reviewer evidence."
     )
-    assert rows[second.run_id]["request_summary_line"] == (
-        "Current request: Synthesize implementation and reviewer evidence."
-    )
     assert rows[second.run_id]["aggregation"]["delivery_owner_run_id"] == second.run_id
 
-    payload = _completion_payload_with_request_summary(
+    payload = _completion_payload(
         second_manifest,
         {"content": "Verification outcome: success.", "result_kind": "test"},
-        summary_line="Current request: consolidate the resident work",
     )
     assert payload["content"].splitlines()[0] == (
-        "Current request: Synthesize implementation and reviewer evidence."
-    )
-    assert payload["request_summary_authority"] == (
-        "managed_manifest_semantic_description"
-    )
-    assert payload["content"].splitlines()[1] == (
         "Related Discord messages: root request 1526369073418731653; current follow-up "
         "and delivery target 1526369712806563840."
     )
+    assert payload["content"].splitlines()[2] == "Verification outcome: success."
+    assert payload["result_kind"] == "test"
+    assert len(payload["content_sha256"]) == 64
 
 
 def test_semantic_followup_promotion_preserves_provenance_and_is_idempotent(

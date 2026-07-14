@@ -49,12 +49,17 @@ if [[ ! -f "$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-m
   && [[ -f "$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop" ]]; then
   WRAPPER_REPO_ROOT="$ARNOLD_SRC"
 fi
-LAUNCHER="${MEGAPLAN_META_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
+LAUNCHER="${MEGAPLAN_META_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 SUBAGENT_SKILL="${MEGAPLAN_META_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
+export LAUNCHER SUBAGENT_SKILL
 DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek:deepseek-v4-pro}"
 SUBAGENT_PROFILE="${MEGAPLAN_META_SUBAGENT_PROFILE:-partnered-5}"
 SUBAGENT_TIMEOUT="${MEGAPLAN_META_SUBAGENT_TIMEOUT_SECS:-900}"
 CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"
+META_CODEX_MODEL="${MEGAPLAN_META_CODEX_MODEL:-gpt-5.6-sol}"
+META_REPAIR_DIFFICULTY="${ARNOLD_META_REPAIR_DIFFICULTY:-10}"
+META_REPAIR_CHILD_DIFFICULTY_CEILING="${ARNOLD_META_REPAIR_CHILD_DIFFICULTY_CEILING:-$META_REPAIR_DIFFICULTY}"
+SUPERFIXER_SKILL="${MEGAPLAN_SUPERFIXER_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/superfixer-debug/SKILL.md}"
 META_REPAIR_BUDGET="${MEGAPLAN_META_BUDGET_SECS:-7200}"
 META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"
 META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
@@ -325,6 +330,48 @@ fi
 
 # Write the prompt to a file for Codex dispatch + redact it
 BRIEF_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-brief.md"
+append_l3_repair_contract() {
+  if [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" != "1" ]]; then
+    return 0
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+    "${ARNOLD_L3_REPAIR_CONTEXT_PATH:-}" \
+    "${ARNOLD_L3_REPAIR_CONTEXT_DIGEST:-}" \
+    "$SUPERFIXER_SKILL" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+context_path = Path(sys.argv[1])
+expected_digest = sys.argv[2]
+skill_path = Path(sys.argv[3])
+if not context_path.is_file():
+    raise SystemExit("deep repair context artifact is missing")
+payload = json.loads(context_path.read_text(encoding="utf-8"))
+observed = str(payload.get("context_digest") or "")
+digest_payload = dict(payload)
+digest_payload.pop("context_digest", None)
+recomputed = hashlib.sha256(
+    json.dumps(digest_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+).hexdigest()
+if not expected_digest or observed != expected_digest or observed != recomputed:
+    raise SystemExit("deep repair context digest disagrees with the queued request")
+if not skill_path.is_file():
+    raise SystemExit("superfixer-debug skill is unavailable")
+encoded = json.dumps(payload, indent=2, sort_keys=True)
+if len(encoded.encode("utf-8")) > 65536:
+    raise SystemExit("deep repair context exceeds the bounded artifact budget")
+print("\n## Six-hour L3 escalation contract\n")
+print(f"Read and follow `{skill_path}` fully before changing anything.")
+print("Walk L1/L2/L3 with TRACKED/FIXED/INTENT/CONTEXT. Fix the first broken fixer/backstop first, then hunt sibling instances of the failure class, then re-trigger the ordinary canonical recovery path. Never alter chain/plan state directly, weaken completion or safety guards, or treat a pause/human gate as a fault.")
+print("The concrete auditor artifact below is authoritative bounded launch context; inspect its cited raw artifacts for full stderr, exit codes, exceptions, commands, token drift, stale projections, false success, missing launch evidence, and spinning fixers.")
+print("```json")
+print(encoded)
+print("```")
+print("Your response must include exact lines `FIXER_FIXED=true|false`, `BACKSTOP_FIXED=true|false`, and `GUARD_WEAKENED=true|false`, followed by evidence paths/tests. A FIXED verdict without those receipts is false success.")
+PY
+}
 {
   echo "# Meta-Repair Diagnosis: $SESSION"
   echo
@@ -385,6 +432,8 @@ Start with a verdict on its own line: FIXED, ESCALATE, or NO_FIX.
 Then cite specific evidence, the root cause, the change(s) made
 (if any), and the retrigger verification result.  Keep under 400 words.
 PROMPT_POLICY
+  echo "- Canonical nested launcher: $LAUNCHER. Automatic nested launches through this path self-register as child managed-agent runs; do not use another launcher path."
+  append_l3_repair_contract
 } > "$BRIEF_PATH"
 redact_file_in_place "$BRIEF_PATH"
 BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
@@ -461,6 +510,8 @@ Start with a verdict on its own line: FIXED, ESCALATE, or NO_FIX.
 Then cite specific evidence, the root cause, the change(s) made
 (if any), and the retrigger verification result.  Keep under 400 words.
 PROMPT_POLICY
+    echo "- Canonical nested launcher: $LAUNCHER. Automatic nested launches through this path self-register as child managed-agent runs; do not use another launcher path."
+    append_l3_repair_contract
   } > "$BRIEF_PATH"
   redact_file_in_place "$BRIEF_PATH"
   BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
@@ -491,6 +542,9 @@ log "commit_allowed=$COMMIT_ALLOWED push_allowed=$PUSH_ALLOWED"
 # ---- Codex dispatch ---------------------------------------------------------
 RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.txt"
 ERR_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.err"
+WORKER_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-managed-run-id"
+META_WORKER_RUN_ID=""
+META_WORKER_MANIFEST=""
 
 if command -v codex >/dev/null 2>&1; then
   log "dispatching Codex meta-repair session=$SESSION deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
@@ -510,16 +564,23 @@ if command -v codex >/dev/null 2>&1; then
     managed_cmd=(
       python3 -m arnold_pipelines.megaplan.managed_agent run
       --run-kind automatic_meta_repair_worker
-      --identity-key "meta-repair-worker:${SESSION}:${TRIGGER_TYPE}"
+      --identity-key "meta-repair-worker:${SESSION}:${TRIGGER_TYPE}:${ARNOLD_MANAGED_AGENT_RUN_ID:-$TS}"
       --project-dir "$ARNOLD_SRC"
       --task-kind root_cause
-      --difficulty 10
-      --model codex-cli-default
+      --difficulty "$META_REPAIR_DIFFICULTY"
+      --child-difficulty-ceiling "$META_REPAIR_CHILD_DIFFICULTY_CEILING"
+      --model "$META_CODEX_MODEL"
       --reasoning-effort high
       --route-class meta_repair_l2_worker
       --backend codex
       --command-display "Codex meta-repair worker $SESSION"
+      --origin-kind meta_repair_worker
+      --origin-id "$SESSION"
+      --origin-component arnold-meta-repair-loop
+      --trigger-id "$TRIGGER_TYPE"
+      --require-output
       --lineage-key "meta-repair-worker:$SESSION"
+      --run-id-file "$WORKER_RUN_ID_PATH"
       --stdin-file "$BRIEF_PATH"
       --link "cloud_session=$SESSION"
       --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
@@ -529,11 +590,15 @@ if command -v codex >/dev/null 2>&1; then
     if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
       managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
     fi
-    managed_cmd+=(-- timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access -)
+    managed_cmd+=(-- timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access -c model="$META_CODEX_MODEL" -c model_reasoning_effort=high -)
     "${managed_cmd[@]}"
   ) > "$RESP_PATH" 2>"$ERR_PATH" || true
   redact_file_in_place "$RESP_PATH"
   redact_file_in_place "$ERR_PATH"
+  META_WORKER_RUN_ID="$(cat "$WORKER_RUN_ID_PATH" 2>/dev/null || true)"
+  if [[ -n "$META_WORKER_RUN_ID" ]]; then
+    META_WORKER_MANIFEST="$ARNOLD_SRC/.megaplan/plans/resident-subagents/$META_WORKER_RUN_ID/manifest.json"
+  fi
   if [[ ! -s "$RESP_PATH" ]]; then
     if grep -qE 'Input exceeds the maximum length|input_too_large' "$ERR_PATH" 2>/dev/null; then
       echo "Codex meta-repair prompt exceeded input limit; see meta-repair log." > "$RESP_PATH"
@@ -650,7 +715,7 @@ fi
 
 # ---- persist meta-repair record ---------------------------------------------
 persist_record() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" "$META_WORKER_MANIFEST" <<'PY'
 import json, os, sys, uuid
 from pathlib import Path
 
@@ -662,7 +727,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
 )
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 
-session, trigger_raw, verdict, resp_path, brief_path, repair_data_dir = sys.argv[1:7]
+session, trigger_raw, verdict, resp_path, brief_path, repair_data_dir, worker_run_id, worker_manifest = sys.argv[1:9]
 
 trigger = None
 try:
@@ -720,8 +785,9 @@ record = MetaRepairRecord(
     diagnosis=redact_text(resp_text[:4000]),
     subagent_results={
         "codex_response": redact_text(resp_text[:4000]),
-        "managed_agent_run_id": str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or ""),
-        "managed_agent_manifest": str(os.environ.get("ARNOLD_MANAGED_AGENT_MANIFEST") or ""),
+        "managed_agent_run_id": worker_run_id,
+        "managed_agent_manifest": worker_manifest,
+        "parent_managed_agent_run_id": str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or ""),
     },
     changes=[],
     tests=[],
@@ -730,6 +796,39 @@ record = MetaRepairRecord(
     outcome=effective_outcome,
 )
 record_path = persist_meta_repair_record(record, repair_data_dir=repair_data_dir)
+outcome_path = str(os.environ.get("ARNOLD_L3_REPAIR_OUTCOME_PATH") or "").strip()
+if outcome_path:
+    marker = lambda name: any(
+        line.strip().lower() == f"{name.lower()}=true"
+        for line in resp_text.splitlines()
+    )
+    guard_false = any(
+        line.strip().lower() == "guard_weakened=false"
+        for line in resp_text.splitlines()
+    )
+    accepted = verification_info.get("accepted") is True
+    outcome = {
+        "schema_version": "arnold-l3-repair-outcome-v1",
+        "audit_escalation_id": str(os.environ.get("ARNOLD_L3_ESCALATION_ID") or ""),
+        "repair_request_id": str(os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID") or ""),
+        "root_managed_run_id": str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or ""),
+        "worker_managed_run_id": worker_run_id,
+        "worker_managed_manifest_path": worker_manifest,
+        "meta_repair_record_path": str(record_path),
+        "fixer_fixed": bool(verdict.startswith("FIXED") and marker("FIXER_FIXED") and accepted),
+        "backstop_fixed": bool(verdict.startswith("FIXED") and marker("BACKSTOP_FIXED") and accepted),
+        "guard_weakened": not guard_false,
+        "guard_changes": [] if guard_false else ["missing_explicit_no-guard-weakening_receipt"],
+        "ordinary_retrigger_run_id": str(verification_info.get("ordinary_retrigger_run_id") or ""),
+        "ordinary_retrigger_manifest_path": str(verification_info.get("ordinary_retrigger_manifest_path") or ""),
+        "ordinary_retrigger_verification": verification_info,
+        "verdict": verdict,
+    }
+    destination = Path(outcome_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(json.dumps(outcome, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(destination)
 print(f"RECORD_PATH={record_path}")
 print(f"META_REPAIR_ID={meta_repair_id}")
 PY
@@ -760,6 +859,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
 from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
 from arnold_pipelines.megaplan.managed_agent import (
     ManagedCommandSpec,
+    machine_origin_provenance,
     run_managed_command,
     stable_managed_run_id,
 )
@@ -896,6 +996,12 @@ spec = ManagedCommandSpec(
     route_class="meta_repair_retrigger",
     backend="repair-loop",
     command_display=f"meta-repair ordinary repair retrigger {session}",
+    launch_provenance=machine_origin_provenance(
+        origin_kind="meta_repair_retrigger",
+        origin_id=session,
+        component="arnold-meta-repair-loop",
+        trigger_id=parent_run_id or install_sync_event_id or session,
+    ),
     links={
         "repair_request_id": request_id,
         "blocker_id": blocker_id,
@@ -946,6 +1052,8 @@ verification = verify_retrigger_success(
     retrigger_result=retrigger_result,
     post_retrigger_verification=post_retrigger_verification,
 )
+verification["ordinary_retrigger_run_id"] = run_id
+verification["ordinary_retrigger_manifest_path"] = str(managed_root / "manifest.json")
 if lookup_error:
     verification["authoritative_repair_data_error"] = lookup_error
     if retrigger_result.returncode == 0:

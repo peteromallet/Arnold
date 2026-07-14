@@ -287,6 +287,7 @@ class Store(Protocol):
         state: str = "shaping",
         home_backend: Backend = "file",
         idempotency_key: str | None = None,
+        epic_id: str | None = None,
     ) -> Epic:
         ...
 
@@ -942,6 +943,8 @@ class Store(Protocol):
         ticket_id: str,
         epic_id: str,
         resolves_on_complete: bool = False,
+        kind: str = "associated",
+        provenance: str | None = None,
         idempotency_key: str | None = None,
     ) -> TicketEpicLink:
         ...

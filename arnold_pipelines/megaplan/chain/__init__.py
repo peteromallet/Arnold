@@ -4525,6 +4525,17 @@ def _reconcile_chain_from_ground_truth(
 ) -> ChainState:
     """Derive the chain cursor from plan state.json and live GitHub PR state."""
 
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        assert_execution_binding,
+    )
+
+    assert_execution_binding(
+        spec_path,
+        state,
+        operation="chain reconciliation",
+        allow_unbound_new=True,
+    )
+
     labels_to_index = {
         milestone.label: index for index, milestone in enumerate(spec.milestones)
     }
@@ -5335,6 +5346,13 @@ def run_chain(
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
     _preflight_agent_backends(spec, writer=writer)
     state = chain_spec.load_chain_state(spec_path)
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        bind_execution_identity,
+    )
+
+    # Bind before the first state save or milestone initialization. Existing
+    # progressed state without a launch binding is refused by the loader.
+    bind_execution_identity(spec_path, state)
     from arnold_pipelines.megaplan.chain.operator_pause import is_paused
 
     if is_paused(state):
@@ -6652,7 +6670,12 @@ def _clear_stale_closed_pr_state(
     return state
 
 
-def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
+def format_chain_status(
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    spec_path: Path | None = None,
+) -> dict[str, Any]:
     completed_labels = {
         entry.get("label")
         for entry in state.completed
@@ -6711,6 +6734,12 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
     if state.pr_number is not None:
         summary["pr_number"] = state.pr_number
         summary["pr_state"] = state.pr_state
+    if spec_path is not None:
+        from arnold_pipelines.megaplan.chain.execution_binding import (
+            execution_binding_report,
+        )
+
+        summary["execution_binding"] = execution_binding_report(spec_path, state)
     return summary
 
 
@@ -6740,6 +6769,16 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
     if summary.get("pr_number"):
         writer(
             f"Current PR: #{summary['pr_number']} ({summary.get('pr_state') or 'unknown'})\n"
+        )
+    binding = summary.get("execution_binding")
+    if isinstance(binding, dict) and binding.get("required"):
+        expected = binding.get("expected") or {}
+        active = binding.get("active") or {}
+        writer(
+            "Execution binding: "
+            f"{binding.get('status')} "
+            f"expected={str(expected.get('bundle_sha256') or 'missing')[:12]} "
+            f"active={str(active.get('bundle_sha256') or 'missing')[:12]}\n"
         )
     # Sync section (branch/PR sync state)
     sync = summary.get("sync") or {}
@@ -7102,14 +7141,19 @@ def run_chain_cli(
                 missing_anchor_ack_override=getattr(args, "missing_anchor_ack", None),
             )
             chain_spec.validate_paths(spec, root, spec_path=spec_path)
-            chain_state = chain_spec.load_chain_state(spec_path)
+            # Status must remain observable during drift. It reports expected
+            # versus active identity without normalizing or adopting either.
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
         except CliError as exc:
             return _emit_error(exc)
         if anchor_requirement.warning:
             writer(f"[chain] WARNING: {anchor_requirement.warning}\n")
         runtime_overrides = chain_spec.load_runtime_policy(spec_path)
         effective_policy = chain_spec.effective_chain_policy(spec, runtime_overrides)
-        summary = format_chain_status(spec, chain_state)
+        summary = format_chain_status(spec, chain_state, spec_path=spec_path)
         _write_chain_status_pretty(summary, writer=writer)
         payload = {
             "success": True,

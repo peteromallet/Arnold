@@ -23,7 +23,7 @@ from arnold_pipelines.megaplan.resident.provenance import (
 )
 from arnold_pipelines.megaplan.resident.subagent import SubagentResult, launch_subagent_task
 from arnold_pipelines.megaplan.resident import vp_todo
-from arnold_pipelines.megaplan.store import FileStore
+from arnold_pipelines.megaplan.store import FileStore, ResidentConversationInput
 
 
 def _origin(*, source: str, message: str, conversation: str = "rconv_testconversation") -> dict:
@@ -87,11 +87,10 @@ def _isolate_process_provenance(monkeypatch) -> None:
 def test_launch_time_duplicate_is_idempotent(tmp_path, monkeypatch) -> None:
     source, message = "msg_duplicateorigin1", "1525300000000000001"
     _persist_source(tmp_path, source=source, message=message)
-    calls = 0
+    calls: list[object] = []
 
     def fake_popen(*args, **kwargs):
-        nonlocal calls
-        calls += 1
+        calls.append(args[0] if args else None)
         return _Process()
 
     monkeypatch.setattr(subagent_module.subprocess, "Popen", fake_popen)
@@ -108,7 +107,10 @@ def test_launch_time_duplicate_is_idempotent(tmp_path, monkeypatch) -> None:
         )
     )
 
-    assert calls == 1
+    # Other test-owned background work can finish while this monkeypatch is
+    # active. Count only the worker command rooted in this test's project.
+    owned_calls = [call for call in calls if str(tmp_path) in str(call)]
+    assert len(owned_calls) == 1
     assert first.run_id == second.run_id
     assert first.manifest_path == second.manifest_path
 
@@ -358,15 +360,34 @@ def test_unbound_discord_shaped_request_fails_closed(
 
 
 def test_todo_sweep_launch_recovers_original_discord_provenance(tmp_path, monkeypatch) -> None:
-    source, message = "msg_todoorigin123", "1525300000000000033"
-    provenance = normalize_delegation_provenance(_origin(source=source, message=message))
+    message = "1525300000000000033"
+    store = FileStore(tmp_path / "store")
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:dm:42",
+            channel_id="dm-channel-ignored-for-key-validation",
+            dm_user_id="42",
+        )
+    )
+    source_record = store.create_message(
+        epic_id=None,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="Launch scheduled work.",
+        discord_message_id=message,
+        idempotency_key="todo-origin",
+    )
+    source = source_record.id
+    provenance = normalize_delegation_provenance(
+        _origin(source=source, message=message, conversation=conversation.id)
+    )
     todo_path = tmp_path / "todo.json"
     item = vp_todo.add_item(
         todo_path, "scheduled work", launch_provenance=provenance
     )
     config = ResidentConfig(special_requests_todo_path=todo_path)
     profile = MegaplanResidentProfile(
-        store=FileStore(tmp_path / "store"),
+        store=store,
         authorizer=ResidentAuthorizer(config),
         config=config,
     )
@@ -377,6 +398,7 @@ def test_todo_sweep_launch_recovers_original_discord_provenance(tmp_path, monkey
         return SubagentResult(
             ok=True, final_text="", stderr="", returncode=0,
             run_id="todo-run", status="running",
+            manifest_path=str(tmp_path / "runs" / "todo-run" / "manifest.json"),
         )
 
     monkeypatch.setattr(profile_module, "launch_subagent_task", fake_launch)
@@ -392,6 +414,9 @@ def test_todo_sweep_launch_recovers_original_discord_provenance(tmp_path, monkey
     assert result.ok
     assert captured["launch_origin"]["source_record_id"] == source
     assert captured["launch_origin"]["reply_to_message_id"] == message
+    resolved = vp_todo.load_items(todo_path)[0]
+    assert resolved["status"] == vp_todo.DELEGATED
+    assert resolved["canonical_run_id"] == "todo-run"
 
 
 def test_child_plan_chain_and_repair_records_retain_safe_projection(tmp_path, monkeypatch) -> None:

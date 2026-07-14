@@ -70,6 +70,7 @@ STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
+CODEX_REPAIR_MODEL="${CLOUD_WATCHDOG_CODEX_REPAIR_MODEL:-gpt-5.6-sol}"
 REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
 REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
 REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
@@ -111,6 +112,8 @@ if [[ "$COOPERATIVE_ONCE" == "1" ]]; then
 fi
 PRIMARY_REPAIR_BASENAME="$(basename "$PRIMARY_REPAIR_BIN")"
 REPAIR_DISPATCH_RESULT=
+REPAIR_DISPATCH_RUN_ID=
+REPAIR_DISPATCH_MANIFEST=
 
 mkdir -p "$(dirname "$LOG")"
 
@@ -282,19 +285,46 @@ report_item() {
   local message="$5"
   local workspace="${6:-}"
   local remote_spec="${7:-}"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$path" "$session" "$action" "$status" "$message" "$workspace" "$remote_spec" <<'PY'
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$path" "$session" "$action" "$status" "$message" "$workspace" "$remote_spec" "${REPAIR_DISPATCH_RUN_ID:-}" "${REPAIR_DISPATCH_MANIFEST:-}" <<'PY'
 import json
 import sys
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 
-path, session, action, status, message, workspace, remote_spec = sys.argv[1:]
+path, session, action, status, message, workspace, remote_spec, run_id, manifest_path = sys.argv[1:]
+derived_launch = status in {"repair_dispatched", "repair_running"} or (
+    action == "meta_repair" and status == "dispatched"
+)
+canonical = False
+if run_id and manifest_path:
+    try:
+        from pathlib import Path
+        from arnold_pipelines.megaplan.managed_agent import (
+            is_managed_manifest,
+            normalize_machine_origin_provenance,
+        )
+        manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        normalize_machine_origin_provenance(manifest.get("launch_provenance") or {})
+        canonical = (
+            is_managed_manifest(manifest)
+            and manifest.get("run_id") == run_id
+            and (manifest.get("links") or {}).get("cloud_session") == session
+            and any(item.get("status") == "running" for item in manifest.get("status_history") or [])
+        )
+    except Exception:
+        canonical = False
+if derived_launch and not canonical:
+    status = "canonical_launch_evidence_missing"
+    message = "suppressed unbacked repair launch claim: " + message
 payload = {
     "session": session,
     "action": action,
     "status": status,
     "message": message,
 }
+if canonical:
+    payload["managed_agent_run_id"] = run_id
+    payload["managed_agent_manifest_path"] = manifest_path
 if workspace:
     payload["workspace"] = workspace
 if remote_spec:
@@ -302,6 +332,55 @@ if remote_spec:
 payload = redact_payload(payload)
 with open(path, "a", encoding="utf-8") as handle:
     handle.write(json.dumps(payload, sort_keys=True) + "\n")
+PY
+}
+
+confirm_managed_agent_dispatch() {
+  local project_dir="$1" run_id_file="$2" request_id="$3" blocker_id="$4"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
+    "$project_dir" "$run_id_file" "$request_id" "$blocker_id" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+from arnold_pipelines.megaplan.managed_agent import (
+    is_managed_manifest,
+    validate_automatic_managed_manifest,
+)
+
+project, run_id_file, request_id, blocker_id = sys.argv[1:]
+deadline = time.monotonic() + 5.0
+while time.monotonic() < deadline:
+    try:
+        run_id = Path(run_id_file).read_text(encoding="utf-8").strip()
+        manifest_path = Path(project) / ".megaplan" / "plans" / "resident-subagents" / run_id / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        validate_automatic_managed_manifest(manifest, manifest_path=manifest_path)
+    except Exception:
+        time.sleep(0.02)
+        continue
+    links = manifest.get("links") if isinstance(manifest.get("links"), dict) else {}
+    stdin_contract = manifest.get("stdin") if isinstance(manifest.get("stdin"), dict) else {}
+    started = any(item.get("status") == "running" for item in manifest.get("status_history") or [])
+    request_matches = not request_id or links.get("repair_request_id") == request_id
+    blocker_matches = not blocker_id or links.get("blocker_id") == blocker_id
+    if (
+        is_managed_manifest(manifest)
+        and manifest.get("run_id") == run_id
+        and stdin_contract.get("sealed") is True
+        and manifest.get("launch_contract_sha256")
+        and started
+        and request_matches
+        and blocker_matches
+        and manifest.get("incident_attempt_event_id")
+    ):
+        print(f"{run_id}\t{manifest_path}")
+        raise SystemExit(0)
+    if manifest.get("status") == "failed" and not started:
+        break
+    time.sleep(0.02)
+raise SystemExit(1)
 PY
 }
 
@@ -797,6 +876,7 @@ notify_needs_human() {
   local health="${6:-stopped}"
   local summary="$7"
   local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir suppression_reason
+  local diagnostic_bin diagnostic_result_tmp diagnostic_status diagnostic_run_id diagnostic_state_path diagnostic_fallback_required diagnostic_error
   suppression_reason="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$workspace" "$session" "$remote_spec" "$MARKER_DIR" <<'PY'
 import json
 import pathlib
@@ -829,8 +909,10 @@ PY
   payload_tmp="$(mktemp)"
   dm_result_tmp="$(mktemp)"
   escalation_context_tmp="$(mktemp)"
+  diagnostic_result_tmp="$(mktemp)"
   repair_data_dir="${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
   discord_dm_bin="${DISCORD_DM_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
+  diagnostic_bin="${HUMAN_REVIEW_DIAGNOSTIC_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-human-review-diagnostic}"
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
     "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
     "${PLAN_STATUS_FAILURE_KIND:-}" "${PLAN_STATUS_FAILURE_MESSAGE:-}" "${PLAN_STATUS_FAILURE_PHASE:-}" \
@@ -978,6 +1060,79 @@ pathlib.Path(context_path).write_text(
 )
 PY
 
+  if [[ -x "$diagnostic_bin" ]]; then
+    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$diagnostic_bin" launch \
+      --payload-file "$payload_tmp" \
+      --marker-dir "$MARKER_DIR" \
+      --repair-data-dir "$repair_data_dir" \
+      --project-dir "$workspace" \
+      > "$diagnostic_result_tmp" 2>>"$LOG" || true
+  else
+    printf '%s\n' '{"ok":false,"status":"launch_failed","error":"dedicated resident diagnostic launcher unavailable","fallback_delivery_required":true,"state_path":""}' > "$diagnostic_result_tmp"
+  fi
+  eval "$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$diagnostic_result_tmp" <<'PY'
+import json
+import shlex
+import sys
+
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    payload = {
+        "status": "launch_failed",
+        "error": "resident diagnostic launcher returned malformed evidence",
+        "fallback_delivery_required": True,
+    }
+for shell_name, field, default in (
+    ("diagnostic_status", "status", "launch_failed"),
+    ("diagnostic_run_id", "run_id", ""),
+    ("diagnostic_state_path", "state_path", ""),
+    ("diagnostic_fallback_required", "fallback_delivery_required", True),
+    ("diagnostic_error", "error", "resident diagnostic launch failed"),
+):
+    value = payload.get(field, default)
+    if isinstance(value, bool):
+        value = "1" if value else "0"
+    print(f"{shell_name}={shlex.quote(str(value or ''))}")
+PY
+)"
+
+  if [[ "$diagnostic_status" == "launched" && -n "$diagnostic_run_id" ]]; then
+    log "needs-human resident diagnostic launched session=$session plan=${PLAN_STATUS_PLAN_NAME:-} run_id=$diagnostic_run_id"
+    report_item "$report_items" "$session" "notify" "diagnostic_agent_launched" "resident diagnostic launched; terminal result will use durable Discord delivery" "$workspace" "$remote_spec"
+    rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
+    return 0
+  fi
+
+  if [[ "$diagnostic_fallback_required" != "1" ]]; then
+    log "needs-human resident diagnostic launch previously failed; fallback already delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+    report_item "$report_items" "$session" "notify" "diagnostic_launch_failed_fallback_delivered" "resident diagnostic launch failed; actionable fallback was already delivered" "$workspace" "$remote_spec"
+    rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
+    return 0
+  fi
+
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$diagnostic_error" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
+
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+error = redact_text(sys.argv[2] or "resident diagnostic launch failed")[:1500]
+payload["title"] = f"Megaplan needs human review; diagnostic launch failed - {payload.get('session', '<unknown>')}"
+payload["diagnostic_launch"] = {"status": "failed", "error": error}
+payload["fields"] = list(payload.get("fields") or []) + [
+    {"label": "Diagnostic launch failure", "value": error}
+]
+payload["next_action"] = (
+    "No durable resident diagnostic launch was confirmed. Inspect the launch failure above, "
+    "restore the resident launcher/provenance path, then retry this escalation; do not assume an agent exists."
+)
+path.write_text(json.dumps(redact_payload(payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
   delivered=0
   webhook_delivered=0
   if [[ -x "$discord_dm_bin" ]]; then
@@ -1122,7 +1277,13 @@ PY
   if [[ "$webhook_delivered" == "1" ]]; then
     report_item "$report_items" "$session" "notify" "webhook_sent" "needs-human webhook delivered" "$workspace" "$remote_spec"
   fi
-  rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp"
+  if [[ -n "$diagnostic_state_path" && -x "$diagnostic_bin" ]]; then
+    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$diagnostic_bin" record-fallback \
+      --state-path "$diagnostic_state_path" \
+      --result-file "$dm_result_tmp" \
+      >>"$LOG" 2>&1 || true
+  fi
+  rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
 }
 
 emit_current_needs_human_sidecar() {
@@ -1861,7 +2022,7 @@ codex_repair_editable_install() {
     return 1
   fi
 
-  local prompt
+  local prompt reason_digest source_repair_id
   prompt="$(mktemp)"
   cat > "$prompt" <<EOF
 You are running inside an Arnold cloud worker. The editable Arnold install failed this watchdog check:
@@ -1879,11 +2040,33 @@ MEGAPLAN_REF or the active workflow checkout branch to choose the repair branch.
 Keep the patch narrowly scoped. Run the smallest relevant verification. Do not ask for input.
 EOF
   redact_file_in_place "$prompt"
+  reason_digest="$(printf '%s' "$reason" | sha256sum | awk '{print $1}')"
+  source_repair_id="watchdog-source-repair:${reason_digest}"
 
   log "starting Codex editable-install repair in $SRC_DIR"
   (
     cd "$SRC_DIR" &&
-    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$prompt"
+    python3 -m arnold_pipelines.megaplan.managed_agent run \
+      --run-kind automatic_watchdog_source_repair \
+      --identity-key "$source_repair_id" \
+      --project-dir "$SRC_DIR" \
+      --task-kind debugging \
+      --difficulty 8 \
+      --model "$CODEX_REPAIR_MODEL" \
+      --reasoning-effort high \
+      --route-class watchdog_editable_install_repair \
+      --backend codex \
+      --command-display "watchdog editable-install Codex repair" \
+      --origin-kind watchdog_source_repair \
+      --origin-id "$source_repair_id" \
+      --origin-component arnold-watchdog \
+      --trigger-id "$reason_digest" \
+      --lineage-key watchdog-source-repair \
+      --stdin-file "$prompt" \
+      --require-output \
+      --link phase=editable_install_repair \
+      -- timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access \
+        -c model="$CODEX_REPAIR_MODEL" -c model_reasoning_effort=high -
   ) >> "$LOG" 2>&1
   local rc=$?
   rm -f "$prompt"
@@ -3781,7 +3964,13 @@ resolve_relaunch_command() {
 }
 
 kimi_dispatch_marker_set() {
-  date -u +%Y-%m-%dT%H:%M:%SZ > "$(kimi_dispatch_marker_path "$1")" 2>/dev/null || true
+  local session="$1" marker_kind="${2:-deterministic_relaunch}" run_id="${3:-}" manifest_path="${4:-}"
+  if [[ "$marker_kind" == "managed_agent" && ( -z "$run_id" || -z "$manifest_path" ) ]]; then
+    return 1
+  fi
+  printf 'arnold-dispatch-marker-v2\t%s\t%s\t%s\t%s\n' \
+    "$marker_kind" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$run_id" "$manifest_path" \
+    > "$(kimi_dispatch_marker_path "$session")" 2>/dev/null || true
 }
 
 kimi_dispatch_marker_clear() {
@@ -3789,7 +3978,11 @@ kimi_dispatch_marker_clear() {
 }
 
 meta_dispatch_marker_set() {
-  date -u +%Y-%m-%dT%H:%M:%SZ > "$(meta_dispatch_marker_path "$1")" 2>/dev/null || true
+  local session="$1" run_id="$2" manifest_path="$3"
+  [[ -n "$run_id" && -n "$manifest_path" ]] || return 1
+  printf 'arnold-dispatch-marker-v2\tmanaged_agent\t%s\t%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$run_id" "$manifest_path" \
+    > "$(meta_dispatch_marker_path "$session")" 2>/dev/null || true
 }
 
 meta_dispatch_marker_clear() {
@@ -4176,9 +4369,11 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
+  local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id run_id_file launch_evidence child_pid
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
+  REPAIR_DISPATCH_RUN_ID=""
+  REPAIR_DISPATCH_MANIFEST=""
   request_id=""
   blocker_id=""
   if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
@@ -4222,8 +4417,9 @@ dispatch_kimi_repair() {
       ;;
   esac
   pgid_path="$(kimi_pgid_path "$session")"
-  kimi_dispatch_marker_set "$session"
   managed_identity="${request_id:-watchdog-${session}-$(date +%s%N)}"
+  run_id_file="$MARKER_DIR/$(safe_name "$session").repair-managed-run-id"
+  rm -f "$run_id_file"
   incident_id="$(json_field "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json" incident_id 2>/dev/null || true)"
   incident_id="${incident_id:-inc-$session}"
   managed_cmd=(
@@ -4238,7 +4434,12 @@ dispatch_kimi_repair() {
     --route-class watchdog_authorized_l1
     --backend repair-loop
     --command-display "arnold-repair-loop $session"
+    --origin-kind watchdog_repair
+    --origin-id "$managed_identity"
+    --origin-component arnold-watchdog
+    --trigger-id "${blocker_id:-$managed_identity}"
     --lineage-key "repair-request:${request_id:-$session}"
+    --run-id-file "$run_id_file"
     --link "repair_request_id=$request_id"
     --link "blocker_id=$blocker_id"
     --link "repair_queue_dir=${MARKER_DIR%/*}/repair-queue"
@@ -4265,8 +4466,18 @@ dispatch_kimi_repair() {
     "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
-  printf '%s\n' "$!" > "$pgid_path"
-  log "repair loop background-dispatched session=$session pid=$!"
+  child_pid=$!
+  printf '%s\n' "$child_pid" > "$pgid_path"
+  if ! launch_evidence="$(confirm_managed_agent_dispatch "$workspace" "$run_id_file" "$request_id" "$blocker_id")"; then
+    kimi_dispatch_marker_clear "$session"
+    REPAIR_DISPATCH_RESULT="launch_failed"
+    log "repair loop canonical launch evidence unavailable session=$session supervisor_pid=$child_pid"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop canonical launch evidence unavailable" "launch_failed" "immediate_repair"
+    return 1
+  fi
+  IFS=$'\t' read -r REPAIR_DISPATCH_RUN_ID REPAIR_DISPATCH_MANIFEST <<< "$launch_evidence"
+  kimi_dispatch_marker_set "$session" managed_agent "$REPAIR_DISPATCH_RUN_ID" "$REPAIR_DISPATCH_MANIFEST"
+  log "repair loop background-dispatched session=$session pid=$child_pid managed_run_id=$REPAIR_DISPATCH_RUN_ID"
   REPAIR_DISPATCH_RESULT="dispatched"
   emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop background-dispatched" "dispatched" "immediate_repair"
   return 0
@@ -4658,9 +4869,11 @@ dispatch_meta_repair() {
   local remote_spec="$3"
   local report_items="$4"
   local trigger_label="${5:-}"
-  local pgid_path repair_busy recursion_result request_id blocker_id incident_id parent_run_id
+  local pgid_path repair_busy recursion_result request_id blocker_id incident_id parent_run_id managed_identity run_id_file launch_evidence child_pid
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
+  REPAIR_DISPATCH_RUN_ID=""
+  REPAIR_DISPATCH_MANIFEST=""
 
   # Feature-flag gate: META_REPAIR_ENABLED defaults on; explicit "0"/"false"/"no"/"off" disables it.
   case "${META_REPAIR_ENABLED_FLAG:-1}" in
@@ -4712,17 +4925,18 @@ dispatch_meta_repair() {
 
   # Marker and pgid tracking
   pgid_path="$(meta_pgid_path "$session")"
-  meta_dispatch_marker_set "$session"
-
   request_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" request_id 2>/dev/null || true)"
   blocker_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" blocker_id 2>/dev/null || true)"
   incident_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" incident_id 2>/dev/null || true)"
   incident_id="${incident_id:-inc-$session}"
   parent_run_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" managed_agent_run_id 2>/dev/null || true)"
+  managed_identity="meta-repair:${session}:${trigger_label}:${request_id:-$(date +%s%N)}"
+  run_id_file="$MARKER_DIR/$(safe_name "$session").meta-managed-run-id"
+  rm -f "$run_id_file"
   managed_cmd=(
     python3 -m arnold_pipelines.megaplan.managed_agent run
     --run-kind automatic_meta_repair
-    --identity-key "meta-repair:${session}:${trigger_label}"
+    --identity-key "$managed_identity"
     --project-dir "$SRC_DIR"
     --task-kind root_cause
     --difficulty 10
@@ -4731,7 +4945,12 @@ dispatch_meta_repair() {
     --route-class meta_repair_l2
     --backend meta-repair-loop
     --command-display "arnold-meta-repair-loop $session $trigger_label"
+    --origin-kind watchdog_meta_repair
+    --origin-id "$session"
+    --origin-component arnold-watchdog
+    --trigger-id "$trigger_label"
     --lineage-key "meta-repair:$session"
+    --run-id-file "$run_id_file"
     --link "repair_request_id=$request_id"
     --link "blocker_id=$blocker_id"
     --link "incident_id=$incident_id"
@@ -4758,8 +4977,21 @@ dispatch_meta_repair() {
     "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
-  printf '%s\n' "$!" > "$pgid_path"
-  log "meta-repair background-dispatched session=$session pid=$!"
+  child_pid=$!
+  printf '%s\n' "$child_pid" > "$pgid_path"
+  if ! launch_evidence="$(confirm_managed_agent_dispatch "$SRC_DIR" "$run_id_file" "$request_id" "$blocker_id")"; then
+    meta_dispatch_marker_clear "$session"
+    REPAIR_DISPATCH_RESULT="launch_failed"
+    log "meta-repair canonical launch evidence unavailable session=$session supervisor_pid=$child_pid"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair canonical launch evidence unavailable" "launch_failed" "meta_repair"
+    if [[ -n "$report_items" ]]; then
+      report_item "$report_items" "$session" "meta_repair" "launch_failed" "meta-repair canonical launch evidence unavailable" "$workspace" "$remote_spec"
+    fi
+    return 1
+  fi
+  IFS=$'\t' read -r REPAIR_DISPATCH_RUN_ID REPAIR_DISPATCH_MANIFEST <<< "$launch_evidence"
+  meta_dispatch_marker_set "$session" "$REPAIR_DISPATCH_RUN_ID" "$REPAIR_DISPATCH_MANIFEST"
+  log "meta-repair background-dispatched session=$session pid=$child_pid managed_run_id=$REPAIR_DISPATCH_RUN_ID"
   REPAIR_DISPATCH_RESULT="dispatched"
   emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair background-dispatched" "dispatched" "meta_repair"
   if [[ -n "$report_items" ]]; then

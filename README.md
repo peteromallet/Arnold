@@ -92,10 +92,12 @@ In subagent mode (the default for Claude Code and Codex) the agent drives the ph
 
 ## Development
 
-Run the focused CI-equivalent suite locally:
+Install the editable runtime (including the pytest runner used by resident and
+subagent verification), then run the focused CI-equivalent suite locally:
 
 ```bash
-python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_cloud_template.py tests/test_cloud_spec.py -q
+python -m pip install -e .
+python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_chain_done_gate.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/cli/test_m5_workflow_cli.py tests/arnold/conformance -q
 ```
 
 ## Some other features
