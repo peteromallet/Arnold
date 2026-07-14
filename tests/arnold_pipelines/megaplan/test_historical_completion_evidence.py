@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from arnold_pipelines.megaplan import chain as chain_module
+from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, MilestoneSpec
 from arnold_pipelines.megaplan.orchestration.completion_contract import (
     CompletionContext,
     CompletionSubject,
@@ -79,6 +80,82 @@ def test_landed_diff_binds_historical_head_not_later_checkout_head(tmp_path: Pat
     assert details["evidence_window"]["head_sha"] == landed_head
     assert details["files_in_committed_range"] == ["milestone.py"]
     assert "successor.py" not in details["files_in_diff"]
+
+
+def test_chain_verify_uses_recorded_milestone_base_for_squash_commit(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+    (root / "base.txt").write_text("base\n", encoding="utf-8")
+    main_base = _commit(root, "main base")
+    main_branch = _git(root, "branch", "--show-current")
+
+    subprocess.run(["git", "checkout", "-b", "feature"], cwd=root, check=True, capture_output=True)
+    (root / "preexisting-repair.py").write_text("REPAIRED = True\n", encoding="utf-8")
+    milestone_base = _commit(root, "repair present before milestone")
+    (root / "milestone.py").write_text("MILESTONE = True\n", encoding="utf-8")
+    _commit(root, "milestone work")
+
+    subprocess.run(["git", "checkout", main_branch], cwd=root, check=True, capture_output=True)
+    assert _git(root, "rev-parse", "HEAD") == main_base
+    subprocess.run(["git", "merge", "--squash", "feature"], cwd=root, check=True, capture_output=True)
+    landed_head = _commit(root, "milestone (#12)")
+
+    plan_dir = root / ".megaplan" / "plans" / "historical"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "config": {"mode": "code", "project_dir": str(root)},
+                "meta": {"chain_policy": {"milestone_base_sha": milestone_base}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "files_changed": ["milestone.py"],
+                        "executor_notes": "Implemented the milestone change.",
+                    }
+                ],
+                "sense_checks": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = chain_module._verify_completed_chain(
+        root,
+        root / "chain.yaml",
+        ChainSpec(milestones=[MilestoneSpec(label="m1", idea="m1.md")]),
+        ChainState(
+            completion_contract_mode="enforce",
+            completed=[
+                {
+                    "label": "m1",
+                    "plan": "historical",
+                    "status": "done",
+                    "landed_head_sha": landed_head,
+                }
+            ],
+        ),
+    )
+
+    assert payload["divergence_count"] == 0
+    milestone = payload["milestones"][0]
+    assert milestone["accepted"] is True
+    assert milestone["evidence_window"]["base_sha"] == milestone_base
+    assert milestone["files_in_committed_range"] == ["milestone.py"]
+    assert "preexisting-repair.py" not in milestone["files_in_diff"]
 
 
 def test_suite_runner_imports_subject_checkout_before_editable_engine(

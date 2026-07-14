@@ -788,11 +788,7 @@ def _verify_completed_chain(
             record,
             completed_records,
         )
-        landed_parent_sha = _git_commit_sha(
-            project_dir,
-            f"{milestone_head_sha}^" if milestone_head_sha else None,
-        )
-        if base_sha is None or milestone_head_sha is None or landed_parent_sha is None:
+        if base_sha is None or milestone_head_sha is None:
             divergence_count += 1
             milestones_payload.append(
                 {
@@ -802,9 +798,9 @@ def _verify_completed_chain(
                     "accepted": False,
                     "would_block": True,
                     "failures": [
-                        "landed_diff: exact milestone base, landed head, and landed parent "
-                        "could not all be resolved; current checkout HEAD is not admissible "
-                        "historical evidence"
+                        "landed_diff: exact milestone base and landed head could not both "
+                        "be resolved; current checkout HEAD is not admissible historical "
+                        "evidence"
                     ],
                     "files_claimed": [],
                     "files_in_diff": [],
@@ -834,10 +830,13 @@ def _verify_completed_chain(
             ),
             mode=verify_mode,
             providers=(LandedDiffProvider(),),
-            # The chain base proves lineage. The landed commit's first parent
-            # bounds the PR patch itself and excludes unrelated commits merged
-            # to the target branch while the milestone was in flight.
-            git_base_ref=landed_parent_sha,
+            # The recorded milestone base is the task/evidence boundary.  A
+            # squash commit's first parent can predate repairs already present
+            # on the milestone branch at plan start; diffing from that parent
+            # would falsely attribute those pre-existing branch changes to the
+            # milestone.  Pinning both recorded base and landed head preserves
+            # the intended tree delta without ever consulting checkout HEAD.
+            git_base_ref=base_sha,
             git_head_ref=milestone_head_sha,
         )
         landed_diff = next(
@@ -863,7 +862,6 @@ def _verify_completed_chain(
                 "diff_source": details.get("diff_source"),
                 "head_source": milestone_head_source,
                 "chain_milestone_base_sha": base_sha,
-                "landed_parent_sha": landed_parent_sha,
             }
         )
 
