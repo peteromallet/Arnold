@@ -50,7 +50,13 @@ def _run_current_suite() -> int:
     # Pin the subject checkout for the duration of the spawned suite and then
     # restore the operator environment.
     previous_pythonpath = os.environ.get("PYTHONPATH")
+    previous_resident_context = os.environ.get("ARNOLD_RESIDENT_DELEGATION_CONTEXT")
     os.environ["PYTHONPATH"] = str(PROJECT)
+    # The operator must retain the immutable inbound envelope, but unit tests
+    # are not delegated outbound work.  Injecting the live Discord envelope
+    # into their temporary marker payloads changes the test subject and creates
+    # false failures, so keep it out of the child suite only.
+    os.environ.pop("ARNOLD_RESIDENT_DELEGATION_CONTEXT", None)
     try:
         result = run_suite(
             PROJECT,
@@ -68,6 +74,8 @@ def _run_current_suite() -> int:
             os.environ.pop("PYTHONPATH", None)
         else:
             os.environ["PYTHONPATH"] = previous_pythonpath
+        if previous_resident_context is not None:
+            os.environ["ARNOLD_RESIDENT_DELEGATION_CONTEXT"] = previous_resident_context
     append_suite_run(HANDOFF, result)
     record = latest_run_for_phase(HANDOFF, "verification") or {}
     print(json.dumps(record, indent=2, sort_keys=True))
