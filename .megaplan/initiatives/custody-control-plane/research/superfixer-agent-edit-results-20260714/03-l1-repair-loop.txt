@@ -1,0 +1,81 @@
+Here is the complete forensic audit result, under 500 words.
+
+---
+
+## TRACKED
+
+**Session:** `agent-edit-verifiable-transaction-spine`
+**Plan:** `sprint-1-authority-20260713-2150`
+**State:** `blocked` → `needs_human`
+**Chain last_state:** `blocked`, `retry_strategy: manual_review`
+**PID guard:** Empty file (`/workspace/.megaplan/cloud-sessions/agent-edit-verifiable-transaction-spine.repair-loop.pid.guard`, 0 bytes)
+**Repair-data:** No `repair-data/*.repair-data.json` for this session
+**Managed-run manifest:** No manifest under `resident-subagents/`
+**Chain health progress:** `stalled`, `plan_signal_liveness: stalled`, `last_state: blocked`, PR#141 open
+
+## FIXED (source) vs DEPLOYED (stale)
+
+The source watchdog at `/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog` (lines 4355–4358) **already contains the fix**:
+
+```bash
+--origin-kind watchdog_repair
+--origin-id "$managed_identity"
+--origin-component arnold-watchdog
+--trigger-id "${blocker_id:-$managed_identity}"
+```
+
+The deployed `/usr/local/bin/arnold-watchdog` (lines 4374–4386) **omits these four arguments entirely**. The `managed_cmd` array jumps from `--command-display` straight to `--run-id-file`.
+
+## INTENT
+
+Current `managed_agent.py` (`/workspace/arnold/arnold_pipelines/megaplan/managed_agent.py`, lines 1006–1009) declares:
+
+```python
+run.add_argument("--origin-kind", choices=sorted(MACHINE_ORIGIN_KINDS), required=True)
+run.add_argument("--origin-id", required=True)
+run.add_argument("--origin-component", required=True)
+run.add_argument("--trigger-id", required=True)
+```
+
+These are `required=True`. The intent is that every automatic managed-agent launch carries explicit machine-origin provenance. The source watchdog honors this; the deployed watchdog does not.
+
+## CONTEXT — First Concrete Failed Command
+
+Watchdog log lines 101795–101809 capture the exact stderr from `python3 -m arnold_pipelines.megaplan.managed_agent run`:
+
+```
+python -m arnold_pipelines.megaplan.managed_agent run: error:
+the following arguments are required: --origin-kind, --origin-id, --origin-component, --trigger-id
+```
+
+This is immediately followed at line 101810:
+
+```
+repair loop launch failed confirmation session=agent-edit-verifiable-transaction-spine
+pid=1107128 run_id=missing manifest=missing
+```
+
+The confirmation loop (5 attempts, 1-second sleeps) never finds a `run_id` because `managed_agent.py` exits with `argparse` error before writing anything.
+
+## Launch Failure vs Task-Level Repair Failure
+
+**This is a launch failure, not a task-level repair failure.** The `managed_agent.py run` subprocess exits at argument-parsing time (exit code 2). The actual `arnold-repair-loop` binary never executes. No repair work was attempted.
+
+## Claim Status
+
+**STALE.** The repair-trigger (line 101854) reports `"custody_bucket": "repairing"` and `"status": "eligible"`, but the actual repair loop never launched. The claim was never fulfilled. The session escalated to `needs_human`.
+
+## Exact Command-Contract Mismatch
+
+| Required by `managed_agent.py run` | Present in deployed watchdog? |
+|---|---|
+| `--origin-kind watchdog_repair` | **MISSING** |
+| `--origin-id "$managed_identity"` | **MISSING** |
+| `--origin-component arnold-watchdog` | **MISSING** |
+| `--trigger-id "${blocker_id:-$managed_identity}"` | **MISSING** |
+
+## Narrow Correct Fix Class
+
+**Insert four `--origin-*` arguments into the `managed_cmd` array** in `/usr/local/bin/arnold-watchdog`'s `dispatch_repair_loop_managed` function, between `--command-display` and `--run-id-file` (after line 4374). The exact lines to add are already present in the source watchdog at lines 4355–4358. This is a pure deployment drift — the source is correct, the installed binary is stale.
+
+Additionally, the source watchdog uses `$run_id_file` while the deployed uses `$run_id_path` — a second variable-name drift that should also be reconciled but is not the blocking error (both are set).

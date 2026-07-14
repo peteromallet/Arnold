@@ -333,37 +333,65 @@ def launch_human_review_diagnostic(
                     run_id=str(existing.get("run_id") or ""),
                     provenance=provenance,
                 )
-            return _result_from_state(existing, state_path)
-
-        evidence = _evidence_snapshot(
-            payload=payload,
-            marker=marker,
-            repair_data_dir=repair_root,
-            session=session,
-        )
-        _atomic_json(evidence_path, evidence)
-        task = _task_text(
-            session=session,
-            workspace=Path(project_dir).resolve(),
-            remote_spec=str(payload.get("remote_spec") or ""),
-            evidence_path=evidence_path,
-            evidence=evidence,
-        )
-        _atomic_text(task_path, task)
-        created_at = _utc_now()
-        initial_state: dict[str, Any] = {
-            "schema_version": SCHEMA,
-            "status": "launching",
-            "escalation_id": escalation_id,
-            "session": session,
-            "custody_id": custody_id,
-            "source_record_id": provenance.get("source_record_id"),
-            "task_path": str(task_path),
-            "task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest(),
-            "evidence_path": str(evidence_path),
-            "created_at": created_at,
-            "updated_at": created_at,
-        }
+                return _result_from_state(existing, state_path)
+            fallback = existing.get("fallback_delivery")
+            fallback_status = (
+                str(fallback.get("status") or "")
+                if isinstance(fallback, Mapping)
+                else ""
+            )
+            if (
+                existing.get("status") != "launch_failed"
+                or fallback_status not in {"delivered", "retry_pending"}
+            ):
+                return _result_from_state(existing, state_path)
+            task_path = Path(str(existing.get("task_path") or ""))
+            task = task_path.read_text(encoding="utf-8")
+            if hashlib.sha256(task.encode("utf-8")).hexdigest() != existing.get(
+                "task_sha256"
+            ):
+                raise ValueError("existing diagnostic task no longer matches custody state")
+            initial_state = {
+                **existing,
+                "status": "launching",
+                "launch_attempt_count": int(existing.get("launch_attempt_count") or 1)
+                + 1,
+                "updated_at": _utc_now(),
+            }
+            initial_state.pop("error", None)
+            _atomic_json(state_path, initial_state)
+        else:
+            evidence = _evidence_snapshot(
+                payload=payload,
+                marker=marker,
+                repair_data_dir=repair_root,
+                session=session,
+            )
+            _atomic_json(evidence_path, evidence)
+            task = _task_text(
+                session=session,
+                workspace=Path(project_dir).resolve(),
+                remote_spec=str(payload.get("remote_spec") or ""),
+                evidence_path=evidence_path,
+                evidence=evidence,
+            )
+            _atomic_text(task_path, task)
+            created_at = _utc_now()
+            initial_state = {
+                "schema_version": SCHEMA,
+                "status": "launching",
+                "escalation_id": escalation_id,
+                "session": session,
+                "custody_id": custody_id,
+                "source_record_id": provenance.get("source_record_id"),
+                "task_path": str(task_path),
+                "task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest(),
+                "evidence_path": str(evidence_path),
+                "launch_attempt_count": 1,
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+            _atomic_json(state_path, initial_state)
         _atomic_json(state_path, initial_state)
 
         try:
@@ -392,16 +420,21 @@ def launch_human_review_diagnostic(
                 "status": "launch_failed",
                 "error": error,
                 "updated_at": _utc_now(),
-                "fallback_delivery": {"status": "pending"},
+                "fallback_delivery": initial_state.get("fallback_delivery")
+                or {"status": "pending"},
             }
             _atomic_json(state_path, failed)
+            fallback = failed.get("fallback_delivery")
+            fallback_delivered = (
+                isinstance(fallback, Mapping) and fallback.get("status") == "delivered"
+            )
             return HumanReviewDiagnosticResult(
                 ok=False,
                 status="launch_failed",
                 escalation_id=escalation_id,
                 state_path=str(state_path),
                 error=error,
-                fallback_delivery_required=True,
+                fallback_delivery_required=not fallback_delivered,
             )
 
         launched_state = {

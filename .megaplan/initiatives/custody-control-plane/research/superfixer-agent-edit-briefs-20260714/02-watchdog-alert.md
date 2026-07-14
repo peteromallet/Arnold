@@ -1,0 +1,3 @@
+Read-only forensic probe. Do not edit files, launch/kill processes, or send messages.
+
+Target session: agent-edit-verifiable-transaction-spine. Inspect /workspace/watchdog.log around 2026-07-14T00:20:30Z through 00:25:10Z, watchdog reports 20260714T002152Z and 20260714T002555Z, repair request 70650274cd6c1e45d715a70851aad82ccc26385d2dea87bb28286baf921f51ef, its decision and active claim, and escalation events. Assess watchdog TRACKED/FIXED/INTENT/CONTEXT. Explain exactly why a blocked session simultaneously appeared repairing and generated human review, and whether the alert faithfully represented custody. Identify a source-layer defect and missed backstop if supported. Return exact evidence and firm verdict, under 450 words.

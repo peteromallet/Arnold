@@ -1,0 +1,3 @@
+Follow the complete megaplan-cloud skill at `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md`. Read-only.
+
+For `workflow-boundary-contracts-corrective-20260710`, lead with canonical status using the supplied YAML, resolve and audit the marker JSON plus all same-prefix marker projections. Compare identities, mtimes, should_run, workspace/spec, chain-health, repair-progress, and current status classification. Determine exactly why canonical status still says `repairing` despite a live runner. Return under 400 words with paths/timestamps and whether marker-level evidence is fresh, stale, or internally inconsistent.
