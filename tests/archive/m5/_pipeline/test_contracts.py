@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.skip("archived legacy pipeline contract surface", allow_module_level=True)
+
 from arnold.pipelines.megaplan._pipeline import contracts as contracts_mod
 from arnold.pipelines.megaplan._pipeline.contracts import (
     ContractLedger,

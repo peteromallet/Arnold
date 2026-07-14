@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytest.skip("archived legacy tournament pipeline; native contract coverage is active elsewhere", allow_module_level=True)
+
 from arnold.pipeline import (
     Edge,
     ParallelStage,
