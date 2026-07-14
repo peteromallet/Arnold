@@ -1,0 +1,14 @@
+{
+  "id": "epic_919e688b6e1c",
+  "title": "Conflict Epic",
+  "goal": "Exercise lock/lease conflicts",
+  "body": "Body",
+  "state": "shaping",
+  "home_backend": "file",
+  "migrated_to": null,
+  "revision": 0,
+  "created_at": "2026-07-14T01:19:38.198815Z",
+  "last_edited_at": "2026-07-14T01:19:38.198824Z",
+  "last_active_at": null,
+  "planned_at": null
+}

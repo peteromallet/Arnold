@@ -1,0 +1,31 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 1,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-14T01:41:46.229563+00:00",
+  "incident_id": "inc-repository-strategy-roadmap",
+  "kind": "incident_summary",
+  "latest_actor": "immediate_repair",
+  "next_expected_event": "repair_attempt.verification",
+  "outcome": "partial_liveness",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-72f87afd3954"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
+    "last_seq": 350,
+    "projection": "incidents"
+  },
+  "state": "repair_attempt",
+  "summary_text": "inc-repository-strategy-roadmap: repair-data outcome=partial_liveness kind=chain workspace=/workspace/repository-strategy-roadmap/Arnold"
+}

@@ -87,7 +87,9 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     "sprint_items": frozenset({"id", "sprint_id", "content", "estimated_complexity", "status", "source_section", "position", "created_at"}),
     "sprints": frozenset({"id", "epic_id", "sprint_number", "name", "goal", "status", "queue_position", "pending_reason", "target_weeks", "revision", "created_at", "updated_at", "queued_at"}),
     "system_logs": frozenset({"id", "level", "category", "event_type", "message", "details", "turn_id", "epic_id", "occurred_at"}),
-    "ticket_epics": frozenset({"ticket_id", "epic_id", "resolves_on_complete", "linked_at"}),
+    "ticket_epics": frozenset({
+        "ticket_id", "epic_id", "resolves_on_complete", "kind", "provenance", "linked_at",
+    }),
     "tickets": frozenset({"id", "codebase_id", "title", "body", "status", "source", "tags", "filed_by_actor_id", "filed_in_turn_id", "slug", "created_at", "last_edited_at", "resolution_note", "addressed_at"}),
     "tool_calls": frozenset({"id", "turn_id", "tool_name", "operation_kind", "arguments", "result", "duration_ms", "called_at"}),
 }

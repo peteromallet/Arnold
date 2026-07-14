@@ -510,7 +510,7 @@
               "const": null,
               "default": 5,
               "dest": "stall_threshold",
-              "help": "Exit if the plan state doesn't change for this many iterations AND no new review.json has been written (default 5). Use --max-review-rework-cycles for the rework-loop limit — execute rework can span many iterations with state pinned at 'finalized', which is not a real stall.",
+              "help": "Exit if the plan state doesn't change for this many iterations AND no new review.json has been written (default 5). Use --max-review-rework-cycles for the rework-loop limit \u2014 execute rework can span many iterations with state pinned at 'finalized', which is not a real stall.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -540,7 +540,7 @@
               "const": null,
               "default": 3,
               "dest": "max_review_rework_cycles",
-              "help": "Cap on observed review→rework cycles before the driver bails (default 3). A rework cycle is counted each time review.json is rewritten while state appears stuck at 'finalized'. Mirrors execution.max_review_rework_cycles.",
+              "help": "Cap on observed review\u2192rework cycles before the driver bails (default 3). A rework cycle is counted each time review.json is rewritten while state appears stuck at 'finalized'. Mirrors execution.max_review_rework_cycles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -2745,7 +2745,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -4137,7 +4137,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -4708,7 +4708,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -4961,7 +4961,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -5278,7 +5278,7 @@
               "const": null,
               "default": null,
               "dest": "mode",
-              "help": "Deliverable type: 'code' (source changes), 'doc' / 'metaplan' (design/spec artifact — 'metaplan' is an alias for 'doc'), or 'joke' (film scene script; requires --output), or 'creative' (creative work; requires --form and --output). Defaults to 'code' unless the idea strongly suggests a design document, in which case --mode must be passed explicitly.",
+              "help": "Deliverable type: 'code' (source changes), 'doc' / 'metaplan' (design/spec artifact \u2014 'metaplan' is an alias for 'doc'), or 'joke' (film scene script; requires --output), or 'creative' (creative work; requires --form and --output). Defaults to 'code' unless the idea strongly suggests a design document, in which case --mode must be passed explicitly.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -5508,7 +5508,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -5576,7 +5576,7 @@
               "const": true,
               "default": false,
               "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
+              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto \u2014 never blocks on human input.",
               "metavar": null,
               "nargs": "0",
               "option_strings": [
@@ -6069,7 +6069,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -6418,7 +6418,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -7263,7 +7263,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -7516,7 +7516,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -8150,7 +8150,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -8418,7 +8418,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -9714,7 +9714,7 @@
                   "const": null,
                   "default": null,
                   "dest": "projects",
-                  "help": "Repo to search — path, owner/name, or bare name. Repeatable.",
+                  "help": "Repo to search \u2014 path, owner/name, or bare name. Repeatable.",
                   "metavar": null,
                   "nargs": null,
                   "option_strings": [
@@ -9959,6 +9959,148 @@
                   "default": null,
                   "dest": "epic_id",
                   "help": "Epic ID",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "subcommands": {}
+            },
+            "promote": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "initiative_slug",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--initiative-slug"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "title",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--title"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "goal",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--goal"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "body",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--body"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "no_resolve",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--no-resolve"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "skip_strategy",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--skip-strategy"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "json",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--json"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "ticket_id",
+                  "help": null,
                   "metavar": null,
                   "nargs": null,
                   "option_strings": [],
@@ -10697,7 +10839,7 @@
               "const": null,
               "default": null,
               "dest": "critic",
-              "help": "Override the critique+review pair (the critique == review invariant — same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
+              "help": "Override the critique+review pair (the critique == review invariant \u2014 same mind pre- and post-execution). 'kimi' swaps in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other premium vendor relative to --vendor. Silently ignored on vendor_locked profiles.",
               "metavar": null,
               "nargs": null,
               "option_strings": [

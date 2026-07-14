@@ -427,11 +427,18 @@ class Ticket(StorageModel):
 
 
 class TicketEpicLink(StorageModel):
-    """Many-to-many join between tickets and epics."""
+    """Many-to-many join between tickets and epics.
+
+    *kind* classifies the relationship (``associated``, ``resolves_on_complete``,
+    ``promoted_to_epic``).  *resolves_on_complete* gates auto-address behavior
+    independently.
+    """
 
     ticket_id: str
     epic_id: str
     resolves_on_complete: bool = False
+    kind: str = "associated"
+    provenance: str | None = None
     linked_at: datetime = Field(default_factory=utc_now)
 
 

@@ -1,18 +1,18 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 296,
+  "evidence_ref_count": 300,
   "evidence_refs": [
     {
-      "kind": "verification_record"
+      "kind": "managed_agent_execution"
     },
     {
-      "kind": "verification_record"
+      "kind": "managed_agent_execution"
     },
     {
-      "kind": "verification_record"
+      "kind": "managed_agent_execution"
     },
     {
-      "kind": "verification_record"
+      "kind": "managed_agent_execution"
     },
     {
       "kind": "verification_record"
@@ -195,12 +195,12 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-11T13:41:18.489533+00:00",
+  "generated_at": "2026-07-14T01:41:46.226490+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
-  "latest_actor": "immediate_repair",
+  "latest_actor": "meta_repair",
   "next_expected_event": "repair_attempt.verification",
-  "omitted_evidence_ref_count": 232,
+  "omitted_evidence_ref_count": 236,
   "outcome": "attempted",
   "placeholders": {
     "install_freshness": "unknown",
@@ -208,17 +208,19 @@
     "shipped_fix": "unknown"
   },
   "problem_ids": [
+    "problem-6a1177eb343e",
     "problem-6e386e382223",
     "problem-6eaee57d9632",
     "problem-9e338df241c5",
-    "problem-b3c4cc0b2599"
+    "problem-b3c4cc0b2599",
+    "problem-c7e2d7ad616b"
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:e36e911e17ca769735ee56777def63c00a0a1ebcd9ae634517dab5b551d04773",
-    "last_seq": 344,
+    "digest": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
+    "last_seq": 349,
     "projection": "incidents"
   },
   "state": "repair_attempt",
-  "summary_text": "inc-demo-session: repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-584/test_repair_loop_serializes_sa0/ws"
+  "summary_text": "inc-demo-session: managed automatic_meta_repair execution started"
 }

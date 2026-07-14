@@ -345,19 +345,23 @@ class DBAssetMixin:
         ticket_id: str,
         epic_id: str,
         resolves_on_complete: bool = False,
+        kind: str = "associated",
+        provenance: str | None = None,
         idempotency_key: str | None = None,
     ) -> TicketEpicLink:
         conn = self._get_conn()
         row = conn.execute(
             """
             INSERT INTO ticket_epics
-                (ticket_id, epic_id, resolves_on_complete)
-            VALUES (%s, %s, %s)
+                (ticket_id, epic_id, resolves_on_complete, kind, provenance)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (ticket_id, epic_id) DO UPDATE SET
-                resolves_on_complete = EXCLUDED.resolves_on_complete
+                resolves_on_complete = EXCLUDED.resolves_on_complete,
+                kind = EXCLUDED.kind,
+                provenance = EXCLUDED.provenance
             RETURNING *
             """,
-            [ticket_id, epic_id, resolves_on_complete],
+            [ticket_id, epic_id, resolves_on_complete, kind, provenance],
         ).fetchone()
         return TicketEpicLink(**row)
 

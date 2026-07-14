@@ -1,0 +1,17 @@
+{
+  "id": "codebase_82a73b8ddbe6",
+  "owner": "openai",
+  "name": "megaplan",
+  "repo_url": "git@github.com:openai/megaplan.git",
+  "repo_workspace": "/workspace/megaplan-next",
+  "default_branch": "trunk",
+  "scope": "global",
+  "group_name": null,
+  "associated_epic_id": null,
+  "added_at": "2026-07-14T01:19:38.320729Z",
+  "added_via": "manual",
+  "last_accessed_at": null,
+  "verified_accessible_at": null,
+  "notes": null,
+  "root_commit_sha": "def456"
+}

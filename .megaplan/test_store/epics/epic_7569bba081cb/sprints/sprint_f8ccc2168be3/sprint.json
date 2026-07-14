@@ -1,0 +1,15 @@
+{
+  "id": "sprint_f8ccc2168be3",
+  "epic_id": "epic_7569bba081cb",
+  "sprint_number": 1,
+  "name": "Sprint 1",
+  "goal": "Ship it",
+  "status": "queued",
+  "revision": 1,
+  "queue_position": 1,
+  "pending_reason": null,
+  "target_weeks": 2,
+  "created_at": "2026-07-14T01:19:38.247815Z",
+  "updated_at": "2026-07-14T01:19:38.254444Z",
+  "queued_at": "2026-07-14T01:19:38.254442Z"
+}
