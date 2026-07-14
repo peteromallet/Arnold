@@ -690,6 +690,10 @@ elif command -v codex >/dev/null 2>&1; then
       --route-class meta_repair_l2_worker
       --backend codex
       --command-display "Codex meta-repair worker $SESSION"
+      --origin-kind meta_repair_worker
+      --origin-id "$SESSION"
+      --origin-component arnold-meta-repair-loop
+      --trigger-id "$TRIGGER_TYPE"
       --lineage-key "meta-repair-worker:$SESSION"
       --stdin-file "$BRIEF_PATH"
       --link "cloud_session=$SESSION"

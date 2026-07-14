@@ -4574,6 +4574,10 @@ dispatch_kimi_repair() {
     --route-class watchdog_authorized_l1
     --backend repair-loop
     --command-display "arnold-repair-loop $session"
+    --origin-kind watchdog_repair
+    --origin-id "${request_id:-$session}"
+    --origin-component arnold-watchdog
+    --trigger-id "${blocker_id:-${request_id:-$session}}"
     --run-id-file "$run_id_path"
     --lineage-key "repair-request:${request_id:-$session}"
     --link "repair_request_id=$request_id"
@@ -5210,6 +5214,10 @@ dispatch_meta_repair() {
     --route-class meta_repair_l2
     --backend meta-repair-loop
     --command-display "arnold-meta-repair-loop $session $trigger_label"
+    --origin-kind watchdog_meta_repair
+    --origin-id "$session"
+    --origin-component arnold-watchdog
+    --trigger-id "$trigger_label"
     --lineage-key "meta-repair:$session"
     --link "repair_request_id=$request_id"
     --link "blocker_id=$blocker_id"

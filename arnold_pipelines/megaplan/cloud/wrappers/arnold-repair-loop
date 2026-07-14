@@ -5925,6 +5925,10 @@ run_dev_fix_turn() {
     --route-class "repair_${dispatch_kind}${fallback_reason:+_fallback}"
     --backend "$dispatch_kind"
     --command-display "automatic repair dev-fix iteration $iteration"
+    --origin-kind repair_loop_worker
+    --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
+    --origin-component arnold-repair-loop
+    --trigger-id "$attempt_id:$iteration:dev"
     --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:dev"
     --run-id-file "$run_id_file"
     --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
@@ -5996,6 +6000,10 @@ run_kimi_launch_turn() {
     --route-class repair_kimi_recovery
     --backend kimi
     --command-display "automatic repair Kimi recovery iteration $iteration"
+    --origin-kind repair_loop_worker
+    --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
+    --origin-component arnold-repair-loop
+    --trigger-id "$CURRENT_ATTEMPT_ID:$iteration:kimi"
     --lineage-key "repair-retry:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:kimi"
     --run-id-file "$run_id_file"
     --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"

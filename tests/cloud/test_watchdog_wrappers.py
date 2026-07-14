@@ -3264,6 +3264,9 @@ def test_watchdog_managed_repair_dispatches_pin_the_selected_runtime() -> None:
     text = _wrapper("arnold-watchdog")
 
     assert text.count("python3 -P -m arnold_pipelines.megaplan.managed_agent run") == 2
+    assert text.count("--origin-kind watchdog_repair") == 1
+    assert text.count("--origin-kind watchdog_meta_repair") == 1
+    assert text.count("--origin-component arnold-watchdog") >= 3
     assert text.count("PYTHONSAFEPATH=1 \\") >= 4
     assert "route_l1_launch_failure_to_meta_repair" in text
     assert text.count(
@@ -13074,6 +13077,10 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     assert 'cd "$ARNOLD_SRC" || exit 1' in text
     assert 'codex exec --skip-git-repo-check --sandbox danger-full-access' in text
     assert "--run-kind automatic_meta_repair_worker" in text
+    assert "--origin-kind meta_repair_worker" in text
+    assert '--origin-id "$SESSION"' in text
+    assert "--origin-component arnold-meta-repair-loop" in text
+    assert '--trigger-id "$TRIGGER_TYPE"' in text
     assert '--stdin-file "$BRIEF_PATH"' in text
     assert '$(cat "$BRIEF_PATH")' not in text
     assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"' in text
@@ -13081,6 +13088,16 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     assert 'meta-repair brief exceeded preflight char budget; rebuilding emergency brief' in text
     assert 'classification_and_prompt 1' in text
     assert 'codex CLI missing' in text
+
+
+def test_repair_loop_managed_workers_have_machine_provenance() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    assert text.count("python3 -m arnold_pipelines.megaplan.managed_agent run") == 2
+    assert text.count("--origin-kind repair_loop_worker") == 2
+    assert text.count("--origin-component arnold-repair-loop") == 2
+    assert '--trigger-id "$attempt_id:$iteration:dev"' in text
+    assert '--trigger-id "$CURRENT_ATTEMPT_ID:$iteration:kimi"' in text
 
 
 def test_meta_repair_wrapper_has_deepseek_hermes_subagent_instructions() -> None:
