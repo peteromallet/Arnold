@@ -54,6 +54,7 @@ from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
+from arnold_pipelines.megaplan.cloud.status_retirement import status_retirement_matches
 from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
 from arnold_pipelines.run_authority import canonical_json, reduce_run_authority
 from arnold_pipelines.megaplan.status_projection import plan_status_presentation
@@ -1863,6 +1864,13 @@ def _load_session_markers(marker_dir: Path) -> list[dict[str, Any]]:
             continue
         payload = _load_json(path)
         if not isinstance(payload, dict) or not payload.get("session"):
+            continue
+        session = str(payload.get("session"))
+        if status_retirement_matches(
+            marker_dir=marker_dir,
+            marker_path=path,
+            session=session,
+        ):
             continue
         payload["_marker_path"] = str(path)
         markers.append(payload)
