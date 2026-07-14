@@ -1,12 +1,32 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# Caller-provided supervisor runtime controls are an explicit invocation
+# contract (and are used by readiness probes).  The shared hot-env supplies
+# defaults for resident service launches, but must not overwrite those explicit
+# values when the wrapper is invoked with a constrained runtime.
+WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET="${MEGAPLAN_SUPERVISOR_PYTHON+x}"
+WATCHDOG_CALLER_SUPERVISOR_PYTHON="${MEGAPLAN_SUPERVISOR_PYTHON-}"
+WATCHDOG_CALLER_RUNTIME_REQUIRED_SET="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED+x}"
+WATCHDOG_CALLER_RUNTIME_REQUIRED="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED-}"
+
 if [[ -f /workspace/.cloud-hot-env ]]; then
   set -a
   # shellcheck disable=SC1091
   . /workspace/.cloud-hot-env
   set +a
 fi
+
+if [[ -n "$WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET" ]]; then
+  MEGAPLAN_SUPERVISOR_PYTHON="$WATCHDOG_CALLER_SUPERVISOR_PYTHON"
+  export MEGAPLAN_SUPERVISOR_PYTHON
+fi
+if [[ -n "$WATCHDOG_CALLER_RUNTIME_REQUIRED_SET" ]]; then
+  MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED="$WATCHDOG_CALLER_RUNTIME_REQUIRED"
+  export MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED
+fi
+unset WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET WATCHDOG_CALLER_SUPERVISOR_PYTHON
+unset WATCHDOG_CALLER_RUNTIME_REQUIRED_SET WATCHDOG_CALLER_RUNTIME_REQUIRED
 
 WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
 SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
