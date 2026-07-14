@@ -36,7 +36,14 @@ _MEGAPLAN_INITIATIVE_SUBDIRS = frozenset(
     {"briefs", "research", "decisions", "notes", "assets", "handoff"}
 )
 _MEGAPLAN_INITIATIVE_ROOT_FILES = frozenset(
-    {"README.md", "NORTHSTAR.md", "chain.yaml", "proof-map.json", "completion-manifest.json"}
+    {
+        "README.md",
+        "NORTHSTAR.md",
+        "STRATEGY.md",
+        "chain.yaml",
+        "proof-map.json",
+        "completion-manifest.json",
+    }
 )
 LEGACY_REFERENCE_PATTERNS = (
     "arnold.pipelines.megaplan",
