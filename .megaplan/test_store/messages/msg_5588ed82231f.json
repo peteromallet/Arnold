@@ -1,0 +1,18 @@
+{
+  "id": "msg_5588ed82231f",
+  "epic_id": "epic_7569bba081cb",
+  "conversation_id": null,
+  "idempotency_key": "contract:epic_7569bba081cb:inbound_message:33607b92b3",
+  "direction": "inbound",
+  "content": "hello from user",
+  "sent_at": "2026-07-14T01:19:38.263344Z",
+  "discord_message_id": "discord_1",
+  "discord_reply_provenance": null,
+  "has_code_attachment": true,
+  "has_image_attachment": false,
+  "in_burst_with": [],
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": null
+}

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-11T13:41:18.498880+00:00",
-  "incident_count": 7,
+  "generated_at": "2026-07-14T01:41:46.234510+00:00",
+  "incident_count": 6,
   "incidents": [
     {
       "incident_id": "inc-canonical-run-state-control-plane",
@@ -15,12 +15,8 @@
       "path": ".megaplan/incident-ledger/summaries/incidents/inc-demo-session.json"
     },
     {
-      "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
-      "path": ".megaplan/incident-ledger/summaries/incidents/inc-megaplan-north-star-sense-checks-revise-design.json"
-    },
-    {
-      "incident_id": "inc-runauthority-epic-cloud",
-      "path": ".megaplan/incident-ledger/summaries/incidents/inc-runauthority-epic-cloud.json"
+      "incident_id": "inc-repository-strategy-roadmap",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-repository-strategy-roadmap.json"
     },
     {
       "incident_id": "inc-superfixer-alive-but-failed-recovery",
@@ -31,11 +27,15 @@
       "path": ".megaplan/incident-ledger/summaries/incidents/incident-42.json"
     }
   ],
-  "problem_count": 7,
+  "problem_count": 9,
   "problems": [
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-68a048c70af7.json",
       "problem_id": "problem-68a048c70af7"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-6a1177eb343e.json",
+      "problem_id": "problem-6a1177eb343e"
     },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-6e386e382223.json",
@@ -60,6 +60,10 @@
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
       "problem_id": "problem-bef9405c197d"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-c7e2d7ad616b.json",
+      "problem_id": "problem-c7e2d7ad616b"
     }
   ],
   "schema_version": 1

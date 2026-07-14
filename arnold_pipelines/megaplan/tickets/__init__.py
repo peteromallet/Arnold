@@ -20,8 +20,17 @@ from .core import (
     show,
     unlink,
 )
+from .promotion import (
+    PromotionConflictError,
+    PromotionResult,
+    TicketNotFoundError,
+    promote_ticket,
+)
 
 __all__ = [
+    "PromotionConflictError",
+    "PromotionResult",
+    "TicketNotFoundError",
     "address_resolved_by_epic",
     "addressed",
     "create_ticket",
@@ -31,6 +40,7 @@ __all__ = [
     "link",
     "list_tickets",
     "new",
+    "promote_ticket",
     "reopen",
     "search",
     "show",

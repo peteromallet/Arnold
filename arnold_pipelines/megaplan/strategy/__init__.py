@@ -63,6 +63,12 @@ from arnold_pipelines.megaplan.strategy.projection import (
     serialize_strategy_projection,
     write_strategy_projection,
 )
+from arnold_pipelines.megaplan.strategy.mutations import (
+    add_roadmap_entry,
+    promote_ticket_to_epic,
+    remove_roadmap_entry,
+    replace_roadmap_entry,
+)
 
 __all__ = [
     "DiagnosticLevel",
@@ -78,8 +84,12 @@ __all__ = [
     "StrategyDocument",
     "StrategyIdentity",
     "StrategySection",
+    "add_roadmap_entry",
     "parse_strategy",
     "project_strategy",
+    "promote_ticket_to_epic",
+    "remove_roadmap_entry",
+    "replace_roadmap_entry",
     "resolve_strategy",
     "serialize_strategy",
     "serialize_strategy_projection",

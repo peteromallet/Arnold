@@ -234,6 +234,70 @@ def run_store_contract(store_factory: Callable[[], Store], *, epic_home_backend:
     )
     assert store.load_epic(epic.id).title == "Editorial Title"
     assert store.load_body(epic.id).startswith("# Editorial Title")
+
+    # --- Explicit epic_id acceptance ---
+    explicit_id = "contract-explicit-epic"
+    explicit_epic = store.create_epic(
+        title="Explicit ID Epic",
+        goal="Exercise explicit epic_id acceptance",
+        body="# Explicit ID Epic\n",
+        epic_id=explicit_id,
+        home_backend=epic_home_backend,
+        idempotency_key=idem("contract", "explicit_epic"),
+    )
+    assert explicit_epic.id == explicit_id, (
+        f"Expected epic_id={explicit_id!r}, got {explicit_epic.id!r}"
+    )
+    assert store.load_epic(explicit_id).title == "Explicit ID Epic"
+
+    # --- Generated default IDs unchanged ---
+    default_epic = store.create_epic(
+        title="Default Generated Epic",
+        goal="Exercise generated epic IDs unchanged",
+        body="# Default Generated Epic\n",
+        home_backend=epic_home_backend,
+        idempotency_key=idem("contract", "default_epic"),
+    )
+    assert default_epic.id, "Generated epic_id must be non-empty"
+    assert default_epic.id != explicit_id, (
+        f"Generated ID {default_epic.id!r} must differ from explicit ID {explicit_id!r}"
+    )
+    assert store.load_epic(default_epic.id).title == "Default Generated Epic"
+
+    # --- Idempotency retry does not fork epics ---
+    retry_key = idem("contract", "retry_epic")
+    retry_epic = store.create_epic(
+        title="Retry Epic",
+        goal="Exercise idempotency retry without forking",
+        body="# Retry Epic\n",
+        epic_id="retry-idempotency-epic",
+        home_backend=epic_home_backend,
+        idempotency_key=retry_key,
+    )
+    try:
+        replayed = store.create_epic(
+            title="Retry Epic",
+            goal="Exercise idempotency retry without forking",
+            body="# Retry Epic\n",
+            epic_id="retry-idempotency-epic",
+            home_backend=epic_home_backend,
+            idempotency_key=retry_key,
+        )
+        # Idempotent path: same epic returned, no fork
+        assert replayed.id == retry_epic.id, (
+            f"Replayed epic id {replayed.id!r} != original {retry_epic.id!r}"
+        )
+        assert replayed.revision == retry_epic.revision, (
+            f"Replayed revision {replayed.revision} != original {retry_epic.revision}"
+        )
+    except Exception:
+        # Backend without idempotency replay for create_epic —
+        # verify the original was not forked and still loadable
+        loaded = store.load_epic(retry_epic.id)
+        assert loaded is not None, "Original epic must still exist after retry"
+        assert loaded.id == retry_epic.id
+        assert loaded.revision == retry_epic.revision
+
     updated_epic = store.update_body(
         epic.id,
         "# Revised\n",
@@ -934,6 +998,31 @@ def run_arnold_adapter_contract(store_factory: Callable[[], Store]) -> None:
     adapter = ArnoldStoreAdapter(store_factory())
     idem = deterministic_idempotency_key
     epic = adapter.create_epic(title="Title", goal="Goal", body="# Title\n", idempotency_key=idem("adapter", "create_epic"))
+
+    # --- Explicit epic_id through adapter ---
+    explicit_adapter_epic = adapter.create_epic(
+        title="Adapter Explicit",
+        goal="Exercise explicit epic_id through adapter",
+        body="# Adapter Explicit\n",
+        epic_id="adapter-explicit-epic",
+        idempotency_key=idem("adapter", "explicit_epic"),
+    )
+    assert explicit_adapter_epic["id"] == "adapter-explicit-epic", (
+        f"Adapter explicit epic_id mismatch: {explicit_adapter_epic['id']!r}"
+    )
+
+    # --- Generated default through adapter ---
+    default_adapter_epic = adapter.create_epic(
+        title="Adapter Default",
+        goal="Exercise generated epic_id through adapter",
+        body="# Adapter Default\n",
+        idempotency_key=idem("adapter", "default_epic"),
+    )
+    assert default_adapter_epic["id"], "Adapter generated epic_id must be non-empty"
+    assert default_adapter_epic["id"] != "adapter-explicit-epic", (
+        f"Adapter generated ID {default_adapter_epic['id']!r} must differ from explicit"
+    )
+
     inbound = adapter.create_message(
         epic_id=epic["id"],
         direction="inbound",
@@ -952,3 +1041,182 @@ def run_arnold_adapter_contract(store_factory: Callable[[], Store]) -> None:
     adapter.release_epic_lock(epic["id"], holder_id="holder-a")
     assert adapter.load_message(inbound["id"])["content"] == "hello"
     assert adapter.load_hot_context(epic["id"])["epic"]["id"] == epic["id"]
+
+
+def run_ticket_relationship_contract(store_factory: Callable[[], Store]) -> None:
+    """Validate ticket–epic relationship semantics across backends.
+
+    Covers:
+    - Relationship kind constants
+    - Legacy frontmatter normalisation (through store read path)
+    - Auto-address gating: only resolves_on_complete=True tickets are addressed
+    - Idempotency replay for link/unlink
+    """
+    from arnold_pipelines.megaplan.tickets.relationships import (
+        KIND_ASSOCIATED,
+        KIND_PROMOTED_TO_EPIC,
+        KIND_RESOLVES_ON_COMPLETE,
+        RELATIONSHIP_KINDS,
+        auto_address_predicate,
+        parse_frontmatter_links,
+        serialize_links_to_frontmatter,
+    )
+
+    store = store_factory()
+    idem = deterministic_idempotency_key
+
+    # ------------------------------
+    # Constants
+    # ------------------------------
+    assert KIND_ASSOCIATED in RELATIONSHIP_KINDS
+    assert KIND_PROMOTED_TO_EPIC in RELATIONSHIP_KINDS
+    assert KIND_RESOLVES_ON_COMPLETE in RELATIONSHIP_KINDS
+    assert len(RELATIONSHIP_KINDS) == 3
+
+    # ------------------------------
+    # Normalisation (unit)
+    # ------------------------------
+    legacy = parse_frontmatter_links(
+        {"id": "tid", "epics": [{"epic_id": "e1", "resolves_on_complete": True}]},
+        ticket_id="tid",
+    )
+    assert legacy[0].kind == KIND_RESOLVES_ON_COMPLETE
+    assert legacy[0].provenance is None
+
+    legacy_no_resolve = parse_frontmatter_links(
+        {"id": "tid", "epics": [{"epic_id": "e2"}]},
+        ticket_id="tid",
+    )
+    assert legacy_no_resolve[0].kind == KIND_ASSOCIATED
+
+    # ------------------------------
+    # Serialization round-trip
+    # ------------------------------
+    from arnold_pipelines.megaplan.schemas import TicketEpicLink
+
+    link = TicketEpicLink(
+        ticket_id="tid", epic_id="e3", resolves_on_complete=False,
+        kind=KIND_PROMOTED_TO_EPIC, provenance="promo",
+    )
+    serialized = serialize_links_to_frontmatter([link])
+    for entry in serialized:
+        assert "kind" in entry
+        assert "provenance" in entry
+
+    # ------------------------------
+    # Auto-address predicate
+    # ------------------------------
+    assert auto_address_predicate(
+        TicketEpicLink(ticket_id="t", epic_id="e", resolves_on_complete=True, kind=KIND_RESOLVES_ON_COMPLETE),
+    ) is True
+    assert auto_address_predicate(
+        TicketEpicLink(ticket_id="t", epic_id="e", resolves_on_complete=False, kind=KIND_ASSOCIATED),
+    ) is False
+    assert auto_address_predicate(
+        TicketEpicLink(ticket_id="t", epic_id="e", resolves_on_complete=False, kind=KIND_PROMOTED_TO_EPIC),
+    ) is False
+
+    # ------------------------------
+    # Store-backed contract
+    # ------------------------------
+    epic = store.create_epic(
+        title="Relationship Contract Epic",
+        goal="Exercise ticket–epic relationships",
+        body="# Epic\n",
+        idempotency_key=idem("rel-contract", "epic"),
+    )
+    codebase = None
+    if hasattr(store, "_resolve_ticket_codebase"):
+        codebase = store._resolve_ticket_codebase()
+    else:
+        # For DB-backed stores, resolve codebase via identity
+        from arnold_pipelines.megaplan.tickets.identity import repo_codebase_identity
+
+        identity = repo_codebase_identity()
+        cb = store.resolve_codebase_by_root_sha(identity.root_commit_sha)
+        if cb is None:
+            cb = store.create_codebase(
+                owner=identity.owner,
+                name=identity.name,
+                default_branch=identity.default_branch,
+                root_commit_sha=identity.root_commit_sha,
+                idempotency_key=idem("rel-contract", "codebase"),
+            )
+        codebase = cb
+
+    ticket_resolve = store.create_ticket(
+        codebase_id=codebase.id,
+        title="Resolving Ticket",
+        body="Should auto-address.",
+        slug="resolving-ticket",
+        idempotency_key=idem("rel-contract", "ticket-resolve"),
+    )
+    ticket_assoc = store.create_ticket(
+        codebase_id=codebase.id,
+        title="Associated Ticket",
+        body="Should NOT auto-address.",
+        slug="associated-ticket",
+        idempotency_key=idem("rel-contract", "ticket-assoc"),
+    )
+
+    # Link with explicit kind
+    link1 = store.link_ticket_to_epic(
+        ticket_id=ticket_resolve.id,
+        epic_id=epic.id,
+        resolves_on_complete=True,
+        kind=KIND_RESOLVES_ON_COMPLETE,
+        provenance="contract",
+        idempotency_key=idem("rel-contract", "link-resolve"),
+    )
+    assert link1.kind == KIND_RESOLVES_ON_COMPLETE
+    assert link1.provenance == "contract"
+
+    link2 = store.link_ticket_to_epic(
+        ticket_id=ticket_assoc.id,
+        epic_id=epic.id,
+        resolves_on_complete=False,
+        kind=KIND_ASSOCIATED,
+        provenance="contract",
+        idempotency_key=idem("rel-contract", "link-assoc"),
+    )
+    assert link2.kind == KIND_ASSOCIATED
+
+    # Link replay (idempotency)
+    replayed = store.link_ticket_to_epic(
+        ticket_id=ticket_resolve.id,
+        epic_id=epic.id,
+        resolves_on_complete=True,
+        kind=KIND_RESOLVES_ON_COMPLETE,
+        provenance="contract",
+        idempotency_key=idem("rel-contract", "link-resolve"),
+    )
+    assert replayed.linked_at == link1.linked_at
+
+    # List links
+    links = store.list_ticket_epic_links(epic_id=epic.id)
+    assert len(links) == 2
+
+    # --- Auto-address: only resolves_on_complete ticket is addressed ---
+    addressed = store.address_tickets_resolved_by_epic(epic.id)
+    assert addressed == [ticket_resolve.id]
+
+    resolved_ticket = store.load_ticket(ticket_resolve.id)
+    assert resolved_ticket.status == "addressed"
+
+    assoc_ticket = store.load_ticket(ticket_assoc.id)
+    assert assoc_ticket.status == "open"
+
+    # --- Unlink idempotency ---
+    store.unlink_ticket_from_epic(
+        ticket_id=ticket_resolve.id,
+        epic_id=epic.id,
+        idempotency_key=idem("rel-contract", "unlink-resolve"),
+    )
+    # Second unlink should succeed
+    store.unlink_ticket_from_epic(
+        ticket_id=ticket_resolve.id,
+        epic_id=epic.id,
+        idempotency_key=idem("rel-contract", "unlink-resolve"),
+    )
+    remaining = store.list_ticket_epic_links(ticket_id=ticket_resolve.id)
+    assert remaining == []

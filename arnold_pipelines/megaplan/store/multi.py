@@ -312,6 +312,7 @@ class MultiStore(Store):
         state: str = "shaping",
         home_backend: Backend = "file",
         idempotency_key: str | None = None,
+        epic_id: str | None = None,
     ) -> Epic:
         if home_backend not in ("file", "db"):
             raise ValueError(f"Unsupported home_backend {home_backend!r}")
@@ -322,6 +323,7 @@ class MultiStore(Store):
             state=state,
             home_backend=home_backend,
             idempotency_key=idempotency_key,
+            epic_id=epic_id,
         )
         self._route_cache[epic.id] = epic.home_backend
         return epic
@@ -933,8 +935,8 @@ class MultiStore(Store):
     def update_ticket(self, ticket_id: str, *, idempotency_key: str | None = None, **changes: Any) -> Ticket:
         return self._route_by_ticket_owner(ticket_id).update_ticket(ticket_id, idempotency_key=idempotency_key, **changes)
 
-    def link_ticket_to_epic(self, *, ticket_id: str, epic_id: str, resolves_on_complete: bool = False, idempotency_key: str | None = None) -> TicketEpicLink:
-        return self._route_by_ticket_owner(ticket_id).link_ticket_to_epic(ticket_id=ticket_id, epic_id=epic_id, resolves_on_complete=resolves_on_complete, idempotency_key=idempotency_key)
+    def link_ticket_to_epic(self, *, ticket_id: str, epic_id: str, resolves_on_complete: bool = False, kind: str = "associated", provenance: str | None = None, idempotency_key: str | None = None) -> TicketEpicLink:
+        return self._route_by_ticket_owner(ticket_id).link_ticket_to_epic(ticket_id=ticket_id, epic_id=epic_id, resolves_on_complete=resolves_on_complete, kind=kind, provenance=provenance, idempotency_key=idempotency_key)
 
     def unlink_ticket_from_epic(self, *, ticket_id: str, epic_id: str, idempotency_key: str | None = None) -> None:
         return self._route_by_ticket_owner(ticket_id).unlink_ticket_from_epic(ticket_id=ticket_id, epic_id=epic_id, idempotency_key=idempotency_key)

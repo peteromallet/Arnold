@@ -1,0 +1,13 @@
+{
+  "id": "log_f7d65420ad64",
+  "level": "info",
+  "category": "system",
+  "event_type": "contract",
+  "message": "ok",
+  "details": {
+    "ok": true
+  },
+  "turn_id": "turn_42256d4635a3",
+  "epic_id": "epic_7569bba081cb",
+  "occurred_at": "2026-07-14T01:19:38.278794Z"
+}
