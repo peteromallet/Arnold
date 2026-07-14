@@ -468,6 +468,7 @@ def test_managed_agent_hot_context_separates_running_and_recent(tmp_path, monkey
         "status": "running",
         "pid": 123,
         "created_at": "2026-07-10T02:00:00Z",
+        "usage": {"total_tokens": 12_345},
         "log_path": "/logs/running.log",
     }))
     (completed / "manifest.json").write_text(json.dumps({
@@ -495,6 +496,7 @@ def test_managed_agent_hot_context_separates_running_and_recent(tmp_path, monkey
 
     assert status["running_count"] == 1
     assert status["running"][0]["run_id"] == "running"
+    assert status["running"][0]["usage"] == {"total_tokens": 12_345}
     assert status["running"][0]["full_log_path"] == "/logs/running.log"
     assert status["recent"][0]["run_id"] == "completed"
     assert status["recent"][0]["completion_delivery"]["status"] == "delivered"

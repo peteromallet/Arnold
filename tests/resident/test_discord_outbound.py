@@ -208,16 +208,35 @@ def test_ready_sweeps_completion_and_reset_outboxes_before_poll_loop(monkeypatch
         def is_closed(self):
             return True
 
+    class FakeCommandTree:
+        def __init__(self, _client):
+            self.registered = []
+
+        def command(self, *, name, description):
+            def decorate(callback):
+                self.registered.append((name, description, callback))
+                return callback
+
+            return decorate
+
+        async def sync(self):
+            calls.append("command-sync")
+            return [
+                SimpleNamespace(name=name)
+                for name, _description, _callback in self.registered
+            ]
+
     fake_discord = SimpleNamespace(
         Intents=SimpleNamespace(default=lambda: SimpleNamespace(message_content=False)),
         Client=FakeClient,
+        app_commands=SimpleNamespace(CommandTree=FakeCommandTree),
     )
     monkeypatch.setitem(sys.modules, "discord", fake_discord)
 
     service = ResidentDiscordService(runtime=Runtime(), token="test-token", transcriber=object())
     asyncio.run(service.start())
 
-    assert calls == ["completion", "reset"]
+    assert calls == ["command-sync", "completion", "reset"]
 
 
 def test_production_container_can_explicitly_reuse_durable_file_store(monkeypatch, tmp_path) -> None:

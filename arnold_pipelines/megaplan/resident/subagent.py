@@ -3671,6 +3671,9 @@ def list_managed_resident_agents(
                     "created_at": payload.get("created_at"),
                     "started_at": payload.get("started_at"),
                     "finished_at": payload.get("finished_at"),
+                    # A provider may persist this immutable measurement on the
+                    # manifest.  Do not synthesize it from logs or limits.
+                    "usage": payload.get("usage"),
                     "manifest_path": str(manifest_path.resolve()),
                     "full_log_path": artifact_path(
                         "full_log_path", str(payload.get("log_path") or "run.log")
