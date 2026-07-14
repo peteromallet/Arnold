@@ -575,7 +575,7 @@ EOF
     # contain a product-local `megaplan` package that shadows Hermes runtime
     # discovery before the agent starts.
     cd /workspace || exit 1
-    timeout "$SUBAGENT_TIMEOUT" python3 -c '
+    PYTHONSAFEPATH=1 timeout "$SUBAGENT_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c '
 import runpy
 import sys
 import types

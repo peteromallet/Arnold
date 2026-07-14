@@ -7748,7 +7748,7 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "run_kimi_launch_turn()" in text
     assert 'timeout "$dev_timeout"' in text
     assert '--stdin-file "$prompt_path"' in text
-    assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent' in text
+    assert 'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent' in text
     assert '--query_file="$prompt_path"' in text
     assert '--query="$(cat "$prompt_path")"' not in text
     assert "prepare_repair_agent_exec_env()" in text
@@ -7756,7 +7756,7 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "export -n failure_summary chain_health_block recurrence_block mode_tasks relaunch_command" in text
     assert text.index("prepare_repair_agent_exec_env") < text.index('timeout "$dev_timeout"')
     assert text.index("prepare_repair_agent_exec_env", text.index("run_kimi_launch_turn()")) < text.index(
-        'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent'
+        'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent'
     )
     assert 'tmux new-session -d -s "$session"' in text
     assert r'rm -f -- "\${BASH_SOURCE[0]}"' in text
