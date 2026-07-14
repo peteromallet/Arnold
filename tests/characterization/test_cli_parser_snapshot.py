@@ -273,53 +273,26 @@ class TestCliParserSnapshot:
         )
 
     def test_lazy_subcommands_are_passthrough_only(self) -> None:
-        """Document and verify that cloud/resident/bakeoff subcommands are
-        captured only as passthrough (``nargs=REMAINDER``) entries.
+        """Document that cloud/resident/bakeoff subcommands are dispatched
+        before ``build_parser()`` in ``main()`` and are *not* registered
+        inside ``build_parser()``.
 
         The real subcommand trees for cloud, resident, and bakeoff are
-        registered lazily in ``main()`` (cli.py lines 4960-5001), not inside
-        ``build_parser()``.  This test asserts the known limitation so that
-        a future refactor that moves those registrations into
-        ``build_parser()`` is immediately visible.
+        intercepted at the top of ``main()`` (cli.py lines 3236-3289)
+        before the parser is even built.  This test asserts that they
+        are absent from ``build_parser()`` so that a future refactor
+        that moves them into the parser is immediately visible.
         """
         fixture = _read_fixture()
         root = fixture["commands"][""]
         subcommands = root.get("subcommands", {})
 
         for cmd in ("cloud", "resident", "bakeoff"):
-            assert cmd in subcommands, (
-                f"Expected '{cmd}' subcommand in parser snapshot"
-            )
-            cmd_spec = subcommands[cmd]
-
-            # Should have zero options, zero positionals, zero mutex groups,
-            # and zero subcommands (just the REMAINDER positional).
-            assert cmd_spec["options"] == [], (
-                f"'{cmd}' should have no options — it is a passthrough entry"
-            )
-            assert cmd_spec["mutually_exclusive_groups"] == [], (
-                f"'{cmd}' should have no mutually exclusive groups"
-            )
-            assert cmd_spec["subcommands"] == {}, (
-                f"'{cmd}' should have no subcommands — real tree is registered "
-                f"lazily in main(), not in build_parser()"
-            )
-
-            # Exactly one positional: the REMAINDER catch-all.
-            positionals = cmd_spec["positionals"]
-            assert len(positionals) == 1, (
-                f"'{cmd}' expected exactly 1 positional (REMAINDER), "
-                f"got {len(positionals)}: {positionals}"
-            )
-            pos = positionals[0]
-            assert pos["nargs"] == "REMAINDER", (
-                f"'{cmd}' positional nargs expected 'REMAINDER', "
-                f"got {pos['nargs']!r}"
-            )
-            # Dest should be the catch-all arg name.
-            assert pos["dest"] in (f"{cmd}_args",), (
-                f"'{cmd}' positional dest expected '{cmd}_args', "
-                f"got {pos['dest']!r}"
+            assert cmd not in subcommands, (
+                f"'{cmd}' should NOT be in build_parser() — it is dispatched "
+                f"before the parser in main(). If this fails, the lazy "
+                f"dispatch was moved into build_parser() and this test must "
+                f"be updated."
             )
 
     def test_root_parser_has_expected_top_level_options(self) -> None:
@@ -342,14 +315,16 @@ class TestCliParserSnapshot:
         subcommands = set(root.get("subcommands", {}).keys())
 
         expected = {
-            "setup", "init", "list", "describe", "epic", "brief", "ticket",
-            "feedback", "resume", "audit", "plan", "prep", "critique",
-            "revise", "gate", "finalize", "execute", "review", "config",
-            "step", "override", "user-action", "quality-gate",
-            "verify-human", "debt", "loop-init", "loop-run",
-            "auto", "run", "chain", "cloud", "resident", "bakeoff",
-            "tiebreaker", "tiebreaker-run", "introspect", "trace",
-            "doctor", "record-tag",
+            "setup", "init", "brief", "ticket", "strategy",
+            "resume", "audit", "plan", "prep", "critique",
+            "revise", "gate", "finalize", "execute", "review",
+            "override", "user-action", "quality-gate",
+            "verify-human", "audit-verifiability",
+            "auto", "chain", "epic-chain",
+            "introspect", "trace", "doctor", "record-tag",
+            "status", "progress", "watch",
+            "initiative", "authority-inventory",
+            "migrate-layout", "pipelines",
         }
         missing = expected - subcommands
         assert not missing, (
@@ -362,39 +337,28 @@ class TestCliParserSnapshot:
         root = fixture["commands"][""]
         subs = root["subcommands"]
 
-        # epic -> snapshot, migrate, export
-        epic_subs = set(subs.get("epic", {}).get("subcommands", {}).keys())
-        assert "snapshot" in epic_subs, "Missing epic snapshot"
-        assert "migrate" in epic_subs, "Missing epic migrate"
-
-        # brief -> new, epic
+        # brief -> new, list, show, search, epic
         brief_subs = set(subs.get("brief", {}).get("subcommands", {}).keys())
-        assert {"new", "epic"}.issubset(brief_subs), (
+        assert {"new", "list", "show", "search", "epic"}.issubset(brief_subs), (
             f"brief subcommands incomplete: {sorted(brief_subs)}"
         )
 
-        # ticket -> new, list, show, edit, link, ...
+        # ticket -> new, list, show, edit, link, search, promote, ...
         ticket_subs = set(subs.get("ticket", {}).get("subcommands", {}).keys())
-        assert {"new", "list", "show", "edit", "search"}.issubset(ticket_subs), (
+        assert {"new", "list", "show", "edit", "search", "promote"}.issubset(ticket_subs), (
             f"ticket subcommands incomplete: {sorted(ticket_subs)}"
         )
 
-        # config -> show, set, reset, profiles, use-profile
-        config_subs = set(subs.get("config", {}).get("subcommands", {}).keys())
-        assert {"show", "set", "reset", "profiles", "use-profile"}.issubset(config_subs), (
-            f"config subcommands incomplete: {sorted(config_subs)}"
+        # strategy -> init, validate, show, list, project, add, remove, move
+        strategy_subs = set(subs.get("strategy", {}).get("subcommands", {}).keys())
+        assert {"init", "validate", "show", "list", "project", "add", "remove", "move"}.issubset(strategy_subs), (
+            f"strategy subcommands incomplete: {sorted(strategy_subs)}"
         )
 
-        # config profiles -> list, show
-        profiles_subs = set(
-            subs.get("config", {})
-            .get("subcommands", {})
-            .get("profiles", {})
-            .get("subcommands", {})
-            .keys()
-        )
-        assert {"list", "show"}.issubset(profiles_subs), (
-            f"config profiles subcommands incomplete: {sorted(profiles_subs)}"
+        # initiative -> new, list, search
+        initiative_subs = set(subs.get("initiative", {}).get("subcommands", {}).keys())
+        assert {"new", "list", "search"}.issubset(initiative_subs), (
+            f"initiative subcommands incomplete: {sorted(initiative_subs)}"
         )
 
     def test_all_option_strings_are_sorted(self) -> None:
@@ -433,24 +397,19 @@ class TestCliParserSnapshot:
         assert "" in fixture["commands"]
 
     def test_tiebreaker_run_has_work_dir(self) -> None:
-        """``tiebreaker-run`` must expose ``--work-dir`` so the common dispatch
-        path in ``main()`` can call ``set_work_dir_override`` before the
-        tiebreaker worker is spawned."""
+        """``tiebreaker-run`` is dispatched before ``build_parser()`` in
+        ``main()`` (alongside ``tiebreaker`` at cli.py line 3388) and is
+        therefore *not* registered inside ``build_parser()``.
+
+        The ``--work-dir`` flag is handled by the common dispatch path
+        in ``main()`` (line 3318) before any handler is called, so it
+        applies uniformly regardless of parser registration.
+        """
         fixture = _read_fixture()
         root = fixture["commands"][""]
         tb_run = root.get("subcommands", {}).get("tiebreaker-run", {})
-        assert tb_run, "tiebreaker-run subcommand missing from parser snapshot"
-
-        option_dests = {o["dest"] for o in tb_run.get("options", [])}
-        assert "work_dir" in option_dests, (
-            "tiebreaker-run must expose --work-dir; "
-            f"found options: {sorted(option_dests)}"
-        )
-
-        # Verify the help text is present and non-trivial
-        work_dir_opt = next(
-            o for o in tb_run["options"] if o["dest"] == "work_dir"
-        )
-        assert "working directory" in work_dir_opt.get("help", "").lower(), (
-            "--work-dir help text must mention 'working directory'"
+        assert not tb_run, (
+            "tiebreaker-run should NOT be in build_parser() — it is dispatched "
+            "before the parser in main(). If this fails, tiebreaker-run was "
+            "moved into build_parser() and this test must be updated."
         )

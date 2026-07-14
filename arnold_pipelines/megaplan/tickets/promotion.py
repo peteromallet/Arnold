@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.layout import (
-    STRATEGY_PATH,
     initiative_root,
     search_initiatives,
     slugify_initiative,
@@ -458,14 +457,14 @@ def promote_ticket(
     if not skip_strategy:
         strat_path = strategy_file_path(repo_root)
         if strat_path.exists():
-            from arnold_pipelines.megaplan.strategy import (
-                parse_strategy,
-                serialize_strategy,
+            from arnold_pipelines.megaplan.strategy.io import (
+                load_strategy_for_write,
+                write_strategy,
             )
 
-            content = strat_path.read_text(encoding="utf-8")
-            document = parse_strategy(content, str(STRATEGY_PATH))
-            original_serialized = serialize_strategy(document)
+            document, file_state = load_strategy_for_write(
+                repo_root, store=store
+            )
             epic_display = epic_title or epic.title or ticket_title
             updated_doc = promote_ticket_to_epic(
                 document,
@@ -478,12 +477,13 @@ def promote_ticket(
             # part of the canonical Markdown), so the caller sees warnings even
             # when the roadmap is unchanged.
             strategy_diagnostics = list(updated_doc.diagnostics)
-            new_serialized = serialize_strategy(updated_doc)
             # Only treat the strategy as updated (and persist a write) when the
             # canonical roadmap actually changed.  Non-roadmap tickets leave the
             # roadmap untouched, so no epic is forced into STRATEGY.md.
-            if new_serialized != original_serialized:
-                strat_path.write_text(new_serialized, encoding="utf-8")
+            # Comparison uses roadmap dict equality (frozen entries) instead of
+            # a full serialize_strategy() comparison to avoid a lossy round-trip.
+            if document.roadmap != updated_doc.roadmap:
+                write_strategy(updated_doc, file_state, repo_root)
                 strategy_updated = True
 
     # ---- 7. Return result ---------------------------------------------------

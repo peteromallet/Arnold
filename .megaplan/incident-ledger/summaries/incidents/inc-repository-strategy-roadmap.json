@@ -1,12 +1,99 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 1,
+  "evidence_ref_count": 20,
   "evidence_refs": [
     {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 242,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/242"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
       "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "github_sync.incident_projection",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "github_sync.problem_projection",
+      "status": "open"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "repository-strategy-roadmap",
+      "status": "2026-07-13T23:51:33.042976+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "repository-strategy-roadmap",
+      "status": "2026-07-13T23:51:33.042976+00:00"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/repository-strategy-roadmap/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-repository-strategy-roadmap.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/repository-strategy-roadmap/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-repository-strategy-roadmap.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/repository-strategy-roadmap/Arnold/.megaplan/incident-ledger/summaries/problems/problem-72f87afd3954.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/repository-strategy-roadmap/Arnold/.megaplan/incident-ledger/summaries/problems/problem-72f87afd3954.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260714T010215Z.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260714T010215Z.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260714T013636Z.json",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260714T013636Z.json",
+      "session_id": "repository-strategy-roadmap"
     }
   ],
-  "generated_at": "2026-07-14T01:41:46.229563+00:00",
+  "generated_at": "2026-07-14T07:41:54.657911+00:00",
   "incident_id": "inc-repository-strategy-roadmap",
   "kind": "incident_summary",
   "latest_actor": "immediate_repair",
@@ -22,8 +109,8 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
-    "last_seq": 350,
+    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
+    "last_seq": 362,
     "projection": "incidents"
   },
   "state": "repair_attempt",

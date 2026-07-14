@@ -86,7 +86,7 @@
       "session_id": "canonical-run-state-control-plane"
     }
   ],
-  "generated_at": "2026-07-14T01:41:46.222471+00:00",
+  "generated_at": "2026-07-14T07:41:54.649127+00:00",
   "incident_id": "inc-canonical-run-state-control-plane",
   "kind": "incident_summary",
   "latest_actor": "six_hour_auditor",
@@ -102,7 +102,7 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:7e5d20767bdf5b8d855dc1fdc0764618219164a95288a90d68ad4b556de766d9",
+    "digest": "sha256:353ebcf34308c59f05c28f1848a05b0532bbf5e2f6125042162ea0c5832ad343",
     "last_seq": 224,
     "projection": "incidents"
   },

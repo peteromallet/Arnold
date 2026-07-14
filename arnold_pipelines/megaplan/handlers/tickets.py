@@ -57,8 +57,19 @@ def handle_ticket_new(args: argparse.Namespace) -> int:
     else:
         cwd = None
 
+    # Roadmap opt-in flags
+    roadmap_horizon = getattr(args, "roadmap_horizon", None)
+    roadmap_title = getattr(args, "roadmap_title", None)
+
     try:
-        _core_new(args.title, body=body, tags=tags, cwd=cwd)
+        _core_new(
+            args.title,
+            body=body,
+            tags=tags,
+            cwd=cwd,
+            roadmap_horizon=roadmap_horizon,
+            roadmap_title=roadmap_title,
+        )
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
