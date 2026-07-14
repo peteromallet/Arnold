@@ -3308,7 +3308,11 @@ def _managed_attempts_from_snapshot(
 ) -> list[RepairCustodyAttemptRecord]:
     """Project real managed-run evidence without fabricating legacy attempts."""
 
-    from arnold_pipelines.megaplan.managed_agent import is_managed_manifest, observed_status
+    from arnold_pipelines.megaplan.managed_agent import (
+        is_managed_manifest,
+        observed_status,
+        validate_automatic_managed_manifest,
+    )
 
     projected: list[RepairCustodyAttemptRecord] = []
     for value in _as_list(payload.get("managed_agent_runs")):
@@ -3333,9 +3337,23 @@ def _managed_attempts_from_snapshot(
             # turn it into a formal claim or attempt.
             continue
 
+        run_kind = _as_scalar_text(manifest.get("run_kind")) or ""
+        if run_kind.startswith("automatic_"):
+            try:
+                validate_automatic_managed_manifest(
+                    manifest,
+                    manifest_path=manifest_path,
+                )
+            except (TypeError, ValueError):
+                continue
+
         links = _as_mapping(manifest.get("links"))
         manifest_blocker_id = _as_scalar_text(links.get("blocker_id"))
         if blocker_id and manifest_blocker_id and manifest_blocker_id != blocker_id:
+            continue
+        reference_request_id = _as_scalar_text(reference.get("repair_request_id"))
+        manifest_request_id = _as_scalar_text(links.get("repair_request_id"))
+        if reference_request_id and manifest_request_id != reference_request_id:
             continue
         status, live = observed_status(manifest, manifest_path)
         if status in {"reserved", "launching"}:

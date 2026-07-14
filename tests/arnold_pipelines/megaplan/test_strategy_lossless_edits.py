@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -100,7 +101,7 @@ JSON is a disposable projection, never the authority.
 <!-- Roadmap begins below -->
 ## Now
 
-- [ticket:01KT50AZRMK5X890TQDDB5V] Fix authentication bug
+- [ticket:01ARZ3NDEKTSV4RRFFQ69G0010] Fix authentication bug
 
 ## Next
 
@@ -206,7 +207,7 @@ Non-goals here.
 
 
 
-- [ticket:01KT50AZRMK5X890TQDDB5V] Fix auth
+- [ticket:01ARZ3NDEKTSV4RRFFQ69G0010] Fix auth
 
 
 
@@ -235,6 +236,10 @@ def _setup_repo(tmp_path: Path, content: str) -> Path:
     megaplan_dir = repo_root / ".megaplan"
     megaplan_dir.mkdir(parents=True, exist_ok=True)
     (megaplan_dir / "STRATEGY.md").write_text(content, encoding="utf-8")
+    for ticket_id in re.findall(r"\[ticket:([0-9A-HJKMNP-TV-Z]{26})\]", content):
+        _setup_ticket_file(repo_root, ticket_id, "Fixture ticket")
+    for initiative_id in re.findall(r"\[epic:([a-z0-9][a-z0-9-]*)\]", content):
+        _setup_initiative_dir(repo_root, initiative_id, "Fixture initiative")
     return repo_root
 
 
@@ -488,12 +493,12 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQNEWTKT", "New ticket for testing")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0014", "New ticket for testing")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQNEWTKT",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0014",
                 title="New ticket for testing",
                 horizon="Next",
             ),
@@ -540,12 +545,12 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TPRSETST", "Prose preservation test")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0009", "Prose preservation test")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TPRSETST",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0009",
                 title="Prose preservation test",
                 horizon="Now",
             ),
@@ -569,12 +574,12 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQDONLY", "Only Next changes")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0011", "Only Next changes")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQDONLY",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0011",
                 title="Only Next changes",
                 horizon="Next",
             ),
@@ -597,7 +602,7 @@ class TestAddPreservesNonRoadmapContent:
         )
 
         # The new bullet should appear in Next.
-        assert "[ticket:01KT50AZRMK5X890TQDONLY]" in after
+        assert "[ticket:01ARZ3NDEKTSV4RRFFQ69G0011]" in after
         assert "Only Next changes" in after
 
     def test_add_preserves_comment_in_empty_horizon(
@@ -609,12 +614,12 @@ class TestAddPreservesNonRoadmapContent:
         original = _read_strategy(repo_root)
         assert "<!-- No entries yet" in original
 
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TFILLNXT", "Filling Next")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0006", "Filling Next")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TFILLNXT",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0006",
                 title="Filling Next",
                 horizon="Next",
             ),
@@ -633,12 +638,12 @@ class TestAddPreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_INTERLEAVED_BLANKS)
         original = _read_strategy(repo_root)
 
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TBLNKTST", "Blank line test")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0003", "Blank line test")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TBLNKTST",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0003",
                 title="Blank line test",
                 horizon="Now",
             ),
@@ -668,7 +673,7 @@ class TestRemovePreservesNonRoadmapContent:
 
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TQDDB5V"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0010"),
         )
 
         after = _read_strategy(repo_root)
@@ -703,7 +708,7 @@ class TestRemovePreservesNonRoadmapContent:
 
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TQDDB5V"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0010"),
         )
 
         after = _read_strategy(repo_root)
@@ -727,7 +732,7 @@ class TestRemovePreservesNonRoadmapContent:
         # Remove the entry from Now.
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TQDDB5V"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0010"),
         )
 
         after = _read_strategy(repo_root)
@@ -745,7 +750,7 @@ class TestRemovePreservesNonRoadmapContent:
 
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TQDDB5V"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0010"),
         )
 
         after = _read_strategy(repo_root)
@@ -771,7 +776,7 @@ class TestMovePreservesNonRoadmapContent:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQDDB5V",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0010",
                 horizon="Next",
             ),
         )
@@ -786,12 +791,12 @@ class TestMovePreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
 
         # Add an entry to Next first so we can move it.
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQMOVEME", "Move me please")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0012", "Move me please")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQMOVEME",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0012",
                 title="Move me please",
                 horizon="Next",
             ),
@@ -801,7 +806,7 @@ class TestMovePreservesNonRoadmapContent:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQMOVEME",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0012",
                 horizon="Now",
             ),
         )
@@ -823,7 +828,7 @@ class TestMovePreservesNonRoadmapContent:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQDDB5V",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0010",
                 horizon="Later",
             ),
         )
@@ -844,12 +849,12 @@ class TestMovePreservesNonRoadmapContent:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
 
         # Add an entry to Next (which has a comment) so we can move it out.
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TQMVOUT", "Moving out of Next")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0013", "Moving out of Next")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQMVOUT",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0013",
                 title="Moving out of Next",
                 horizon="Next",
             ),
@@ -859,7 +864,7 @@ class TestMovePreservesNonRoadmapContent:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQMVOUT",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0013",
                 horizon="Later",
             ),
         )
@@ -880,7 +885,7 @@ class TestMovePreservesNonRoadmapContent:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQDDB5V",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0010",
                 horizon="Next",
             ),
         )
@@ -908,12 +913,12 @@ class TestShowListProjectEquivalence:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         show_before = _snapshot_show(repo_root)
 
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TSHOWADD", "Show equivalence test")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0016", "Show equivalence test")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TSHOWADD",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0016",
                 title="Show equivalence test",
                 horizon="Next",
             ),
@@ -936,7 +941,7 @@ class TestShowListProjectEquivalence:
         # Remove the Now entry.
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TQDDB5V"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0010"),
         )
 
         result = _snapshot_list(repo_root)
@@ -951,7 +956,7 @@ class TestShowListProjectEquivalence:
             assert "source" in entry
         # The removed entry is gone.
         refs = [e["ref"] for e in result["entries"]]
-        assert "01KT50AZRMK5X890TQDDB5V" not in refs
+        assert "01ARZ3NDEKTSV4RRFFQ69G0010" not in refs
         # The Later epic is still present.
         assert "performance-initiative" in refs
 
@@ -966,7 +971,7 @@ class TestShowListProjectEquivalence:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQDDB5V",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0010",
                 horizon="Later",
             ),
         )
@@ -987,12 +992,12 @@ class TestShowListProjectEquivalence:
         show_original = _snapshot_show(repo_root)
 
         # Add a temporary entry.
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TTEMPADD", "Temporary add")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0017", "Temporary add")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TTEMPADD",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0017",
                 title="Temporary add",
                 horizon="Now",
             ),
@@ -1000,7 +1005,7 @@ class TestShowListProjectEquivalence:
         # Remove it.
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TTEMPADD"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0017"),
         )
 
         show_restored = _snapshot_show(repo_root)
@@ -1020,7 +1025,7 @@ class TestShowListProjectEquivalence:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQDDB5V",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0010",
                 horizon="Next",
             ),
         )
@@ -1028,7 +1033,7 @@ class TestShowListProjectEquivalence:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TQDDB5V",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0010",
                 horizon="Now",
             ),
         )
@@ -1049,19 +1054,19 @@ class TestShowListProjectEquivalence:
         proj_before = _snapshot_project(repo_root)
 
         # Add and remove a temporary entry in Next.
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TTMPCYCL", "Cycle test")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0018", "Cycle test")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TTMPCYCL",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0018",
                 title="Cycle test",
                 horizon="Next",
             ),
         )
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TTMPCYCL"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0018"),
         )
 
         proj_after = _snapshot_project(repo_root)
@@ -1105,12 +1110,12 @@ class TestFullRoundTripEquivalence:
         _setup_repo(tmp_path, content)
 
         # Step 2: Do a lossless write (via CLI add).
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TRNDTRP", "Round-trip ticket")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0015", "Round-trip ticket")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TRNDTRP",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0015",
                 title="Round-trip ticket",
                 horizon="Next",
             ),
@@ -1121,7 +1126,7 @@ class TestFullRoundTripEquivalence:
         assert "<!-- Manual addition -->" in after
         assert "New constraint: must be fast." in after
         # Verify the CLI add took effect.
-        assert "[ticket:01KT50AZRMK5X890TRNDTRP]" in after
+        assert "[ticket:01ARZ3NDEKTSV4RRFFQ69G0015]" in after
         assert "Round-trip ticket" in after
 
     def test_frontmatter_custom_field_round_trip(
@@ -1131,12 +1136,12 @@ class TestFullRoundTripEquivalence:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_FRONTMATTER_VARIATIONS)
 
         # Add an entry via lossless write.
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TCUSTMFM", "Custom FM test")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0005", "Custom FM test")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TCUSTMFM",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0005",
                 title="Custom FM test",
                 horizon="Now",
             ),
@@ -1146,7 +1151,7 @@ class TestFullRoundTripEquivalence:
         assert 'custom_field: "retained-value"' in after
         assert "nested: yes" in after
         assert "count: 42" in after
-        assert "[ticket:01KT50AZRMK5X890TCUSTMFM]" in after
+        assert "[ticket:01ARZ3NDEKTSV4RRFFQ69G0005]" in after
 
     def test_all_headings_preserved_after_mutations(
         self, tmp_path: Path,
@@ -1165,12 +1170,12 @@ class TestFullRoundTripEquivalence:
         ]
 
         # Perform a sequence: add, move, remove.
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TALLHDRS", "All headers test")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0002", "All headers test")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TALLHDRS",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0002",
                 title="All headers test",
                 horizon="Next",
             ),
@@ -1179,13 +1184,13 @@ class TestFullRoundTripEquivalence:
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TALLHDRS",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0002",
                 horizon="Later",
             ),
         )
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TALLHDRS"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0002"),
         )
 
         after = _read_strategy(repo_root)
@@ -1197,12 +1202,12 @@ class TestFullRoundTripEquivalence:
         mutations."""
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
 
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TPRSABLE", "Parsable after add")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0008", "Parsable after add")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TPRSABLE",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0008",
                 title="Parsable after add",
                 horizon="Now",
             ),
@@ -1214,7 +1219,7 @@ class TestFullRoundTripEquivalence:
         assert len(doc.stable_direction) == 5
         # The new entry is present.
         now_refs = [e.identity.ref for e in doc.roadmap.get("Now", [])]
-        assert "01KT50AZRMK5X890TPRSABLE" in now_refs
+        assert "01ARZ3NDEKTSV4RRFFQ69G0008" in now_refs
 
     def test_blank_lines_in_roadmap_section_preserved_by_rewrite_engine(
         self, tmp_path: Path,
@@ -1263,7 +1268,7 @@ class TestConflictDetectionIntegrity:
         # Now the write should raise StrategyConflictError.
         mutated = add_roadmap_entry(
             doc,
-            make_roadmap_entry("ticket", "01KT50AZRMK5X890TCONFLCT", "Conflict test"),
+            make_roadmap_entry("ticket", "01ARZ3NDEKTSV4RRFFQ69G0004", "Conflict test"),
             "Next",
         )
         with pytest.raises(StrategyConflictError):
@@ -1273,7 +1278,7 @@ class TestConflictDetectionIntegrity:
         # not a corrupted mix.
         on_disk = _read_strategy(repo_root)
         assert "CHANGED EXTERNALLY" in on_disk
-        assert "01KT50AZRMK5X890TCONFLCT" not in on_disk
+        assert "01ARZ3NDEKTSV4RRFFQ69G0004" not in on_disk
 
     def test_no_conflict_when_file_unchanged(self, tmp_path: Path) -> None:
         """When the file hasn't been modified, write succeeds without error."""
@@ -1282,14 +1287,14 @@ class TestConflictDetectionIntegrity:
         doc, file_state = load_strategy_for_write(repo_root)
         mutated = add_roadmap_entry(
             doc,
-            make_roadmap_entry("ticket", "01KT50AZRMK5X890TNOCCONF", "No conflict"),
+            make_roadmap_entry("ticket", "01ARZ3NDEKTSV4RRFFQ69G0007", "No conflict"),
             "Next",
         )
         # Should not raise.
         write_strategy(mutated, file_state, repo_root)
 
         after = _read_strategy(repo_root)
-        assert "01KT50AZRMK5X890TNOCCONF" in after
+        assert "01ARZ3NDEKTSV4RRFFQ69G0007" in after
 
 
 # ---------------------------------------------------------------------------
@@ -1325,19 +1330,19 @@ class TestIdempotentWriteProducesIdenticalFile:
         repo_root = _setup_repo(tmp_path, _STRATEGY_WITH_COMMENTS_AND_PROSE)
         original = _read_strategy(repo_root)
 
-        _setup_ticket_file(repo_root, "01KT50AZRMK5X890TADDRMV", "Add then remove")
+        _setup_ticket_file(repo_root, "01ARZ3NDEKTSV4RRFFQ69G0001", "Add then remove")
         handle_strategy_add(
             repo_root,
             _ns(
                 type="ticket",
-                ref="01KT50AZRMK5X890TADDRMV",
+                ref="01ARZ3NDEKTSV4RRFFQ69G0001",
                 title="Add then remove",
                 horizon="Next",
             ),
         )
         handle_strategy_remove(
             repo_root,
-            _ns(type="ticket", ref="01KT50AZRMK5X890TADDRMV"),
+            _ns(type="ticket", ref="01ARZ3NDEKTSV4RRFFQ69G0001"),
         )
 
         after = _read_strategy(repo_root)

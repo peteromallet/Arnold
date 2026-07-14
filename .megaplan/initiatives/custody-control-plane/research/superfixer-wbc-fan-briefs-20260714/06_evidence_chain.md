@@ -1,0 +1,3 @@
+Follow the complete megaplan-cloud skill at `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md`; read-only only.
+
+Resolve `workflow-boundary-contracts-corrective-20260710` from canonical status, then audit all `.megaplan/plans/.chains/*.json` without confusing historical and current chains. Establish current milestone index, completed milestones, last_state evolution, current plan, timestamps, and whether chain JSON truth supports recovery. Identify any chain-state contradictions used incorrectly by repair/auditor artifacts. Return under 350 words with exact paths/timestamps.

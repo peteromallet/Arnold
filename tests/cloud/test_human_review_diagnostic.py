@@ -249,4 +249,8 @@ def test_launch_failure_is_persisted_and_fallback_delivery_is_deduplicated(
     )
     assert after_delivery.ok is False
     assert after_delivery.fallback_delivery_required is False
-    assert calls == 1
+    assert after_delivery.idempotent_replay is False
+    assert calls == 2
+    retried_state = json.loads(Path(first.state_path).read_text(encoding="utf-8"))
+    assert retried_state["launch_attempt_count"] == 2
+    assert retried_state["fallback_delivery"]["status"] == "delivered"

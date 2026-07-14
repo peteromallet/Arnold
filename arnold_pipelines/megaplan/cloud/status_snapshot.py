@@ -975,6 +975,11 @@ def _build_session_entry(
     # that sits off the progression ladder and would under-report the plan's
     # position. Fall back to last_state when state.json is unavailable.
     plan_state_doc = _load_current_plan_state(workspace, str(current_plan or ""))
+    completed_at = _terminal_completion_at(
+        workspace,
+        str(current_plan or ""),
+        chain_complete=chain_complete,
+    )
     plan_current_state = (
         str(plan_state_doc.get("current_state") or "").strip().lower()
         if isinstance(plan_state_doc, Mapping)
@@ -1124,6 +1129,10 @@ def _build_session_entry(
         "watchdog": watchdog_status,
         "repairing": status == "repairing",
         "current_plan": current_plan,
+        # A terminal completion receipt is deliberately distinct from
+        # ``latest_activity``.  The latter includes watchdog/health rewrites,
+        # which must never make an old completed chain look recently complete.
+        "completed_at": completed_at,
         "completed_count": completed_count,
         "milestone_count": milestone_count,
         "chain_complete": chain_complete,
@@ -2101,6 +2110,48 @@ def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[
     path = workspace / ".megaplan" / "plans" / current_plan / "state.json"
     loaded = _load_json(path)
     return dict(loaded) if isinstance(loaded, Mapping) and loaded else None
+
+
+_TERMINAL_SUCCESS_STATES = frozenset({"done", "complete", "completed", "finished", "success", "succeeded"})
+
+
+def _terminal_completion_at(
+    workspace: Path | None,
+    current_plan: str,
+    *,
+    chain_complete: bool,
+) -> str | None:
+    """Return the durable terminal-success receipt time for a completed chain.
+
+    A chain-health sidecar is refreshed by every watchdog sweep, so its
+    ``updated_at`` is activity-observation time, not completion time.  The
+    plan event journal records the terminal ``plan_finished`` transition with
+    its own UTC timestamp and is the only source accepted here.
+    """
+
+    if not chain_complete or workspace is None or not current_plan:
+        return None
+    events_path = workspace / ".megaplan" / "plans" / current_plan / "events.ndjson"
+    try:
+        lines = events_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    terminal_at: datetime | None = None
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, Mapping) or event.get("kind") != "plan_finished":
+            continue
+        payload = event.get("payload")
+        state = str(payload.get("state") or "").casefold() if isinstance(payload, Mapping) else ""
+        if state not in _TERMINAL_SUCCESS_STATES:
+            continue
+        observed_at = _parse_iso(event.get("ts_utc"))
+        if observed_at is not None and (terminal_at is None or observed_at > terminal_at):
+            terminal_at = observed_at
+    return _isoformat(terminal_at) if terminal_at is not None else None
 
 
 def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> bool:
