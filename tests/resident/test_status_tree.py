@@ -78,6 +78,46 @@ def test_hot_context_root_excludes_raw_repair_evidence() -> None:
     assert root["sessions"][0]["children"][-1].endswith("/events")
 
 
+def test_root_exposes_recency_sorted_canonical_completed_sessions_beyond_legacy_preview() -> None:
+    snapshot = {
+        "sessions": [
+            {
+                "session": f"older-{index}",
+                "display_name": f"Older {index}",
+                "status": "complete",
+                "latest_activity": f"2026-07-01T00:0{index}:00Z",
+            }
+            for index in range(3)
+        ]
+        + [
+            {
+                "session": "repository-strategy-roadmap",
+                "display_name": "Repository strategy roadmap",
+                "status": "complete",
+                "latest_activity": "2026-07-14T17:18:48Z",
+                "completed_count": 5,
+                "milestone_count": 5,
+                "progress": {"completed_count": 5, "milestone_count": 5},
+            },
+            {"session": "paused", "status": "paused"},
+            {"session": "failed", "status": "failed"},
+        ],
+    }
+
+    root = compact_cloud_status_snapshot(snapshot)
+
+    assert root["completed_session_count"] == 4
+    assert [row["session"] for row in root["recently_completed"]] == [
+        "repository-strategy-roadmap",
+        "older-2",
+        "older-1",
+        "older-0",
+    ]
+    strategy = root["recently_completed"][0]
+    assert strategy["progress"]["completed_count"] == 5
+    assert strategy["progress"]["milestone_count"] == 5
+
+
 def test_status_tree_navigates_to_bounded_repair_evidence() -> None:
     snapshot = _large_snapshot()
     run = "session/workflow-boundary-contracts"
