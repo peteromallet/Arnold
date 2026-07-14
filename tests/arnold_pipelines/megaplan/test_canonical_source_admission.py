@@ -10,7 +10,12 @@ from arnold_pipelines.megaplan.chain.source_admission import (
     admit_milestone_source,
     require_milestone_source_update,
 )
-from arnold_pipelines.megaplan.chain.spec import ChainState, load_spec, save_chain_state
+from arnold_pipelines.megaplan.chain.spec import (
+    ChainState,
+    load_chain_state,
+    load_spec,
+    save_chain_state,
+)
 from arnold_pipelines.megaplan.planning.source_binding import (
     SOURCE_EVIDENCE_FILE,
     assert_canonical_source_current,
@@ -151,3 +156,4 @@ def test_active_chain_future_stale_milestone_cannot_enter_and_then_reconciles(tm
     assert requirement["status"] == "reconciled"
     assert requirement["admission_decision"] == "admitted"
     assert event["current_identity"]["semantic_sha256"] == requirement["expected"]["semantic_sha256"]
+    assert load_chain_state(spec_path).metadata["required_canonical_source_updates"]["c3"]["status"] == "reconciled"

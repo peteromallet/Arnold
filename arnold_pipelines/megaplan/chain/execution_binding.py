@@ -424,6 +424,38 @@ def _future_source_reconciliation_is_safe(
     return True, changed_kinds
 
 
+def _reconciled_requirements_cover_revision_errors(
+    state: Any,
+    active: Mapping[str, Any],
+) -> bool:
+    errors = list(active.get("errors") or [])
+    if not errors:
+        return True
+    requirements = (getattr(state, "metadata", {}) or {}).get(
+        "required_canonical_source_updates"
+    )
+    if not isinstance(requirements, Mapping):
+        return False
+    active_assets = {
+        str(item.get("kind")): item
+        for item in active.get("assets") or []
+        if isinstance(item, Mapping)
+    }
+    covered: set[str] = set()
+    for requirement in requirements.values():
+        if not isinstance(requirement, Mapping) or requirement.get("status") != "reconciled":
+            continue
+        index = requirement.get("milestone_index")
+        expected = requirement.get("expected")
+        if not isinstance(index, int) or not isinstance(expected, Mapping):
+            continue
+        kind = f"milestone_brief:{index}"
+        active_asset = active_assets.get(kind) or {}
+        if active_asset.get("semantic_sha256") == expected.get("semantic_sha256"):
+            covered.add(f"asset_not_at_intended_revision:{kind}")
+    return bool(errors) and set(errors).issubset(covered)
+
+
 def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
     policy = binding_policy(spec_path)
     binding = getattr(state, "metadata", {}).get("execution_binding")
@@ -457,10 +489,14 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
             active=active,
             drift_fields=drift_fields,
         )
+        active_ready = bool(active.get("ready")) or _reconciled_requirements_cover_revision_errors(
+            state,
+            active,
+        )
         if safe_future:
             status = "reconcile_required"
         else:
-            status = "drift" if drift_fields or not active.get("ready") else "match"
+            status = "drift" if drift_fields or not active_ready else "match"
     return {
         "schema": BINDING_SCHEMA,
         "required": policy["required"],
