@@ -49,6 +49,33 @@ milestones:
     Manual review/merge must verify three accepted receipts, zero divergences, a regenerated
     manifest, the canonical `.megaplan/initiatives/runauthority-epic/.retired` marker,
     and its retirement attestation before the serial chain can admit M6.
+- label: m5a-atomic-fail-closed-milestone-completion
+  idea: .megaplan/initiatives/custody-control-plane/briefs/m5a-atomic-fail-closed-milestone-completion.md
+  branch: megaplan/custody-control-plane/m5a-atomic-fail-closed-milestone-completion
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  with_prep: true
+  prep_clarify: false
+  prep_direction: Start only from M5's actually accepted, manually reviewed and
+    merged evidence at one exact landed/runtime identity. Implement a single atomic,
+    fail-closed milestone-completion transaction that cannot persist executed,
+    complete, merge-ready, or successor-ready state until the full acceptance suite,
+    accepted content-addressed receipts, zero-divergence verification, valid retirement
+    ordering, and exact-tested-commit attestation all agree. Every false or unknown
+    predicate must emit a typed repair target; after any repair, invalidate the candidate
+    snapshot and rerun the complete end-to-end boundary. Reproduce the six-review
+    M5 failure pattern and gate every normal, resume, repair, watchdog, cloud, resident,
+    and reconciliation path so M6 cannot start before M5A is accepted. Preserve all
+    review, CI, merge, authorization, execution-binding, promotion, and safety gates.
+  depends_on:
+  - m5-run-authority-receipt-reconciliation-and-retirement
+  notes: Difficulty 5/5; partnered-5/thorough/high @codex +prep. This is the
+    authoritative completion-transition boundary. Planning insertion is not acceptance;
+    M5A requires full implementation, independent review, CI, authorized merge, exact
+    landed/runtime revalidation, and one accepted atomic completion transaction before
+    any former successor may initialize.
 - label: m6-authority-contract-and-residual-inventory
   idea: .megaplan/initiatives/custody-control-plane/briefs/m6-authority-contract-and-residual-inventory.md
   branch: megaplan/custody-control-plane/m6-authority-contract-and-residual-inventory
@@ -73,7 +100,7 @@ milestones:
     work. Do not implement a second authority kernel, attempt/effect ledger, boundary
     contract, or status authority.
   depends_on:
-  - m5-run-authority-receipt-reconciliation-and-retirement
+  - m5a-atomic-fail-closed-milestone-completion
   notes: Difficulty 5/5; partnered-5/full/high @codex +prep. Read-only contract and
     inventory freeze. M6 must fail closed if the audited WBC merge is not an ancestor
     of the landed target/runtime vector, if M5 evidence is stale, if the old four-milestone
