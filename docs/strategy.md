@@ -18,6 +18,8 @@ megaplan initiative new my-repository-strategy --strategy
 
 Initialization creates missing canonical initiative subdirectories and a minimal `README.md`, but never overwrites an existing strategy unless `--force` is explicitly supplied. Existing repositories with `.megaplan/STRATEGY.md` remain readable and writable for backward compatibility; all newly initialized documents use the initiative layout.
 
+During migration, keep exactly one authoritative strategy document. If a legacy `.megaplan/STRATEGY.md` and an initiative-root `STRATEGY.md` coexist, or if multiple initiatives contain one, strategy commands fail closed and report every conflicting path. Reconcile the documents deliberately; `strategy init --initiative <slug>` may be used only to select the initialization target and does not make duplicate authorities safe for normal reads or writes.
+
 ## Authority model
 
 **Typed Markdown is authoritative.** The strategy Markdown file is the one source of truth. The generated JSON at `.megaplan/strategy.projection.json` is a deterministic, disposable projection. It can be deleted and rebuilt from the Markdown at any time. Consumers that treat the projection as authoritative are violating the contract.
