@@ -4,7 +4,8 @@ schema_version: megaplan-strategy-v1
 
 # Repository Strategy
 
-> Copy this file to `.megaplan/STRATEGY.md` and fill in the sections below.
+> This file belongs at `.megaplan/initiatives/<slug>/STRATEGY.md` and is
+> created with `megaplan strategy init` or `megaplan initiative new <slug> --strategy`.
 > The frontmatter `schema_version` MUST remain `megaplan-strategy-v1`.
 > Roadmap entries use the narrow bullet grammar described in CONTRACT.md.
 >

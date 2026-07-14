@@ -43,6 +43,7 @@ def _initiative_args(**overrides: object) -> argparse.Namespace:
         "description_file": None,
         "north_star": None,
         "north_star_file": None,
+        "strategy": False,
         "doc": [],
         "chain": False,
         "milestone": ["m1=First Sprint"],
@@ -95,6 +96,28 @@ def test_initiative_new_scaffolds_cloud_ready_canonical_layout(tmp_path: Path) -
     assert cloud["ssh"]["host"] == "TODO_SSH_HOST"
     assert cloud["chain_session"] == "cloud-ready-project"
     assert result["next"]["launch"].endswith(f"cloud chain {chain_path} --cloud-yaml {cloud_path}")
+
+
+def test_initiative_new_can_scaffold_root_strategy_without_briefs_fallback(
+    tmp_path: Path,
+) -> None:
+    result = handle_initiative(
+        tmp_path,
+        _initiative_args(
+            slug="Product Direction",
+            strategy=True,
+            milestone=[],
+            chain=False,
+            cloud=False,
+        ),
+    )
+
+    initiative = tmp_path / ".megaplan" / "initiatives" / "product-direction"
+    strategy = initiative / "STRATEGY.md"
+    assert result["strategy"] == str(strategy)
+    assert strategy.is_file()
+    assert "schema_version: megaplan-strategy-v1" in strategy.read_text(encoding="utf-8")
+    assert not (tmp_path / ".megaplan" / "briefs").exists()
 
 
 def test_cloud_preflight_rejects_template_placeholders_without_override(

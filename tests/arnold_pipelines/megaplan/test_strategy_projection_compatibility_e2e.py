@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from arnold_pipelines.megaplan.layout import strategy_file_path
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -103,12 +105,14 @@ def _read_projection(repo: Path) -> dict:
 
 def _read_strategy_md(repo: Path) -> str:
     """Read the authoritative STRATEGY.md content."""
-    return (repo / ".megaplan" / "STRATEGY.md").read_text(encoding="utf-8")
+    return strategy_file_path(repo).read_text(encoding="utf-8")
 
 
 def _write_strategy_md(repo: Path, content: str) -> None:
     """Write (overwrite) the authoritative STRATEGY.md."""
-    (repo / ".megaplan" / "STRATEGY.md").write_text(content, encoding="utf-8")
+    path = strategy_file_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def _projection_exists(repo: Path) -> bool:
