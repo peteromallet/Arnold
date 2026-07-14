@@ -32,6 +32,7 @@ from arnold_pipelines.megaplan.tickets.relationships import (
     parse_frontmatter_links,
     serialize_links_to_frontmatter,
 )
+from arnold_pipelines.megaplan.tickets.promotion import promote_ticket
 
 idem = deterministic_idempotency_key
 
@@ -474,6 +475,48 @@ def test_legacy_frontmatter_round_trips_with_kind_added(
     for entry in epics:
         assert "kind" in entry, f"Missing kind in {entry}"
         assert "provenance" in entry, f"Missing provenance in {entry}"
+
+
+def test_promote_ticket_end_to_end_is_idempotent(
+    file_store: FileStore,
+) -> None:
+    """Promotion creates a distinct epic, records provenance, and replays cleanly."""
+    from arnold_pipelines.megaplan.tickets.core import new
+    from arnold_pipelines.megaplan.tickets.files import read_ticket_file
+
+    repo_root = Path(file_store.repo_root)
+    ticket_id = new(
+        "Promote Me",
+        body="Ticket body",
+        store=file_store,
+        cwd=repo_root,
+    )
+
+    first = promote_ticket(ticket_id, store=file_store, cwd=repo_root)
+    second = promote_ticket(ticket_id, store=file_store, cwd=repo_root)
+
+    assert ticket_id != first.epic.id
+    assert first.epic.id == "promote-me"
+    assert second.epic.id == first.epic.id
+    assert first.initiative_slug == "promote-me"
+    assert second.initiative_created is False
+    assert second.epic_created is False
+
+    links = file_store.list_ticket_epic_links(ticket_id=ticket_id, epic_id=first.epic.id)
+    assert len(links) == 1
+    assert links[0].kind == KIND_PROMOTED_TO_EPIC
+    assert links[0].provenance == f"promotion:{ticket_id}"
+    assert links[0].resolves_on_complete is True
+
+    ticket_path = next(
+        path for path, record in file_store._ticket_file_records() if record.get("id") == ticket_id
+    )
+    record = read_ticket_file(ticket_path)
+    assert record is not None
+    parsed_links = parse_frontmatter_links(record, ticket_id=ticket_id)
+    assert len(parsed_links) == 1
+    assert parsed_links[0].epic_id == first.epic.id
+    assert parsed_links[0].kind == KIND_PROMOTED_TO_EPIC
 
 
 # ---------------------------------------------------------------------------
