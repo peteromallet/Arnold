@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -51,6 +52,37 @@ python3 -c 'import sys; print(sys.executable)'
     result = subprocess.run(["bash", "-c", script], env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert Path(result.stdout.strip()).resolve() == Path(sys.executable).resolve()
+
+
+def test_runtime_library_forces_safe_path_against_shadow_cwd(tmp_path: Path) -> None:
+    shadow_pkg = tmp_path / "arnold_pipelines"
+    shadow_pkg.mkdir()
+    (shadow_pkg / "__init__.py").write_text("print('SHADOWED_CWD_IMPORT')\n", encoding="utf-8")
+    script = f"""
+source {str(WRAPPERS / 'arnold-supervisor-runtime-lib')!r}
+arnold_supervisor_runtime_init test-component {str(REPO_ROOT)!r}
+PYTHONPATH="{str(REPO_ROOT)}:${{PYTHONPATH:-}}" python3 -c 'import arnold_pipelines,sys; print(arnold_pipelines.__file__); print(sys.path[0])'
+"""
+    env = os.environ.copy()
+    env.update(
+        {
+            "MEGAPLAN_SUPERVISOR_PYTHON": sys.executable,
+            "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED": "1",
+            "MEGAPLAN_SUPERVISOR_STATUS_DIR": str(tmp_path / "status"),
+        }
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "SHADOWED_CWD_IMPORT" not in result.stdout
+    stdout_lines = result.stdout.strip().splitlines()
+    assert stdout_lines[0].startswith(str(REPO_ROOT / "arnold_pipelines"))
+    assert stdout_lines[1] != ""
 
 
 def test_watchdog_fails_before_heartbeat_when_runtime_is_not_ready(tmp_path: Path) -> None:
@@ -176,6 +208,29 @@ def test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work() 
         scan = text.index('"$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P "$SUPERVISOR_GAP_SCAN"')
         readiness = text.index(f'arnold_supervisor_runtime_init {component} ')
         assert scan < readiness
+
+
+def test_supervisor_wrappers_do_not_launch_python_before_runtime_init() -> None:
+    expected = {
+        "arnold-watchdog": "watchdog",
+        "arnold-repair-loop": "repair-loop",
+        "arnold-meta-repair-loop": "meta-repair-loop",
+        "arnold-progress-auditor": "progress-auditor",
+    }
+    python_re = re.compile(r"(?m)^[^#\n]*\bpython3\b")
+    for wrapper, component in expected.items():
+        text = _text(wrapper)
+        readiness = text.index(f"arnold_supervisor_runtime_init {component} ")
+        first_python = python_re.search(text)
+        assert first_python is not None
+        assert first_python.start() > readiness
+
+
+def test_timeout_bypasses_use_absolute_safe_supervisor_interpreter() -> None:
+    repair = _text("arnold-repair-loop")
+    meta = _text("arnold-meta-repair-loop")
+    assert 'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent' in repair
+    assert 'PYTHONSAFEPATH=1 timeout "$SUBAGENT_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c ' in meta
 
 
 def test_runtime_prepare_uses_staging_and_atomic_symlink_swap() -> None:

@@ -5861,7 +5861,7 @@ run_kimi_launch_turn() {
   run_id_file="$RUN_DIR/iter${iteration}-kimi-managed-run-id"
   worker_cmd=(
     env PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"
-    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent
+    PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent
     --query_file="$prompt_path"
     --model="$KIMI_MODEL"
     --api_key="${KIMI_API_KEY:-}"
