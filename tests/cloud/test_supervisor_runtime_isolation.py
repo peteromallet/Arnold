@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -229,6 +230,71 @@ def test_dependency_independent_gap_scan_flags_stopped_marker_without_custody(
     (chain_dir / "chain.json").write_text("{}\n", encoding="utf-8")
     subprocess.run(command, check=True, text=True, capture_output=True)
     assert json.loads(output.read_text())["status"] == "healthy"
+
+
+def test_dependency_independent_gap_scan_flags_execution_binding_drift(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    marker_dir.mkdir()
+    chain_dir.mkdir(parents=True)
+    spec = workspace / "chain.yaml"
+    old_spec = b"milestones:\n  - label: m5\n  - label: m6\n"
+    spec.write_bytes(
+        b"milestones:\n  - label: m5\n  - label: m5a\n  - label: m6\n"
+    )
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(workspace),
+                "remote_spec": str(spec),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 0,
+                "current_plan_name": "m5-plan",
+                "metadata": {
+                    "execution_binding": {
+                        "launched_identity": {
+                            "bundle_sha256": "a" * 64,
+                            "chain_spec_sha256": hashlib.sha256(old_spec).hexdigest(),
+                            "milestone_sequence": [
+                                {"index": 0, "label": "m5"},
+                                {"index": 1, "label": "m6"},
+                            ],
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "gaps.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(WRAPPERS / "arnold-supervisor-gap-scan"),
+            "--marker-dir",
+            str(marker_dir),
+            "--output",
+            str(output),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text())
+    assert payload["status"] == "unhealthy"
+    assert payload["findings"][0]["reason"] == "chain_execution_binding_drift"
+    assert payload["findings"][0]["expected_milestone_count"] == 2
 
 
 def test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work() -> None:

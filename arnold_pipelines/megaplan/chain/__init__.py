@@ -7511,6 +7511,20 @@ def build_chain_parser(subparsers: Any) -> None:
     reconcile_source_parser.add_argument("--promotion-receipt")
     reconcile_source_parser.add_argument("--require-promotion-receipt", action="store_true")
 
+    rebind_parser = chain_sub.add_parser(
+        "rebind",
+        help="Guardedly adopt a content-addressed successor chain without moving its cursor",
+    )
+    rebind_parser.add_argument("--spec", required=True)
+    rebind_parser.add_argument("--project-dir", required=False)
+    rebind_parser.add_argument("--from-bundle-sha256", required=True)
+    rebind_parser.add_argument("--to-bundle-sha256", required=True)
+    rebind_parser.add_argument("--expected-current-milestone", required=True)
+    rebind_parser.add_argument("--expected-current-plan", required=True)
+    rebind_parser.add_argument("--expected-next-milestone", required=True)
+    rebind_parser.add_argument("--reason", required=True)
+    rebind_parser.add_argument("--actor", default="operator")
+
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
     )
@@ -7739,6 +7753,52 @@ def run_chain_cli(
                     "spec": str(spec_path),
                     "action": "reconcile-source",
                     "requirement": requirement,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "rebind":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                rebind_execution_identity,
+            )
+
+            result = rebind_execution_identity(
+                spec_path,
+                chain_state,
+                expected_previous_bundle_sha256=args.from_bundle_sha256,
+                expected_active_bundle_sha256=args.to_bundle_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_next_milestone=args.expected_next_milestone,
+                reason=args.reason,
+                actor=args.actor,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_execution_binding_drift",
+                        f"chain rebind refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "rebind",
+                    **result,
                 },
                 indent=2,
             )
