@@ -1,0 +1,54 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 7,
+  "evidence_refs": [
+    {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "managed_agent_execution"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-14T19:36:15.081319+00:00",
+  "incident_id": "inc-custody-control-plane-20260714",
+  "kind": "incident_summary",
+  "latest_actor": "immediate_repair",
+  "next_expected_event": "repair_attempt.verification",
+  "outcome": "attempted",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-51b6859a7c76",
+    "problem-67a765759422",
+    "problem-690ba3ad3bda",
+    "problem-837fddf200f3",
+    "problem-a5fc272da737",
+    "problem-bca9d501eede"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:b9e00b9015dccf525eeed0f0dc694918cee5c4fa1fe7dac5261a891228040212",
+    "last_seq": 524,
+    "projection": "incidents"
+  },
+  "state": "repair_attempt",
+  "summary_text": "inc-custody-control-plane-20260714: repair-data outcome=repairing kind=chain workspace=/workspace/custody-control-plane-20260714/Arnold"
+}
