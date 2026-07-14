@@ -568,6 +568,8 @@ def test_real_dispatch_seams_use_shared_supervisor() -> None:
     assert repair.count("--run-kind automatic_repair_retry") >= 2
     assert "--run-kind automatic_meta_repair_worker" in meta
     assert "ManagedCommandSpec(" in meta and "meta_repair_retrigger" in meta
+    assert 'origin_kind="meta_repair_retrigger"' in meta
+    assert 'component="arnold-meta-repair-loop"' in meta
     assert "subprocess.Popen(\n            manager_argv" in trigger
     assert "subprocess.Popen(cmd" not in trigger
     assert "--run-kind automatic_progress_audit_agent" in auditor

@@ -997,6 +997,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
 from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
 from arnold_pipelines.megaplan.managed_agent import (
     ManagedCommandSpec,
+    machine_origin_provenance,
     run_managed_command,
     stable_managed_run_id,
 )
@@ -1138,6 +1139,12 @@ spec = ManagedCommandSpec(
     route_class="meta_repair_retrigger",
     backend="repair-loop",
     command_display=f"meta-repair ordinary repair retrigger {session}",
+    launch_provenance=machine_origin_provenance(
+        origin_kind="meta_repair_retrigger",
+        origin_id=parent_run_id or install_sync_event_id or session,
+        component="arnold-meta-repair-loop",
+        trigger_id=install_sync_event_id or request_id or session,
+    ),
     links={
         "repair_request_id": request_id,
         "blocker_id": blocker_id,
