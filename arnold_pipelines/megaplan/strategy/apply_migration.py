@@ -245,9 +245,10 @@ def apply_strategy_migration(
     backup_root.mkdir(parents=True, exist_ok=True)
 
     manifest_entries: list[dict[str, Any]] = []
-    for kind, abspath, _new_text in targets:
+    for kind, abspath, new_text in targets:
         original_bytes = abspath.read_bytes()
         digest = hashlib.sha256(original_bytes).hexdigest()
+        new_digest = hashlib.sha256(new_text.encode("utf-8")).hexdigest()
         rel = abspath.relative_to(repo_root)
         backup_path = backup_root / rel
         backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -258,6 +259,10 @@ def apply_strategy_migration(
             "path": str(rel),
             "backup_path": str(backup_path.relative_to(repo_root)),
             "sha256": digest,
+            "new_sha256": new_digest,
+            # Current supported rewrites preserve every artifact identity;
+            # no explicit old-to-new identity mapping is applied.
+            "identity_mappings": [],
             "bytes": len(original_bytes),
         })
 

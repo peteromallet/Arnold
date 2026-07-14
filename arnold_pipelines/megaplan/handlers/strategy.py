@@ -64,7 +64,10 @@ from arnold_pipelines.megaplan.strategy.migration import (
     MigrationReport,
     inspect_strategy_migration,
 )
-from arnold_pipelines.megaplan.strategy.apply_migration import apply_strategy_migration
+from arnold_pipelines.megaplan.strategy.apply_migration import (
+    apply_strategy_migration,
+    compute_apply_plan,
+)
 from arnold_pipelines.megaplan.strategy.versions import (
     CURRENT_SCHEMA_VERSION,
     inspect_strategy_file,
@@ -1076,10 +1079,15 @@ def handle_strategy_migrate(
 
     report = inspect_strategy_migration(repo_root)
 
-    # Compute backup paths that would be used for each action.
-    backup_paths = _compute_backup_paths(report, repo_root)
+    # Preview the exact apply layout with an explicit timestamp placeholder.
+    backup_paths, manifest_path = _compute_backup_paths(repo_root)
 
-    return _migration_report_to_dict(report, backup_paths=backup_paths, action="migrate")
+    return _migration_report_to_dict(
+        report,
+        backup_paths=backup_paths,
+        manifest_path=manifest_path,
+        action="migrate",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1090,6 +1098,7 @@ def handle_strategy_migrate(
 def _migration_report_to_dict(
     report: MigrationReport,
     backup_paths: list[str] | None = None,
+    manifest_path: str | None = None,
     action: str = "doctor",
 ) -> dict[str, Any]:
     """Serialize a :class:`MigrationReport` to a stable JSON-serializable dict.
@@ -1166,40 +1175,30 @@ def _migration_report_to_dict(
 
     if backup_paths is not None:
         result["backup_paths"] = backup_paths
+    if manifest_path is not None:
+        result["manifest_path"] = manifest_path
 
     return result
 
 
 def _compute_backup_paths(
-    report: MigrationReport,
     repo_root: Path,
-) -> list[str]:
-    """Compute backup file paths that would be created for each proposed action.
+) -> tuple[list[str], str | None]:
+    """Preview the backup and manifest paths used by migration apply.
 
-    For each file-targeted action, we derive a ``.bak`` sibling path.
-    For repo-level actions (no target), no backup path is generated.
+    The real timestamp is chosen only when ``--apply`` begins.  Dry-run uses
+    the literal ``<timestamp>`` segment while preserving every other path
+    component from the apply plan.
     """
-    backup_paths: list[str] = []
-    seen: set[str] = set()
+    plan = compute_apply_plan(repo_root)
+    if plan.blocked or not plan.rewrites:
+        return [], None
 
-    for action in report.proposed_actions:
-        if action.target is None:
-            continue
-        target_path = Path(action.target)
-        bak = str(target_path.with_suffix(target_path.suffix + ".bak"))
-        if bak not in seen:
-            seen.add(bak)
-            backup_paths.append(bak)
-
-    # Always include strategy backup if strategy exists.
-    strategy_path = Path(report.strategy_file_path)
-    if strategy_path.is_file():
-        strategy_bak = str(strategy_path.with_suffix(strategy_path.suffix + ".bak"))
-        if strategy_bak not in seen:
-            seen.add(strategy_bak)
-            backup_paths.append(strategy_bak)
-
-    return backup_paths
+    preview_root = (
+        Path(".megaplan") / "backups" / "strategy-migration" / "<timestamp>"
+    )
+    backup_paths = [str(preview_root / rewrite.path) for rewrite in plan.rewrites]
+    return backup_paths, str(preview_root / "manifest.json")
 
 
 # ---------------------------------------------------------------------------

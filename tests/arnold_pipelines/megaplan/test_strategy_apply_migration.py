@@ -319,6 +319,8 @@ class TestBackupsAndManifest:
         manifest = json.loads((backup_dir / "manifest.json").read_text())
         entry = [e for e in manifest["rewrites"] if e["path"] == str(rel)][0]
         assert entry["sha256"] == hashlib.sha256(before).hexdigest()
+        assert entry["new_sha256"] == hashlib.sha256(spath.read_bytes()).hexdigest()
+        assert entry["identity_mappings"] == []
         assert entry["bytes"] == len(before)
 
     def test_backup_mirrors_repo_relative_path(self, tmp_path: Path):
@@ -434,3 +436,18 @@ class TestCliApplyFlag:
         result = handle_strategy_migrate(tmp_path, args)
         assert result["applied"] is True
         assert result["success"] is True
+
+    def test_handler_dry_run_previews_apply_backup_layout(self, tmp_path: Path):
+        import argparse
+
+        from arnold_pipelines.megaplan.handlers.strategy import handle_strategy_migrate
+
+        write_strategy(tmp_path, MISSING_VERSION_STRATEGY)
+        result = handle_strategy_migrate(tmp_path, argparse.Namespace(apply=False))
+
+        assert result["backup_paths"] == [
+            ".megaplan/backups/strategy-migration/<timestamp>/.megaplan/STRATEGY.md"
+        ]
+        assert result["manifest_path"] == (
+            ".megaplan/backups/strategy-migration/<timestamp>/manifest.json"
+        )
