@@ -139,6 +139,26 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
     return discovered
 
 
+def discover_attention_sessions(
+    status_node: Mapping[str, Any] | None,
+) -> list[Mapping[str, Any]]:
+    """Return canonical attention/blocked chains that are not live execution."""
+
+    if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
+        return []
+    sessions = status_node.get("sessions")
+    if not isinstance(sessions, list):
+        return []
+    running = {id(row) for row in discover_running_sessions(status_node)}
+    return [
+        row for row in sessions
+        if isinstance(row, Mapping)
+        and id(row) not in running
+        and str(row.get("status") or "").casefold()
+        in {_ATTENTION_SESSION_STATUS, "blocked"}
+    ]
+
+
 def discover_live_managed_agents(
     managed_agents: Mapping[str, Any] | None,
 ) -> list[Mapping[str, Any]]:
@@ -219,6 +239,14 @@ def render_currently_running(
             lines.append("_No active epics or chains._")
 
     lines.append("")
+    attention = discover_attention_sessions(status_node)
+    lines.append(_attention_heading(len(attention)))
+    if attention:
+        lines.extend(_render_session(row) for row in attention)
+    else:
+        lines.append("_No epics or chains need attention._")
+
+    lines.append("")
     completed = discover_recently_completed_sessions(status_node)
     displayed_completed = completed[:_MAX_RECENT_COMPLETED]
     lines.append(_recently_completed_heading(len(displayed_completed)))
@@ -270,6 +298,10 @@ def _agents_heading(summary: str | None = None) -> str:
 
 def _recently_completed_heading(count: int) -> str:
     return f"## Recently completed · {count} shown —"
+
+
+def _attention_heading(count: int) -> str:
+    return _section_heading("⚠️", "Needs attention", str(count))
 
 
 def _section_heading(icon: str, title: str, summary: str | None = None) -> str:
@@ -630,6 +662,7 @@ __all__ = [
     "CurrentlyRunningReport",
     "collect_currently_running",
     "discover_live_managed_agents",
+    "discover_attention_sessions",
     "discover_recently_completed_sessions",
     "discover_running_sessions",
     "render_currently_running",

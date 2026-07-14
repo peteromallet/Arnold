@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan.resident.auth import AuthorizationDecision
 from arnold_pipelines.megaplan.resident.currently_running import (
     CurrentlyRunningReport,
     collect_currently_running,
+    discover_attention_sessions,
     discover_live_managed_agents,
     discover_running_sessions,
     render_currently_running,
@@ -143,6 +144,34 @@ def test_non_active_attention_stays_on_attention_surface_not_running_list() -> N
     ]
 
 
+def test_installed_custom_control_plane_remains_visible_as_attention() -> None:
+    status_node = {
+        "sessions": [
+            {
+                "session": "custody-control-plane-20260714",
+                "display_name": "Custody control plane",
+                "status": "attention",
+                "process": False,
+                "repairing": False,
+                "operator_next": "workspace missing or unreadable",
+                "progress": {"display_state": "executed", "percent": 0},
+            }
+        ]
+    }
+
+    assert discover_running_sessions(status_node) == []
+    assert [row["session"] for row in discover_attention_sessions(status_node)] == [
+        "custody-control-plane-20260714"
+    ]
+    rendered = render_currently_running(
+        CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
+    )
+
+    assert "## ⚠️ Needs attention · 1 —" in rendered
+    assert "**Custody control plane**" in rendered
+    assert "`executed` · 0% overall · ⚠️ attention · workspace missing or unreadable" in rendered
+
+
 def test_active_execute_phase_is_executing_when_display_state_is_absent() -> None:
     report = CurrentlyRunningReport(
         status_node={
@@ -216,6 +245,9 @@ def test_render_uses_h1_title_and_h2_section_heading_hierarchy() -> None:
         "## ⛓️ Epics & chains · 1 active —\n"
         "• **status-refresh**\n"
         "  `executing` · 25% overall · chain running\n"
+        "\n"
+        "## ⚠️ Needs attention · 0 —\n"
+        "_No epics or chains need attention._\n"
         "\n"
         "## Recently completed · 0 shown —\n"
         "_No recently completed chains._\n"
