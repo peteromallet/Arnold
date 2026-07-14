@@ -15,6 +15,10 @@ from typing import Any
 
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan._core import list_batch_artifacts
+from arnold_pipelines.megaplan.planning.state import (
+    STATE_AWAITING_PR_MERGE,
+    STATE_DONE,
+)
 
 _MISSING_REMOTE_REF_MARKERS = (
     "couldn't find remote ref",
@@ -2429,6 +2433,8 @@ def _reconcile_terminal_pr_state(
 
     live_state = _compat()._pr_state(root, pr_number, writer=writer)
     reconciled = live_state
+    if live_state == "open" and state.last_state == STATE_DONE:
+        state.last_state = STATE_AWAITING_PR_MERGE
     if state.pr_number is not None:
         state.pr_state = reconciled
     if completed_entry is not None:
