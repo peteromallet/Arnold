@@ -120,6 +120,7 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert "observe-meta" in wrapper
     assert 'investigator_mode="brokered_no_tools"' in wrapper
     assert '--toolsets ""' in wrapper
+    assert "ARNOLD_NESTED_MANAGED_AGENT_WORKER=1 exec" in wrapper
     assert "bwrap --ro-bind / / true" in wrapper
     assert 'META_INVESTIGATION_ACTION" == "replan"' in wrapper
     assert "meta_repair_replan_handoff" in wrapper
