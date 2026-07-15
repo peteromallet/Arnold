@@ -58,6 +58,7 @@ LEGACY_MANAGED_RUN_SCHEMA = "arnold-subagent-run-v1"
 DEFAULT_MANAGED_RUN_ROOT = Path(".megaplan/plans/resident-subagents")
 DEFAULT_DELEGATED_TASK_KIND = "routine"
 DEFAULT_DELEGATED_DIFFICULTY = 4
+DEFAULT_DELEGATED_WORK_INTENT = "auto"
 DELEGATED_TASK_KINDS = (
     "routine",
     "lookup",
@@ -72,6 +73,7 @@ DELEGATED_TASK_KINDS = (
     "review",
     "autonomous",
 )
+DELEGATED_WORK_INTENTS = ("auto", "execution", "review", "speculative")
 DelegatedTaskKind = Literal[
     "routine",
     "lookup",
@@ -86,12 +88,16 @@ DelegatedTaskKind = Literal[
     "review",
     "autonomous",
 ]
+DelegatedWorkIntent = Literal["auto", "execution", "review", "speculative"]
 _BOUNDED_TASK_KINDS = frozenset({"lookup", "extraction", "mechanical"})
 _HIGH_RISK_TASK_KINDS = frozenset(
     {"root_cause", "architecture", "migration", "review", "autonomous"}
 )
 _VALID_DELEGATED_EFFORTS = frozenset(
     {"minimal", "low", "medium", "high", "xhigh", "max"}
+)
+_NON_EXECUTION_TASK_KINDS = frozenset(
+    {"lookup", "extraction", "research", "root_cause", "architecture", "review"}
 )
 _ACTIVE_STATUSES = SHARED_ACTIVE_STATUSES
 _TERMINAL_STATUSES = frozenset(
@@ -128,6 +134,12 @@ FINAL_SUMMARY_INSTRUCTION = (
     "caveat. Do not include internal handoff notes, ask a follow-up question, or merely say that "
     "work is complete. Never expose credentials or other secrets. Preserve and follow all "
     "task-specific instructions above."
+)
+DELEGATION_DELIVERY_INSTRUCTION_SCHEMA = (
+    "arnold-resident-delegation-delivery-instruction-v1"
+)
+DELEGATION_DELIVERY_INSTRUCTION_HEADER = (
+    "[Resident delegation execution/delivery instruction — canonical v1]"
 )
 
 # resident/ -> megaplan/ -> skills/subagent-launcher/launch_hermes_agent.py
@@ -260,6 +272,74 @@ def route_delegated_task(
         model="gpt-5.6-terra",
         reasoning_effort="medium",
         route_class="routine",
+    )
+
+
+def resolve_delegated_work_intent(
+    *,
+    task_kind: DelegatedTaskKind,
+    work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
+) -> Literal["execution", "review", "speculative"]:
+    """Resolve one explicit instruction mode for every managed child launch.
+
+    The compatibility default is deliberately conservative for analysis-shaped
+    task kinds. Resident execution normally arrives as routine, mechanical,
+    coding, debugging, migration, or autonomous work. Callers can explicitly
+    downgrade any task to review/speculative, but no caller can omit the final
+    resolved mode from the launch prompt and manifest.
+    """
+
+    if task_kind not in DELEGATED_TASK_KINDS:
+        raise ValueError(
+            f"task_kind must be one of {', '.join(DELEGATED_TASK_KINDS)}; got {task_kind!r}"
+        )
+    if work_intent not in DELEGATED_WORK_INTENTS:
+        raise ValueError(
+            "work_intent must be one of "
+            f"{', '.join(DELEGATED_WORK_INTENTS)}; got {work_intent!r}"
+        )
+    if work_intent != "auto":
+        return work_intent
+    return "review" if task_kind in _NON_EXECUTION_TASK_KINDS else "execution"
+
+
+def _delegation_delivery_instruction(
+    work_intent: Literal["execution", "review", "speculative"],
+) -> str:
+    common = (
+        "This instruction is appended by the resident launch boundary and does not expand the "
+        "user's authority. Preserve the inherited immutable Discord/delegation provenance; never "
+        "replace, reconstruct, or reinterpret its source envelope."
+    )
+    if work_intent == "execution":
+        applicable = (
+            "This is execution work: complete and proportionally verify the explicitly authorized "
+            "implementation in an isolated worktree, then integrate it into the clearly identified "
+            "target branch using the repository's non-destructive workflow. If the request is actually "
+            "tentative/speculative, the target is materially ambiguous, or authorization does not cover "
+            "an effect, keep the work isolated and report the exact gate instead. A local implementation "
+            "does not authorize push, remote merge, deployment, restart, destructive cleanup, credential "
+            "changes, or any other external effect unless the user or established policy explicitly "
+            "authorizes that effect."
+        )
+    elif work_intent == "review":
+        applicable = (
+            "This is review/analysis work: inspect and verify without mutating repositories, branches, "
+            "services, external systems, or user-visible state. Findings may recommend execution, but "
+            "must not implement, integrate, push, deploy, restart, or otherwise perform it unless a newer "
+            "authorized instruction explicitly changes the task."
+        )
+    else:
+        applicable = (
+            "This is speculative/tentative work: do not integrate or perform external effects. Prefer "
+            "read-only analysis; when a prototype is necessary, keep it on an isolated disposable branch, "
+            "label it unintegrated, and report the target or authorization decision needed before delivery."
+        )
+    return (
+        f"{DELEGATION_DELIVERY_INSTRUCTION_HEADER}\n"
+        f"- schema: {DELEGATION_DELIVERY_INSTRUCTION_SCHEMA}\n"
+        f"- resolved work intent: {work_intent}\n"
+        f"{applicable} {common}"
     )
 
 
@@ -455,12 +535,24 @@ def _delivery_prompt(
     task: str,
     timezone_name: str = "UTC",
     *,
+    task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
+    work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
     context_directory: Mapping[str, Any] | None = None,
     query_relationship: Mapping[str, Any] | None = None,
     contributors: list[Mapping[str, Any]] | None = None,
 ) -> str:
+    if DELEGATION_DELIVERY_INSTRUCTION_HEADER in task:
+        raise ValueError(
+            "delegated task contains the reserved resident delivery instruction marker"
+        )
+    resolved_work_intent = resolve_delegated_work_intent(
+        task_kind=task_kind,
+        work_intent=work_intent,
+    )
+    delivery_instruction = _delegation_delivery_instruction(resolved_work_intent)
     prompt = (
         f"{task.rstrip()}\n\n"
+        f"{delivery_instruction}\n\n"
         "[Completion delivery contract]\n"
         "[User-time presentation rule]\n"
         f"Render absolute user-visible times in {timezone_name} with local date/time, timezone "
@@ -1498,6 +1590,11 @@ def follow_up_managed_subagent(
                     tip.get("reasoning_effort") or target.get("reasoning_effort") or "medium"
                 ),
                 task_kind=str(tip.get("task_kind") or target.get("task_kind") or "routine"),
+                work_intent=str(
+                    tip.get("work_intent")
+                    or target.get("work_intent")
+                    or DEFAULT_DELEGATED_WORK_INTENT
+                ),
                 difficulty=int(tip.get("difficulty") or target.get("difficulty") or 4),
                 route_class="resident_followup_continuation",
                 run_root=root,
@@ -1559,6 +1656,7 @@ def launch_codex_subagent_detached(
     model: str = "gpt-5.6-terra",
     reasoning_effort: str = "medium",
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
+    work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
     difficulty: int = DEFAULT_DELEGATED_DIFFICULTY,
     route_class: str = "routine",
     run_root: str | Path = DEFAULT_MANAGED_RUN_ROOT,
@@ -1585,6 +1683,10 @@ def launch_codex_subagent_detached(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
             "store large evidence durably and pass paths/routes"
         )
+    if DELEGATION_DELIVERY_INSTRUCTION_HEADER in task:
+        raise ValueError(
+            "delegated task contains the reserved resident delivery instruction marker"
+        )
     project_root = Path(project_dir or Path.cwd()).resolve()
     provenance = _canonical_launch_provenance(
         launch_origin,
@@ -1593,6 +1695,10 @@ def launch_codex_subagent_detached(
     )
     is_discord = provenance["applicability"] == "applicable"
     agent_description = concise_agent_description(description, task)
+    resolved_work_intent = resolve_delegated_work_intent(
+        task_kind=task_kind,
+        work_intent=work_intent,
+    )
     if aggregation_role not in AGGREGATION_ROLES:
         raise ValueError(
             "aggregation_role must be synthesis_delivery_owner or internal_contributor"
@@ -1645,6 +1751,7 @@ def launch_codex_subagent_detached(
         provenance.get("correlation_id") or "not-applicable",
         launch_selector,
         task_digest,
+        resolved_work_intent,
         agent_description,
         aggregation_role,
         synthesis_group or "",
@@ -1702,6 +1809,8 @@ def launch_codex_subagent_detached(
     prompt = _delivery_prompt(
         task,
         str(provenance.get("timezone_name") or "UTC"),
+        task_kind=task_kind,
+        work_intent=resolved_work_intent,
         context_directory=context_directory,
         query_relationship=query_relationship,
         contributors=contributors,
@@ -1724,6 +1833,14 @@ def launch_codex_subagent_detached(
         "model": model,
         "reasoning_effort": reasoning_effort,
         "task_kind": task_kind,
+        "work_intent": resolved_work_intent,
+        "delegation_delivery_instruction": {
+            "schema_version": DELEGATION_DELIVERY_INSTRUCTION_SCHEMA,
+            "resolved_work_intent": resolved_work_intent,
+            "sha256": hashlib.sha256(
+                _delegation_delivery_instruction(resolved_work_intent).encode("utf-8")
+            ).hexdigest(),
+        },
         "description": agent_description,
         "difficulty": difficulty,
         "route_class": route_class,
@@ -3683,6 +3800,7 @@ async def launch_subagent_task(
     model: str | None = None,
     reasoning_effort: str | None = None,
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
+    work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
     difficulty: int = DEFAULT_DELEGATED_DIFFICULTY,
     request_id: str | None = None,
     launch_origin: Mapping[str, Any] | None = None,
@@ -3721,6 +3839,7 @@ async def launch_subagent_task(
             model=model or route.model,
             reasoning_effort=selected_effort,
             task_kind=route.task_kind,
+            work_intent=work_intent,
             difficulty=route.difficulty,
             route_class=(
                 "explicit_override"
@@ -3767,6 +3886,8 @@ async def launch_subagent_task(
             _delivery_prompt(
                 task,
                 str(compatibility_provenance.get("timezone_name") or "UTC"),
+                task_kind=task_kind,
+                work_intent=work_intent,
                 context_directory=_delegated_context_directory(
                     project_root=Path(project_dir or Path.cwd()).resolve(),
                     provenance=compatibility_provenance,
@@ -3817,6 +3938,11 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
         "--reasoning-effort", choices=sorted(_VALID_DELEGATED_EFFORTS)
     )
     launch.add_argument("--task-kind", choices=DELEGATED_TASK_KINDS, default=DEFAULT_DELEGATED_TASK_KIND)
+    launch.add_argument(
+        "--work-intent",
+        choices=DELEGATED_WORK_INTENTS,
+        default=DEFAULT_DELEGATED_WORK_INTENT,
+    )
     launch.add_argument("--difficulty", type=int, default=DEFAULT_DELEGATED_DIFFICULTY)
     launch.add_argument("--request-id")
     launch.add_argument("--retry-of-run-id")
@@ -3879,6 +4005,7 @@ def _main(argv: list[str] | None = None) -> int:
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
                 task_kind=args.task_kind,
+                work_intent=args.work_intent,
                 difficulty=args.difficulty,
                 request_id=args.request_id,
                 retry_of_run_id=args.retry_of_run_id,

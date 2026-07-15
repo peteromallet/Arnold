@@ -17,6 +17,8 @@ from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
 from arnold_pipelines.megaplan.resident.runtime import InboundEvent, ResidentRuntime
 from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
 from arnold_pipelines.megaplan.resident.subagent import (
+    DELEGATION_DELIVERY_INSTRUCTION_HEADER,
+    DELEGATION_DELIVERY_INSTRUCTION_SCHEMA,
     FINAL_SUMMARY_INSTRUCTION,
     ManagedCompletionTurnResult,
     SubagentResult,
@@ -63,10 +65,11 @@ def test_local_resident_launch_seam_uses_injected_provenance(tmp_path, monkeypat
     monkeypatch.setattr(module, "launch_codex_subagent_detached", fake_launch)
     rc = module._main([
         "launch", "--task-file", str(task_file), "--project-dir", str(tmp_path),
-        "--task-kind", "coding", "--difficulty", "7",
+        "--task-kind", "coding", "--work-intent", "speculative", "--difficulty", "7",
     ])
     assert rc == 0
     assert observed["task"] == "do durable work"
+    assert observed["work_intent"] == "speculative"
     assert observed["difficulty"] == 7
     assert json.loads(capsys.readouterr().out)["run_id"] == "run-1"
 class _Completed:
@@ -124,9 +127,10 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     assert "--max-tokens" in argv and "12345" in argv
     assert "--project-dir" in argv and str(tmp_path) in argv
     assert "--query-file" in argv
-    assert captured["query"].startswith(
-        "hello\nworld\n\n[Completion delivery contract]"
-    )
+    assert captured["query"].startswith("hello\nworld\n\n")
+    assert captured["query"].count(DELEGATION_DELIVERY_INSTRUCTION_HEADER) == 1
+    assert "- resolved work intent: execution" in captured["query"]
+    assert "does not authorize push, remote merge, deployment, restart" in captured["query"]
     assert FINAL_SUMMARY_INSTRUCTION in captured["query"]
     # query file cleaned up after the run
     qf = argv[argv.index("--query-file") + 1]
@@ -251,9 +255,14 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert manifest["full_log_path"] == result.log_path
     assert Path(manifest["result_path"]).is_file()
     prompt = Path(manifest["prompt_path"]).read_text()
-    assert prompt.startswith(
-        "do the work\n\n[Completion delivery contract]"
-    )
+    assert prompt.startswith("do the work\n\n")
+    assert prompt.count(DELEGATION_DELIVERY_INSTRUCTION_HEADER) == 1
+    assert "- resolved work intent: execution" in prompt
+    assert manifest["work_intent"] == "execution"
+    instruction = manifest["delegation_delivery_instruction"]
+    assert instruction["schema_version"] == DELEGATION_DELIVERY_INSTRUCTION_SCHEMA
+    assert instruction["resolved_work_intent"] == "execution"
+    assert len(instruction["sha256"]) == 64
     assert "[Delegated context directory]" in prompt
     assert "full resident/cloud/conversation state is deliberately not embedded" in prompt
     assert "resident context --node root" in prompt
