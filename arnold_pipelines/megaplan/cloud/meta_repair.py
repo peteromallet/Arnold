@@ -80,6 +80,9 @@ class MetaRepairTrigger(str, Enum):
     PARTIAL_LIVENESS_RECURRENCE = "partial_liveness_recurrence"
     DISCORD_DELIVERY_FAILURE = "discord_delivery_failure"
     L1_CUSTODY_FAILURE = "l1_custody_failure"
+    REPAIR_GOAL_OWNER_MISSING = "repair_goal_owner_missing"
+    REPAIR_CONTEXT_TARGET_MISMATCH = "repair_context_target_mismatch"
+    REPAIR_GOAL_CIRCUIT_BREAKER = "repair_goal_circuit_breaker"
 
 
 # Canonical ordering for display / prompt ordering
@@ -91,6 +94,9 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE: 5,
     MetaRepairTrigger.DISCORD_DELIVERY_FAILURE: 6,
     MetaRepairTrigger.L1_CUSTODY_FAILURE: 7,
+    MetaRepairTrigger.REPAIR_GOAL_OWNER_MISSING: 8,
+    MetaRepairTrigger.REPAIR_CONTEXT_TARGET_MISMATCH: 9,
+    MetaRepairTrigger.REPAIR_GOAL_CIRCUIT_BREAKER: 10,
 }
 
 # Outcomes that suppress another meta-repair dispatch.  Fresh activity is
