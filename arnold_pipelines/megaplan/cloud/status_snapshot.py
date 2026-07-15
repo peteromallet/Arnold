@@ -1066,6 +1066,35 @@ def _build_session_entry(
             worker_pid = _as_int(raw_worker_pid)
             if worker_pid is None or not _pid_is_live(worker_pid):
                 active_step_for_advancement = False
+    # ── Successor gate parameters ─────────────────────────────────────
+    _successors: list = []
+    _completion_contract_mode = "shadow"
+    _has_final_acceptance_receipt = False
+    _final_milestone_label = None
+    if remote_spec and chain_complete:
+        try:
+            _spec = load_chain_spec(Path(remote_spec))
+            _successors = getattr(_spec, "successors", None) or []
+            if chain_health:
+                _completion_contract_mode = str(
+                    chain_health.get("completion_contract_mode", "shadow")
+                )
+            if _spec.milestones:
+                _final_milestone_label = _spec.milestones[-1].label
+                # Load the chain state file directly to check for an
+                # acceptance receipt on the final milestone.
+                _state_path, _chain_state_doc = _load_latest_chain_state(workspace)
+                if isinstance(_chain_state_doc, dict):
+                    _completed = _chain_state_doc.get("completed")
+                    if isinstance(_completed, list):
+                        for _rec in _completed:
+                            if isinstance(_rec, dict) and _rec.get("label") == _final_milestone_label:
+                                _has_final_acceptance_receipt = isinstance(
+                                    _rec.get("acceptance_receipt"), dict
+                                )
+                                break
+        except Exception:
+            pass
     advancement = assess_advancement(
         advancement_policy,
         current_state=plan_current_state,
@@ -1075,6 +1104,11 @@ def _build_session_entry(
         active_step=active_step_for_advancement,
         explicit_human_gate=(operator_next if status == "blocked" else None),
         failure_kind=latest_failure.get("kind"),
+        successors=_successors,
+        completion_contract_mode=_completion_contract_mode,
+        completed_count=completed_count or 0,
+        has_final_acceptance_receipt=_has_final_acceptance_receipt,
+        final_milestone_label=_final_milestone_label,
     )
     active_step = (
         plan_state_doc.get("active_step")
