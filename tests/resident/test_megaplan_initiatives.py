@@ -139,10 +139,15 @@ def test_megaplan_resident_create_initiative_writes_description_metadata(tmp_pat
     assert initiative["slug"] == "discord-context"
     assert initiative["description"] == "Classify worker messages and preserve initiative structure."
     root = project / ".megaplan" / "initiatives" / "discord-context"
-    assert (root / "README.md").read_text(encoding="utf-8") == (
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    assert readme.startswith(
         "# Discord Context\n\n"
         "Classify worker messages and preserve initiative structure.\n"
     )
+    assert "## Current truth and index" in readme
+    assert "`NORTHSTAR.md` — optional" in readme
+    assert "`chain.yaml` — optional" in readme
+    assert "cite raw agent/subagent run artifacts" in readme
     assert (root / "chain.yaml").exists()
 
 
@@ -152,6 +157,34 @@ def test_megaplan_resident_create_initiative_requires_description(tmp_path: Path
 
     with pytest.raises(ValidationError):
         tool.input_model(project_root=str(tmp_path), slug="No Description")
+
+
+def test_megaplan_resident_initiative_defaults_to_structure_without_readiness_artifacts(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    profile = MegaplanResidentProfile(store=FileStore(tmp_path / "store"))
+    tool = profile.tools().get("create_initiative")
+
+    result = tool.handler(
+        tool.input_model(
+            project_root=str(project),
+            slug="Exploratory Workspace",
+            description="Curate related knowledge without implying chain approval.",
+        )
+    )
+
+    assert result.ok is True
+    root = project / ".megaplan" / "initiatives" / "exploratory-workspace"
+    assert {path.name for path in root.iterdir() if path.is_dir()} == {
+        "assets",
+        "briefs",
+        "decisions",
+        "handoff",
+        "notes",
+        "research",
+    }
+    assert not (root / "NORTHSTAR.md").exists()
+    assert not (root / "chain.yaml").exists()
 
 
 def test_megaplan_resident_search_initiatives_uses_fuzzy_title_description(tmp_path: Path) -> None:
