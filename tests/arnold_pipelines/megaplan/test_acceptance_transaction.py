@@ -421,3 +421,528 @@ def test_schema_constants_consistent():
     assert ACCEPTANCE_TRANSACTION_SCHEMA_VERSION == 1
     assert ACCEPTANCE_RECEIPT_SCHEMA == "megaplan.acceptance_receipt"
     assert ACCEPTANCE_RECEIPT_SCHEMA_VERSION == 1
+
+
+# ---------------------------------------------------------------------------
+# run_acceptance_boundary — identity validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def boundary_tmp_dirs(tmp_path: Path):
+    """Create a minimal project and plan directory for boundary tests."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"baseline_test_command": None}), encoding="utf-8"
+    )
+    return project_dir, plan_dir
+
+
+def test_boundary_fails_closed_on_unbound_commit_ref(
+    tmp_path, minimal_snapshot_kwargs, boundary_tmp_dirs
+):
+    """Unbound commit ref (short SHA) must short-circuit before suite run."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        run_acceptance_boundary,
+    )
+
+    project_dir, plan_dir = boundary_tmp_dirs
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="abc1234", runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(**kwargs)
+    result = run_acceptance_boundary(
+        snap, project_dir=project_dir, plan_dir=plan_dir, mode="atomic",
+    )
+    assert result.identity_valid is False
+    assert result.accepted is False
+    assert len(result.identity_failures) > 0
+    assert "unbound" in str(result.identity_failures).lower() or "short" in str(result.identity_failures).lower()
+    # Suite should not have been run
+    assert result.suite_status is None
+
+
+def test_boundary_fails_closed_on_shadow_runtime(
+    tmp_path, minimal_snapshot_kwargs, boundary_tmp_dirs
+):
+    """Shadow runtime identity must be rejected."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        run_acceptance_boundary,
+    )
+
+    project_dir, plan_dir = boundary_tmp_dirs
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="a" * 40, runtime_identity="shadow")
+    snap = AcceptanceSnapshot(**kwargs)
+    result = run_acceptance_boundary(
+        snap, project_dir=project_dir, plan_dir=plan_dir, mode="atomic",
+    )
+    assert result.identity_valid is False
+    assert result.accepted is False
+    assert any("shadow" in f.lower() or "placeholder" in f.lower() for f in result.identity_failures)
+
+
+def test_boundary_fails_closed_on_branch_ref(
+    tmp_path, minimal_snapshot_kwargs, boundary_tmp_dirs
+):
+    """Branch ref (refs/heads/*) must be rejected as unbound."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        run_acceptance_boundary,
+    )
+
+    project_dir, plan_dir = boundary_tmp_dirs
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="refs/heads/main", runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(**kwargs)
+    result = run_acceptance_boundary(
+        snap, project_dir=project_dir, plan_dir=plan_dir, mode="atomic",
+    )
+    assert result.identity_valid is False
+    assert result.accepted is False
+
+
+# ---------------------------------------------------------------------------
+# run_acceptance_boundary — suite execution & verdict
+# ---------------------------------------------------------------------------
+
+
+_MOCK_SUITE_PASSED = object()
+
+
+def _make_mock_suite_result(
+    status="passed", exit_code=0, command="pytest -q", run_id="run-001"
+):
+    """Create a minimal object mimicking SuiteRunResult."""
+
+    class MockSuiteResult:
+        def __init__(self):
+            self.run_id = run_id
+            self.phase = "verification"
+            self.command = command
+            self.duration = 1.5
+            self.collected = 10
+            self.collected_ids = ["tests/test_a.py::test_1"]
+            self.failures = []
+            self.passes = ["tests/test_a.py::test_1"]
+            self.status = status
+            self.exit_code = exit_code
+            self.code_hash = "sha256:abcdef1234567890"
+            self.raw_log_path = None
+            self.collections_parse_ok = True
+            self.collection_errors = []
+            self.timeout_reason = None
+
+    return MockSuiteResult()
+
+
+def _make_accepting_verdict():
+    """Return a pre-computed CompletionVerdict with accepted=True."""
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        CompletionSubject,
+        CompletionVerdict,
+    )
+
+    subject = CompletionSubject(
+        kind="milestone", name="m5a", to_state="done",
+        plan_name="test-plan", milestone_label="m5a",
+    )
+    return CompletionVerdict(
+        mode="enforce",
+        subject=subject,
+        evidence=(),
+        accepted=True,
+    )
+
+
+def test_boundary_success_path(
+    tmp_path, minimal_snapshot_kwargs, boundary_tmp_dirs
+):
+    """Full success path: valid identity + suite passed + verdict accepted."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        run_acceptance_boundary,
+    )
+
+    project_dir, plan_dir = boundary_tmp_dirs
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="a" * 40, runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(**kwargs)
+    mock_suite = _make_mock_suite_result(status="passed", exit_code=0)
+    accepting_verdict = _make_accepting_verdict()
+
+    result = run_acceptance_boundary(
+        snap,
+        project_dir=project_dir,
+        plan_dir=plan_dir,
+        mode="atomic",
+        suite_runner=lambda *a, **kw: mock_suite,
+        suite_config={"test_command": "true"},
+        verdict=accepting_verdict,
+        invalidate_prior_candidates=False,
+    )
+    assert result.accepted is True
+    assert result.identity_valid is True
+    assert result.suite_status == "passed"
+
+
+def test_boundary_suite_failed_blocks_acceptance(
+    tmp_path, minimal_snapshot_kwargs, boundary_tmp_dirs
+):
+    """Even with valid identity, a failing suite must block acceptance."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        run_acceptance_boundary,
+    )
+
+    project_dir, plan_dir = boundary_tmp_dirs
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="a" * 40, runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(**kwargs)
+    mock_suite = _make_mock_suite_result(status="failed", exit_code=1)
+    accepting_verdict = _make_accepting_verdict()
+
+    result = run_acceptance_boundary(
+        snap,
+        project_dir=project_dir,
+        plan_dir=plan_dir,
+        mode="atomic",
+        suite_runner=lambda *a, **kw: mock_suite,
+        suite_config={"test_command": "false"},
+        verdict=accepting_verdict,
+        invalidate_prior_candidates=False,
+    )
+    assert result.accepted is False
+    assert result.suite_status == "failed"
+    assert any("did not pass" in r for r in result.failure_reasons)
+
+
+def _make_rejecting_verdict(*, predicate_kind="unknown", evidence_kind="test_evidence"):
+    """Return a pre-computed CompletionVerdict with accepted=False and typed failures."""
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        BlockingPredicateFailure,
+        CompletionSubject,
+        CompletionVerdict,
+    )
+
+    subject = CompletionSubject(
+        kind="milestone", name="m5a", to_state="done",
+        plan_name="test-plan", milestone_label="m5a",
+    )
+    return CompletionVerdict(
+        mode="enforce",
+        subject=subject,
+        evidence=(),
+        accepted=False,
+        failures=("test_evidence: blocked",),
+        predicate_failures=(
+            BlockingPredicateFailure(
+                kind=predicate_kind,
+                evidence_kind=evidence_kind,
+                summary="blocked",
+                details={"reason": "test"},
+            ),
+        ),
+    )
+
+
+def test_boundary_rejecting_verdict_blocks_acceptance(
+    tmp_path, minimal_snapshot_kwargs, boundary_tmp_dirs
+):
+    """A rejecting verdict (accepted=False) must block overall acceptance."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        run_acceptance_boundary,
+    )
+
+    project_dir, plan_dir = boundary_tmp_dirs
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="a" * 40, runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(**kwargs)
+    mock_suite = _make_mock_suite_result(status="passed", exit_code=0)
+    rejecting_verdict = _make_rejecting_verdict(predicate_kind="rejected")
+
+    result = run_acceptance_boundary(
+        snap,
+        project_dir=project_dir,
+        plan_dir=plan_dir,
+        mode="atomic",
+        suite_runner=lambda *a, **kw: mock_suite,
+        suite_config={"test_command": "true"},
+        verdict=rejecting_verdict,
+        invalidate_prior_candidates=False,
+    )
+    assert result.accepted is False
+    assert result.verdict is not None
+    assert getattr(result.verdict, "accepted", True) is False
+
+
+# ---------------------------------------------------------------------------
+# run_acceptance_boundary — no test_command (vacuously passed)
+# ---------------------------------------------------------------------------
+
+
+def test_boundary_no_test_command_passes_vacuously(
+    tmp_path, minimal_snapshot_kwargs, boundary_tmp_dirs
+):
+    """No test_command = suite not_applicable, vacuously passed."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        run_acceptance_boundary,
+    )
+
+    project_dir, plan_dir = boundary_tmp_dirs
+    # Remove any test_command from finalize
+    (plan_dir / "finalize.json").write_text("{}", encoding="utf-8")
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="a" * 40, runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(**kwargs)
+    accepting_verdict = _make_accepting_verdict()
+
+    result = run_acceptance_boundary(
+        snap,
+        project_dir=project_dir,
+        plan_dir=plan_dir,
+        mode="atomic",
+        verdict=accepting_verdict,
+        invalidate_prior_candidates=False,
+    )
+    assert result.suite_status == "not_applicable"
+    # suite_passed is True when not_applicable
+    assert result.accepted is True
+
+
+# ---------------------------------------------------------------------------
+# run_acceptance_boundary — require_full_boundary
+# ---------------------------------------------------------------------------
+
+
+def test_boundary_require_full_boundary_ignores_test_selection_override(
+    tmp_path, minimal_snapshot_kwargs, boundary_tmp_dirs
+):
+    """require_full_boundary=True must ignore test_selection command_override."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        run_acceptance_boundary,
+    )
+
+    project_dir, plan_dir = boundary_tmp_dirs
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({
+            "baseline_test_command": "echo baseline",
+            "test_selection": {"command_override": "echo focused"},
+        }),
+        encoding="utf-8",
+    )
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="a" * 40, runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(**kwargs)
+    accepting_verdict = _make_accepting_verdict()
+    captured_config = {}
+
+    def capture_runner(_project_dir, config, **_kw):
+        captured_config.update(config)
+        return _make_mock_suite_result()
+
+    run_acceptance_boundary(
+        snap,
+        project_dir=project_dir,
+        plan_dir=plan_dir,
+        mode="atomic",
+        suite_runner=capture_runner,
+        verdict=accepting_verdict,
+        invalidate_prior_candidates=False,
+        require_full_boundary=True,
+    )
+    assert captured_config.get("test_command") == "echo baseline"
+
+
+# ---------------------------------------------------------------------------
+# CandidateInvalidation tests
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_invalidation_required_fields():
+    """CandidateInvalidation must reject missing required fields."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        CandidateInvalidation,
+    )
+
+    with pytest.raises(ValueError, match="transaction_id"):
+        CandidateInvalidation(transaction_id="", reason="stale-evidence")
+    with pytest.raises(ValueError, match="reason"):
+        CandidateInvalidation(transaction_id="txn-1", reason="")
+
+
+def test_candidate_invalidation_roundtrip():
+    """CandidateInvalidation must survive to_dict -> from_dict round-trip."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        CandidateInvalidation,
+    )
+
+    inv = CandidateInvalidation(
+        transaction_id="txn-old",
+        reason="stale-evidence",
+        superseded_by="txn-new",
+    )
+    d = inv.to_dict()
+    inv2 = CandidateInvalidation.from_dict(d)
+    assert inv2.transaction_id == inv.transaction_id
+    assert inv2.reason == inv.reason
+    assert inv2.superseded_by == inv.superseded_by
+    assert inv2.invalidated_at == inv.invalidated_at
+
+
+def test_candidate_invalidation_is_frozen():
+    """CandidateInvalidation is a frozen dataclass."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        CandidateInvalidation,
+    )
+
+    inv = CandidateInvalidation(transaction_id="txn-1", reason="stale-evidence")
+    with pytest.raises(FrozenInstanceError):
+        inv.reason = "hijacked"  # type: ignore[misc]
+
+
+def test_check_and_invalidate_stale_candidates_same_hash_no_invalidation(
+    tmp_path, minimal_snapshot_kwargs
+):
+    """Same hash -> no invalidation."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        check_and_invalidate_stale_candidates,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    snap = AcceptanceSnapshot(**minimal_snapshot_kwargs)
+    # All candidates have same hash as snapshot
+    prior = {
+        "txn-old": type("obj", (), {"snapshot_hash": snap.content_hash})(),
+    }
+    result = check_and_invalidate_stale_candidates(
+        snap, plan_dir=plan_dir, prior_candidates=prior,
+    )
+    assert len(result) == 0
+
+
+def test_check_and_invalidate_stale_candidates_different_hash_invalidates(
+    tmp_path, minimal_snapshot_kwargs
+):
+    """Different hash -> stale candidate invalidated."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        check_and_invalidate_stale_candidates,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    snap = AcceptanceSnapshot(**minimal_snapshot_kwargs)
+    prior = {
+        "txn-old": type("obj", (), {"snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000bad"})(),
+    }
+    result = check_and_invalidate_stale_candidates(
+        snap, plan_dir=plan_dir, prior_candidates=prior,
+    )
+    assert len(result) == 1
+    assert result[0].transaction_id == "txn-old"
+    assert result[0].reason == "stale-evidence"
+    assert result[0].superseded_by == snap.transaction_id
+
+
+def test_check_and_invalidate_malformed_candidate(
+    tmp_path, minimal_snapshot_kwargs
+):
+    """Candidate without a valid snapshot_hash -> invalidated as malformed."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        check_and_invalidate_stale_candidates,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    snap = AcceptanceSnapshot(**minimal_snapshot_kwargs)
+    prior = {
+        "txn-old": type("obj", (), {"snapshot_hash": None})(),
+    }
+    result = check_and_invalidate_stale_candidates(
+        snap, plan_dir=plan_dir, prior_candidates=prior,
+    )
+    assert len(result) == 1
+    assert result[0].transaction_id == "txn-old"
+    assert result[0].reason == "malformed-candidate"
+
+
+# ---------------------------------------------------------------------------
+# AcceptanceBoundaryResult round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_boundary_result_roundtrip(
+    tmp_path, minimal_snapshot_kwargs, sample_evidence
+):
+    """AcceptanceBoundaryResult must survive to_dict -> from_dict round-trip."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        AcceptanceBoundaryResult,
+    )
+
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="a" * 40, runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(evidence=sample_evidence, **kwargs)
+    result = AcceptanceBoundaryResult(
+        snapshot=snap,
+        identity_valid=True,
+        identity_failures=(),
+        suite_run=None,
+        verdict=None,
+        commands=("echo hi",),
+        exit_codes=(0,),
+        log_paths=("/tmp/log.txt",),
+        log_digests=("sha256:abc",),
+        started_at="2026-07-15T00:00:00Z",
+        completed_at="2026-07-15T00:00:01Z",
+        suite_identity="run-001",
+        commit_tree="sha256:tree",
+        artifact_digests={"/tmp/log.txt": "sha256:abc"},
+        suite_status="passed",
+        accepted=True,
+        duration_seconds=1.0,
+        failure_reasons=(),
+        mode="atomic",
+    )
+    d = result.to_dict()
+    result2 = AcceptanceBoundaryResult.from_dict(d)
+    assert result2.accepted == result.accepted
+    assert result2.identity_valid == result.identity_valid
+    assert result2.suite_status == result.suite_status
+    assert result2.mode == result.mode
+    assert result2.snapshot.content_hash == snap.content_hash
+
+
+def test_boundary_result_is_frozen(
+    tmp_path, minimal_snapshot_kwargs
+):
+    """AcceptanceBoundaryResult is a frozen dataclass."""
+    from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+        AcceptanceBoundaryResult,
+    )
+
+    kwargs = {**minimal_snapshot_kwargs}
+    kwargs.update(source_commit_ref="a" * 40, runtime_identity="arnold-engine-v4.0.0")
+    snap = AcceptanceSnapshot(**kwargs)
+    result = AcceptanceBoundaryResult(
+        snapshot=snap,
+        identity_valid=False,
+        identity_failures=("bad commit",),
+        suite_run=None,
+        verdict=None,
+        commands=(),
+        exit_codes=(),
+        log_paths=(),
+        log_digests=(),
+        started_at="2026-07-15T00:00:00Z",
+        completed_at="2026-07-15T00:00:01Z",
+        suite_identity=None,
+        commit_tree=None,
+        artifact_digests={},
+        suite_status=None,
+        accepted=False,
+        duration_seconds=0.1,
+        failure_reasons=("bad commit",),
+        mode="atomic",
+    )
+    with pytest.raises(FrozenInstanceError):
+        result.accepted = True  # type: ignore[misc]

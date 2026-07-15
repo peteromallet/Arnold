@@ -1,0 +1,6 @@
+{
+  "baseline_test_command": "pytest --collect-only -q",
+  "test_selection": {
+    "command_override": "pytest --collect-only -q"
+  }
+}
