@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-15T01:36:14.762826+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-custody-control-plane-20260714"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 1,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-b30c9a064f61",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:98c7c4fe7c8231d90435f7f8411265b7c7c002117151f7ec59a3c5489c7d47c4",
+    "last_seq": 532,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-b30c9a064f61: stale_active_step: plan=m5-run-authority-receipt-20260714-1428; state=executed; phase=review; worker_pid=120578 not live"
+}
