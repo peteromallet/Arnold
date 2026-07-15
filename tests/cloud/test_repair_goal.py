@@ -146,7 +146,14 @@ def test_retry_inherits_same_goal_and_frozen_checkpoint(tmp_path: Path) -> None:
     assert second["request_ids"] == ["request-1", "request-2"]
 
 
-def test_later_authoritative_transition_beyond_checkpoint_completes_goal(tmp_path: Path) -> None:
+def test_later_authoritative_transition_beyond_checkpoint_completes_goal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MEGAPLAN_REPAIR_RECOVERY_FOLLOWUP_SECONDS", "0")
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.repair_goal._canonical_runner_live",
+        lambda _observation: True,
+    )
     path, goal = _goal(tmp_path)
     state_path = Path(goal["frozen_checkpoint"]["plan_state_path"])
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -167,12 +174,30 @@ def test_later_authoritative_transition_beyond_checkpoint_completes_goal(tmp_pat
             + "\n"
         )
 
-    result = evaluate_repair_goal(path, action="post_redrive_verify")
+    candidate = evaluate_repair_goal(path, action="post_redrive_verify")
+
+    assert candidate["status"] == GOAL_ACTIVE
+    assert candidate["evaluation"]["control_action"] == "observe_recovery"
+    with events.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "kind": "state_transition",
+                    "seq": 15,
+                    "ts_utc": "2026-07-15T00:03:00+00:00",
+                    "payload": {"from": "reviewed", "to": "reviewed"},
+                }
+            )
+            + "\n"
+        )
+
+    result = evaluate_repair_goal(path, action="post_redrive_bounded_followup")
 
     assert result["status"] == GOAL_PROGRESSED
     assert result["semantic_completion"] is True
     assert result["evaluation"]["authoritative_progress"] is True
-    assert result["evaluation"]["acceptance_event"]["seq"] == 14
+    assert result["evaluation"]["recovery_gate_accepted"] is True
+    assert result["recovery_acceptance"]["accepted"] is True
 
 
 def test_replacement_session_evidence_cannot_complete_original_goal(tmp_path: Path) -> None:

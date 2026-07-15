@@ -13609,7 +13609,7 @@ def test_meta_repair_record_persistence_embedded_python_matches_contract(
     marker = (
         'python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" '
         '"$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" '
-        '"$META_WORKER_MANIFEST" <<'
+        '"$META_WORKER_MANIFEST" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'
     )
     text = _meta_repair_wrapper()
 

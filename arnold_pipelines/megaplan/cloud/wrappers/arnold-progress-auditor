@@ -1120,6 +1120,26 @@ def _meta_repair_summary(
     repair_goal_path = pathlib.Path(str(repair_goal_ref.get("goal_path") or "")) if repair_goal_ref.get("goal_path") else None
     repair_goal = _load_json(repair_goal_path) if repair_goal_path is not None else {}
     repair_goal_active = isinstance(repair_goal, dict) and repair_goal.get("status") == "active"
+    recovery_gate = (
+        repair_goal.get("recovery_acceptance")
+        if isinstance(repair_goal, dict)
+        and isinstance(repair_goal.get("recovery_acceptance"), dict)
+        else {}
+    )
+    recovery_gate_failures = (
+        repair_goal.get("recovery_gate_failures")
+        if isinstance(repair_goal, dict)
+        and isinstance(repair_goal.get("recovery_gate_failures"), list)
+        else []
+    )
+    recovery_gate_failed = bool(
+        recovery_gate.get("accepted") is False or recovery_gate_failures
+    )
+    failed_fixer_evidence = [
+        item
+        for item in (recovery_gate.get("failed_fixer_evidence") or [])[-15:]
+        if isinstance(item, dict)
+    ]
     request_id = str(repair_payload.get("request_id") or "").strip()
     if not request_id and isinstance(repair_goal, dict):
         request_ids = repair_goal.get("request_ids")
@@ -1378,7 +1398,15 @@ def _meta_repair_summary(
             or request_gate_recommendation.startswith("preserve_live")
         )
     )
-    if repair_goal_active and request_target_mismatch:
+    if repair_goal_active and recovery_gate_failed:
+        should_dispatch = True
+        trigger = "post_fixer_recovery_gate_failed"
+        rationale = [
+            "the fixer terminalized without durable recovery: blocker clearance, "
+            "live canonical runner, beyond-checkpoint progress, or bounded continued "
+            "progress was not proven; dispatch transcript-aware root-cause/meta-repair"
+        ]
+    elif repair_goal_active and request_target_mismatch:
         should_dispatch = True
         trigger = "repair_context_target_mismatch"
         rationale = [
@@ -1468,6 +1496,9 @@ def _meta_repair_summary(
             "request_target_mismatch": request_target_mismatch,
             "request_gate_recommendation": _redact_scalar(request_gate_recommendation),
             "repair_dispatch_during_preserve_live": repair_dispatch_during_preserve_live,
+            "recovery_gate_failed": recovery_gate_failed,
+            "recovery_gate": recovery_gate,
+            "failed_fixer_evidence": failed_fixer_evidence,
         },
         "meta_record_count": len(meta_refs or []),
         "meta_run_log_count": len(run_refs),

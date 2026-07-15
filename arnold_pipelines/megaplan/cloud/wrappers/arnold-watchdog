@@ -7701,6 +7701,17 @@ PY
       return 0
       ;;
     active_unowned)
+      if [[ "$repair_goal_control_action" == "meta_repair" ]]; then
+        log "post-fixer recovery gate failed after owner terminalization; dispatching transcript-aware L2 meta-repair session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+        if dispatch_meta_repair \
+          "$session" "$workspace" "$remote_spec" "$report_items" \
+          "post_fixer_recovery_gate_failed"; then
+          report_item "$report_items" "$session" "meta_repair" "repair_dispatched" "L2 received the failed fixer's durable recovery receipt and transcript/artifact refs" "$workspace" "$remote_spec"
+        else
+          report_item "$report_items" "$session" "meta_repair" "repair_failed" "post-fixer recovery gate failed and L2 dispatch did not start" "$workspace" "$remote_spec"
+        fi
+        return 0
+      fi
       if [[ "$repair_goal_control_action" == "preserve_live" ]]; then
         log "durable repair goal is unowned while its fresh matching worker progresses; observing without repair launch session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
         report_item "$report_items" "$session" "observe" "recovery_observation" "preserve fresh matching worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"

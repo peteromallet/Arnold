@@ -338,6 +338,8 @@ def _reason_tokens(finding: Mapping[str, Any]) -> list[str]:
 
 def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     repair = _mapping(finding.get("repair_data_summary"))
+    meta = _mapping(finding.get("meta_repair_summary"))
+    repair_goal = _mapping(meta.get("repair_goal"))
     custody = _mapping(finding.get("repair_custody_summary"))
     superfixer = _mapping(finding.get("deterministic_superfixer_evidence"))
     retry = _mapping(custody.get("retry_budget") or superfixer.get("retry_budget"))
@@ -365,7 +367,8 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     liveness_without_custody = bool(
         provisional_liveness and (accepted or missing_custody_links)
     )
-    false_success = bool(
+    recovery_gate_failed = repair_goal.get("recovery_gate_failed") is True
+    false_success = recovery_gate_failed or bool(
         outcome in {"complete", "completed", "progressed", "success", "fixed"}
         and _chain_evidence(finding).get("nonterminal")
     ) or any("repair_complete_incomplete_chain" in item for item in reasons)
@@ -409,6 +412,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "retry_remaining": retry_remaining,
         "repeated_deterministic_failures": repeated,
         "false_success": false_success,
+        "post_fixer_recovery_gate_failed": recovery_gate_failed,
         "missing_canonical_manifest": missing_manifest,
         "missing_custody_links": missing_custody_links,
         "provisional_liveness": provisional_liveness,
@@ -940,6 +944,7 @@ def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _mapping(latest.get("metadata") or finding.get("latest_failure_metadata"))
     repair = _mapping(finding.get("repair_data_summary"))
     meta = _mapping(finding.get("meta_repair_summary"))
+    repair_goal = _mapping(meta.get("repair_goal"))
     source_refs = _mapping(finding.get("source_refs"))
     mechanics = {
         key: metadata.get(key)
@@ -969,6 +974,10 @@ def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
         "repair_iterations": _list(repair.get("iterations"))[-5:],
         "repair_attempts": _list(repair.get("attempts"))[-5:],
         "meta_run_refs": _list(meta.get("meta_run_refs"))[-5:],
+        "post_fixer_recovery_gate": _mapping(repair_goal.get("recovery_gate")),
+        "failed_fixer_evidence": _list(
+            repair_goal.get("failed_fixer_evidence")
+        )[-15:],
         "artifact_refs": {
             key: _list(value)[-10:] if isinstance(value, list) else value
             for key, value in source_refs.items()

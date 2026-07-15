@@ -4746,7 +4746,9 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     load_json,
     save_repair_data,
 )
-from arnold_pipelines.megaplan.cloud.repair_contract import save_repair_data
+from arnold_pipelines.megaplan.cloud.repair_goal import (
+    recovery_acceptance_verification,
+)
 
 path, outcome = sys.argv[1:]
 payload = load_json(pathlib.Path(path), default={})
@@ -4758,6 +4760,12 @@ if is_success_outcome(outcome):
     payload["last_success_at"] = now
     payload["last_success_outcome"] = outcome
     payload["run_recurrence_detected"] = False
+    goal_ref = payload.get("repair_goal") if isinstance(payload.get("repair_goal"), dict) else {}
+    goal_path = pathlib.Path(str(goal_ref.get("goal_path") or ""))
+    goal_payload = load_json(goal_path, default={}) if str(goal_path) not in {"", "."} else {}
+    gate_verification = recovery_acceptance_verification(goal_payload)
+    if gate_verification:
+        payload["verification"] = gate_verification
 save_repair_data(pathlib.Path(path), payload)
 PY
   repair_save_verdict_evidence "$repair_goal_status_override"
@@ -4817,7 +4825,7 @@ PY
 }
 
 repair_goal_evaluate_or_exit() {
-  local phase="$1" result status reason
+  local phase="$1" result status action reason wait_rc
   result="$(
     PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
       arnold_pipelines.megaplan.cloud.repair_goal evaluate \
@@ -4830,21 +4838,44 @@ repair_goal_evaluate_or_exit() {
     log "repair goal verification failed closed session=$SESSION phase=$phase"
     return 1
   }
-  IFS=$'\t' read -r status reason <<< "$(
-    python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print(str(d.get("status") or "")+"\t"+str(e.get("reason") or ""))' <<< "$result"
+  IFS=$'\t' read -r status action reason <<< "$(
+    python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), str(e.get("reason") or ""))))' <<< "$result"
   )"
-  case "$status" in
-    progressed)
+  case "$status:$action" in
+    progressed:*)
       repair_data_set_outcome "progressed" "$status"
       clear_repair_markers
       log "repair goal verified authoritative progress session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
       exit 0
       ;;
-    approval_required)
+    approval_required:*)
       repair_data_set_outcome "true_human_blocker" "$status"
       write_needs_human_marker "goal_gate_recorded" "approval_required: $reason"
       log "repair goal reached explicit approval gate session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
       exit 0
+      ;;
+    active:observe_recovery)
+      repair_data_set_outcome "repairing"
+      log "post-fixer recovery candidate requires bounded follow-up session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
+      wait_for_repair_goal_progress_if_live "$phase-bounded-followup"
+      wait_rc=$?
+      if [[ "$wait_rc" == "0" ]]; then
+        exit 0
+      fi
+      if [[ "$wait_rc" == "2" ]]; then
+        log "post-fixer recovery circuit breaker stopped this repair owner session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID"
+        exit 1
+      fi
+      return "$wait_rc"
+      ;;
+    active:meta_repair)
+      repair_data_set_outcome "recovery_not_verified"
+      repair_goal_record_terminal_failure \
+        "post-fixer-recovery-gate" \
+        "recovery_not_verified" \
+        "$reason" || true
+      log "post-fixer recovery gate failed; L2 transcript-aware meta-repair required session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
+      exit 1
       ;;
     *)
       repair_data_set_outcome "repairing"
@@ -4906,11 +4937,20 @@ wait_for_repair_goal_progress_if_live() {
         log "retained goal owner reached explicit approval gate session=$SESSION phase=$phase reason=$reason"
         return 0
         ;;
-      active:preserve_live)
+      active:preserve_live|active:observe_recovery)
         ensure_repair_budget_available "goal-preserve-live-$phase"
         sleep_secs="$(cap_timeout_to_repair_budget "$REPAIR_GOAL_POLL_SECS" "goal-preserve-live-$phase")"
-        log "preserving correct live worker while retained goal remains active session=$SESSION phase=$phase poll_secs=$sleep_secs reason=$reason"
+        log "observing correct live runner until durable recovery gate resolves session=$SESSION phase=$phase action=$action poll_secs=$sleep_secs reason=$reason"
         sleep "$sleep_secs"
+        ;;
+      active:meta_repair)
+        repair_data_set_outcome "recovery_not_verified"
+        repair_goal_record_terminal_failure \
+          "post-fixer-recovery-gate" \
+          "recovery_not_verified" \
+          "$reason" || true
+        log "post-fixer recovery gate failed during bounded observation; L2 meta-repair required session=$SESSION phase=$phase reason=$reason"
+        return 2
         ;;
       active:replan)
         repair_data_set_outcome "deterministic_failure"
