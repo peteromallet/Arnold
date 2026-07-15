@@ -257,6 +257,13 @@ def test_build_audit_input_resolves_brief_incident_and_problem(tmp_path: Path) -
     assert payload["problem"]["problem_id"] == "prob-audit-1"
 
 
+def test_build_audit_input_can_remain_read_only(tmp_path: Path) -> None:
+    payload = build_audit_input("missing-session", root=tmp_path, persist=False)
+
+    assert payload["brief"]["found"] is False
+    assert not (tmp_path / ".megaplan").exists()
+
+
 def test_fixture_writer_cannot_alias_production_incident_paths(tmp_path: Path) -> None:
     production_root = tmp_path / "production"
     production_ledger = production_root / ".megaplan" / "incident-ledger"
