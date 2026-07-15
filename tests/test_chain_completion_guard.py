@@ -2462,220 +2462,676 @@ def test_diff_name_only_fetch_once_retry_once_via_subprocess_mock(
     )
 
 
-def test_diff_name_only_non_ref_error_skips_fetch_via_subprocess_mock(
-    tmp_path: Path,
-) -> None:
-    """Non-ref-resolution error (e.g. 'not a git repository') must NOT trigger
-    fetch — the error surfaces immediately with only one diff call."""
-    base = _init_repo(tmp_path)
-    _commit_semantic_change(tmp_path)
-    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
 
-    _real_run = subprocess.run
-    captured: list[list[str]] = []
-
-    def _selective_run(args, **kwargs):
-        cmd = [str(a) for a in args]
-        is_diff = any("diff" in a for a in cmd)
-        is_fetch = any("fetch" in a for a in cmd)
-        if is_diff or is_fetch:
-            captured.append(cmd)
-        if is_diff or is_fetch:
-            return subprocess.CompletedProcess(
-                args=args,
-                returncode=128,
-                stdout="",
-                stderr="fatal: not a git repository\n",
-            )
-        return _real_run(args, **kwargs)
-
-    with mock.patch("subprocess.run", side_effect=_selective_run):
-        ok, reason = _chain_completion_guard(
-            tmp_path,
-            _record(),
-            implementation_milestone=True,
-        )
-
-    assert ok is False, "non-ref error should fail the guard"
-    diff_calls = [c for c in captured if "diff" in c]
-    fetch_calls = [c for c in captured if "fetch" in c]
-    assert len(diff_calls) == 1, (
-        f"Expected exactly 1 git diff call (no retry); got {len(diff_calls)}: {captured}"
-    )
-    assert len(fetch_calls) == 0, (
-        f"Expected 0 git fetch calls for non-ref error; got {len(fetch_calls)}: {captured}"
-    )
+# ---------------------------------------------------------------------------
+# T33: Mode-aware completion guard — shadow fail-open, atomic fail-closed
+# ---------------------------------------------------------------------------
 
 
-def test_completion_guard_bare_origin_fetch_supplies_missing_object(
-    tmp_path: Path,
-) -> None:
-    """Local/bare Git workflow: a merge commit exists on origin but not locally.
-    _chain_completion_guard with pr_merge_sha pointing to the remote-only commit
-    must fetch --prune and pass the guard."""
-    local = tmp_path / "local"
-    remote = tmp_path / "remote.git"
-    other = tmp_path / "other"
-    local.mkdir()
-    remote.mkdir()
-    _git(remote, "init", "--bare")
-    base = _init_repo(local)
-    _git(local, "branch", "-M", "main")
-    _git(local, "remote", "add", "origin", str(remote))
-    _git(local, "push", "-u", "origin", "main")
+def _atomic_state() -> ChainState:
+    state = ChainState()
+    state.completion_contract_mode = "atomic"
+    return state
 
-    # Create a remote-only commit from a separate clone
-    _git(tmp_path, "clone", str(remote), str(other))
-    _git(other, "config", "user.email", "test@example.com")
-    _git(other, "config", "user.name", "Test User")
-    (other / "src").mkdir(exist_ok=True)
-    (other / "src" / "app.py").write_text("print('remote done')\n", encoding="utf-8")
-    _git(other, "add", "src/app.py")
-    _git(other, "commit", "-m", "remote semantic change")
-    remote_sha = _git(other, "rev-parse", "HEAD")
-    _git(other, "push", "origin", "main")
 
-    # Confirm local doesn't have the remote commit
-    missing = subprocess.run(
-        ["git", "cat-file", "-t", remote_sha],
-        cwd=local,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert missing.returncode != 0, "remote commit should be missing locally"
+def _enforce_state() -> ChainState:
+    state = ChainState()
+    state.completion_contract_mode = "enforce"
+    return state
 
-    # Write plan state with base_sha
-    _write_plan(local, base_sha=base, finalize_tasks=[{"id": "T1"}])
 
-    # Run completion guard — fetch should bring the missing object in
-    ok, reason = _chain_completion_guard(
-        local,
+def _shadow_state() -> ChainState:
+    return ChainState()  # default == shadow
+
+
+def _warn_state() -> ChainState:
+    state = ChainState()
+    state.completion_contract_mode = "warn"
+    return state
+
+
+def _off_state() -> ChainState:
+    state = ChainState()
+    state.completion_contract_mode = "off"
+    return state
+
+
+def _state_with_receipt(
+    mode: str = "atomic",
+    label: str = "m1",
+    transaction_id: str = "tx-abc123",
+    snapshot_hash: str = "sha256:deadbeef",
+) -> ChainState:
+    state = ChainState()
+    state.completion_contract_mode = mode
+    state.completed.append(
         {
-            **_record(),
-            "pr_number": 42,
-            "pr_state": "merged",
-            "pr_merge_sha": remote_sha,
-        },
-        implementation_milestone=True,
+            "label": label,
+            "plan": "plan-m1",
+            "status": "done",
+            "acceptance_receipt": {
+                "transaction_id": transaction_id,
+                "snapshot_hash": snapshot_hash,
+                "milestone_label": label,
+                "plan_name": "plan-m1",
+                "milestone_index": 0,
+            },
+        }
     )
-
-    assert ok is True, f"completion guard should pass after fetch: {reason}"
-    assert (
-        "published PR target" in reason or "completion guard passed" in reason
-    ), f"unexpected reason: {reason}"
+    return state
 
 
-def test_completion_guard_surfaces_unresolved_error_after_fetch_retry(
+# -- Shadow mode retains fail-open behavior ----------------------------------
+
+
+def test_shadow_completion_guard_fail_open_without_acceptance_receipt(
     tmp_path: Path,
 ) -> None:
-    """When fetch succeeds but the retry diff still fails (truly bogus SHA),
-    the real error is surfaced through the completion guard, not swallowed."""
+    """Shadow mode (default) must NOT require an acceptance receipt — fail-open."""
     base = _init_repo(tmp_path)
     _commit_semantic_change(tmp_path)
     _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
 
-    bogus_sha = "deadbeef" * 5  # 40 hex chars, not a real object anywhere
-
-    _real_run = subprocess.run
-    captured: list[list[str]] = []
-
-    def _selective_run(args, **kwargs):
-        cmd = [str(a) for a in args]
-        is_diff = any("diff" in a for a in cmd)
-        is_fetch = any("fetch" in a for a in cmd)
-        cmd_str = " ".join(cmd)
-        involves_bogus = "deadbeef" in cmd_str
-        if (is_diff and involves_bogus) or is_fetch:
-            captured.append(cmd)
-        if is_fetch:
-            return _empty_completed_process()
-        if is_diff and involves_bogus:
-            return subprocess.CompletedProcess(
-                args=args,
-                returncode=128,
-                stdout="",
-                stderr="fatal: bad object deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n",
-            )
-        return _real_run(args, **kwargs)
-
-    with mock.patch("subprocess.run", side_effect=_selective_run):
-        ok, reason = _chain_completion_guard(
-            tmp_path,
-            {
-                **_record(),
-                "pr_number": 99,
-                "pr_state": "merged",
-                "pr_merge_sha": bogus_sha,
-            },
-            implementation_milestone=True,
-        )
-
-    assert ok is False, f"truly bogus SHA should fail after fetch+retry, got ok={ok}: {reason}"
-    diff_calls = [c for c in captured if "diff" in c]
-    fetch_calls = [c for c in captured if "fetch" in c]
-    assert len(diff_calls) == 2, (
-        f"Expected 2 diff calls (first fail + retry fail); got {len(diff_calls)}: {captured}"
+    state = _shadow_state()
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
     )
-    assert len(fetch_calls) == 1, (
-        f"Expected 1 fetch call; got {len(fetch_calls)}: {captured}"
-    )
-    # The error reason must mention the failed diff
-    assert (
-        "failed" in reason.lower()
-        or "bad object" in reason.lower()
-        or "git diff" in reason.lower()
-    ), f"reason should surface the unresolved error: {reason}"
+
+    assert ok is True, f"shadow mode should pass: {reason}"
+    assert len(state.completed) == 1
+    assert state.completed[0]["label"] == "m1"
 
 
-def test_semantic_diff_nonempty_from_base_fetch_once_retry_once(
+def test_shadow_completion_guard_still_blocks_on_guard_failure(
     tmp_path: Path,
 ) -> None:
-    """Through _semantic_diff_nonempty_from_base: first diff fails with
-    'unknown revision', fetch runs once, retry succeeds.  Verifies the
-    fetch-and-retry at the lower helper layer called by the completion guard."""
+    """Shadow mode must still block when the underlying guard fails (e.g. no diff)."""
+    base = _init_repo(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    state = _shadow_state()
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
+    )
+
+    assert ok is False
+    assert "no semantic diff from milestone_base_sha" in reason
+    assert state.completed == []
+    assert state.last_state == "authority_divergence"
+
+
+def test_warn_mode_fail_open_without_acceptance_receipt(
+    tmp_path: Path,
+) -> None:
+    """Warn mode must NOT require an acceptance receipt — fail-open."""
     base = _init_repo(tmp_path)
     _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
 
-    _real_run = subprocess.run
-    captured: list[list[str]] = []
-
-    def _selective_run(args, **kwargs):
-        cmd = [str(a) for a in args]
-        is_diff = any("diff" in a for a in cmd)
-        is_fetch = any("fetch" in a for a in cmd)
-        if is_diff or is_fetch:
-            captured.append(cmd)
-        if is_diff:
-            if len([c for c in captured if "diff" in c]) == 1:
-                return subprocess.CompletedProcess(
-                    args=args,
-                    returncode=128,
-                    stdout="",
-                    stderr="fatal: unknown revision or path not in the working tree\n",
-                )
-            return subprocess.CompletedProcess(
-                args=args,
-                returncode=0,
-                stdout="src/app.py\n",
-                stderr="",
-            )
-        if is_fetch:
-            return _empty_completed_process()
-        return _real_run(args, **kwargs)
-
-    with mock.patch("subprocess.run", side_effect=_selective_run):
-        ok, reason = chain_module._semantic_diff_nonempty_from_base(
-            tmp_path, base
-        )
-
-    assert ok is True, f"semantic diff should pass after fetch: {reason}"
-    assert "local HEAD" in reason
-    diff_calls = [c for c in captured if "diff" in c]
-    fetch_calls = [c for c in captured if "fetch" in c]
-    assert len(diff_calls) == 2, (
-        f"Expected 2 git diff calls (fail + retry); got {len(diff_calls)}: {captured}"
+    state = _warn_state()
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
     )
-    assert len(fetch_calls) == 1, (
-        f"Expected exactly 1 git fetch call; got {len(fetch_calls)}: {captured}"
+
+    assert ok is True, f"warn mode should pass: {reason}"
+    assert len(state.completed) == 1
+
+
+def test_off_mode_fail_open_without_acceptance_receipt(
+    tmp_path: Path,
+) -> None:
+    """Off mode must NOT require an acceptance receipt — fail-open."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    state = _off_state()
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
     )
+
+    assert ok is True, f"off mode should pass: {reason}"
+    assert len(state.completed) == 1
+
+
+# -- Atomic/enforce mode fails closed without acceptance evidence --------------
+
+
+def test_atomic_mode_fails_closed_without_acceptance_evidence(
+    tmp_path: Path,
+) -> None:
+    """Atomic mode must block completion without acceptance evidence."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    state = _atomic_state()
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
+    )
+
+    assert ok is False
+    assert "requires an accepted acceptance boundary" in reason
+    assert state.completed == []
+    # Repair targets must be recorded
+    targets = state.metadata.get("completion_guard_repair_targets")
+    assert isinstance(targets, list)
+    assert len(targets) >= 1
+    assert targets[0]["kind"] == "unknown_acceptance_failure"
+
+
+def test_enforce_mode_fails_closed_without_acceptance_evidence(
+    tmp_path: Path,
+) -> None:
+    """Enforce mode (synonym of atomic) must also block without acceptance evidence."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    state = _enforce_state()
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
+    )
+
+    assert ok is False
+    assert "requires an accepted acceptance boundary" in reason
+    assert state.completed == []
+
+
+def test_atomic_mode_fails_closed_on_predicate_failure(
+    tmp_path: Path,
+) -> None:
+    """Atomic mode must block and record typed repair targets when the guard fails."""
+    base = _init_repo(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    state = _atomic_state()
+    predicate_failures = [
+        {
+            "kind": "divergent",
+            "evidence_kind": "artifact_hash",
+            "summary": "declared hash mismatch for src/app.py",
+            "details": {"expected": "sha256:abc", "observed": "sha256:def"},
+        }
+    ]
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
+        predicate_failures=predicate_failures,
+    )
+
+    assert ok is False
+    assert state.completed == []
+    targets = state.metadata.get("completion_guard_repair_targets")
+    assert isinstance(targets, list)
+    assert len(targets) >= 1
+    assert targets[0]["kind"] == "divergent"
+    assert "declared hash mismatch" in targets[0]["summary"]
+
+
+def test_atomic_mode_with_guard_failure_records_legacy_target(
+    tmp_path: Path,
+) -> None:
+    """Atomic mode with guard failure but no predicate_failures records legacy target."""
+    base = _init_repo(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    state = _atomic_state()
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
+        # No predicate_failures — legacy path
+    )
+
+    assert ok is False
+    targets = state.metadata.get("completion_guard_repair_targets")
+    assert isinstance(targets, list)
+    assert len(targets) >= 1
+    assert targets[0]["kind"] == "unknown_acceptance_failure"
+    assert targets[0]["details"].get("legacy") is True
+
+
+# -- Shadow mode handles rejection reason (guard failure) the legacy way -----
+
+
+def test_shadow_mode_predicate_failure_records_authority_divergence(
+    tmp_path: Path,
+) -> None:
+    """Shadow mode records authority_divergence on guard failure, legacy behavior."""
+    base = _init_repo(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    state = _shadow_state()
+    ok, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        writer=lambda _msg: None,
+    )
+
+    assert ok is False
+    assert state.last_state == "authority_divergence"
+    # Shadow mode does NOT populate completion_guard_repair_targets
+    assert "completion_guard_repair_targets" not in state.metadata
+
+
+# -- Normalization preserves blocked markers in atomic mode -------------------
+
+
+def test_normalization_preserves_blocked_in_atomic_without_receipt(
+    tmp_path: Path,
+) -> None:
+    """_normalize_advanced_completed_cursor must preserve blocked markers
+    in atomic mode when completed records lack acceptance receipts."""
+    from arnold_pipelines.megaplan.chain.spec import (
+        ChainSpec,
+        MilestoneSpec,
+        _normalize_advanced_completed_cursor,
+    )
+
+    spec = ChainSpec(
+        base_branch="main",
+        anchors={},
+        milestones=[MilestoneSpec(label="m1", idea=tmp_path / "idea.md")],
+    )
+    state = ChainState(
+        current_milestone_index=1,  # past m1
+        current_plan_name=None,
+        last_state="blocked",
+        completed=[
+            {"label": "m1", "plan": "plan-m1", "status": "done"},
+        ],
+    )
+    state.completion_contract_mode = "atomic"
+
+    normalized = _normalize_advanced_completed_cursor(state, spec)
+    # Blocked marker must be preserved in atomic mode without receipt
+    assert normalized.last_state == "blocked"
+
+
+def test_normalization_preserves_authority_divergence_in_atomic_without_receipt(
+    tmp_path: Path,
+) -> None:
+    """_normalize_advanced_completed_cursor must preserve authority_divergence
+    in atomic mode when completed records lack acceptance receipts."""
+    from arnold_pipelines.megaplan.chain.spec import (
+        ChainSpec,
+        MilestoneSpec,
+        _normalize_advanced_completed_cursor,
+    )
+
+    spec = ChainSpec(
+        base_branch="main",
+        anchors={},
+        milestones=[MilestoneSpec(label="m1", idea=tmp_path / "idea.md")],
+    )
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="authority_divergence",
+        completed=[
+            {"label": "m1", "plan": "plan-m1", "status": "done"},
+        ],
+    )
+    state.completion_contract_mode = "atomic"
+
+    normalized = _normalize_advanced_completed_cursor(state, spec)
+    assert normalized.last_state == "authority_divergence"
+
+
+def test_normalization_clears_blocked_in_atomic_with_valid_receipt(
+    tmp_path: Path,
+) -> None:
+    """_normalize_advanced_completed_cursor clears blocked marker in atomic
+    mode when the completed record carries a valid, identity-matched receipt."""
+    from arnold_pipelines.megaplan.chain.spec import (
+        ChainSpec,
+        MilestoneSpec,
+        _normalize_advanced_completed_cursor,
+    )
+
+    spec = ChainSpec(
+        base_branch="main",
+        anchors={},
+        milestones=[MilestoneSpec(label="m1", idea=tmp_path / "idea.md")],
+    )
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="blocked",
+        completed=[
+            {
+                "label": "m1",
+                "plan": "plan-m1",
+                "status": "done",
+                "milestone_index": 0,
+                "acceptance_receipt": {
+                    "transaction_id": "tx-001",
+                    "snapshot_hash": "sha256:abc123",
+                    "milestone_label": "m1",
+                    "plan_name": "plan-m1",
+                    "milestone_index": 0,
+                },
+            },
+        ],
+    )
+    state.completion_contract_mode = "atomic"
+
+    normalized = _normalize_advanced_completed_cursor(state, spec)
+    # In atomic mode with valid receipt, blocked can be cleared
+    assert normalized.last_state == "done"
+
+
+def test_normalization_clears_blocked_in_shadow_without_receipt(
+    tmp_path: Path,
+) -> None:
+    """load_chain_state clears blocked marker in shadow mode even without receipt."""
+    idea = tmp_path / "idea.md"
+    idea.write_text("ship milestone\n", encoding="utf-8")
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {idea}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="blocked",
+        completed=[
+            {"label": "m1", "plan": "plan-m1", "status": "done"},
+        ],
+    )
+    # Default = shadow
+    save_chain_state(spec_path, state)
+
+    loaded = load_chain_state(spec_path)
+    # In shadow mode, blocked is cleared (legacy behavior)
+    assert loaded.last_state == "done"
+
+
+def test_normalization_preserves_blocked_with_mismatched_receipt_identity(
+    tmp_path: Path,
+) -> None:
+    """_normalize_advanced_completed_cursor must not clear blocked when receipt
+    identity fields don't match the completed record."""
+    from arnold_pipelines.megaplan.chain.spec import (
+        ChainSpec,
+        MilestoneSpec,
+        _normalize_advanced_completed_cursor,
+    )
+
+    spec = ChainSpec(
+        base_branch="main",
+        anchors={},
+        milestones=[MilestoneSpec(label="m1", idea=tmp_path / "idea.md")],
+    )
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="blocked",
+        completed=[
+            {
+                "label": "m1",
+                "plan": "plan-m1",
+                "status": "done",
+                "milestone_index": 0,
+                "acceptance_receipt": {
+                    "transaction_id": "tx-001",
+                    "snapshot_hash": "sha256:abc123",
+                    "milestone_label": "m2",  # WRONG label
+                    "plan_name": "plan-m1",
+                    "milestone_index": 0,
+                },
+            },
+        ],
+    )
+    state.completion_contract_mode = "atomic"
+
+    normalized = _normalize_advanced_completed_cursor(state, spec)
+    # Receipt identity mismatch — blocked stays
+    assert normalized.last_state == "blocked"
+
+
+# -- Chain completion guard mode-aware integration ---------------------------
+
+
+def test_chain_completion_guard_shadow_ignores_acceptance_context(
+    tmp_path: Path,
+) -> None:
+    """_chain_completion_guard in shadow mode works regardless of chain_state mode."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    # Pass a chain_state with atomic mode — guard itself is mode-agnostic
+    state = _atomic_state()
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        _record(),
+        implementation_milestone=True,
+        chain_state=state,
+    )
+
+    assert ok is True
+    assert "completion guard passed" in reason
+
+
+# -- _handle_completion_guard_failure in atomic mode -------------------------
+
+
+def test_handle_completion_guard_failure_atomic_with_predicate_failures(
+    tmp_path: Path,
+) -> None:
+    """_handle_completion_guard_failure stores typed repair targets for atomic mode."""
+    base = _init_repo(tmp_path)
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "on_failure:\n"
+        "  retry: retry_milestone\n"
+        "  abort: stop_chain\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {tmp_path / 'idea.md'}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "idea.md").write_text("ship milestone\n", encoding="utf-8")
+    (tmp_path / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-m1",
+        completion_contract_mode="atomic",
+    )
+    spec = load_spec(spec_path)
+
+    predicate_failures = [
+        {
+            "kind": "stale",
+            "evidence_kind": "manifest_freshness",
+            "summary": "execution batch not sequential",
+            "details": {"batch_index": 2, "expected_previous": "batch_1"},
+        }
+    ]
+
+    result = _handle_completion_guard_failure(
+        root=tmp_path,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        milestone=spec.milestones[0],
+        plan_name="plan-m1",
+        outcome_status="done",
+        reason="completion guard blocked in atomic mode",
+        events=[],
+        writer=lambda _msg: None,
+        predicate_failures=predicate_failures,
+        acceptance_transaction_id="tx-test",
+        acceptance_snapshot_hash="sha256:test",
+    )
+
+    targets = state.metadata.get("completion_guard_repair_targets")
+    assert isinstance(targets, list)
+    assert len(targets) >= 1
+    assert any(t.get("kind") == "stale" for t in targets)
+    assert result["status"] == "stopped"
+
+
+def test_handle_completion_guard_failure_legacy_callers_get_fail_closed_target(
+    tmp_path: Path,
+) -> None:
+    """Legacy callers without predicate_failures get fail-closed unknown_acceptance_failure."""
+    base = _init_repo(tmp_path)
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "on_failure:\n"
+        "  retry: retry_milestone\n"
+        "  abort: stop_chain\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {tmp_path / 'idea.md'}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "idea.md").write_text("ship milestone\n", encoding="utf-8")
+    (tmp_path / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-m1",
+        completion_contract_mode="atomic",
+    )
+    spec = load_spec(spec_path)
+
+    result = _handle_completion_guard_failure(
+        root=tmp_path,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        milestone=spec.milestones[0],
+        plan_name="plan-m1",
+        outcome_status="done",
+        reason="no semantic diff",
+        events=[],
+        writer=lambda _msg: None,
+        # No predicate_failures — legacy caller
+    )
+
+    targets = state.metadata.get("completion_guard_repair_targets")
+    assert isinstance(targets, list)
+    assert len(targets) >= 1
+    legacy_target = targets[0]
+    assert legacy_target["kind"] == "unknown_acceptance_failure"
+    assert legacy_target["details"].get("legacy") is True
+    assert result["status"] == "stopped"
+
+
+def test_handle_completion_guard_failure_shadow_preserves_legacy_behavior(
+    tmp_path: Path,
+) -> None:
+    """Shadow mode _handle_completion_guard_failure preserves legacy retry/abort
+    behavior. Repair targets may be recorded (T13 added them for all modes) but the
+    core chain response (stopped + retry) must remain identical to pre-T13."""
+    base = _init_repo(tmp_path)
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "on_failure:\n"
+        "  retry: retry_milestone\n"
+        "  abort: stop_chain\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {tmp_path / 'idea.md'}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "idea.md").write_text("ship milestone\n", encoding="utf-8")
+    (tmp_path / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-m1",
+        # Default = shadow
+    )
+    spec = load_spec(spec_path)
+
+    result = _handle_completion_guard_failure(
+        root=tmp_path,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        milestone=spec.milestones[0],
+        plan_name="plan-m1",
+        outcome_status="done",
+        reason="no semantic diff",
+        events=[],
+        writer=lambda _msg: None,
+    )
+
+    # Shadow mode: status is still "stopped" (retry ladder), legacy behavior preserved
+    assert result["status"] == "stopped"
+    assert "completion guard retrying" in result["reason"]
+    # T13 added repair targets for all modes — verify a legacy target was recorded
+    targets = state.metadata.get("completion_guard_repair_targets")
+    assert isinstance(targets, list)
+    assert len(targets) >= 1
+    assert targets[0]["kind"] == "unknown_acceptance_failure"
+    assert targets[0]["details"].get("legacy") is True
