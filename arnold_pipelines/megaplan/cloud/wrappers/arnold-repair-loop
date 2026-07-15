@@ -5585,14 +5585,14 @@ mechanical_launch_step() {
   local run_kind="$5"
   local plan_name="$6"
   local relaunch_command="$7"
-  local quoted_command launch_script safe detail health control_result control_status control_action
+  local quoted_command launch_script safe detail health control_result control_status control_action control_blocker_cleared
 
   control_result="$(repair_goal_control_snapshot "pre-mechanical-relaunch-$iteration")" || {
     echo "failed:repair_goal_control_unavailable"
     return 1
   }
-  IFS=$'\t' read -r control_status control_action <<< "$(
-    python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print(str(d.get("status") or "")+"\t"+str(e.get("control_action") or ""))' <<< "$control_result"
+  IFS=$'\t' read -r control_status control_action control_blocker_cleared <<< "$(
+    python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), "true" if e.get("blocker_cleared") else "false")))' <<< "$control_result"
   )"
   if [[ "$control_status" == "active" && "$control_action" == "preserve_live" ]]; then
     # mechanical_launch_step is consumed through command substitution. Keep
@@ -5605,6 +5605,14 @@ mechanical_launch_step() {
     log "mechanical relaunch fenced: deterministic owner circuit requires replan session=$session iteration=$iteration" >&2
     echo "failed:replan_required"
     return 1
+  fi
+  if [[ "$control_status" == "active" && "$control_blocker_cleared" == "true" ]] && {
+    { [[ "$run_kind" == "chain" ]] && chain_process_is_alive "$remote_spec"; } ||
+    { [[ -n "$plan_name" ]] && plan_process_is_alive "$plan_name"; }
+  }; then
+    log "mechanical relaunch fenced: matching target runner is alive in a blocker-cleared transition session=$session iteration=$iteration" >&2
+    echo "preserved:runner_transition"
+    return 0
   fi
 
   quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
@@ -6246,8 +6254,6 @@ EOF
       --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
       --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" \
       --link "cloud_session=$SESSION" \
-      --link "repair_goal_id=$ARNOLD_REPAIR_GOAL_ID" \
-      --link "repair_goal_path=$ARNOLD_REPAIR_GOAL_PATH" \
       --link "phase=repair_investigator" \
       "${parent_args[@]}" \
       -- timeout "$investigator_timeout" codex exec --skip-git-repo-check --sandbox read-only \
