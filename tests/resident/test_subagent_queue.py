@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
 
 
 PREDECESSOR_RUN_ID = "subagent-20260715-120000-aaaaaaaa"
+CALLER_RUN_ID = "subagent-20260715-130000-bbbbbbbb"
 
 
 def _non_discord_provenance() -> dict[str, object]:
@@ -51,6 +53,192 @@ def _discord_provenance() -> dict[str, object]:
         "source_kind": "discord_inbound_message",
         "timezone_name": "UTC",
     }
+
+
+def _cross_provenance(
+    *,
+    source_record_id: str,
+    message_id: str,
+    conversation_id: str = "rconv_queuetest",
+    user_id: str = "42",
+    root_run_id: str | None = None,
+) -> dict[str, object]:
+    value = {
+        "schema_version": "arnold-resident-delegation-provenance-v1",
+        "applicability": "applicable",
+        "transport": "discord",
+        "correlation_id": f"discord-corr-{source_record_id}",
+        "custody_id": f"discord-custody-{source_record_id}",
+        "resident_conversation_id": conversation_id,
+        "source_record_id": source_record_id,
+        "conversation_key": f"discord:dm:{user_id}",
+        "discord_message_id": message_id,
+        "reply_to_message_id": message_id,
+        "guild_id": None,
+        "channel_id": "777",
+        "thread_id": None,
+        "dm_user_id": user_id,
+        "resident_turn_id": f"turn_{source_record_id}",
+        "source_kind": "discord_inbound_message",
+        "timezone_name": "UTC",
+    }
+    if root_run_id:
+        value["root_run_id"] = root_run_id
+    return value
+
+
+def _write_authoritative_request(
+    root: Path,
+    provenance: dict[str, object],
+    *,
+    author_id: str,
+) -> None:
+    store = root / ".megaplan/resident"
+    messages = store / "messages"
+    conversations = store / "resident_conversations"
+    messages.mkdir(parents=True, exist_ok=True)
+    conversations.mkdir(parents=True, exist_ok=True)
+    source = str(provenance["source_record_id"])
+    conversation_id = str(provenance["resident_conversation_id"])
+    message_id = str(provenance["discord_message_id"])
+    messages.joinpath(f"{source}.json").write_text(
+        json.dumps(
+            {
+                "id": source,
+                "conversation_id": conversation_id,
+                "direction": "inbound",
+                "content": "authorized request",
+                "discord_message_id": message_id,
+                "discord_reply_provenance": {
+                    "transport": "discord",
+                    "source_message_id": message_id,
+                    "source_author_id": author_id,
+                    "conversation_key": provenance["conversation_key"],
+                    "scope": {
+                        "channel_id": provenance["channel_id"],
+                        "dm_user_id": provenance["dm_user_id"],
+                    },
+                },
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    conversations.joinpath(f"{conversation_id}.json").write_text(
+        json.dumps(
+            {
+                "id": conversation_id,
+                "transport": "discord",
+                "conversation_key": provenance["conversation_key"],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_cross_request_caller(
+    root: Path,
+    provenance: dict[str, object],
+    *,
+    names_predecessor: bool = True,
+) -> Path:
+    run_dir = root / ".megaplan/plans/resident-subagents" / CALLER_RUN_ID
+    run_dir.mkdir(parents=True)
+    prompt = (
+        f"Queue exactly after {PREDECESSOR_RUN_ID}."
+        if names_predecessor
+        else "Queue the requested successor."
+    )
+    prompt_path = run_dir / "prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    source = str(provenance["source_record_id"])
+    relationship = {
+        "schema_version": "arnold-resident-query-relationship-v1",
+        "conversation_id": provenance["resident_conversation_id"],
+        "current_request": {"source_record_id": source},
+        "delivery_owner": {"source_record_id": source},
+        "aggregation_owner": {"source_record_id": source},
+    }
+    manifest = {
+        "schema_version": MANAGED_AGENT_SCHEMA,
+        "run_kind": "resident_delegated_agent",
+        "custodian": MANAGED_AGENT_CUSTODIAN,
+        "run_id": CALLER_RUN_ID,
+        "status": "running",
+        "project_dir": str(root),
+        "work_intent": "review",
+        "prompt_path": str(prompt_path),
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "task_sha256": hashlib.sha256(b"queue task").hexdigest(),
+        "launch_provenance": provenance,
+        "query_relationship": relationship,
+        "aggregation": {
+            "schema_version": subagent.AGGREGATION_SCHEMA,
+            "key": "aggregation-current-request",
+            "synthesis_group": "current-request-synthesis",
+            "role": "internal_contributor",
+            "delivery_owner_run_id": None,
+            "delivery_target_source_record_id": source,
+            "contributors": [],
+        },
+        "completion_delivery": {
+            "transport": "discord",
+            "status": "suppressed",
+            "reply_target": {
+                "source_record_id": source,
+                "message_id": provenance["discord_message_id"],
+                "conversation_key": provenance["conversation_key"],
+            },
+        },
+    }
+    path = run_dir / "manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return path
+
+
+def _cross_request_fixture(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    current_author: str = "42",
+    predecessor_author: str = "42",
+    current_conversation: str = "rconv_queuetest",
+    names_predecessor: bool = True,
+) -> tuple[dict[str, object], Path]:
+    monkeypatch.setenv(
+        "MEGAPLAN_RESIDENT_STORE_ROOT", str(root / ".megaplan/resident")
+    )
+    predecessor_provenance = _cross_provenance(
+        source_record_id="msg_predecessor1",
+        message_id="1527043418327486586",
+    )
+    current_provenance = _cross_provenance(
+        source_record_id="msg_currentreq1",
+        message_id="1527043418327486587",
+        conversation_id=current_conversation,
+        user_id="42",
+        root_run_id=CALLER_RUN_ID,
+    )
+    _write_authoritative_request(
+        root, predecessor_provenance, author_id=predecessor_author
+    )
+    _write_authoritative_request(root, current_provenance, author_id=current_author)
+    predecessor_path = _write_predecessor(root, provenance=predecessor_provenance)
+    _write_cross_request_caller(
+        root, current_provenance, names_predecessor=names_predecessor
+    )
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(current_provenance))
+    return current_provenance, predecessor_path
+
+
+def _queue_cross_request(root: Path):
+    return subagent.launch_codex_subagent_detached(
+        task="Verify predecessor success and own delivery to the current request.",
+        description="Verify predecessor for current request",
+        project_dir=str(root),
+        depends_on_run_id=PREDECESSOR_RUN_ID,
+    )
 
 
 def _write_predecessor(
@@ -382,6 +570,171 @@ def test_queue_inherits_discord_provenance_and_cannot_broaden_authorization(
     predecessor = json.loads(predecessor_path.read_text())
     assert predecessor["completion_delivery"]["status"] == "superseded"
     assert manifest["completion_delivery"]["status"] == "pending"
+
+
+def test_cross_request_queue_uses_authoritative_same_subject_and_current_delivery(
+    tmp_path, monkeypatch
+) -> None:
+    current, predecessor_path = _cross_request_fixture(tmp_path, monkeypatch)
+
+    queued = _queue_cross_request(tmp_path)
+    replayed = _queue_cross_request(tmp_path)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+
+    assert queued.status == "queued"
+    assert replayed.run_id == queued.run_id
+    assert successor["route_class"] == "queued_cross_request_successor"
+    assert successor["launch_provenance"] == current
+    assert successor["source_record_id"] == current["source_record_id"]
+    assert successor["aggregation"]["key"] == "aggregation-current-request"
+    assert successor["aggregation"]["role"] == "synthesis_delivery_owner"
+    assert successor["completion_delivery"]["reply_target"]["source_record_id"] == current[
+        "source_record_id"
+    ]
+    authorization = successor["queue"]["cross_request_authorization"]
+    assert authorization["schema_version"] == (
+        subagent.QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA
+    )
+    assert authorization["predecessor_run_id"] == PREDECESSOR_RUN_ID
+    assert "42" not in json.dumps(authorization)
+    predecessor = json.loads(predecessor_path.read_text())
+    assert predecessor["aggregation"]["role"] == "synthesis_delivery_owner"
+    assert predecessor["completion_delivery"]["status"] == "pending"
+
+
+@pytest.mark.parametrize(
+    ("fixture_kwargs", "error"),
+    [
+        ({"current_author": "43"}, "changed Discord subject"),
+        (
+            {"current_conversation": "rconv_otherconv"},
+            "changed resident conversation",
+        ),
+        (
+            {"names_predecessor": False},
+            "does not explicitly name predecessor",
+        ),
+    ],
+)
+def test_cross_request_queue_denies_wrong_subject_conversation_or_missing_explicit_name(
+    tmp_path, monkeypatch, fixture_kwargs, error
+) -> None:
+    _cross_request_fixture(tmp_path, monkeypatch, **fixture_kwargs)
+
+    with pytest.raises(subagent.SubagentQueueError, match=error):
+        _queue_cross_request(tmp_path)
+
+
+def test_cross_request_queue_denies_missing_authoritative_provenance(
+    tmp_path, monkeypatch
+) -> None:
+    _cross_request_fixture(tmp_path, monkeypatch)
+    (tmp_path / ".megaplan/resident/messages/msg_currentreq1.json").unlink()
+
+    with pytest.raises(ValueError, match="source_record_id does not match"):
+        _queue_cross_request(tmp_path)
+
+
+def test_cross_request_queue_reconciliation_revalidates_authorization_after_restart(
+    tmp_path, monkeypatch
+) -> None:
+    _, predecessor_path = _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    _complete_predecessor(predecessor_path)
+    caller_path = (
+        tmp_path
+        / ".megaplan/plans/resident-subagents"
+        / CALLER_RUN_ID
+        / "manifest.json"
+    )
+    caller = json.loads(caller_path.read_text())
+    caller["status"] = "completed"
+    caller_path.write_text(json.dumps(caller))
+    launched = []
+    monkeypatch.setattr(
+        subagent,
+        "_spawn_managed_supervisor",
+        lambda path, manifest: (launched.append(path) or _Supervisor(), manifest),
+    )
+
+    result = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+
+    assert result.launched == 1
+    assert launched == [Path(queued.manifest_path)]
+
+
+def test_cross_request_queue_preserves_failure_propagation(
+    tmp_path, monkeypatch
+) -> None:
+    _, predecessor_path = _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    predecessor = json.loads(predecessor_path.read_text())
+    predecessor.update(
+        {"status": "failed", "terminal_outcome": "failed", "returncode": 1}
+    )
+    predecessor_path.write_text(json.dumps(predecessor))
+
+    result = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    successor = json.loads(Path(queued.manifest_path).read_text())
+
+    assert result.failed_closed == 1
+    assert successor["status"] == "failed"
+    assert successor["queue"]["attention"] == "predecessor_terminal_failure"
+
+
+def test_cross_request_queue_fails_closed_if_authorization_or_source_record_changes(
+    tmp_path, monkeypatch
+) -> None:
+    _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+    del successor["queue"]["cross_request_authorization"]
+    successor_path.write_text(json.dumps(successor))
+
+    result = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    terminal = json.loads(successor_path.read_text())
+
+    assert result.failed_closed == 1
+    assert terminal["status"] == "failed"
+    assert terminal["queue"]["attention"] == "invalid_dependency_contract"
+
+
+def test_cross_request_queue_denies_delivered_aggregation_owner(
+    tmp_path, monkeypatch
+) -> None:
+    _cross_request_fixture(tmp_path, monkeypatch)
+    conflict_dir = (
+        tmp_path
+        / ".megaplan/plans/resident-subagents"
+        / "subagent-20260715-140000-cccccccc"
+    )
+    conflict_dir.mkdir(parents=True)
+    conflict_dir.joinpath("manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": MANAGED_AGENT_SCHEMA,
+                "run_kind": "resident_delegated_agent",
+                "custodian": MANAGED_AGENT_CUSTODIAN,
+                "run_id": "subagent-20260715-140000-cccccccc",
+                "aggregation": {
+                    "key": "aggregation-current-request",
+                    "role": "synthesis_delivery_owner",
+                },
+                "completion_delivery": {"status": "delivered"},
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="already has a delivered owner"):
+        _queue_cross_request(tmp_path)
 
 
 def test_queue_cycle_is_rejected_before_successor_commit(tmp_path, monkeypatch) -> None:
