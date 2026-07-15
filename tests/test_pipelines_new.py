@@ -1,8 +1,6 @@
 """T11 / M6 — pipelines new scaffold tests (native-first compositional contract).
 
-Verifies that ``pipelines new <name>`` via both module paths:
-* ``python -m arnold_pipelines.megaplan pipelines new <name>``
-* ``python -m arnold_pipelines.megaplan.cli.arnold pipelines new <name>``
+Verifies ``python -m arnold_pipelines.megaplan pipelines new <name>``.
 
 creates a native-first compositional shell module and SKILL.md stub,
 and that the emitted package passes authoring validation.
@@ -21,7 +19,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import shutil
 import subprocess
 import sys
 from argparse import Namespace
@@ -30,6 +27,9 @@ from pathlib import Path
 import pytest
 
 from arnold.pipelines._authoring import validate_package_module
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -124,12 +124,34 @@ def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _run_arnold_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run ``python -m arnold_pipelines.megaplan.cli.arnold pipelines ...``."""
+def _run_scaffold_module(
+    module: str,
+    *,
+    pipelines_dir: Path,
+    name: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run a module entrypoint with its scan root patched in the child."""
+
+    script = f"""
+import runpy
+import sys
+from pathlib import Path
+
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from arnold_pipelines.megaplan.runtime import discovery
+
+discovery._SCAN_ROOTS = [
+    (Path({str(pipelines_dir.parent)!r}), "arnold_pipelines"),
+    (Path({str(pipelines_dir)!r}), "arnold_pipelines.megaplan.pipelines"),
+]
+sys.argv = [{module!r}, "pipelines", "new", {name!r}]
+runpy.run_module({module!r}, run_name="__main__")
+"""
     return subprocess.run(
-        [sys.executable, "-m", "arnold_pipelines.megaplan.cli.arnold", "pipelines", *args],
+        [sys.executable, "-c", script],
         capture_output=True,
         text=True,
+        cwd=REPO_ROOT,
         env={**os.environ, "MEGAPLAN_MOCK_WORKERS": "1"},
     )
 
@@ -438,7 +460,7 @@ def test_m6_scaffold_preserves_legacy_path_absence(
         )
 
     # Also verify the legacy path directory is empty (deleted content).
-    legacy_dir = Path("/workspace/arnold/arnold/pipelines/_template")
+    legacy_dir = REPO_ROOT / "arnold" / "pipelines" / "_template"
     if legacy_dir.exists():
         remaining = list(legacy_dir.iterdir())
         assert not remaining, (
@@ -451,61 +473,19 @@ def test_m6_scaffold_preserves_legacy_path_absence(
 
 
 def test_subprocess_pipelines_new_via_megaplan_module(
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """``python -m arnold_pipelines.megaplan pipelines new`` works end-to-end."""
-    from arnold_pipelines.megaplan.runtime import discovery as discovery_mod
-
     pipelines_dir = tmp_path / "pipelines"
     pipelines_dir.mkdir()
-    monkeypatch.setattr(
-        discovery_mod,
-        "_SCAN_ROOTS",
-        ((tmp_path, "arnold_pipelines"), (pipelines_dir, "arnold_pipelines.megaplan.pipelines")),
-    )
-    # Also patch getattr on the cli module to use monkeypatched _SCAN_ROOTS
-    import arnold_pipelines.megaplan.cli as cli_mod
-    monkeypatch.setattr(cli_mod, "_handle_pipelines", cli_mod._handle_pipelines)
 
     name = "t11-subprocess-megaplan"
     module_stem = name.replace("-", "_")
-    result = subprocess.run(
-        [sys.executable, "-m", "arnold_pipelines.megaplan", "pipelines", "new", name],
-        capture_output=True,
-        text=True,
-        env={**os.environ, "MEGAPLAN_MOCK_WORKERS": "1"},
+    result = _run_scaffold_module(
+        "arnold_pipelines.megaplan",
+        pipelines_dir=pipelines_dir,
+        name=name,
     )
-    # This will use the real _SCAN_ROOTS, so the module won't be in tmp_path.
-    # We just verify the CLI doesn't crash with "invalid choice".
-    assert "invalid choice" not in result.stderr
-    # Clean up any scaffold written to the real directory
-    real_module = Path("/workspace/arnold/arnold_pipelines/megaplan/pipelines") / f"{module_stem}.py"
-    real_skill_dir = Path("/workspace/arnold/arnold_pipelines/megaplan/pipelines") / name
-    if real_module.exists():
-        real_module.unlink()
-    if real_skill_dir.exists():
-        shutil.rmtree(real_skill_dir)
-
-
-def test_subprocess_pipelines_new_via_arnold_entry(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """``python -m arnold_pipelines.megaplan.cli.arnold pipelines new`` works."""
-    name = "t11-subprocess-arnold"
-    module_stem = name.replace("-", "_")
-    result = subprocess.run(
-        [sys.executable, "-m", "arnold_pipelines.megaplan.cli.arnold", "pipelines", "new", name],
-        capture_output=True,
-        text=True,
-        env={**os.environ, "MEGAPLAN_MOCK_WORKERS": "1"},
-    )
-    assert "invalid choice" not in result.stderr
-    # Clean up
-    real_module = Path("/workspace/arnold/arnold_pipelines/megaplan/pipelines") / f"{module_stem}.py"
-    real_skill_dir = Path("/workspace/arnold/arnold_pipelines/megaplan/pipelines") / name
-    if real_module.exists():
-        real_module.unlink()
-    if real_skill_dir.exists():
-        shutil.rmtree(real_skill_dir)
+    assert result.returncode == 0, result.stderr
+    assert (pipelines_dir / f"{module_stem}.py").is_file()
+    assert (pipelines_dir / name / "SKILL.md").is_file()

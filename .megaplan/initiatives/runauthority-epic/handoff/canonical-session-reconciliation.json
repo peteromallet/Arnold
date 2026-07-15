@@ -34,7 +34,7 @@
   },
   "quarantine_action": {
     "pregate_retired_marker_found": true,
-    "quarantined_path": ".megaplan/initiatives/runauthority-epic/.retired.pregate-quarantine",
+    "quarantined_path": ".megaplan/initiatives/runauthority-epic/handoff/retirement-pregate-quarantine.yaml",
     "quarantined_sha256": "b3b082eb91c578c569a7c6f2237c7da684a0a43a92b7589e23869d17d4bcb1d8",
     "original_content": {
       "schema": "megaplan-initiative-retirement-v1",

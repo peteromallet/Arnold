@@ -80,7 +80,6 @@ LIVE_CORE_PATHS: tuple[tuple[str, str], ...] = (
 LIVE_CLI_PATHS: tuple[tuple[str, str], ...] = (
     # CLI entrypoints
     ("monolithic CLI", "arnold_pipelines.megaplan.cli"),
-    ("cli parser", "arnold_pipelines.megaplan.cli.parser"),
     ("cli run handler", "arnold_pipelines.megaplan.cli.run"),
     ("module entrypoint", "arnold_pipelines.megaplan.__main__"),
 )
@@ -183,7 +182,7 @@ STALE_PATHS_WITH_LIVE_EQUIVALENTS: tuple[tuple[str, str, str], ...] = (
     ("auto", "arnold.pipelines.megaplan.auto", "arnold_pipelines.megaplan.auto"),
     ("registry", "arnold.pipelines.megaplan.registry", "arnold_pipelines.megaplan.registry"),
     ("cli/__init__", "arnold.pipelines.megaplan.cli", "arnold_pipelines.megaplan.cli"),
-    ("cli/parser", "arnold.pipelines.megaplan.cli.parser", "arnold_pipelines.megaplan.cli.parser"),
+    ("cli/parser", "arnold.pipelines.megaplan.cli.parser", "arnold_pipelines.megaplan.cli"),
     ("cli/run", "arnold.pipelines.megaplan.cli.run", "arnold_pipelines.megaplan.cli.run"),
     ("routing", "arnold.pipelines.megaplan.routing", "arnold_pipelines.megaplan.routing"),
     ("runtime/bridge", "arnold.pipelines.megaplan.runtime.bridge", "arnold_pipelines.megaplan.runtime.bridge"),

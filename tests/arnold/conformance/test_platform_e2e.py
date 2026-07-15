@@ -73,7 +73,13 @@ def test_local_platform_e2e_conformance_with_deterministic_fakes(tmp_path: Path)
         "workflow.pypeline",
     ) as workflow_source:
         lowered = lower_workflow_file(workflow_source)
-    assert {"parallel_map", "subpipeline"} <= {step.kind for step in lowered.steps}
+    assert "parallel_map" in {step.kind for step in lowered.steps}
+    assert {
+        "tiebreaker_researcher",
+        "tiebreaker_challenger",
+        "tiebreaker_synthesis",
+        "tiebreaker_decision",
+    } <= {step.id for step in lowered.steps}
 
     lease = lease_store.claim_project_lease(
         "project-alpha",

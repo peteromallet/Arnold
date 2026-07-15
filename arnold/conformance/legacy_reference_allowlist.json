@@ -719,6 +719,54 @@
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
+    },
+    {
+      "path": "arnold/conformance/authoring_terms.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "The shared forbidden-term catalogue must name the deleted package prefix that inventory scanners reject."
+    },
+    {
+      "path": "docs/arnold/native-platform.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Platform documentation identifies the deleted source path as a negative conformance target."
+    },
+    {
+      "path": "docs/arnold/repair-system/forbidden-terms-single-source-of-truth.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Repair-system documentation explains why scanners must retain the forbidden legacy package literal."
+    },
+    {
+      "path": "docs/megaplan/loose-work-cleanup-2026-07-05.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "The dated cleanup audit records archived branches that still used the deleted package name."
+    },
+    {
+      "path": "docs/megaplan/loose-work-cleanup-2026-07-05.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "The dated cleanup audit records archived branches that still used the deleted source path."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_routing_source_invariants.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "The routing invariant test names the legacy package as forbidden product vocabulary."
+    },
+    {
+      "path": "tests/fixtures/workflow_boundary_contracts/captured_bundle_003_20260616T195220.json",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "The immutable captured workflow fixture preserves a pre-migration input path for replay compatibility."
+    },
+    {
+      "path": "tests/fixtures/workflow_boundary_contracts/captured_bundles_index.json",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "The immutable captured-fixture index preserves pre-migration path evidence for replay compatibility."
     }
   ]
 }
