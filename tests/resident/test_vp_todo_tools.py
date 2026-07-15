@@ -288,7 +288,7 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
         "arnold-managed-agent-run-v2"
     )
     policy = context["resident_runtime"]["subagent_launch"]["delegation_policy"]
-    assert policy["schema_version"] == "megaplan-resident-delegation-policy-v2"
+    assert policy["schema_version"] == "megaplan-resident-delegation-policy-v3"
     assert "independent actionable sub-problems" in policy["preference"]
     assert "one clear owner per sub-problem" in policy["ownership"]
     assert "action-oriented task prompt" in policy["task_prompt_contract"]

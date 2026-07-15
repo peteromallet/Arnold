@@ -85,6 +85,28 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     search_parser.add_argument("--cursor", type=int, default=0)
     search_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
 
+    queue_parser = sub.add_parser(
+        "queue-subagent-successor",
+        parents=[shared],
+        help="Durably queue a provenance-preserving successor after one managed run",
+    )
+    queue_parser.add_argument("--after-run-id", required=True)
+    prompt_source = queue_parser.add_mutually_exclusive_group(required=True)
+    prompt_source.add_argument("--prompt")
+    prompt_source.add_argument("--prompt-file")
+    queue_parser.add_argument("--description", required=True)
+    queue_parser.add_argument("--project-dir")
+    queue_parser.add_argument("--max-launch-attempts", type=int, default=3)
+
+    inspect_queue_parser = sub.add_parser(
+        "inspect-subagent-queue",
+        parents=[shared],
+        help="Inspect bounded resident successor dependency state",
+    )
+    inspect_queue_parser.add_argument("--run-id")
+    inspect_queue_parser.add_argument("--project-dir")
+    inspect_queue_parser.add_argument("--limit", type=int, default=8)
+
 
 def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     config = _resident_config(args)
@@ -95,6 +117,10 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
             return _resident_health(store, config, limit=args.limit)
         if action == "scheduler-once":
             return asyncio.run(_resident_scheduler_once(store, config, worker_id=args.worker_id))
+        if action == "queue-subagent-successor":
+            return _resident_queue_subagent_successor(root, config, args)
+        if action == "inspect-subagent-queue":
+            return _resident_inspect_subagent_queue(root, args)
         if action == "read-reply-chain":
             return _resident_read_reply_chain(
                 store,
@@ -128,6 +154,132 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
         if callable(close):
             close()
     raise CliError("invalid_args", f"Unknown resident action: {getattr(args, 'resident_action', None)!r}")
+
+
+def _resident_queue_subagent_successor(
+    root: Path, config: ResidentConfig, args: argparse.Namespace
+) -> dict[str, Any]:
+    from .subagent import SubagentQueueError, launch_subagent_task
+
+    if args.prompt_file:
+        try:
+            prompt = Path(args.prompt_file).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            raise CliError("invalid_args", f"cannot read --prompt-file: {exc}") from exc
+    else:
+        prompt = str(args.prompt or "")
+    if not prompt.strip():
+        raise CliError("invalid_args", "queued successor prompt must not be empty")
+    project_dir = str(Path(args.project_dir).expanduser().resolve()) if args.project_dir else str(root)
+    try:
+        result = asyncio.run(
+            launch_subagent_task(
+                config,
+                task=prompt.strip(),
+                description=args.description,
+                project_dir=project_dir,
+                depends_on_run_id=args.after_run_id,
+                queue_max_launch_attempts=args.max_launch_attempts,
+            )
+        )
+    except (SubagentQueueError, ValueError, OSError) as exc:
+        raise CliError("queue_rejected", str(exc)) from exc
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "queue-subagent-successor",
+        "run_id": result.run_id,
+        "status": result.status,
+        "predecessor_run_id": args.after_run_id,
+        "manifest_path": result.manifest_path,
+        "description": result.description,
+    }
+
+
+def _resident_inspect_subagent_queue(
+    root: Path, args: argparse.Namespace
+) -> dict[str, Any]:
+    from .subagent import list_managed_resident_agents
+
+    if args.limit < 1 or args.limit > 25:
+        raise CliError("invalid_args", "inspect-subagent-queue --limit must be 1..25")
+    project_dir = Path(args.project_dir).expanduser().resolve() if args.project_dir else root
+    inventory = list_managed_resident_agents(
+        project_root=project_dir,
+        workspace_root=None,
+        recent_limit=args.limit,
+        queue_limit=args.limit,
+    )
+    rows = list(inventory.get("queued") or []) + [
+        row
+        for row in inventory.get("recent") or []
+        if isinstance(row, dict) and isinstance(row.get("queue"), dict)
+    ]
+    if args.run_id:
+        rows = [row for row in rows if row.get("run_id") == args.run_id]
+        if not rows:
+            raise CliError("not_found", f"queued resident run not found: {args.run_id}")
+    bounded = []
+    for row in rows[: args.limit]:
+        queue = dict(row.get("queue") or {})
+        authored = queue.get("authored_prompt")
+        authored = authored if isinstance(authored, dict) else {}
+        references = []
+        for ref in list(queue.get("predecessor_references") or [])[:3]:
+            if not isinstance(ref, dict):
+                continue
+            references.append(
+                {
+                    "schema_version": str(ref.get("schema_version") or "")[:80],
+                    "run_id": str(ref.get("run_id") or "")[:96],
+                    "artifact_type": str(ref.get("artifact_type") or "")[:32],
+                    "path": str(ref.get("path") or "")[:4096],
+                    "content_inlined": bool(ref.get("content_inlined")),
+                }
+            )
+        bounded.append(
+            {
+                "run_id": str(row.get("run_id") or "")[:96],
+                "status": str(row.get("status") or "")[:48],
+                "description": str(row.get("description") or "")[:180],
+                "predecessor_run_id": str(queue.get("predecessor_run_id") or "")[:96],
+                "successor_run_id": str(queue.get("successor_run_id") or "")[:96],
+                "dependency_state": str(queue.get("state") or "")[:48],
+                "predecessor_status": str(queue.get("predecessor_status") or "")[:48],
+                "attention": str(queue.get("attention") or "")[:120],
+                "attempt_count": (
+                    max(0, min(queue["attempt_count"], 10_000))
+                    if isinstance(queue.get("attempt_count"), int)
+                    and not isinstance(queue.get("attempt_count"), bool)
+                    else None
+                ),
+                "max_launch_attempts": (
+                    max(0, min(queue["max_launch_attempts"], 10_000))
+                    if isinstance(queue.get("max_launch_attempts"), int)
+                    and not isinstance(queue.get("max_launch_attempts"), bool)
+                    else None
+                ),
+                "authored_prompt": {
+                    "description": str(authored.get("description") or "")[:180],
+                    "size_chars": (
+                        max(0, min(authored["size_chars"], 40_000))
+                        if isinstance(authored.get("size_chars"), int)
+                        and not isinstance(authored.get("size_chars"), bool)
+                        else None
+                    ),
+                },
+                "predecessor_references": references,
+            }
+        )
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "inspect-subagent-queue",
+        "items": bounded,
+        "count": len(bounded),
+        "queued_total_count": inventory.get("queued_count", 0),
+        "omitted_count": max(0, len(rows) - len(bounded)),
+    }
 
 
 def _resident_config(args: argparse.Namespace) -> ResidentConfig:

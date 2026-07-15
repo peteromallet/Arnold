@@ -46,7 +46,7 @@ from .restart_resident import (
     restart_discord_resident,
 )
 from .scheduler import ScheduledJobWorker
-from .subagent import sweep_managed_agent_deliveries
+from .subagent import reconcile_managed_subagent_queues, sweep_managed_agent_deliveries
 from .transcription import AudioTranscriptionError, OpenAICompatibleAudioTranscriber
 from .timezone import InvalidTimezone, TimezoneService
 
@@ -1348,6 +1348,14 @@ class ResidentDiscordService:
                     "in_progress": 0,
                 }
                 LOGGER.exception("Resident restart transaction reconciliation failed")
+            try:
+                queue_reconciliation = await asyncio.to_thread(
+                    reconcile_managed_subagent_queues,
+                    project_root=Path.cwd(),
+                )
+            except Exception:
+                queue_reconciliation = None
+                LOGGER.exception("Resident managed successor reconciliation failed")
             if self.runtime.config.allows_operational_discord_delivery:
                 completion_delivery = await sweep_managed_agent_deliveries(
                     outbound=self.runtime.outbound,
@@ -1391,6 +1399,7 @@ class ResidentDiscordService:
                 "restart_reconciled_failed=%s restart_reconcile_in_progress=%s "
                 "completion_delivery_scanned=%s completion_delivered=%s "
                 "completion_retry_pending=%s completion_failed=%s "
+                "queue_scanned=%s queue_launched=%s queue_failed_closed=%s "
                 "reset_delivery_scanned=%s reset_delivered=%s reset_retry_pending=%s "
                 "reset_waiting_for_target=%s reset_failed=%s "
                 "reaction_effects_scanned=%s reaction_effects_applied=%s "
@@ -1406,6 +1415,9 @@ class ResidentDiscordService:
                 completion_delivery.delivered if completion_delivery is not None else 0,
                 completion_delivery.retry_pending if completion_delivery is not None else 0,
                 completion_delivery.failed if completion_delivery is not None else 0,
+                queue_reconciliation.scanned if queue_reconciliation is not None else 0,
+                queue_reconciliation.launched if queue_reconciliation is not None else 0,
+                queue_reconciliation.failed_closed if queue_reconciliation is not None else 0,
                 reset_delivery.scanned if reset_delivery is not None else 0,
                 reset_delivery.delivered if reset_delivery is not None else 0,
                 reset_delivery.retry_pending if reset_delivery is not None else 0,
