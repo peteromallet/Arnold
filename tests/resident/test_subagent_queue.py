@@ -578,6 +578,7 @@ def test_queue_inherits_discord_provenance_and_cannot_broaden_authorization(
     assert manifest["launch_provenance"] == provenance
     assert manifest["project_dir"] == str(tmp_path)
     assert manifest["work_intent"] == "review"
+    assert manifest["delegation_delivery_instruction"]["resolved_work_intent"] == "review"
     assert manifest["source_record_id"] == provenance["source_record_id"]
     predecessor_path = (
         tmp_path
