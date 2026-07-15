@@ -39,6 +39,7 @@ def spec(
     run_kind: str = "automatic_repair_retry",
     lineage: str | None = None,
     links: dict[str, str] | None = None,
+    description: str | None = None,
 ) -> ManagedCommandSpec:
     return ManagedCommandSpec(
         run_kind=run_kind,
@@ -52,6 +53,7 @@ def spec(
         route_class="test_route",
         backend="codex",
         command_display="fixture managed worker",
+        description=description,
         launch_provenance=machine_origin_provenance(
             origin_kind="repair_loop_worker",
             origin_id=identity,
@@ -101,6 +103,7 @@ def test_automatic_run_has_full_truthful_lifecycle_and_unified_view(tmp_path: Pa
     assert payload["model"] == "gpt-5.6-sol"
     assert payload["reasoning_effort"] == "high"
     assert payload["difficulty"] == 8
+    assert payload["description"] == "fixture managed worker"
     assert payload["completion_delivery"]["status"] == "not_applicable"
     assert payload["launch_provenance"]["schema_version"] == MACHINE_ORIGIN_SCHEMA
     assert payload["launch_provenance"]["transport"] == "automatic_system"
@@ -116,6 +119,26 @@ def test_automatic_run_has_full_truthful_lifecycle_and_unified_view(tmp_path: Pa
     assert row["status"] == "completed"
     assert row["links"]["blocker_id"] == "blocker-1"
     assert view["delivery_status_counts"] == {"not_applicable": 1}
+
+
+def test_automatic_run_persists_specific_operator_description(tmp_path: Path) -> None:
+    item = spec(
+        tmp_path,
+        identity="described-investigator",
+        description=(
+            "Read-only investigation of repair_goal_owner_missing for custody-control-plane "
+            "at m5a/execute"
+        ),
+    )
+
+    path, payload, created = reserve_managed_command(item)
+
+    assert created is True
+    assert path.exists()
+    assert payload["description"] == (
+        "Read-only investigation of repair_goal_owner_missing for custody-control-plane "
+        "at m5a/execute"
+    )
 
 
 def test_terminal_failure_is_persisted_with_result(tmp_path: Path) -> None:
