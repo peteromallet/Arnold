@@ -5986,7 +5986,7 @@ Requested model label for this iteration: $requested_model
 Actual dispatch model: $dispatch_model
 
 Task:
-0. You are the sole high-reasoning goal owner for this repair cycle. Read the validated investigator receipt first. Keep working through productive evidence-changing iterations inside this turn, but report `replan` when the same deterministic failure/progress token repeats. Never launch or retain a second mutating owner.
+0. You are the sole high-reasoning goal owner for this repair cycle. Read the validated investigator receipt first. Keep working through productive evidence-changing iterations inside this turn, but report \`replan\` when the same deterministic failure/progress token repeats. Never launch or retain a second mutating owner.
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
    Read the LAST EXECUTE ATTEMPT summary first. The root cause might be in the Arnold SOURCE (a code bug) OR in the PLAN STATE (a deferred task, a missing baseline, stale tests for deleted modules). If a task was deferred or blocked rather than failed, investigate the task-level deferral reason; the fix might be to clear or resolve the deferral/state, not to change source code.
    Classification guide:
