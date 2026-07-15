@@ -252,6 +252,29 @@ def test_investigator_receipt_is_bound_to_context_and_requires_evidence() -> Non
         validate_investigator_receipt(receipt, expected_context_digest="digest-2")
 
 
+def test_context_tells_investigator_the_fail_closed_action_target_contract(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    contract = context["required_investigator_output"]["action_target_contract"]
+    assert contract["replan"] == ["none"]
+    assert contract["recover_state"] == ["plan_state_via_cli", "repair_custody"]
+
+    receipt = _receipt()
+    receipt["recommended_action"] = "replan"
+    receipt["handoff"]["action"] = "replan"
+    receipt["safe_repair_target"]["kind"] = "repair_custody"
+    with pytest.raises(ValueError, match="action and safe repair target disagree"):
+        validate_investigator_receipt(receipt, expected_context_digest="digest-1")
+
+
 def test_unknown_or_guard_weakening_receipt_fails_closed() -> None:
     receipt = _receipt()
     receipt["custody_status"] = "unknown"

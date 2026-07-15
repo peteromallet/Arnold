@@ -168,6 +168,13 @@ def _common_required_output(target_kind: str) -> dict[str, Any]:
             "scope": "<bounded path/component or none>",
             "rationale": "<why this is the safe ownership boundary>",
         },
+        "action_target_contract": {
+            "preserve_live": ["none"],
+            "replan": ["none"],
+            "repair_source": ["arnold_source", "target_workspace"],
+            "repair_target": ["target_workspace"],
+            "recover_state": ["plan_state_via_cli", "repair_custody"],
+        },
         "handoff": {
             "action": "preserve_live|repair_source|repair_target|recover_state|replan",
             "allowed_mutations": ["<bounded mutation or none>"],
