@@ -6135,6 +6135,7 @@ EOF
       --route-class repair_read_only_investigator \
       --backend codex \
       --command-display "automatic repair bounded investigator" \
+      --description "Read-only investigation of ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-repair blocker} for $SESSION at ${PLAN_NAME:-current plan}; produce evidence and a mutation verdict" \
       --origin-kind repair_loop_worker \
       --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}" \
       --origin-component arnold-repair-loop \
@@ -6233,6 +6234,7 @@ run_dev_fix_turn() {
     --route-class "repair_${dispatch_kind}${fallback_reason:+_fallback}"
     --backend "$dispatch_kind"
     --command-display "automatic repair dev-fix iteration $iteration"
+    --description "Mutating fixer for ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-repair blocker} in $SESSION at ${PLAN_NAME:-current plan}; authorized by investigator verdict ${INVESTIGATOR_RECOMMENDED_ACTION:-repair}"
     --origin-kind repair_loop_worker
     --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
     --origin-component arnold-repair-loop
