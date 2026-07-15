@@ -492,7 +492,8 @@ EOF
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" \
     "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RUN_ID" "$investigator_mode" \
-    "$META_INVESTIGATION_OBSERVATION_PATH" <<'PY' >>"$RUN_LOG" 2>&1
+    "$META_INVESTIGATION_OBSERVATION_PATH" <<'PY' >>"$RUN_LOG" 2>&1 || return 1
+import json
 import pathlib
 import sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
@@ -501,9 +502,11 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import validate_invest
 data_path, context_path, receipt_path, digest, run_id, mode, observation_path = sys.argv[1:]
 payload = load_json(pathlib.Path(data_path), default={})
 validated = validate_investigator_receipt(
-    load_json(pathlib.Path(receipt_path), default={}),
+    json.loads(pathlib.Path(receipt_path).read_text(encoding="utf-8")),
     expected_context_digest=digest,
-    observation_bundle=load_json(pathlib.Path(observation_path), default={}),
+    observation_bundle=json.loads(
+        pathlib.Path(observation_path).read_text(encoding="utf-8")
+    ),
 )
 payload["meta_investigation"] = {
     "context_path": context_path, "context_digest": digest, "receipt_path": receipt_path,
