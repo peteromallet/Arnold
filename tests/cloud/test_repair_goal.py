@@ -350,6 +350,8 @@ def test_repair_loop_fences_mechanical_relaunch_and_uses_two_stage_owner() -> No
     assert 'REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-1}"' in wrapper
     assert "sole high-reasoning goal owner" in wrapper
     assert "Success requires the blocker cleared" in wrapper
+    assert '--difficulty "$([[ "$recurring" == "1" ]] && printf 8 || printf 7)"' in wrapper
+    assert 'printf 9 || printf 7' not in wrapper
 
     investigator = wrapper[wrapper.index("run_repair_investigator_turn() {") :]
     investigator = investigator[: investigator.index("\n}\n")]

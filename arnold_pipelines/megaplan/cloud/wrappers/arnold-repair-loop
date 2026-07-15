@@ -6333,7 +6333,9 @@ run_dev_fix_turn() {
     --identity-key "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:dev:$attempt_id:$iteration:$dispatch_model"
     --project-dir "$repair_workdir"
     --task-kind root_cause
-    --difficulty "$([[ "$recurring" == "1" ]] && printf 9 || printf 7)"
+    # The watchdog-authorized root is difficulty 8. High reasoning is carried
+    # independently; never exceed the inherited managed-agent custody ceiling.
+    --difficulty "$([[ "$recurring" == "1" ]] && printf 8 || printf 7)"
     --model "$dispatch_model"
     --reasoning-effort "$reasoning_effort"
     --route-class "repair_${dispatch_kind}${fallback_reason:+_fallback}"
