@@ -498,6 +498,7 @@ class ResidentRuntime:
                     claim.notification_id,
                     status="complete",
                     replacement_turn_id=turn.id,
+                    user_delivery_owned=True,
                 )
                 recovered += 1
                 continue

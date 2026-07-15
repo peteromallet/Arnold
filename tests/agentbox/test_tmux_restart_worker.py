@@ -7,11 +7,13 @@ from agentbox.reset_notifications import (
     prepare_reset_notification,
 )
 from agentbox.tmux_restart_worker import complete_tmux_restart
+from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
 
 
 def test_detached_worker_finalizes_success_after_replacement_health(
     monkeypatch, tmp_path
 ) -> None:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
     reservation = prepare_reset_notification(notification_root=tmp_path)
     monkeypatch.setattr(
         subprocess,
@@ -45,6 +47,7 @@ def test_detached_worker_finalizes_success_after_replacement_health(
 
 
 def test_detached_worker_finalizes_failed_respawn(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
     reservation = prepare_reset_notification(notification_root=tmp_path)
     monkeypatch.setattr(
         subprocess,
