@@ -227,8 +227,8 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
     )
     payload = json.loads(repair_data.read_text(encoding="utf-8"))
     payload["meta_investigation"] = {
-        "access_receipt_path": str(access),
-        "context_digest": context_digest,
+        "access_receipt_path": str(tmp_path / "stale-erased-observations.json"),
+        "context_digest": "d" * 64,
     }
     _write(repair_data, payload)
 
@@ -239,6 +239,8 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
         repair_data_path=repair_data,
         request_path=request,
         goal_path=goal,
+        l2_handoff_path=access,
+        l2_context_digest=context_digest,
     )
 
     assert context["exact_error"]["failure_kind"] == "external_pr_ci_guard_failed"
@@ -256,6 +258,8 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
             repair_data_path=repair_data,
             request_path=request,
             goal_path=goal,
+            l2_handoff_path=access,
+            l2_context_digest=context_digest,
         )
 
 
