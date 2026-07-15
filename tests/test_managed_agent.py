@@ -418,6 +418,21 @@ def test_active_repair_goal_cannot_be_completed_by_worker_exit(tmp_path: Path) -
     assert payload["semantic_completion"]["complete"] is False
 
 
+def test_missing_repair_goal_evidence_fails_closed(tmp_path: Path) -> None:
+    item = spec(
+        tmp_path,
+        identity="missing-goal-worker-exit",
+        run_kind="automatic_repair",
+        links={"repair_goal_path": str(tmp_path / "missing-goal.json")},
+    )
+
+    assert run_managed_command(item) == 75
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    assert payload["status"] == "failed"
+    assert payload["repair_goal"]["status"] == "unknown"
+    assert payload["semantic_completion"]["complete"] is False
+
+
 def test_approval_gate_is_terminal_non_success_not_autonomous_failure(
     tmp_path: Path,
 ) -> None:

@@ -314,6 +314,7 @@ def _repair_goal_semantics(payload: Mapping[str, Any]) -> dict[str, Any] | None:
             "goal_path": goal_path,
             "checkpoint_digest": str(links.get("repair_checkpoint_digest") or ""),
             "status": "unknown",
+            "terminal": False,
             "semantic_completion": False,
             "reason": "durable repair goal evidence is unavailable",
         }
