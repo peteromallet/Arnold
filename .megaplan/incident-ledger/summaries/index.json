@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-15T07:36:20.507775+00:00",
+  "generated_at": "2026-07-15T13:36:30.410512+00:00",
   "incident_count": 10,
   "incidents": [
     {
@@ -43,7 +43,7 @@
       "path": ".megaplan/incident-ledger/summaries/incidents/incident-42.json"
     }
   ],
-  "problem_count": 24,
+  "problem_count": 26,
   "problems": [
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-3bc7a5eaa27e.json",
@@ -64,6 +64,10 @@
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-5b2d4b8c99c1.json",
       "problem_id": "problem-5b2d4b8c99c1"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-6356292eb79a.json",
+      "problem_id": "problem-6356292eb79a"
     },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
@@ -136,6 +140,10 @@
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-c7e2d7ad616b.json",
       "problem_id": "problem-c7e2d7ad616b"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-dd5016fd3ab4.json",
+      "problem_id": "problem-dd5016fd3ab4"
     },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-e20c45ae0eb0.json",
