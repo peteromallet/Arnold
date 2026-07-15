@@ -21,7 +21,7 @@ MAX_CONTEXT_TEXT_CHARS = 500
 
 
 DELEGATION_POLICY: dict[str, Any] = {
-    "schema_version": "megaplan-resident-delegation-policy-v2",
+    "schema_version": "megaplan-resident-delegation-policy-v3",
     "preference": (
         "Default to `launch_subagent` for any user-requested execution work when delegation "
         "adds useful execution. Decompose the query into independent actionable "
@@ -61,12 +61,16 @@ DELEGATION_POLICY: dict[str, Any] = {
     ),
     "integration_default": (
         "The target is the branch explicitly named or clearly implied by the request; otherwise use the "
-        "launch-time current non-main branch. Never infer literal `main` from an unspecified target. If "
-        "the checkout is on `main`, detached, divergent, or ambiguous, keep the verified commit on its "
-        "feature branch and report the exact integration gate. For authorized implementation, revalidate "
-        "the target and integrate locally after verification, preferring rebase plus fast-forward-only or "
-        "the repository's documented non-destructive merge method. Local integration does not authorize "
-        "a remote push, pull-request merge, deployment, or service restart."
+        "launch-time current non-main branch. For resident-source work, a separately pinned clean attached "
+        "runtime branch in the same repository is the target over an unrelated dirty project checkout. "
+        "Never infer literal `main` from an unspecified target. A dirty, detached, or divergent launch "
+        "checkout requires isolation and recorded target discovery; those facts alone are not target "
+        "ambiguity. For authorized implementation, revalidate the recorded target ref after verification. "
+        "If it advanced on the same lineage, rebase or replay as needed and integrate locally, preferring "
+        "fast-forward-only or the repository's documented non-destructive merge method. Keep the verified "
+        "commit isolated with an exact enumerated gate only when multiple plausible writable refs remain, "
+        "target history was rewritten or conflicts, or authorization differs materially. Local integration "
+        "does not authorize a remote push, pull-request merge, deployment, or service restart."
     ),
     "external_actions": (
         "Automatically commit and locally integrate verified implementation when the request clearly "

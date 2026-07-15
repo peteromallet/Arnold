@@ -40,6 +40,12 @@ from arnold_pipelines.megaplan.managed_agent import (
 )
 
 from .config import ResidentConfig
+from .git_custody import (
+    GitCustodyError,
+    render_git_custody_contract,
+    resolve_launch_git_custody,
+    validate_git_custody_evidence,
+)
 from .provenance import (
     DelegationProvenanceError,
     discord_origin_projection,
@@ -540,6 +546,7 @@ def _delivery_prompt(
     context_directory: Mapping[str, Any] | None = None,
     query_relationship: Mapping[str, Any] | None = None,
     contributors: list[Mapping[str, Any]] | None = None,
+    git_custody: Mapping[str, Any] | None = None,
 ) -> str:
     if DELEGATION_DELIVERY_INSTRUCTION_HEADER in task:
         raise ValueError(
@@ -561,6 +568,8 @@ def _delivery_prompt(
     )
     if context_directory is not None:
         prompt += _render_delegated_context_directory(context_directory) + "\n"
+    if resolved_work_intent == "execution" and git_custody is not None:
+        prompt += render_git_custody_contract(git_custody) + "\n"
     relationship_context = _render_query_relationship(query_relationship)
     if relationship_context:
         prompt += relationship_context + "\n"
@@ -1802,9 +1811,15 @@ def launch_codex_subagent_detached(
     manifest_path = run_dir / "manifest.json"
     log_path = run_dir / "run.log"
     result_path = run_dir / "result.md"
+    git_custody_evidence_path = run_dir / "git-custody-evidence.json"
     context_directory = _delegated_context_directory(
         project_root=project_root,
         provenance=provenance,
+    )
+    git_custody = resolve_launch_git_custody(
+        project_root=project_root,
+        runtime_root=str(context_directory["resident_runtime_source"]),
+        evidence_path=git_custody_evidence_path,
     )
     prompt = _delivery_prompt(
         task,
@@ -1814,6 +1829,7 @@ def launch_codex_subagent_detached(
         context_directory=context_directory,
         query_relationship=query_relationship,
         contributors=contributors,
+        git_custody=git_custody,
     )
     prompt_path.write_text(prompt, encoding="utf-8")
     result_path.touch()
@@ -1854,6 +1870,7 @@ def launch_codex_subagent_detached(
         "task_sha256": task_digest,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "context_directory": context_directory,
+        "git_custody": git_custody,
         "launch_idempotency_key": launch_key,
         "correlation_id": provenance.get("correlation_id") or run_id,
         "custody_id": provenance.get("custody_id") or stable_identity("resident-custody", run_id),
@@ -2308,6 +2325,24 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 "evidence": "managed_codex_worker_log_and_dispatch",
                 "recorded_at": _utc_now(),
             }
+        custody_error: str | None = None
+        if returncode == 0 and manifest.get("work_intent") == "execution":
+            custody = manifest.get("git_custody")
+            if isinstance(custody, Mapping):
+                project_snapshot = custody.get("launch_checkouts")
+                project_snapshot = (
+                    project_snapshot.get("project")
+                    if isinstance(project_snapshot, Mapping)
+                    else None
+                )
+                if isinstance(project_snapshot, Mapping) and project_snapshot.get("git"):
+                    try:
+                        manifest["git_custody_verification"] = validate_git_custody_evidence(
+                            custody
+                        )
+                    except GitCustodyError as exc:
+                        custody_error = str(exc)
+                        returncode = 2
         manifest.update(
             {
                 "status": "completed" if returncode == 0 else "failed",
@@ -2316,6 +2351,9 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 "terminal_outcome": "completed" if returncode == 0 else "failed",
             }
         )
+        if custody_error is not None:
+            manifest["error"] = "git custody verification failed"
+            manifest["git_custody_error"] = custody_error
         manifest["updated_at"] = manifest["finished_at"]
         history = list(manifest.get("status_history") or [])
         history.append(
@@ -2324,6 +2362,7 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 "at": manifest["finished_at"],
                 "evidence": "managed_codex_worker_waited",
                 "returncode": returncode,
+                **({"git_custody_error": custody_error} if custody_error else {}),
             }
         )
         manifest["status_history"] = history[-100:]
