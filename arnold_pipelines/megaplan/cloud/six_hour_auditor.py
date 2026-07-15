@@ -258,11 +258,17 @@ def build_audit_input(
     *,
     root: Path | str | None = None,
     now: str | None = None,
+    persist: bool = True,
 ) -> dict[str, Any]:
     """Resolve the same bounded brief used by the CLI plus backing projections."""
     workspace_root = Path.cwd() if root is None else Path(root)
-    projections = rebuild_projections(workspace_root)
-    brief = build_brief(id_or_session, root=workspace_root, now=now)
+    projections = rebuild_projections(workspace_root, persist=persist)
+    brief = build_brief(
+        id_or_session,
+        root=workspace_root,
+        now=now,
+        persist=persist,
+    )
     incident = _resolve_incident(
         projections["incidents"].get("incidents", []),
         brief.get("incident_id"),

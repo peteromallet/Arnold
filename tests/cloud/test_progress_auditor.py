@@ -382,6 +382,11 @@ def _run_gather_program(
     # never let live marker or meta-run evidence alter the deterministic fixture.
     env["MEGAPLAN_AUDIT_MARKER_DIR"] = str(tmp_path / ".megaplan" / "cloud-sessions")
     env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / ".megaplan" / "meta-runs")
+    # Keep ordinary fixtures independent of the host installation. Drift-specific
+    # tests override this with a deliberately different installed wrapper.
+    env["MEGAPLAN_AUDIT_INSTALLED_WRAPPER"] = str(
+        WRAPPER_DIR / "arnold-progress-auditor"
+    )
     if extra_env:
         env.update(extra_env)
 
@@ -830,7 +835,7 @@ from arnold_pipelines.megaplan.cloud._stub_capture import write_capture
 AUDIT_RESULT = {audit_result_literal}
 
 
-def build_audit_input(session, *, root, now):
+def build_audit_input(session, *, root, now, persist=True):
     return {{
         "brief": {{
             "found": True,
@@ -1405,6 +1410,7 @@ class TestGreenChecksJsonSchema:
             "plan", "workspace", "session", "sources", "current_state",
             "iteration", "active_step_phase", "plan_v_count",
             "last_gate_recommendation", "last_gate_score",
+            "suppression", "auditor_wrapper_runtime",
         }
 
     def test_timestamp_always_present(self, tmp_path: Path) -> None:
@@ -1734,7 +1740,7 @@ class TestAuditorCrossReferences:
         assert finding["incident_brief"]["incident_id"] == "inc-demo"
         assert finding["incident_audit"]["incident_id"] == "inc-demo"
         assert finding["reasons"][0].startswith("reconciler ")
-        assert Path(finding["source_refs"]["incident_summary_path"]).exists()
+        assert not Path(finding["source_refs"]["incident_summary_path"]).exists()
 
 
 class TestAuditorWrapperBoundary:
@@ -5578,3 +5584,291 @@ class TestProgressAuditorCompletionRecordShape:
         payload, _md = _run_report_assembler(findings_data, tmp_path)
         assert payload["findings"][0]["plan"] == "audit-plan"
         assert payload["findings"][0]["session"] == "audit-sess"
+
+
+
+
+def test_gather_report_only_does_not_write_audited_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "read-only-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "executing"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    (chain_dir / "chain-read-only.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = {
+        path.relative_to(workspace): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+
+    _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": plan,
+                "session": "read-only-session",
+                "kind": "chain",
+            }
+        ],
+        tmp_path,
+    )
+
+    after = {
+        path.relative_to(workspace): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+def test_gather_flags_liveness_and_repair_churn_without_acceptance(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "green-churn"
+    plan = "active-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_dir = marker_dir / "repair-data"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    repair_dir.mkdir(parents=True)
+    now = datetime.now(timezone.utc).isoformat()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "blocked", "iteration": 7}),
+        encoding="utf-8",
+    )
+    events = [
+        {"kind": kind, "phase": "execute", "ts_utc": now, "seq": index}
+        for index, kind in enumerate(
+            ["llm_token_heartbeat", "state_written", "cost_recorded", "llm_token_heartbeat"],
+            start=101,
+        )
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    (chain_dir / "chain-green.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "blocked",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}, {"label": "m2"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (marker_dir / f"{session}.chain-health.progress.json").write_text(
+        json.dumps({"no_advance_ticks": 4, "stuck_ticks": 3, "updated_at": now}),
+        encoding="utf-8",
+    )
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"session": session, "outcome": "running", "iterations": [{"i": 1}]}),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": session, "kind": "chain"}],
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert payload["green_checks"] == []
+    reasons = payload["findings"][0]["reasons"]
+    assert any(reason.startswith("green_with_recent_repair_churn:") for reason in reasons)
+    assert any(reason.startswith("liveness_without_acceptance_progress:") for reason in reasons)
+
+
+def test_gather_flags_deterministic_repair_failure_exhaustion(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "deterministic-repair-loop"
+    plan = "active-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    repair_dir = tmp_path / "repair-data"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    repair_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "executing"}), encoding="utf-8"
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    (chain_dir / "chain-loop.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "blocked",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    repeated = {
+        "chain_state_summary": {"current_plan_name": plan, "last_state": "blocked"},
+        "plan_latest_failure": {"kind": "phase_failed", "message": "same parse failure"},
+    }
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"session": session, "outcome": "running", "iterations": [repeated] * 3}),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": session, "kind": "chain"}],
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert payload["green_checks"] == []
+    assert any(
+        reason.startswith("deterministic_failure_exhaustion:")
+        for reason in payload["findings"][0]["reasons"]
+    )
+
+
+def test_gather_suppresses_clean_completed_shadow_but_not_session_custody(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "completed-shadow"
+    shadow = "m1-done"
+    current = "m2-current"
+    plan_dir = workspace / ".megaplan" / "plans" / shadow
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": shadow, "current_state": "done"}), encoding="utf-8"
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    chain_path = chain_dir / "chain-shadow.json"
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": current,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}, {"label": "m2"}],
+                "completed": [{"label": "m1", "plan": shadow, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    worklist = [{"workspace": str(workspace), "plan": shadow, "session": session, "kind": "chain"}]
+
+    clean = _run_gather_program(worklist, tmp_path)
+
+    assert clean["findings"] == []
+    assert clean["green_checks"][0]["suppression"]["reason"] == (
+        "completed_plan_shadow_plan_local_evidence_suppressed"
+    )
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "outcome": "running",
+                "current_attempt_id": "",
+                "attempt_ids": [],
+                "iterations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    suspicious = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert suspicious["green_checks"] == []
+    assert any(
+        reason.startswith("repair_data_ghost_running:")
+        for reason in suspicious["findings"][0]["reasons"]
+    )
+
+
+def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "current-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    state_path = plan_dir / "state.json"
+    state_path.write_text(json.dumps({"name": plan, "current_state": "executing"}), encoding="utf-8")
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    chain_path = chain_dir / "chain-wrapper.json"
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    installed = tmp_path / "installed-auditor"
+    installed.write_text("older wrapper\n", encoding="utf-8")
+    worklist = [{"workspace": str(workspace), "plan": plan, "session": "wrapper-drift", "kind": "chain"}]
+
+    active = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_INSTALLED_WRAPPER": str(installed)},
+    )
+
+    assert active["green_checks"] == []
+    assert any(
+        reason.startswith("installed_wrapper_drift:")
+        for reason in active["findings"][0]["reasons"]
+    )
+    assert active["findings"][0]["auditor_wrapper_runtime"]["installed_matches_source"] is False
+    report, _markdown = _run_report_assembler(active, tmp_path)
+    assert report["auditor_runtime_receipt"]["installed_matches_source"] is False
+    assert report["dispatch_summary"]["mode"] == "report_only"
+    assert report["dispatch_summary"]["repair_dispatched"] is False
+    assert report["dispatch_summary"]["file_edit_performed"] is False
+
+    state_path.write_text(json.dumps({"name": plan, "current_state": "done"}), encoding="utf-8")
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "done",
+                "chain_complete": True,
+                "pr_state": "merged",
+                "milestones": [{"label": "m1"}],
+                "completed": [{"label": "m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
