@@ -17,6 +17,15 @@ from arnold_pipelines.megaplan.chain import (
     save_chain_state,
 )
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_spec
+from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+    AcceptanceSnapshot,
+    AcceptanceTransaction,
+)
+from arnold_pipelines.megaplan.orchestration.completion_io import (
+    commit_acceptance_transaction,
+    prepare_acceptance_transaction,
+    store_acceptance_snapshot,
+)
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
 
 
@@ -2521,6 +2530,70 @@ def _state_with_receipt(
     return state
 
 
+_FULL_SHA = "a" * 40
+
+
+def _state_with_committed_receipt(
+    root: Path,
+    *,
+    mode: str = "atomic",
+    label: str = "m1",
+    milestone_index: int = 0,
+    plan_name: str = "plan-m1",
+    transaction_id: str = "tx-001",
+    source_commit_ref: str = _FULL_SHA,
+    runtime_identity: str = "ci-runner-7",
+) -> ChainState:
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    snapshot = AcceptanceSnapshot(
+        transaction_id=transaction_id,
+        chain_run_id="chain-run-1",
+        milestone_label=label,
+        milestone_index=milestone_index,
+        plan_name=plan_name,
+        source_commit_ref=source_commit_ref,
+        runtime_identity=runtime_identity,
+    )
+    store_acceptance_snapshot(plan_dir, snapshot)
+    transaction = AcceptanceTransaction(
+        transaction_id=transaction_id,
+        snapshot_hash=snapshot.content_hash,
+        accepted=True,
+        mode=mode,
+        tested_commit_ref=source_commit_ref,
+        tested_runtime_identity=runtime_identity,
+    )
+    prepare_acceptance_transaction(plan_dir, transaction)
+    commit_acceptance_transaction(plan_dir, transaction_id)
+
+    return ChainState(
+        completion_contract_mode=mode,
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="blocked",
+        completed=[
+            {
+                "label": label,
+                "plan": plan_name,
+                "status": "done",
+                "milestone_index": milestone_index,
+                "transaction_id": transaction_id,
+                "snapshot_hash": snapshot.content_hash,
+                "source_commit_ref": source_commit_ref,
+                "runtime_identity": runtime_identity,
+                "acceptance_receipt": snapshot.with_receipt().to_dict(),
+            },
+        ],
+        metadata={
+            "acceptance_plan_dirs": {
+                label: str(plan_dir),
+                plan_name: str(plan_dir),
+            }
+        },
+    )
+
+
 # -- Shadow mode retains fail-open behavior ----------------------------------
 
 
@@ -2826,30 +2899,10 @@ def test_normalization_clears_blocked_in_atomic_with_valid_receipt(
         anchors={},
         milestones=[MilestoneSpec(label="m1", idea=tmp_path / "idea.md")],
     )
-    state = ChainState(
-        current_milestone_index=1,
-        current_plan_name=None,
-        last_state="blocked",
-        completed=[
-            {
-                "label": "m1",
-                "plan": "plan-m1",
-                "status": "done",
-                "milestone_index": 0,
-                "acceptance_receipt": {
-                    "transaction_id": "tx-001",
-                    "snapshot_hash": "sha256:abc123",
-                    "milestone_label": "m1",
-                    "plan_name": "plan-m1",
-                    "milestone_index": 0,
-                },
-            },
-        ],
-    )
-    state.completion_contract_mode = "atomic"
+    state = _state_with_committed_receipt(tmp_path)
 
     normalized = _normalize_advanced_completed_cursor(state, spec)
-    # In atomic mode with valid receipt, blocked can be cleared
+    # In atomic mode with committed acceptance evidence, blocked can be cleared.
     assert normalized.last_state == "done"
 
 
