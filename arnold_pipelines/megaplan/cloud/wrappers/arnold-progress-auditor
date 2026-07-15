@@ -1488,8 +1488,15 @@ def _meta_repair_summary(
         ]
     failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
     failed_meta_records = []
+    recursion_guard_blocked = False
     for item in meta_refs or []:
         path = item.get("path") if isinstance(item, dict) else ""
+        record = _load_json(pathlib.Path(str(path))) if path else {}
+        if isinstance(record, dict) and (
+            str(record.get("outcome") or "") == "NEEDS_HUMAN"
+            and "recursion" in str(record.get("reason") or "").lower()
+        ):
+            recursion_guard_blocked = True
         if path and _meta_record_is_launch_failure(pathlib.Path(str(path))):
             failed_meta_records.append(item)
     return {
@@ -1519,6 +1526,7 @@ def _meta_repair_summary(
         "meta_run_refs": run_refs,
         "failed_meta_run_count": len(failed_run_refs),
         "failed_meta_record_count": len(failed_meta_records),
+        **({"recursion_guard_blocked": True} if recursion_guard_blocked else {}),
         "missing_meta_run_evidence": bool(should_dispatch and not meta_refs and not run_refs),
         "failed_meta_run_evidence": bool(should_dispatch and (failed_run_refs or failed_meta_records)),
     }
@@ -2148,6 +2156,18 @@ def _repair_data_summary(session):
     return {
         "path": str(path),
         "exists": True,
+        **(
+            {
+                "size_bytes": path.stat().st_size,
+                "evidence_compaction": payload.get("evidence_compaction") if isinstance(payload, dict) else {},
+                "evidence_expansion_unbounded": not (
+                    isinstance(payload, dict)
+                    and isinstance(payload.get("evidence_compaction"), dict)
+                ),
+            }
+            if path.stat().st_size > 4 * 1024 * 1024
+            else {}
+        ),
         "mtime_age_min": int((now.timestamp() - _mtime(path)) // 60) if _mtime(path) else None,
         "outcome": payload.get("outcome") if isinstance(payload, dict) else "",
         "current_attempt_id": payload.get("current_attempt_id") if isinstance(payload, dict) else "",

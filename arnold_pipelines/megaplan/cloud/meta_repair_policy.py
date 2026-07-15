@@ -47,6 +47,43 @@ _CODEX_LAUNCH_FAILURE_NEEDLES = (
 _MAX_COMMIT_CUSTODY_FAILURE_RETRIES = 2
 
 
+def resolve_authoritative_blocker_id(
+    session: str, *, repair_data_dir: str | Path, supplied_blocker_id: str = ""
+) -> tuple[str, bool]:
+    """Resolve blocker identity from durable repair custody, exposing drift.
+
+    The repair goal is the frozen authority.  Repair-data must agree with it;
+    a caller-supplied dispatch token is observational and may be stale.
+    """
+
+    repair_path = Path(repair_data_dir) / f"{session}.repair-data.json"
+    if not repair_path.exists():
+        # A legacy/manual caller may have no repair episode.  Preserve its
+        # historical session-scoped guard; real queued repair custody must use
+        # the authoritative path below.
+        return str(supplied_blocker_id or "").strip(), False
+    repair_data = load_json(repair_path, default={})
+    if not isinstance(repair_data, dict):
+        raise ValueError("authoritative repair data is missing")
+    data_blocker = str(repair_data.get("blocker_id") or "").strip()
+    goal_ref = repair_data.get("repair_goal")
+    goal_path = str(goal_ref.get("goal_path") or "") if isinstance(goal_ref, dict) else ""
+    goal = load_json(Path(goal_path), default={}) if goal_path else {}
+    goal_target = goal.get("target") if isinstance(goal, dict) else {}
+    goal_blocker = (
+        str(goal_target.get("blocker_id") or "").strip()
+        if isinstance(goal_target, dict)
+        else ""
+    )
+    if data_blocker and goal_blocker and data_blocker != goal_blocker:
+        raise ValueError("repair data and repair goal blocker identities disagree")
+    authoritative = goal_blocker or data_blocker
+    if not authoritative:
+        raise ValueError("authoritative repair blocker identity is missing")
+    supplied = str(supplied_blocker_id or "").strip()
+    return authoritative, bool(supplied and supplied != authoritative)
+
+
 def _is_unrecordable_launch_failure(data: dict) -> bool:
     """Return True for historical records that never launched meta-repair.
 
@@ -269,4 +306,5 @@ __all__ = [
     "can_commit_changes",
     "can_push_changes",
     "check_meta_repair_recursion",
+    "resolve_authoritative_blocker_id",
 ]

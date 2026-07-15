@@ -75,6 +75,18 @@ _RETENTION_WINDOWS_DAYS = {
 _SNAPSHOT_RETENTION_DAYS = 30
 _MIN_ATTEMPTS_PER_SESSION = 20
 
+REPAIR_EVIDENCE_REF_SCHEMA = "arnold-repair-evidence-ref-v1"
+REPAIR_EVIDENCE_COMPACTION_SCHEMA = "arnold-repair-evidence-compaction-v1"
+MAX_REPAIR_DATA_BYTES = 4 * 1024 * 1024
+_EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES = 16 * 1024
+_CURRENT_FAILURE_CONTEXT_MAX_BYTES = 512 * 1024
+_ATTEMPT_EVIDENCE_FIELDS = (
+    "failure_context",
+    "post_launch_failure_context",
+    "post_kimi_failure_context",
+    "execute_attempt_context",
+)
+
 
 BLOCKER_FINGERPRINT_VERSION = 1
 BLOCKER_FINGERPRINT_V1_PREFIX = "repair-blocker-fingerprint/v1"
@@ -1646,6 +1658,186 @@ def redact_repair_data(
     return _redact_value(validated, redactor)
 
 
+def _encoded_json(value: Any, *, pretty: bool = False) -> bytes:
+    if pretty:
+        return (json.dumps(value, indent=2, sort_keys=True, default=str) + "\n").encode(
+            "utf-8"
+        )
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+
+
+def _is_repair_evidence_ref(value: object) -> bool:
+    return bool(
+        isinstance(value, Mapping)
+        and value.get("schema_version") == REPAIR_EVIDENCE_REF_SCHEMA
+        and value.get("kind") == "content_addressed_repair_evidence"
+    )
+
+
+def _persist_repair_evidence(
+    target: Path,
+    value: Any,
+    *,
+    field: str,
+) -> dict[str, Any]:
+    """Persist expanding history once and return an immutable typed pointer."""
+
+    encoded = _encoded_json(value, pretty=True)
+    digest = sha256(encoded).hexdigest()
+    evidence_dir = target.parent / f"{target.stem}.evidence"
+    evidence_path = evidence_dir / f"sha256-{digest}.json"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    if evidence_path.exists():
+        observed = evidence_path.read_bytes()
+        if len(observed) != len(encoded) or sha256(observed).hexdigest() != digest:
+            raise ValueError(
+                f"content-addressed repair evidence disagrees: {evidence_path}"
+            )
+    else:
+        fd, temporary_raw = tempfile.mkstemp(
+            prefix=f".{evidence_path.name}.", suffix=".tmp", dir=evidence_dir
+        )
+        temporary = Path(temporary_raw)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, evidence_path)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+    return {
+        "schema_version": REPAIR_EVIDENCE_REF_SCHEMA,
+        "kind": "content_addressed_repair_evidence",
+        "field": field,
+        "path": str(evidence_path.resolve()),
+        "sha256": digest,
+        "size_bytes": len(encoded),
+    }
+
+
+def load_repair_evidence_reference(value: Mapping[str, Any]) -> Any:
+    """Load a compacted evidence reference only after size and digest checks."""
+
+    if not _is_repair_evidence_ref(value):
+        raise ValueError("repair evidence reference schema is invalid")
+    path = Path(str(value.get("path") or ""))
+    expected_size = value.get("size_bytes")
+    expected_digest = str(value.get("sha256") or "")
+    if not path.is_absolute() or not isinstance(expected_size, int) or expected_size <= 0:
+        raise ValueError("repair evidence reference identity is incomplete")
+    encoded = path.read_bytes()
+    if len(encoded) != expected_size or sha256(encoded).hexdigest() != expected_digest:
+        raise ValueError("repair evidence reference content disagrees")
+    return json.loads(encoded)
+
+
+def _bounded_current_failure_context(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the current decision fields inline while moving an oversized blob aside."""
+
+    allowed = (
+        "failure_classification",
+        "stale_state",
+        "state_mismatch",
+        "raw_failure_signals",
+        "plan_latest_failure",
+        "chain_state_summary",
+        "plan_runtime_state",
+        "last_gate",
+        "user_action_context",
+        "resolver_output",
+        "chain_log_path",
+        "run_log_path",
+        "plan_events_path",
+        "mechanical_log_path",
+    )
+    return {key: deepcopy(value[key]) for key in allowed if key in value}
+
+
+def compact_repair_data_evidence(
+    path: str | Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Externalize repeated expanding contexts without discarding their custody."""
+
+    target = Path(path)
+    compacted = deepcopy(dict(payload))
+    source_bytes = len(_encoded_json(compacted))
+    if source_bytes <= _EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES:
+        return compacted
+    externalized = 0
+    unique_refs: set[str] = set()
+
+    def replace_large(container: dict[str, Any], field: str, *, force: bool = False) -> None:
+        nonlocal externalized
+        value = container.get(field)
+        if value in (None, "", [], {}) or _is_repair_evidence_ref(value):
+            return
+        if not force and len(_encoded_json(value)) <= _EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES:
+            return
+        ref = _persist_repair_evidence(target, value, field=field)
+        container[field] = ref
+        externalized += 1
+        unique_refs.add(str(ref["sha256"]))
+
+    initial = compacted.get("initial_facts")
+    if isinstance(initial, dict):
+        for field in (
+            "failure_context",
+            "execute_attempt_context",
+            "semantic_health",
+            "semantic_context",
+            "custody_projection",
+        ):
+            replace_large(initial, field)
+
+    for collection_name in ("attempts", "iterations"):
+        collection = compacted.get(collection_name)
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            for field in _ATTEMPT_EVIDENCE_FIELDS:
+                replace_large(item, field)
+
+    current = compacted.get("current_failure_context")
+    if (
+        isinstance(current, Mapping)
+        and len(_encoded_json(current)) > _CURRENT_FAILURE_CONTEXT_MAX_BYTES
+    ):
+        ref = _persist_repair_evidence(
+            target, current, field="current_failure_context"
+        )
+        summary = _bounded_current_failure_context(current)
+        summary["evidence_ref"] = ref
+        compacted["current_failure_context"] = summary
+        externalized += 1
+        unique_refs.add(str(ref["sha256"]))
+
+    compacted["evidence_compaction"] = {
+        "schema_version": REPAIR_EVIDENCE_COMPACTION_SCHEMA,
+        "source_size_bytes": source_bytes,
+        "externalized_field_count": externalized,
+        "unique_evidence_count": len(unique_refs),
+    }
+    persisted_bytes = 0
+    for _ in range(3):
+        persisted_bytes = len(_encoded_json(compacted))
+        compacted["evidence_compaction"]["persisted_size_bytes"] = persisted_bytes
+    if persisted_bytes > MAX_REPAIR_DATA_BYTES:
+        raise ValueError(
+            "repair-data remains above 4 MiB after evidence compaction; refusing expansion"
+        )
+    return compacted
+
+
 def save_repair_data(
     path: str | Path,
     payload: Mapping[str, Any],
@@ -1664,8 +1856,11 @@ def save_repair_data(
     incident-ledger root before falling back to the current working directory.
     """
 
-    prepared = redact_repair_data(payload, redactor=redactor)
     target = Path(path)
+    prepared = compact_repair_data_evidence(
+        target,
+        redact_repair_data(payload, redactor=redactor),
+    )
 
     # ------------------------------------------------------------------
     # Snapshot the previous payload *before* overwriting so we can

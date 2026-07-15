@@ -561,7 +561,8 @@ def _run_one(
 
         agent = AIAgent(
             model=resolved_model,
-            enabled_toolsets=toolset_list or None,
+            # Preserve an explicit empty capability set; None enables defaults.
+            enabled_toolsets=toolset_list,
             session_id=session_id,
             session_db=_get_session_db(),
             max_tokens=max_tokens,

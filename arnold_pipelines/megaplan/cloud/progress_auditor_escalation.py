@@ -460,6 +460,13 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         for item in reasons
         for token in ("false_fixed_l2", "l2 false success", "no ordinary repair retrigger")
     )
+    recursion_blocked = bool(meta.get("recursion_guard_blocked"))
+    investigation = _mapping(
+        _mapping(finding.get("repair_data_summary")).get("meta_investigation_summary")
+    )
+    access_failure = str(investigation.get("failure_code") or "").startswith(
+        "investigator_"
+    )
     l1 = _l1_failure_fingerprint(finding)
     due = bool(
         meta.get("should_dispatch")
@@ -467,8 +474,17 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or superfixer.get("actionable")
         or l1.get("failed")
     )
-    failed = bool(due and (failed_launch or missing or false_success))
-    axis = "FIXED" if false_success else "TRACKED" if failed_launch else "CONTEXT"
+    failed = bool(
+        due
+        and (failed_launch or missing or false_success or recursion_blocked or access_failure)
+    )
+    axis = (
+        "FIXED"
+        if false_success
+        else "TRACKED"
+        if failed_launch or recursion_blocked
+        else "CONTEXT"
+    )
     return {
         "failed": failed,
         "axis": axis if failed else "",
@@ -476,6 +492,8 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "failed_launch": failed_launch,
         "missing_or_stale": missing,
         "false_success": false_success,
+        "recursion_guard_blocked": recursion_blocked,
+        "investigator_access_failure": access_failure,
         "trigger": _text(meta.get("trigger")),
     }
 
