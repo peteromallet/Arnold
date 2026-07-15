@@ -129,3 +129,17 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     ).read_text(encoding="utf-8")
     assert "enabled_toolsets=toolset_list," in launcher
     assert "enabled_toolsets=toolset_list or None" not in launcher
+
+
+def test_meta_dispatch_retries_failed_generation_without_false_receipt() -> None:
+    watchdog = Path(
+        "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'managed_identity="meta-repair:${session}:${trigger_label}:'
+        '${request_id:-none}:$(date +%s%N)"'
+    ) in watchdog
+    assert 'terminal_failed = manifest.get("status") == "failed"' in watchdog
+    assert "and not terminal_failed" in watchdog
+    assert "if terminal_failed:" in watchdog
