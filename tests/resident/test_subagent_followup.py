@@ -394,13 +394,18 @@ def test_concurrent_duplicate_followups_create_one_continuation(
     calls = 0
     calls_lock = threading.Lock()
 
-    def fake_popen(*args, **kwargs):
+    def fake_spawn(manifest_path, manifest):
         nonlocal calls
         with calls_lock:
             calls += 1
-        return _Supervisor()
+        current = dict(manifest)
+        current["status"] = "running"
+        return _Supervisor(), current
 
-    monkeypatch.setattr(subagent.subprocess, "Popen", fake_popen)
+    # Patch the resident launch seam, not subprocess.Popen on Python's shared
+    # subprocess module. Full-suite background activity may legitimately use
+    # Popen and must not be counted as a duplicate continuation launch.
+    monkeypatch.setattr(subagent, "_spawn_managed_supervisor", fake_spawn)
     kwargs = {
         "run_id": TARGET_RUN_ID,
         "message": "Only one continuation may own this Discord reply.",
