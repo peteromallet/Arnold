@@ -118,6 +118,41 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     assert len(context["context_digest"]) == 64
 
 
+def test_fresh_quality_phase_result_is_exact_error_when_latest_failure_cleared(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    payload["latest_failure"] = None
+    _write(state, payload)
+    _write(
+        state.parent / "phase_result.json",
+        {
+            "phase": "execute",
+            "exit_kind": "blocked_by_quality",
+            "invocation_id": "inv-14",
+            "blocked_tasks": [],
+            "deviations": [
+                {"kind": "quality_gate", "message": "scope_drift_severity=high exact files"}
+            ],
+        },
+    )
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    assert context["exact_error"]["exit_kind"] == "blocked_by_quality"
+    assert context["exact_error"]["deviations"][0]["message"] == (
+        "scope_drift_severity=high exact files"
+    )
+    assert context["current_phase_result"]["path"].endswith("phase_result.json")
+
+
 def test_investigator_receipt_is_bound_to_context_and_requires_evidence() -> None:
     receipt = {
         "schema_version": REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
