@@ -6210,7 +6210,7 @@ fresh = capture_checkpoint(
     remote_spec=str(context.get("remote_spec") or ""),
 )
 investigated = context.get("current") or {}
-for field in ("plan_name", "target_stage", "plan_state", "latest_failure"):
+for field in ("plan_name", "target_stage", "plan_state", "latest_failure", "workspace_head"):
     if fresh.get(field) != investigated.get(field):
         raise SystemExit(f"target evidence changed after investigation: {field}")
 fresh_worker = fresh.get("active_worker") or {}
@@ -6331,7 +6331,7 @@ EOF
   cat >> "$INVESTIGATOR_PROMPT_PATH" <<EOF
 </authoritative_repair_context>
 
-Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. Unknown or conflicting custody, guard-weakening risk, or no safe target must recommend replan. When contradictory repair ownership is itself the bounded root cause, use replan with safe_repair_target.kind=repair_custody; that names the L2/root-cause target but authorizes no L1 mutation. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
+Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. A frozen repair checkpoint is the immutable acceptance baseline for an outcome, not a requirement that every successor blocker have the same failure label; when goal/session/plan identity remains consistent, a fresh authoritative successor blocker should receive its bounded repair action under the same goal. Unknown or genuinely conflicting identity/custody, guard-weakening risk, or no safe target must recommend replan. When contradictory repair ownership is itself the bounded root cause, use replan with safe_repair_target.kind=repair_custody; that names the L2/root-cause target but authorizes no L1 mutation. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
 EOF
   redact_file_in_place "$INVESTIGATOR_PROMPT_PATH"
   investigator_timeout="$(cap_timeout_to_repair_budget "$DEV_ROOT_CAUSE_TIMEOUT" "repair-investigator")"
