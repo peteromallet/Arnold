@@ -148,6 +148,9 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert "load_json(pathlib.Path(observation_path), default={})" not in wrapper
     assert 'pathlib.Path(observation_path).read_text(encoding="utf-8")' in wrapper
     assert "<<'PY' >>\"$RUN_LOG\" 2>&1 || return 1" in wrapper
+    assert "STATE MISMATCH DETECTED — NOT CLEARED" in repair_wrapper
+    assert 'mismatch_cleared = state_mismatch.get("cleared") is True' in repair_wrapper
+    assert "Action taken: cleared chain last_state to match plan current_state" not in repair_wrapper
     launcher = Path(
         "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
     ).read_text(encoding="utf-8")
