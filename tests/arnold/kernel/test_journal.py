@@ -989,3 +989,328 @@ class TestCASFailureResultIntegrity:
         assert d["committed"] is False
         assert len(d["violations"]) == 1
         assert d["violations"][0]["guard"] == "target_absent"
+
+
+# ---------------------------------------------------------------------------
+# Journal-level acceptance-commit concurrency & crash semantics
+# (T30 / Step 20)
+#
+# These tests model the acceptance-commit boundary as a multi-write CAS-guarded
+# journal transaction (state file + receipt file + snapshot file) and prove at
+# the journal level that no crash stage, duplicate driver, stale worker, retry,
+# or out-of-order replay can expose a torn transaction, duplicate completion
+# records, or advance a modeled cursor more than once.
+# ---------------------------------------------------------------------------
+
+
+def _acceptance_writes(root: Path, tx_id: str, *, state_path: Path,
+                       state_payload: str, receipt_path: Path,
+                       snapshot_path: Path, prior_sha: "str | None") -> list[dict]:
+    """Build the multi-write CAS-guarded journal entries that model an
+    acceptance commit (mirrors ``prepare_acceptance_commit`` writes)."""
+    w_state = journal_text_write(state_path, state_payload, tx_id=tx_id)
+    w_state = dict(w_state)
+    if prior_sha is not None:
+        w_state["expected_prior_sha256"] = prior_sha
+    else:
+        w_state["target_absent"] = True
+    w_receipt = journal_text_write(receipt_path, '{"tx":"' + tx_id + '"}', tx_id=tx_id)
+    w_snap = journal_text_write(snapshot_path, '{"snap":1}', tx_id=tx_id)
+    return [w_state, w_receipt, w_snap]
+
+
+def _acceptance_state(payload: str, *, cursor: int, completed: list[str]) -> str:
+    """Build a modeled chain-state JSON with a cursor + completed list."""
+    return json.dumps(
+        {"current_milestone_index": cursor, "completed": completed}, sort_keys=True
+    )
+
+
+class TestAcceptanceCommitJournalCrashStages:
+    """Each crash stage of an acceptance-commit journal transaction must
+    recover to either fully-applied or fully-discarded — never torn."""
+
+    def test_crash_after_prepare_discards_all(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        receipt = tmp_path / "data" / "receipt.json"
+        snap = tmp_path / "data" / "snap.json"
+        writes = _acceptance_writes(root, "tx1", state_path=state,
+                                    state_payload=_acceptance_state(
+                                        "", cursor=3, completed=["m5a"]),
+                                    receipt_path=receipt, snapshot_path=snap,
+                                    prior_sha=None)
+        prepare_journal_transaction(root, "tx1", writes=writes)
+
+        report = recover_journal(root)
+        assert report["discarded"] == ["tx1"]
+        assert not state.exists()
+        assert not receipt.exists()
+        assert not snap.exists()
+
+    def test_crash_after_marker_before_apply_completes(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        receipt = tmp_path / "data" / "receipt.json"
+        snap = tmp_path / "data" / "snap.json"
+        payload = _acceptance_state("", cursor=3, completed=["m5a"])
+        writes = _acceptance_writes(root, "tx1", state_path=state,
+                                    state_payload=payload, receipt_path=receipt,
+                                    snapshot_path=snap, prior_sha=None)
+        prepare_journal_transaction(root, "tx1", writes=writes)
+        write_journal_commit_marker(root, "tx1")
+        assert not state.exists()
+
+        report = recover_journal(root)
+        assert report["replayed"] == ["tx1"]
+        assert state.read_text() == payload
+        assert receipt.exists()
+        assert snap.exists()
+
+    def test_crash_after_apply_before_cleanup_idempotent(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        receipt = tmp_path / "data" / "receipt.json"
+        snap = tmp_path / "data" / "snap.json"
+        payload = _acceptance_state("", cursor=3, completed=["m5a"])
+        writes = _acceptance_writes(root, "tx1", state_path=state,
+                                    state_payload=payload, receipt_path=receipt,
+                                    snapshot_path=snap, prior_sha=None)
+        prepare_path = prepare_journal_transaction(root, "tx1", writes=writes)
+        write_journal_commit_marker(root, "tx1")
+        p = json.loads(prepare_path.read_text())
+        p["journal_root"] = str(root)
+        _apply_prepared_writes(p)
+        before = state.read_bytes()
+
+        report = recover_journal(root)
+        assert report["replayed"] == ["tx1"]
+        assert state.read_bytes() == before  # idempotent
+
+    def test_repeated_recovery_no_duplicate(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        receipt = tmp_path / "data" / "receipt.json"
+        snap = tmp_path / "data" / "snap.json"
+        payload = _acceptance_state("", cursor=3, completed=["m5a"])
+        writes = _acceptance_writes(root, "tx1", state_path=state,
+                                    state_payload=payload, receipt_path=receipt,
+                                    snapshot_path=snap, prior_sha=None)
+        prepare_journal_transaction(root, "tx1", writes=writes)
+        write_journal_commit_marker(root, "tx1")
+
+        for _ in range(5):
+            recover_journal(root)
+        assert json.loads(state.read_text())["completed"] == ["m5a"]
+
+
+class TestAcceptanceCommitDuplicateDrivers:
+    """Two concurrent drivers cannot both complete the same milestone."""
+
+    def test_target_absent_second_driver_blocked(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        payload = _acceptance_state("", cursor=3, completed=["m5a"])
+
+        w_a = _acceptance_writes(root, "drvA", state_path=state,
+                                 state_payload=payload, receipt_path=tmp_path / "rA.json",
+                                 snapshot_path=tmp_path / "sA.json", prior_sha=None)
+        w_b = _acceptance_writes(root, "drvB", state_path=state,
+                                 state_payload=payload, receipt_path=tmp_path / "rB.json",
+                                 snapshot_path=tmp_path / "sB.json", prior_sha=None)
+        prepare_journal_transaction(root, "drvA", writes=w_a)
+        prepare_journal_transaction(root, "drvB", writes=w_b)
+
+        res_a = commit_journal_transaction_cas(root, "drvA")
+        res_b = commit_journal_transaction_cas(root, "drvB")
+        assert res_a.committed is True
+        assert res_b.committed is False
+        assert res_b.violations
+
+
+class TestAcceptanceCommitStaleWorker:
+    """A worker with a stale prior-state hash cannot commit."""
+
+    def test_stale_prior_hash_fails_closed(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        state.parent.mkdir()
+        # Seed state.
+        state.write_text(_acceptance_state("", cursor=0, completed=["m0"]))
+        prior = _path_sha256(state)
+
+        # A second commit lands, changing the state.
+        state.write_text(_acceptance_state("", cursor=2, completed=["m0", "m2"]))
+
+        # Stale worker still holds the old hash.
+        stale = _acceptance_writes(root, "stale", state_path=state,
+                                   state_payload=_acceptance_state(
+                                       "", cursor=1, completed=["m0", "m2", "m1"]),
+                                   receipt_path=tmp_path / "r.json",
+                                   snapshot_path=tmp_path / "s.json", prior_sha=prior)
+        prepare_journal_transaction(root, "stale", writes=stale)
+        res = commit_journal_transaction_cas(root, "stale")
+        assert res.committed is False
+        # Stale worker's m1 did NOT land.
+        assert json.loads(state.read_text())["completed"] == ["m0", "m2"]
+
+    def test_stale_worker_recovers_after_refresh(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        state.parent.mkdir()
+        state.write_text(_acceptance_state("", cursor=0, completed=["m0"]))
+        prior = _path_sha256(state)
+        state.write_text(_acceptance_state("", cursor=2, completed=["m0", "m2"]))
+
+        w_bad = _acceptance_writes(root, "bad", state_path=state,
+                                   state_payload=_acceptance_state(
+                                       "", cursor=2, completed=["m0", "m2", "m1"]),
+                                   receipt_path=tmp_path / "r.json",
+                                   snapshot_path=tmp_path / "s.json", prior_sha=prior)
+        prepare_journal_transaction(root, "bad", writes=w_bad)
+        assert commit_journal_transaction_cas(root, "bad").committed is False
+
+        # Refresh hash and retry.
+        fresh = _path_sha256(state)
+        w_ok = _acceptance_writes(root, "ok", state_path=state,
+                                  state_payload=_acceptance_state(
+                                      "", cursor=2, completed=["m0", "m2", "m1"]),
+                                  receipt_path=tmp_path / "r2.json",
+                                  snapshot_path=tmp_path / "s2.json", prior_sha=fresh)
+        prepare_journal_transaction(root, "ok", writes=w_ok)
+        assert commit_journal_transaction_cas(root, "ok").committed is True
+
+
+class TestAcceptanceCommitCrashRestart:
+    """Crash at prepare, then restart + re-prepare + commit succeeds."""
+
+    def test_crash_discard_then_reprepare_commit(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        payload = _acceptance_state("", cursor=3, completed=["m5a"])
+        w = _acceptance_writes(root, "tx1", state_path=state,
+                               state_payload=payload, receipt_path=tmp_path / "r.json",
+                               snapshot_path=tmp_path / "s.json", prior_sha=None)
+        prepare_journal_transaction(root, "tx1", writes=w)
+        # Crash: recover discards.
+        recover_journal(root)
+        assert not state.exists()
+
+        # Restart: re-prepare + commit.
+        w2 = _acceptance_writes(root, "tx2", state_path=state,
+                                state_payload=payload, receipt_path=tmp_path / "r.json",
+                                snapshot_path=tmp_path / "s.json", prior_sha=None)
+        prepare_journal_transaction(root, "tx2", writes=w2)
+        assert commit_journal_transaction_cas(root, "tx2").committed is True
+        assert state.read_text() == payload
+
+
+class TestAcceptanceCommitRetry:
+    """CAS failure discards the candidate; a fresh prepare commits."""
+
+    def test_cas_failure_discards_then_retry(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        state.parent.mkdir()
+        state.write_text(_acceptance_state("", cursor=0, completed=["m0"]))
+
+        # Bad prior hash -> CAS failure.
+        w_bad = _acceptance_writes(root, "bad", state_path=state,
+                                   state_payload=_acceptance_state(
+                                       "", cursor=1, completed=["m0", "m1"]),
+                                   receipt_path=tmp_path / "r.json",
+                                   snapshot_path=tmp_path / "s.json",
+                                   prior_sha="sha256:" + "0" * 64)
+        prepare_journal_transaction(root, "bad", writes=w_bad)
+        assert commit_journal_transaction_cas(root, "bad").committed is False
+        assert not journal_prepare_path(root, "bad").exists()  # auto-discarded
+
+        # Retry with correct hash.
+        w_ok = _acceptance_writes(root, "ok", state_path=state,
+                                  state_payload=_acceptance_state(
+                                      "", cursor=1, completed=["m0", "m1"]),
+                                  receipt_path=tmp_path / "r2.json",
+                                  snapshot_path=tmp_path / "s2.json",
+                                  prior_sha=_path_sha256(state))
+        prepare_journal_transaction(root, "ok", writes=w_ok)
+        assert commit_journal_transaction_cas(root, "ok").committed is True
+
+
+class TestAcceptanceCommitOutOfOrder:
+    """The modeled cursor (max) never regresses on out-of-order commits."""
+
+    def test_higher_then_lower_cursor_stays_max(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        # Commit index 2.
+        p2 = _acceptance_state("", cursor=2, completed=["m2"])
+        w2 = _acceptance_writes(root, "t2", state_path=state, state_payload=p2,
+                                receipt_path=tmp_path / "r2.json",
+                                snapshot_path=tmp_path / "s2.json", prior_sha=None)
+        prepare_journal_transaction(root, "t2", writes=w2)
+        assert commit_journal_transaction_cas(root, "t2").committed is True
+
+        # Commit index 0 — cursor stays at max(2,0)=2.
+        p0 = _acceptance_state("", cursor=2, completed=["m2", "m0"])
+        w0 = _acceptance_writes(root, "t0", state_path=state, state_payload=p0,
+                                receipt_path=tmp_path / "r0.json",
+                                snapshot_path=tmp_path / "s0.json",
+                                prior_sha=_path_sha256(state))
+        prepare_journal_transaction(root, "t0", writes=w0)
+        assert commit_journal_transaction_cas(root, "t0").committed is True
+        assert json.loads(state.read_text())["current_milestone_index"] == 2
+
+
+class TestAcceptanceCommitExactlyOnce:
+    """Re-committing the same modeled milestone yields exactly one completion
+    entry and the cursor advances exactly once."""
+
+    def test_recommit_single_completion(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        payload = _acceptance_state("", cursor=3, completed=["m5a"])
+        w1 = _acceptance_writes(root, "tx1", state_path=state, state_payload=payload,
+                                receipt_path=tmp_path / "r.json",
+                                snapshot_path=tmp_path / "s.json", prior_sha=None)
+        prepare_journal_transaction(root, "tx1", writes=w1)
+        commit_journal_transaction_cas(root, "tx1")
+
+        # Re-commit with the same milestone (idempotent content).
+        w2 = _acceptance_writes(root, "tx2", state_path=state, state_payload=payload,
+                                receipt_path=tmp_path / "r2.json",
+                                snapshot_path=tmp_path / "s2.json",
+                                prior_sha=_path_sha256(state))
+        prepare_journal_transaction(root, "tx2", writes=w2)
+        commit_journal_transaction_cas(root, "tx2")
+
+        completed = json.loads(state.read_text())["completed"]
+        assert completed.count("m5a") == 1
+        assert json.loads(state.read_text())["current_milestone_index"] == 3
+
+    def test_replay_does_not_advance_cursor_twice(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        state = tmp_path / "data" / "state.json"
+        payload = _acceptance_state("", cursor=3, completed=["m5a"])
+        w = _acceptance_writes(root, "tx1", state_path=state, state_payload=payload,
+                               receipt_path=tmp_path / "r.json",
+                               snapshot_path=tmp_path / "s.json", prior_sha=None)
+        prepare_journal_transaction(root, "tx1", writes=w)
+        write_journal_commit_marker(root, "tx1")
+
+        for _ in range(4):
+            recover_journal(root)
+        d = json.loads(state.read_text())
+        assert d["current_milestone_index"] == 3
+        assert d["completed"] == ["m5a"]

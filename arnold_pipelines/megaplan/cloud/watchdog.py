@@ -8,10 +8,18 @@ declared successors require acceptance MUST carry a validated acceptance
 receipt for its final milestone.  When the receipt is absent the dispatch
 caller must emit a typed blocker event instead of silently observing the
 blocked state.
+
+Also provides :func:`assess_watchdog_accepted_progress` so watchdog escalation
+logic can distinguish authoritative accepted milestone transitions from
+fixer-infrastructure activity (repair loops, recovery, custody handover) and
+automatic continuation custody (chain advancing to the next milestone without
+acceptance evidence).  This ensures the watchdog escalates on genuine absence
+of accepted progress rather than treating liveness signals as success.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import build_audit_input
@@ -27,6 +35,14 @@ from arnold_pipelines.megaplan.orchestration.completion_contract import (
 __all__ = [
     "BLOCKER_KIND_BY_CALLER",
     "CALLER_KINDS",
+    "ACTIVITY_CLASSIFICATION_ACCEPTED_PROGRESS",
+    "ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE",
+    "ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY",
+    "ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE",
+    "ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY",
+    "ACTIVITY_CLASSIFICATION_IDLE",
+    "ACTIVITY_CLASSIFICATION_NOT_APPLICABLE",
+    "assess_watchdog_accepted_progress",
     "build_audit_input",
     "check_watchdog_dispatch_acceptance_gate",
     "check_wrapper_acceptance_gate",
@@ -96,3 +112,227 @@ def check_watchdog_dispatch_acceptance_gate(
         result["blocker_event"] = blocker_event
 
     return result
+
+
+# ── activity classification constants for watchdog escalation ──────────
+
+ACTIVITY_CLASSIFICATION_ACCEPTED_PROGRESS = "accepted_progress"
+ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE = "waiting_for_acceptance"
+ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY = "activity_only"
+ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE = "fixer_infrastructure"
+ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY = (
+    "automatic_continuation_custody"
+)
+ACTIVITY_CLASSIFICATION_IDLE = "idle"
+ACTIVITY_CLASSIFICATION_NOT_APPLICABLE = "not_applicable"
+
+# Activity kinds that must never be counted as accepted progress.
+_NON_PROGRESS_ACTIVITY_KINDS: frozenset[str] = frozenset(
+    (
+        ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE,
+        ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY,
+        ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY,
+        ACTIVITY_CLASSIFICATION_IDLE,
+        ACTIVITY_CLASSIFICATION_NOT_APPLICABLE,
+    )
+)
+
+# Activity kinds that indicate the chain is blocked and needs escalation.
+_ESCALATION_ACTIVITY_KINDS: frozenset[str] = frozenset(
+    (
+        ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE,
+        ACTIVITY_CLASSIFICATION_IDLE,
+    )
+)
+
+# Status values that signal fixer-infrastructure activity (not progress).
+_FIXER_INFRA_STATUSES: frozenset[str] = frozenset(
+    ("repairing", "attention", "blocked")
+)
+
+
+def assess_watchdog_accepted_progress(
+    snapshot_entry: Mapping[str, Any] | None,
+    *,
+    chain_complete: bool = False,
+    is_fail_closed: bool = False,
+    has_declared_successors: bool = False,
+) -> dict[str, Any]:
+    """Assess whether a snapshot entry represents accepted progress or other activity.
+
+    Watchdog escalation must key off the **absence of accepted progress**.
+    Fixer-infrastructure liveness (repair loops, recovery, custody handover)
+    and automatic continuation custody (chain advancing without acceptance)
+    are **not** progress — they must be reported separately and must not
+    suppress escalation.
+
+    Parameters
+    ----------
+    snapshot_entry:
+        A session entry dict from the cloud-status snapshot.  Must carry at
+        minimum the ``accepted_progress``, ``status``, ``custody_state``,
+        and ``repair_state`` keys produced by
+        :func:`~arnold_pipelines.megaplan.cloud.status_snapshot.build_cloud_status`.
+    chain_complete:
+        Whether the chain has completed all its declared milestones.
+    is_fail_closed:
+        Whether the chain is in atomic/enforce (fail-closed) mode.
+    has_declared_successors:
+        Whether the chain spec declares successors that require acceptance.
+
+    Returns
+    -------
+    dict
+        A dict with these keys:
+
+        * ``activity_classification`` — one of the
+          ``ACTIVITY_CLASSIFICATION_*`` constants.
+        * ``escalate`` — ``True`` when the watchdog should escalate because
+          accepted progress is absent and the chain is not making accepted
+          forward progress.
+        * ``escalation_reason`` — human-readable reason string (empty when
+          ``escalate`` is ``False``).
+        * ``accepted_progress`` — the raw ``accepted_progress`` sub-dict from
+          the snapshot entry, or ``None``.
+        * ``acceptance_state`` — ``"accepted"``, ``"waiting_for_acceptance"``,
+          ``"activity_only"``, or ``"not_applicable"`` (same contract as
+          :func:`~arnold_pipelines.megaplan.status_projection.accepted_progress_presentation`).
+        * ``fixer_infrastructure_active`` — ``True`` when repair/attention/
+          blocked/recovery custody is observed.
+        * ``automatic_continuation_custody`` — ``True`` when the chain has
+          advanced past a completed milestone but no acceptance receipt
+          exists for the prior milestone.
+    """
+    if not isinstance(snapshot_entry, Mapping) or not snapshot_entry:
+        return {
+            "activity_classification": ACTIVITY_CLASSIFICATION_NOT_APPLICABLE,
+            "escalate": False,
+            "escalation_reason": "",
+            "accepted_progress": None,
+            "acceptance_state": "not_applicable",
+            "fixer_infrastructure_active": False,
+            "automatic_continuation_custody": False,
+        }
+
+    accepted_progress = snapshot_entry.get("accepted_progress")
+    if not isinstance(accepted_progress, Mapping):
+        accepted_progress = {}
+
+    waiting = bool(accepted_progress.get("waiting_for_acceptance"))
+    final_accepted = bool(accepted_progress.get("final_milestone_accepted"))
+    acceptance_required = bool(accepted_progress.get("acceptance_required"))
+    accepted_labels = accepted_progress.get("accepted_milestones")
+    accepted_count = (
+        len(accepted_labels) if isinstance(accepted_labels, list) else 0
+    )
+
+    # ── detect fixer-infrastructure activity ──────────────────────────
+    status = str(snapshot_entry.get("status") or "")
+    repairing = bool(snapshot_entry.get("repairing"))
+    custody_state = str(snapshot_entry.get("custody_state") or "")
+    repair_state = snapshot_entry.get("repair_state")
+    repair_state = (
+        repair_state if isinstance(repair_state, Mapping) else {}
+    )
+
+    fixer_infra_active = (
+        status in _FIXER_INFRA_STATUSES
+        or repairing
+        or bool(repair_state.get("active"))
+        or bool(repair_state.get("repairing"))
+    )
+
+    # ── detect automatic continuation custody ─────────────────────────
+    # Automatic continuation custody: the chain has advanced past a
+    # completed milestone (chain_complete is True OR the cursor has
+    # moved to a successor) but no acceptance receipt exists for the
+    # prior milestone in fail-closed mode.
+    auto_continuation = (
+        is_fail_closed
+        and has_declared_successors
+        and chain_complete
+        and acceptance_required
+        and not final_accepted
+        and not waiting
+    )
+
+    # ── determine acceptance_state ────────────────────────────────────
+    if waiting:
+        acceptance_state = "waiting_for_acceptance"
+    elif chain_complete and final_accepted:
+        acceptance_state = "accepted"
+    elif chain_complete and not acceptance_required:
+        acceptance_state = "not_applicable"
+    elif accepted_count > 0:
+        acceptance_state = "accepted"
+    elif acceptance_required and not final_accepted:
+        acceptance_state = "activity_only"
+    else:
+        acceptance_state = "activity_only"
+
+    # ── classify activity ─────────────────────────────────────────────
+    if waiting:
+        activity_classification = ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE
+    elif final_accepted or accepted_count > 0:
+        activity_classification = ACTIVITY_CLASSIFICATION_ACCEPTED_PROGRESS
+    elif fixer_infra_active:
+        activity_classification = ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE
+    elif auto_continuation:
+        activity_classification = (
+            ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY
+        )
+    elif not acceptance_required and chain_complete:
+        # Shadow / warn / off modes: acceptance is not required and the
+        # chain is complete, so the absence of a receipt is expected.
+        # This is not a stall.
+        activity_classification = ACTIVITY_CLASSIFICATION_NOT_APPLICABLE
+    elif (
+        status in ("running",)
+        and not fixer_infra_active
+        and not chain_complete
+    ):
+        activity_classification = ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY
+    elif not status or status in ("complete",):
+        activity_classification = ACTIVITY_CLASSIFICATION_IDLE
+    elif not acceptance_required:
+        # Shadow / warn / off modes: acceptance not required and chain
+        # is not complete (still running or in some other state).
+        activity_classification = ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY
+    else:
+        activity_classification = ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY
+
+    # ── escalation decision ───────────────────────────────────────────
+    escalate = activity_classification in _ESCALATION_ACTIVITY_KINDS
+
+    if activity_classification == ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE:
+        escalation_reason = (
+            "chain complete in fail-closed mode but no acceptance receipt "
+            "exists for the final milestone — accepted progress absent"
+        )
+    elif activity_classification == ACTIVITY_CLASSIFICATION_IDLE:
+        escalation_reason = (
+            "no accepted progress and no forward activity observed"
+        )
+    elif activity_classification == ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE:
+        escalation_reason = (
+            "fixer-infrastructure activity observed — this is NOT accepted "
+            "progress and does not suppress escalation; however, the fixer "
+            "is still working so the watchdog defers escalation"
+        )
+    elif activity_classification == ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY:
+        escalation_reason = (
+            "chain continuing to successor without acceptance evidence — "
+            "automatic continuation custody observed"
+        )
+    else:
+        escalation_reason = ""
+
+    return {
+        "activity_classification": activity_classification,
+        "escalate": escalate,
+        "escalation_reason": escalation_reason,
+        "accepted_progress": dict(accepted_progress),
+        "acceptance_state": acceptance_state,
+        "fixer_infrastructure_active": fixer_infra_active,
+        "automatic_continuation_custody": auto_continuation,
+    }
