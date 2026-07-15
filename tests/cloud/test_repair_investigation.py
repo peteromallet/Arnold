@@ -121,6 +121,37 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     assert len(context["context_digest"]) == 64
 
 
+def test_context_normalizes_mapping_validation_from_real_repair_report(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    payload = json.loads(repair_data.read_text(encoding="utf-8"))
+    payload["attempts"][-1]["dev_summary"] = None
+    payload["attempts"][-1]["dev_report"] = {
+        "what_tried": "centralized extracted wrapper dependencies",
+        "validation": {
+            "focused_tests": "9 passed",
+            "exact_selector": "passed",
+        },
+        "pushed_commit": "1322b318e5b3c98c88ca47b56f7764d2cfc730d1",
+    }
+    _write(repair_data, payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    latest = context["prior_repairs"][-1]
+    assert latest["what_tried"] == ["centralized extracted wrapper dependencies"]
+    assert latest["validation"] == [
+        "{'focused_tests': '9 passed', 'exact_selector': 'passed'}"
+    ]
+    assert latest["pushed_commit"] == "1322b318e5b3c98c88ca47b56f7764d2cfc730d1"
+
+
 def test_fresh_quality_phase_result_is_exact_error_when_latest_failure_cleared(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     state = workspace / ".megaplan/plans/current-m5a/state.json"
@@ -312,6 +343,9 @@ def test_l1_investigation_precedes_every_target_mutation_and_failures_stop() -> 
     fail_closed = main[investigation : main.index("GLM_MODEL=", investigation)]
     assert "investigation failed or produced no valid handoff; target remains unchanged" in fail_closed
     assert '"status": "failed"' in wrapper
+    assert '"failure_phase": failure_phase' in wrapper
+    assert '"error_excerpt": error_excerpt' in wrapper
+    assert 'repair_data_set_outcome "fixer_infrastructure_failure"' in wrapper
     assert "require_investigation_before_mutation" in wrapper
 
 

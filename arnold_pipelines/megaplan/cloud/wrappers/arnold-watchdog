@@ -5066,6 +5066,13 @@ if current_target_observation_raw:
         resolver_record = loaded_observation
 
 repair_outcome = str(payload.get("outcome") or "")
+investigation = payload.get("investigation")
+if not isinstance(investigation, dict):
+    investigation = {}
+has_l1_custody_failure = bool(
+    repair_outcome == "fixer_infrastructure_failure"
+    or investigation.get("status") in {"failed", "invalid"}
+)
 needs_human_present = needs_human_path.exists()
 terminal_repair_failures = {
     "discord_escalated",
@@ -5291,6 +5298,7 @@ classification, _ = evaluate_meta_repair_triggers(
     semantic_fingerprints=semantic_fingerprints,
     has_state_inspection_error=has_state_inspection_error,
     has_model_tool_launch_error=has_model_tool_launch_error,
+    has_l1_custody_failure=has_l1_custody_failure,
     discord_delivery_failed=discord_delivery_failed,
     discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
     repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
@@ -7697,6 +7705,22 @@ PY
         log "durable repair goal is unowned while its fresh matching worker progresses; observing without repair launch session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
         report_item "$report_items" "$session" "observe" "recovery_observation" "preserve fresh matching worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"
         return 0
+      fi
+      local owner_gap_health owner_gap_meta_trigger owner_gap_meta_result
+      owner_gap_health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+      owner_gap_meta_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$owner_gap_health")"
+      if [[ "$owner_gap_meta_trigger" == TRIGGER:* ]]; then
+        if dispatch_meta_repair \
+          "$session" "$workspace" "$remote_spec" "$report_items" "${owner_gap_meta_trigger#TRIGGER:}"; then
+          owner_gap_meta_result="${REPAIR_DISPATCH_RESULT:-}"
+          if [[ "$owner_gap_meta_result" == "dispatched" || "$owner_gap_meta_result" == "busy" ]]; then
+            log "durable repair goal lost its L1 owner after a repair-system failure; L2 now has custody session=$session goal_id=$repair_goal_id trigger=${owner_gap_meta_trigger#TRIGGER:} result=$owner_gap_meta_result"
+            report_item "$report_items" "$session" "meta_repair" "$owner_gap_meta_result" \
+              "L2 took custody of unowned durable goal after L1 repair-system failure" "$workspace" "$remote_spec"
+            return 0
+          fi
+        fi
+        log "durable repair goal matched an L2 trigger but meta-repair could not take custody; falling back to bounded L1 redispatch session=$session goal_id=$repair_goal_id trigger=${owner_gap_meta_trigger#TRIGGER:} result=${REPAIR_DISPATCH_RESULT:-unavailable}"
       fi
       log "durable repair goal lost its process owner while target remained frozen; redispatching root repair session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
       export ARNOLD_REPAIR_LAUNCH_DESCRIPTION="Investigate then repair unowned goal $repair_goal_id for $session; control_action=${repair_goal_control_action:-unknown}; $repair_goal_reason"
