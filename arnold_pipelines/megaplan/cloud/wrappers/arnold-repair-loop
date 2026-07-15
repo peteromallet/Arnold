@@ -947,84 +947,8 @@ PY
 
 kill_matching_runner_processes() {
   require_repair_lock_held
-  local session="$1"
-  local remote_spec="$2"
-  local run_kind="${3:-chain}"
-  local plan_name="${4:-}"
-  python3 - "$$" "$session" "$remote_spec" "$run_kind" "$plan_name" <<'PY' 2>>"$LOG" || true
-import os
-import signal
-import subprocess
-import sys
-import time
-
-own_pid = int(sys.argv[1])
-session = sys.argv[2]
-remote_spec = sys.argv[3]
-run_kind = sys.argv[4]
-plan_name = sys.argv[5]
-
-try:
-    proc = subprocess.run(
-        ["ps", "-eww", "-o", "pid=", "-o", "pgid=", "-o", "args="],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-except Exception:
-    raise SystemExit(0)
-if proc.returncode != 0:
-    raise SystemExit(0)
-
-needles: list[str] = []
-if run_kind == "chain" and remote_spec:
-    needles.append("arnold_pipelines.megaplan chain start")
-elif run_kind == "epic_chain" and remote_spec:
-    needles.append("arnold_pipelines.megaplan epic-chain start")
-elif plan_name:
-    needles.append("arnold_pipelines.megaplan auto")
-
-targets: set[int] = set()
-ignored = {os.getpid(), os.getppid(), own_pid}
-for line in proc.stdout.splitlines():
-    stripped = line.strip()
-    if not stripped:
-        continue
-    try:
-        pid_text, pgid_text, args = stripped.split(None, 2)
-        pid = int(pid_text)
-        pgid = int(pgid_text)
-    except Exception:
-        continue
-    if pid in ignored:
-        continue
-    if session and f"arnold-repair-loop {session}" in args:
-        continue
-    if remote_spec and any(needle in args for needle in needles) and "--spec" in args and remote_spec in args:
-        targets.add(pgid if pgid > 0 else pid)
-    elif plan_name and any(needle in args for needle in needles) and f"--plan {plan_name}" in args:
-        targets.add(pgid if pgid > 0 else pid)
-
-for pgid in sorted(targets):
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-        print(f"killed stale runner process group pgid={pgid}", file=sys.stderr)
-    except ProcessLookupError:
-        pass
-    except Exception as exc:
-        print(f"failed SIGTERM stale runner pgid={pgid}: {exc}", file=sys.stderr)
-
-if targets:
-    time.sleep(2)
-for pgid in sorted(targets):
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-        print(f"force-killed stale runner process group pgid={pgid}", file=sys.stderr)
-    except ProcessLookupError:
-        pass
-    except Exception:
-        pass
-PY
+  log "runner cleanup refused without an exact managed-run lifecycle receipt session=$1"
+  return 1
 }
 
 marker_requires_repair_despite_alive() {
@@ -5555,14 +5479,8 @@ verify_started_and_holding() {
 
 kill_tmux_session_if_present() {
   require_repair_lock_held
-  local session="$1"
-  if tmux has-session -t "$session" 2>/dev/null; then
-    tmux kill-session -t "$session" 2>/dev/null || true
-    for _ in 1 2 3 4 5; do
-      tmux has-session -t "$session" 2>/dev/null || break
-      sleep 0.2
-    done
-  fi
+  log "tmux cleanup refused without an exact managed-run lifecycle receipt session=$1"
+  return 1
 }
 
 mechanical_launch_step() {
@@ -5576,7 +5494,9 @@ mechanical_launch_step() {
   local run_kind="$5"
   local plan_name="$6"
   local relaunch_command="$7"
-  local quoted_command launch_script launch_evidence safe detail health control_result control_status control_action control_blocker_cleared
+  local quoted_command launch_script launch_log launch_receipt command_sha safe detail health
+  local control_result control_status control_action control_blocker_cleared receipt_detail
+  local post_result post_status receipt_wait
 
   control_result="$(repair_goal_control_snapshot "pre-mechanical-relaunch-$iteration")" || {
     echo "failed:repair_goal_control_unavailable"
@@ -5606,19 +5526,26 @@ mechanical_launch_step() {
     return 0
   fi
 
-  quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
-    echo "failed:missing_relaunch_command"
-    return 1
-  }
-  # Recovery never tears down discovered processes or tmux sessions.  We do
-  # not have launch provenance for them, and replacing an unobserved owner can
-  # create a duplicate chain runner.  Leave the durable owner intact and make
-  # the conflict explicit for the next bounded diagnosis.
+  if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
+    quoted_command="${INVESTIGATOR_SUPPORTED_CLI:-}"
+    if [[ -z "$quoted_command" ]]; then
+      echo "failed:receipt_supported_cli_missing"
+      return 1
+    fi
+  else
+    quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
+      echo "failed:missing_relaunch_command"
+      return 1
+    }
+  fi
   if tmux has-session -t "$session" 2>/dev/null; then
     log "mechanical relaunch fenced: existing tmux session is not this owner's custody session=$session iteration=$iteration" >&2
-    echo "failed:existing_tmux_session"
+    echo "failed:existing_tmux_custody_unverified"
     return 1
   fi
+  # Recovery never tears down discovered processes or tmux sessions. We do
+  # not have launch provenance for them, and replacing an unobserved owner can
+  # create a duplicate chain runner. Preserve it for bounded observation.
   if { [[ "$run_kind" == "chain" ]] && chain_process_is_alive "$remote_spec"; } || \
      { [[ -n "$plan_name" ]] && plan_process_is_alive "$plan_name"; }; then
     log "mechanical relaunch fenced: existing canonical runner must be preserved session=$session iteration=$iteration" >&2
@@ -5626,11 +5553,13 @@ mechanical_launch_step() {
     return 0
   fi
   safe="$(safe_name "$session")"
-  launch_evidence="$RUN_DIR/mechanical-launch-${iteration}-$(date -u +%Y%m%dT%H%M%SZ).log"
   launch_script="$(mktemp)"
+  launch_log="$RUN_DIR/mechanical-launch-$iteration.log"
+  launch_receipt="$RUN_DIR/mechanical-launch-$iteration-receipt.json"
+  command_sha="$(printf '%s' "$quoted_command" | sha256sum | awk '{print $1}')"
   cat > "$launch_script" <<EOF
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 # Unlink only after this child has opened the script.  Removing it in the
 # parent immediately after tmux new-session -d races tmux startup and can
 # turn a valid canonical relaunch into a false failed:stopped result.
@@ -5640,7 +5569,31 @@ export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "${ARNOLD_REPAIR_QUEUE_ROOT:-$REPA
 export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
 export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
 export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
-exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command" >> $(printf '%q' "$launch_evidence") 2>&1
+/usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $(printf '%q' "$quoted_command") >>$(printf '%q' "$launch_log") 2>&1
+rc=\$?
+python3 -P - $(printf '%q' "$launch_receipt") "\$rc" $(printf '%q' "$launch_log") $(printf '%q' "$command_sha") $(printf '%q' "$session") $(printf '%q' "${ARNOLD_MANAGED_AGENT_RUN_ID:-}") <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import sys
+
+path_raw, returncode, log_path, command_sha, session, owner_run_id = sys.argv[1:]
+path = pathlib.Path(path_raw)
+temporary = path.with_suffix(path.suffix + ".tmp")
+payload = {
+    "schema_version": "arnold-mechanical-launch-receipt-v1",
+    "session": session,
+    "owner_run_id": owner_run_id,
+    "command_sha256": command_sha,
+    "log_path": log_path,
+    "returncode": int(returncode),
+    "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+}
+temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+os.replace(temporary, path)
+PY
+exit "\$rc"
 EOF
   chmod +x "$launch_script"
   if ! tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'"; then
@@ -5650,11 +5603,24 @@ EOF
   fi
   health="$(verify_started_and_holding "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MECHANICAL_VERIFY_INITIAL_SECS" "$MECHANICAL_VERIFY_HOLD_SECS")" || {
     detail="$health"
-    # Preserve the launched session for manifest-targeted observation.  Its
-    # stdout/stderr is retained in launch_evidence even when it exits before
-    # the chain log is opened, which is the evidence needed for a safe retry.
-    log "mechanical relaunch did not hold session=$session iteration=$iteration detail=$detail evidence=$launch_evidence" >&2
-    echo "failed:$detail"
+    receipt_detail="pending"
+    for receipt_wait in 1 2 3 4 5 6 7 8 9 10; do
+      [[ -f "$launch_receipt" ]] && break
+      sleep 0.2
+    done
+    if [[ -f "$launch_receipt" ]]; then
+      receipt_detail="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("rc=" + str(d.get("returncode")))' "$launch_receipt" 2>/dev/null || printf unknown)"
+    fi
+    post_result="$(repair_goal_control_snapshot "post-mechanical-stop-$iteration")" || {
+      echo "failed:$detail:$receipt_detail:receipt=$launch_receipt:goal=unavailable"
+      return 1
+    }
+    post_status="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status") or "")' <<< "$post_result")"
+    if [[ "$post_status" == "progressed" || "$post_status" == "approval_required" ]]; then
+      echo "terminal:$post_status:receipt=$launch_receipt"
+      return 0
+    fi
+    echo "failed:$detail:$receipt_detail:receipt=$launch_receipt"
     return 1
   }
   echo "running"
@@ -6467,6 +6433,40 @@ PY
   export INVESTIGATION_CONTEXT_DIGEST="$context_digest"
   recommended_action="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("recommended_action") or "")' "$INVESTIGATOR_RECEIPT_PATH")"
   export INVESTIGATOR_RECOMMENDED_ACTION="$recommended_action"
+  INVESTIGATOR_SUPPORTED_CLI="$(python3 -P - "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" <<'PY'
+import json
+import pathlib
+import sys
+
+context_path, receipt_path = map(pathlib.Path, sys.argv[1:])
+context = json.loads(context_path.read_text(encoding="utf-8"))
+receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+if receipt.get("recommended_action") != "recover_state":
+    print("")
+    raise SystemExit(0)
+expected = str(
+    (context.get("safe_repair_boundaries") or {}).get("supported_recovery_cli") or ""
+).strip()
+allowed = [
+    str(item).strip()
+    for item in (receipt.get("handoff") or {}).get("allowed_mutations") or []
+]
+if not expected or allowed != [f"supported_cli:{expected}"]:
+    raise SystemExit(
+        "recover_state receipt does not authorize the exact bounded supported CLI"
+    )
+print(expected)
+PY
+  )" || {
+    repair_data_set_outcome "fixer_infrastructure_failure"
+    persist_repair_investigation_failure \
+      "receipt_mutation_contract" \
+      "investigator recover_state receipt did not match the exact supported CLI" \
+      "" "$context_digest" "$investigator_run_id"
+    log "repair investigator mutation contract failed closed session=$SESSION run_id=${investigator_run_id:-unknown}"
+    return 1
+  }
+  export INVESTIGATOR_SUPPORTED_CLI
   log "bounded repair investigator receipt accepted session=$SESSION run_id=$investigator_run_id digest=$context_digest action=$recommended_action"
   if [[ "$recommended_action" == "replan" ]]; then
     repair_data_set_outcome "deterministic_failure"
@@ -7385,8 +7385,7 @@ fi
 
 STALE_CLEAR_STATUS=""
 if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
-  require_investigation_before_mutation "stale-state-recovery"
-  STALE_CLEAR_STATUS="$(repair_clear_stale_state_if_needed 2>>"$LOG" || true)"
+  log "direct stale-state JSON synchronization is outside the recover_state receipt; using only the exact supported CLI session=$SESSION"
 fi
 if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   log "stale state cleared before dev-fix: ${STALE_CLEAR_STATUS#cleared:}"
@@ -7406,7 +7405,30 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "0" "0" "running" "investigator-authorized state recovery came up and held"
-    repair_goal_evaluate_or_exit "post-baseline-mechanical-launch" || true
+    recovery_wait_rc=0
+    if wait_for_repair_goal_progress_if_live "baseline-authorized-recovery"; then
+      exit 0
+    else
+      recovery_wait_rc=$?
+    fi
+    if [[ "$recovery_wait_rc" == "2" ]]; then
+      exit 1
+    fi
+    repair_data_set_outcome "recovery_not_verified"
+    repair_goal_record_terminal_failure \
+      "authorized-recovery-no-progress" \
+      "recovery_not_verified" \
+      "the exact investigator-authorized recovery command remained live without accepted progress" || true
+    exit 1
+  elif [[ "${mechanical_status:-}" == terminal:* ]]; then
+    repair_data_record_mechanical "0" "0" "terminal" "$mechanical_status"
+    repair_goal_evaluate_or_exit "post-authorized-recovery-command" || true
+    repair_data_set_outcome "recovery_not_verified"
+    repair_goal_record_terminal_failure \
+      "authorized-recovery-terminal-unverified" \
+      "recovery_not_verified" \
+      "$mechanical_status" || true
+    exit 1
   elif [[ "${mechanical_status:-}" == preserved:* ]]; then
     repair_data_record_mechanical "0" "0" "preserved_live" "$mechanical_status"
     if wait_for_repair_goal_progress_if_live "baseline-preserved-live"; then
@@ -7414,6 +7436,14 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
     elif [[ "$?" == "2" ]]; then
       exit 1
     fi
+  else
+    repair_data_set_outcome "recovery_not_verified"
+    repair_goal_record_terminal_failure \
+      "authorized-recovery-launch-failed" \
+      "recovery_not_verified" \
+      "$mechanical_status" || true
+    log "investigator-authorized recovery failed with a durable launch receipt; delegating transcript-aware correction to L2 session=$SESSION status=$mechanical_status"
+    exit 1
   fi
 fi
 

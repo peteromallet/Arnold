@@ -535,9 +535,11 @@ def test_repair_loop_fences_mechanical_relaunch_and_uses_two_stage_owner() -> No
     assert 'repair_goal_control_snapshot "pre-mechanical-relaunch-$iteration"' in mechanical
     assert 'control_action"' in mechanical
     assert 'echo "preserved:live_progress"' in mechanical
-    assert mechanical.index("preserved:live_progress") < mechanical.index("kill_matching_runner_processes")
+    assert mechanical.index("preserved:live_progress") < mechanical.index('tmux has-session -t "$session"')
     assert 'echo "preserved:runner_transition"' in mechanical
-    assert mechanical.index("preserved:runner_transition") < mechanical.index("kill_matching_runner_processes")
+    assert mechanical.index("preserved:runner_transition") < mechanical.index('tmux has-session -t "$session"')
+    assert "kill_matching_runner_processes" not in mechanical
+    assert "tmux kill-session" not in mechanical
     assert "run_repair_investigator_turn()" in wrapper
     assert "automatic_research_subagent" in wrapper
     assert "--sandbox read-only" in wrapper

@@ -123,6 +123,14 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     )
     assert "old-m5" in context["request"]["mismatch_reason"]
     assert len(context["context_digest"]) == 64
+    supported_cli = context["safe_repair_boundaries"]["supported_recovery_cli"]
+    assert supported_cli == (
+        f"python -P -m arnold_pipelines.megaplan chain start --spec {spec} "
+        f"--project-dir {workspace}"
+    )
+    assert context["required_investigator_output"][
+        "action_specific_handoff_examples"
+    ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
 
 
 def test_context_normalizes_mapping_validation_from_real_repair_report(tmp_path: Path) -> None:
@@ -641,11 +649,13 @@ def test_l1_investigation_precedes_every_target_mutation_and_failures_stop() -> 
         'repair_source_initiative_if_possible; then',
         'repair_source_workspace_if_possible; then',
         'repair_dependency_manifests_if_possible; then',
-        'repair_clear_stale_state_if_needed 2>>"$LOG"',
         'mechanical_launch_step "0"',
         'run_dev_fix_turn "$iteration"',
     ):
         assert main.index(mutation) > investigation
+    assert 'repair_clear_stale_state_if_needed 2>>"$LOG"' not in main
+    assert "direct stale-state JSON synchronization is outside the recover_state receipt" in main
+    assert "recover_state receipt does not authorize the exact bounded supported CLI" in wrapper
     fail_closed = main[investigation : main.index("GLM_MODEL=", investigation)]
     assert "investigation failed or produced no valid handoff; target remains unchanged" in fail_closed
     assert '"status": "failed"' in wrapper

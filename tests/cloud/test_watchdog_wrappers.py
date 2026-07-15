@@ -8224,9 +8224,13 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "kill_matching_runner_processes()" in text
     assert 'kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"' not in text
     assert 'kill_tmux_session_if_present "$session"' not in text
-    assert 'failed:existing_tmux_session' in text
+    assert 'failed:existing_tmux_custody_unverified' in text
     assert 'preserved:existing_runner' in text
-    assert 'mechanical-launch-${iteration}-' in text
+    assert "runner cleanup refused without an exact managed-run lifecycle receipt" in text
+    assert "tmux cleanup refused without an exact managed-run lifecycle receipt" in text
+    assert "tmux kill-session" not in text
+    assert "os.killpg" not in text
+    assert "SIGKILL" not in text
     assert "marker_requires_repair_despite_alive()" in text
     assert 'python3 - "$MARKER_PATH" "$DATA_FILE"' in text
     assert 'repair_payload.get("current_failure_context")' in text
@@ -8249,6 +8253,13 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
         'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent'
     )
     assert 'tmux new-session -d -s "$session"' in text
+    assert 'launch_receipt="$RUN_DIR/mechanical-launch-$iteration-receipt.json"' in text
+    assert '"schema_version": "arnold-mechanical-launch-receipt-v1"' in text
+    assert 'echo "terminal:$post_status:receipt=$launch_receipt"' in text
+    assert '"authorized-recovery-launch-failed"' in text
+    assert text.index('if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]') < text.index(
+        'GLM_MODEL=""'
+    )
     assert r'rm -f -- "\${BASH_SOURCE[0]}"' in text
     launch_start = text.index('if ! tmux new-session -d -s "$session"')
     verify_start = text.index('health="$(verify_started_and_holding', launch_start)
