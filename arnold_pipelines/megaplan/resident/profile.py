@@ -47,6 +47,7 @@ from arnold_pipelines.megaplan.layout import (
     initiative_root,
     initiatives_dir,
     migrate_legacy_briefs_layout,
+    render_initiative_readme,
     search_initiatives,
     slugify_initiative,
 )
@@ -95,8 +96,9 @@ from .context_tree import (
     read_context_node,
     search_context,
 )
+from .knowledge_context import KNOWLEDGE_LIFECYCLE, build_knowledge_context
 
-MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v9"
+MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v10"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
 # of staleness before treating broad status as degraded.
 _SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
@@ -106,6 +108,7 @@ _VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT = 3
 _VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS = 240
 _VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS = 160
 _INITIATIVE_HOT_CONTEXT_LIMIT = 5
+_INITIATIVE_CONTEXT_ROUTE_LIMIT = 200
 _RESIDENT_AGENT_RUNNING_LIMIT = 12
 _RESIDENT_AGENT_RECENT_LIMIT = 3
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
@@ -752,7 +755,15 @@ class ReadContextNodeInput(ToolInput):
 
 class SearchContextInput(ToolInput):
     scope: Literal[
-        "status", "agents", "conversation", "initiatives", "todos", "capabilities", "policies"
+        "status",
+        "agents",
+        "conversation",
+        "tickets",
+        "initiatives",
+        "documents",
+        "todos",
+        "capabilities",
+        "policies",
     ]
     query: str = ""
     cursor: int = Field(default=0, ge=0)
@@ -860,9 +871,17 @@ def _resident_core_prompt() -> str:
         "unknowns. Use constrained resident/CLI operations for durable actions and never claim an "
         "action, launch, delivery, or restart without returned durable evidence. Ask for human input "
         "only when a real approval gate or material ambiguity blocks safe work.\n"
-        f"Planning assets follow {LAYOUT_POLICY_VERSION} under .megaplan/initiatives/<slug>/; search "
-        "initiatives by rough slug/title/description first and reuse matches before creating one. Never put planning docs directly under "
-        ".megaplan/briefs. Never create planning docs directly under .megaplan/briefs.\n"
+        "A document is speculative, exploratory, or durable knowledge and never implies execution "
+        "approval. A ticket is a specific problem, opportunity, or idea that probably should be "
+        "addressed but is not yet a coordinated plan. An initiative is a committed coherent outcome "
+        "with boundaries and success criteria; detailed planning and execution may come later. Always "
+        "search initiatives by rough slug/title/description first, then search related tickets and "
+        "documents; reuse the closest canonical artifact before creating anything.\n"
+        f"Planning assets follow {LAYOUT_POLICY_VERSION} under .megaplan/initiatives/<slug>/. README.md "
+        "is the current truth/front door and canonical index; use briefs/, research/, decisions/, "
+        "notes/, handoff/, and assets/. NORTHSTAR.md and chain.yaml are optional readiness artifacts. "
+        "Curate agent/subagent results into canonical documents that cite raw runs. Never create planning "
+        "docs directly under .megaplan/briefs.\n"
         "Hot context is a bounded orientation root, not the database. Follow context_root.routes and "
         "use read_context_node/search_context (or the listed python -P CLI twins) for only the branch "
         "needed. Never load a complete cloud-status JSON. conversation_history and model history are "
@@ -1067,6 +1086,7 @@ class MegaplanResidentProfile:
         (
             local_epic_chain_state,
             initiative_index,
+            knowledge_context,
             resident_agents,
             todo_context,
             restart_lifecycle,
@@ -1075,8 +1095,9 @@ class MegaplanResidentProfile:
         ) = await asyncio.gather(
             asyncio.to_thread(self._load_local_epic_chain_state_context),
             asyncio.to_thread(
-                initiative_compact_index, Path.cwd(), limit=_INITIATIVE_HOT_CONTEXT_LIMIT
+                initiative_compact_index, Path.cwd(), limit=_INITIATIVE_CONTEXT_ROUTE_LIMIT
             ),
+            asyncio.to_thread(build_knowledge_context, Path.cwd()),
             asyncio.to_thread(list_managed_resident_agents, project_root=Path.cwd()),
             asyncio.to_thread(_vp_todo_hot_context, self._todo_path()),
             asyncio.to_thread(list_reset_notifications, limit=5),
@@ -1099,8 +1120,10 @@ class MegaplanResidentProfile:
                 "initiatives_root": ".megaplan/initiatives",
                 "allowed_doc_kinds": sorted(ALLOWED_INITIATIVE_SUBDIRS),
                 "legacy_briefs_root": ".megaplan/briefs",
+                "readme_role": "front door, current truth, and canonical index",
+                "optional_readiness_files": ["NORTHSTAR.md", "chain.yaml"],
             },
-            "initiative_index": initiative_index,
+            "initiative_index": initiative_index[:_INITIATIVE_HOT_CONTEXT_LIMIT],
             "resident_runtime": {
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
@@ -1215,6 +1238,10 @@ class MegaplanResidentProfile:
             status=cloud_status_tree_root,
             agents=compact_agents,
             initiatives=initiative_index,
+            knowledge_lifecycle=KNOWLEDGE_LIFECYCLE,
+            recent_activity=knowledge_context.recent_activity,
+            ticket_count=len(knowledge_context.tickets),
+            document_count=len(knowledge_context.documents),
             todos=todo_context,
             runtime={
                 "model_provider": self.config.model_provider,
@@ -1231,6 +1258,8 @@ class MegaplanResidentProfile:
                 "status_snapshot": full_cloud_status_snapshot,
                 "agents": resident_agents,
                 "initiatives": initiative_index,
+                "tickets": list(knowledge_context.tickets),
+                "documents": list(knowledge_context.documents),
                 "todos": [vp_todo.public_item(item) for item in vp_todo.load_items(self._todo_path())],
                 "runtime": {
                     "model_provider": self.config.model_provider,
@@ -1921,7 +1950,10 @@ class MegaplanResidentProfile:
             readme = initiative / "README.md"
             if not readme.exists():
                 title = (payload.title or slug.replace("-", " ").title()).strip()
-                readme.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
+                readme.write_text(
+                    render_initiative_readme(title, description),
+                    encoding="utf-8",
+                )
             if payload.create_chain:
                 chain = initiative / "chain.yaml"
                 if not chain.exists():

@@ -1607,6 +1607,7 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
         initiatives_dir,
         is_initiative_retired,
         read_initiative_retirement,
+        render_initiative_readme,
         search_initiatives,
         slugify_initiative,
     )
@@ -1656,7 +1657,10 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
         readme = initiative / "README.md"
         if args.force or not readme.exists():
             title = (args.title or slug.replace("-", " ").title()).strip()
-            readme.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
+            readme.write_text(
+                render_initiative_readme(title, description),
+                encoding="utf-8",
+            )
         north_star = args.north_star
         if args.north_star_file:
             source = Path(args.north_star_file).expanduser()

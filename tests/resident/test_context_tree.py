@@ -27,7 +27,12 @@ def _sources() -> dict:
                 "progress": {"percent": 31},
             },
             *[
-                {"session": f"done-{index}", "status": "complete", "latest_activity": str(index)}
+                {
+                    "session": f"done-{index}",
+                    "status": "complete",
+                    "completed_at": f"2026-07-13T17:{index:02d}:00Z",
+                    "latest_activity": f"2026-07-13T17:{index:02d}:00Z",
+                }
                 for index in range(20)
             ],
         ],
@@ -53,7 +58,9 @@ def _sources() -> dict:
         "status_snapshot": snapshot,
         "agents": agents,
         "messages": [{"content": "the exact Discord failure", "direction": "inbound"}],
+        "tickets": [{"id": "ticket-1", "title": "boundary ticket"}],
         "initiatives": [{"slug": "north-star", "description": "boundary work"}],
+        "documents": [{"path": "docs/boundary.md", "name": "docs/boundary.md"}],
         "todos": [{"id": "todo-1", "task": "verify delivery"}],
         "capabilities": [{"name": "read_context_node"}],
         "runtime": {"restart": {"canonical_command": "safe-restart"}},
@@ -78,7 +85,11 @@ def test_every_context_namespace_is_typed_and_bounded() -> None:
         "status/session/active-chain/progress",
         "agents/running",
         "conversation/messages",
+        "tickets",
+        "tickets/ticket-1",
         "initiatives",
+        "initiatives/north-star",
+        "documents",
         "runtime/restart",
         "todos",
         "capabilities",
@@ -97,6 +108,16 @@ def test_context_search_stays_within_requested_scope() -> None:
     assert result["success"] is True
     assert result["node"]["total_count"] == 1
     assert "boundary work" not in json.dumps(result)
+
+
+def test_knowledge_context_search_uses_typed_ticket_and_document_scopes() -> None:
+    sources = _sources()
+
+    tickets = search_context(sources, scope="tickets", query="boundary", limit=5)
+    documents = search_context(sources, scope="documents", query="boundary", limit=5)
+
+    assert tickets["node"]["items"] == sources["tickets"]
+    assert documents["node"]["items"] == sources["documents"]
 
 
 def test_intent_policy_routing_selects_relevant_packs_only() -> None:

@@ -40,6 +40,42 @@ InitiativeDocKind = Literal[
 ]
 
 
+def render_initiative_readme(title: str, description: str) -> str:
+    """Render the initiative front door and canonical working index.
+
+    ``README.md`` is required for agent-obvious discovery.  Readiness anchors
+    remain optional: creating an initiative must not imply that a North Star or
+    executable chain already exists.
+    """
+
+    clean_title = " ".join(str(title).split())
+    clean_description = " ".join(str(description).split())
+    if not clean_title:
+        raise ValueError("initiative title must not be empty")
+    if not clean_description:
+        raise ValueError("initiative description must not be empty")
+    return (
+        f"# {clean_title}\n\n"
+        f"{clean_description}\n\n"
+        "## Current truth and index\n\n"
+        "Keep this README current as the initiative front door: state the outcome, boundaries, "
+        "success criteria, lifecycle/readiness, and link the canonical documents below. Initiative "
+        "creation records commitment to an outcome; it does not launch work.\n\n"
+        "- `briefs/` — curated planning inputs and milestone briefs.\n"
+        "- `research/` — evidence, investigations, alternatives, and syntheses.\n"
+        "- `decisions/` — durable decisions with rationale and consequences.\n"
+        "- `notes/` — working notes worth retaining but not yet promoted.\n"
+        "- `handoff/` — curated handoffs and canonical syntheses; cite raw agent/subagent run "
+        "artifacts instead of copying raw output here.\n"
+        "- `assets/` — supporting non-prose files.\n"
+        "- `NORTHSTAR.md` — optional durable end-state anchor, added when lifecycle maturity needs it.\n"
+        "- `chain.yaml` — optional executable coordination, added only when execution is ready.\n\n"
+        "Promote notes/research into decisions or briefs when they become authoritative, and update "
+        "this index. Search and reuse related documents, tickets, and initiatives before creating "
+        "another artifact.\n"
+    )
+
+
 def slugify_initiative(value: str) -> str:
     """Return the canonical initiative slug."""
     slug = artifact_slugify(value, max_length=96, allow_dots=True)
@@ -373,6 +409,14 @@ def _read_initiative_readme(root: Path) -> dict[str, str | None]:
         lines = path.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
         return {"title": None, "description": None}
+    if lines and lines[0].strip() == "---":
+        try:
+            closing = next(
+                index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"
+            )
+        except StopIteration:
+            return {"title": None, "description": None}
+        lines = lines[closing + 1 :]
     title: str | None = None
     description_parts: list[str] = []
     in_description = False
