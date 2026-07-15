@@ -265,7 +265,9 @@ def build_context_root(
             "pending_todo_count": (todos or {}).get("pending_count", 0),
         },
         "knowledge_lifecycle": _safe(knowledge_lifecycle or {}, depth=4),
-        "recent_knowledge_activity": _safe(recent_activity or {}, depth=4),
+        # Causal initiative activity is intentionally nested (initiative ->
+        # document events) but bounded before it reaches this generic guard.
+        "recent_knowledge_activity": _safe(recent_activity or {}, depth=7),
         "routes": [
             {"node_id": "status", "contains": "cloud sessions, progress, failures, repair evidence"},
             {"node_id": "agents", "contains": "managed agent lifecycle and delivery"},

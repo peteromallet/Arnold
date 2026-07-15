@@ -60,15 +60,32 @@ The resident injects concise lifecycle instructions plus three separately
 labeled rolling-hour categories:
 
 - tickets added or edited;
-- initiatives added or edited;
+- initiatives with recent admitted document activity (a derived roll-up, not a
+  claim that the initiative front door or control files were edited);
 - durable non-state documents added or edited.
 
 The lower one-hour boundary is inclusive and future timestamps are excluded.
-The hot summary emits names only, sorted by newest authoritative UTC activity
-then normalized name/identity. Added and edited evidence for one identity is
-deduplicated; because the output is name-only, duplicate case-folded display
-names are also collapsed with newest evidence winning. Each category is capped
-and reports an omitted count.
+The compatibility summary sections emit names only, sorted by newest available
+UTC activity then normalized name/identity. Added and edited evidence for one
+identity is deduplicated; because these sections are name-only, duplicate
+case-folded display names are also collapsed with newest evidence winning. Each
+category is capped and reports an omitted count.
+
+The compatibility name-only initiative section is paired with an explicit
+initiative-to-document causal section. For every visible recently active
+initiative, that section identifies the precise recent admitted document
+events which caused the roll-up. It is capped at three document pointers per
+initiative and eight pointers overall, allocates one pointer to each visible
+initiative before adding second or third pointers, and reports per-initiative,
+overall-pointer, and initiative omitted counts.
+
+Causal pointers contain only evidence the collector can support: document
+path, authoritative added/edited classification, authoritative UTC event time,
+and Git commit identity when available. Working-tree and filesystem-mtime
+fallbacks explicitly identify their weaker evidence source and omit any field
+that is not authoritative. The resident never fabricates line counts or a
+semantic change summary; instead each pointer gives the exact document and a
+source-appropriate inspection action.
 
 Ticket activity uses canonical `created_at` and `last_edited_at` values and
 fails closed on malformed records. Document activity uses explicit
