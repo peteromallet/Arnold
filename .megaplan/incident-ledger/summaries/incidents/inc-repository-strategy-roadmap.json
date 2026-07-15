@@ -1,6 +1,6 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 36,
+  "evidence_ref_count": 40,
   "evidence_refs": [
     {
       "action": "commented",
@@ -8,6 +8,13 @@
       "number": 242,
       "repo": "peteromallet/Arnold",
       "url": "https://github.com/peteromallet/Arnold/issues/242#issuecomment-4966662265"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 242,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/242#issuecomment-4973260971"
     },
     {
       "action": "created",
@@ -26,6 +33,9 @@
       "kind": "github_sync.publication_payload"
     },
     {
+      "kind": "github_sync.publication_payload"
+    },
+    {
       "kind": "verification_record"
     },
     {
@@ -41,6 +51,14 @@
     {
       "kind": "github_sync.incident_projection",
       "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "github_sync.incident_projection",
+      "session_id": "repository-strategy-roadmap"
+    },
+    {
+      "kind": "github_sync.problem_projection",
+      "status": "open"
     },
     {
       "kind": "github_sync.problem_projection",
@@ -171,7 +189,7 @@
       "session_id": "repository-strategy-roadmap"
     }
   ],
-  "generated_at": "2026-07-14T13:45:50.927480+00:00",
+  "generated_at": "2026-07-15T07:36:20.483227+00:00",
   "incident_id": "inc-repository-strategy-roadmap",
   "kind": "incident_summary",
   "latest_actor": "github_sync",
@@ -187,8 +205,8 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
-    "last_seq": 517,
+    "digest": "sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e",
+    "last_seq": 526,
     "projection": "incidents"
   },
   "state": "github_sync.issue_published",

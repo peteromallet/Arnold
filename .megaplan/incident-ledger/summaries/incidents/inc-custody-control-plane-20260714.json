@@ -1,9 +1,26 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 7,
+  "evidence_ref_count": 45,
   "evidence_refs": [
     {
-      "kind": "managed_agent_execution"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 252,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/252"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 253,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/253"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
     },
     {
       "kind": "managed_agent_execution"
@@ -12,7 +29,10 @@
       "kind": "managed_agent_execution"
     },
     {
-      "kind": "managed_agent_execution"
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -22,33 +42,184 @@
     },
     {
       "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "github_sync.incident_projection",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "github_sync.incident_projection",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "github_sync.problem_projection",
+      "status": "open"
+    },
+    {
+      "kind": "github_sync.problem_projection",
+      "status": "open"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "custody-control-plane-20260714",
+      "status": "2026-07-14T19:18:59.456599+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "custody-control-plane-20260714",
+      "status": "2026-07-14T19:18:59.456599+00:00"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane-20260714.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane-20260714.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "meta_record_path",
+      "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/34941d34-79f4-46e8-92b0-03943e3de5fa.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "meta_record_path",
+      "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/34941d34-79f4-46e8-92b0-03943e3de5fa.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "meta_record_path",
+      "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/meta_repair_verdict.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "meta_record_path",
+      "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/meta_repair_verdict.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/problems/problem-51b6859a7c76.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/problems/problem-51b6859a7c76.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "chain_health_failure"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "chain_health_failure"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "chain_health_failure"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "chain_health_failure"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "chain_health_failure"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "chain_health_failure"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "unavailable"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "unavailable"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "unavailable"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "unavailable"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "unavailable"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "unavailable"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260714T173242Z.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260714T173242Z.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260714T183517Z.json",
+      "session_id": "custody-control-plane-20260714"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260714T183517Z.json",
+      "session_id": "custody-control-plane-20260714"
     }
   ],
-  "generated_at": "2026-07-14T19:36:15.081319+00:00",
+  "generated_at": "2026-07-15T07:36:20.472351+00:00",
   "incident_id": "inc-custody-control-plane-20260714",
   "kind": "incident_summary",
-  "latest_actor": "immediate_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "outcome": "attempted",
+  "latest_actor": "watchdog",
+  "next_expected_event": null,
+  "outcome": "unavailable",
   "placeholders": {
     "install_freshness": "unknown",
-    "recurrence": "unknown",
+    "recurrence": "repeated_attempts_without_new_evidence",
     "shipped_fix": "unknown"
   },
   "problem_ids": [
     "problem-51b6859a7c76",
+    "problem-5b2d4b8c99c1",
     "problem-67a765759422",
     "problem-690ba3ad3bda",
-    "problem-837fddf200f3",
-    "problem-a5fc272da737",
+    "problem-72f87afd3954",
+    "problem-a923a5d15e23",
     "problem-bca9d501eede"
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:b9e00b9015dccf525eeed0f0dc694918cee5c4fa1fe7dac5261a891228040212",
-    "last_seq": 524,
+    "digest": "sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e",
+    "last_seq": 542,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "inc-custody-control-plane-20260714: repair-data outcome=repairing kind=chain workspace=/workspace/custody-control-plane-20260714/Arnold"
+  "state": "dispatch",
+  "summary_text": "inc-custody-control-plane-20260714: repair request claim failed"
 }

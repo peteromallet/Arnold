@@ -1,19 +1,20 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-14T13:45:50.947219+00:00",
+  "generated_at": "2026-07-15T07:36:20.502185+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
+    "inc-custody-control-plane-20260714",
     "inc-workflow-boundary-contracts-corrective-20260710"
   ],
   "next_review_ts": null,
-  "occurrence_count": 1,
-  "owner_actor": "immediate_repair",
+  "occurrence_count": 5,
+  "owner_actor": "github_sync",
   "problem_id": "problem-51b6859a7c76",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
-    "last_seq": 487,
+    "digest": "sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e",
+    "last_seq": 524,
     "projection": "problems"
   },
   "status": "open",
