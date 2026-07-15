@@ -24,7 +24,19 @@ def _minimal_state(tmp_path: Path) -> dict[str, Any]:
         plan_dir / "plan_v1.meta.json",
         {"success_criteria": [{"criterion": "Focused behavior passes."}]},
     )
-    _write_json(plan_dir / "gate.json", {"recommendation": "PROCEED"})
+    _write_json(
+        plan_dir / "gate.json",
+        {
+            "recommendation": "PROCEED",
+            "rationale": "Ready.",
+            "signals_assessment": "Clear.",
+            "warnings": [],
+            "settled_decisions": [],
+            "flag_resolutions": [],
+            "accepted_tradeoffs": [],
+            "north_star_actions": [],
+        },
+    )
     return {
         "name": "demo",
         "idea": "Change the behavior.",
@@ -54,3 +66,6 @@ def test_finalize_prompt_forbids_routing_only_dependencies_and_model_full_suite(
     assert "Do NOT add a final integration/full-suite test task" in prompt
     assert "Narrow verification should consume at most 2 minutes" in prompt
     assert "at most one diagnostic rerun" in prompt
+    assert "`task_contract_version` to `2`" in prompt
+    assert "integer 1-15" in prompt
+    assert "at most 3 changed-behavior selectors" in prompt

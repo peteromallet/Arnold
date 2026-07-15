@@ -280,5 +280,26 @@ def test_build_gate_signals_routes_unverifiable_checks_to_execute_contract(
 
     projected = _gate_signals_for_prompt(gate_signals)
     prompt_signals = projected["signals"]
-    assert "unverifiable_checks" not in prompt_signals
-    assert "execution_acceptance_contract" not in prompt_signals
+    assert prompt_signals["unverifiable_checks"] == required_checks
+    assert prompt_signals["execution_acceptance_contract"]["required_checks"] == required_checks
+
+
+def test_gate_prompt_hides_only_operational_unverifiable_checks() -> None:
+    from arnold_pipelines.megaplan.prompts.gate import _gate_signals_for_prompt
+
+    operational = {
+        "id": "provider",
+        "reason": "provider rate limit",
+        "attention": "high_complexity_unverifiable",
+    }
+    projected = _gate_signals_for_prompt(
+        {
+            "signals": {
+                "unverifiable_checks": [operational],
+                "execution_acceptance_contract": {"required_checks": [operational]},
+            }
+        }
+    )
+
+    assert "unverifiable_checks" not in projected["signals"]
+    assert "execution_acceptance_contract" not in projected["signals"]

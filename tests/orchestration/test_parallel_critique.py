@@ -138,3 +138,65 @@ def test_parallel_critique_flags_only_verifiability_payload_becomes_unverifiable
     assert payload["status"] == "unverifiable"
     assert payload["unverifiable_cause"] == "sandbox_namespace"
     assert payload["unverifiable_error_kind"] == "sandbox_namespace"
+
+
+def test_parallel_critique_flags_only_scope_payload_preserves_blocking_findings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+
+    monkeypatch.setattr(
+        parallel_critique,
+        "single_check_critique_prompt",
+        lambda *_args, **_kwargs: "critique prompt",
+    )
+    monkeypatch.setattr(
+        parallel_critique,
+        "scatter_worker_units",
+        lambda **_kwargs: GenericScatterResult(
+            ordered_results=[
+                {
+                    "checks": [],
+                    "flags": [
+                        {
+                            "id": "god-task",
+                            "category": "scope",
+                            "concern": "Step 2 combines independent objectives.",
+                            "evidence": "The step spans protocol, migration, and broad tests.",
+                        }
+                    ],
+                    "verified_flag_ids": [],
+                    "disputed_flag_ids": [],
+                }
+            ],
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        ),
+    )
+    state = {"config": {"mode": "code", "project_dir": str(tmp_path)}, "iteration": 1}
+    check = {
+        "id": "scope",
+        "question": "Are steps bounded?",
+        "complexity": 5,
+        "_resolved_agent_mode": AgentMode(
+            agent="codex",
+            mode="fresh",
+            refreshed=False,
+            model="gpt-5.5",
+            resolved_model="gpt-5.5",
+        ),
+    }
+
+    worker = parallel_critique.run_parallel_critique(
+        state, plan_dir, root=tmp_path, model="gpt-5.5", checks=(check,)
+    )
+
+    payload = worker.payload["checks"][0]
+    assert payload["status"] == "complete"
+    assert payload["findings"] == [
+        {"detail": "The step spans protocol, migration, and broad tests.", "flagged": True}
+    ]
