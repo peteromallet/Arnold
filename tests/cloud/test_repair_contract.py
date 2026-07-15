@@ -2278,6 +2278,13 @@ def test_repair_verdict_uses_matching_terminal_goal_evaluation_across_file_race(
     assert mismatched.verdict_kind == repair_contract.REPAIR_VERDICT_NO_VERDICT
     assert mismatched.no_verdict_detected is True
 
+    goal_path.write_text(json.dumps({"status": "progressed"}), encoding="utf-8")
+    recomputed = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload=payload,
+    )
+    assert recomputed.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert recomputed.no_verdict_detected is False
+
 
 def test_validate_repair_verdict_payload_rejects_bad_inputs() -> None:
     """validate_repair_verdict_payload raises ValueError on invalid payloads."""
