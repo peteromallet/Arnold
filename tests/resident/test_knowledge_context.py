@@ -8,6 +8,8 @@ import subprocess
 
 from arnold_pipelines.megaplan.resident.context_tree import POLICY_PACKS, build_context_root
 from arnold_pipelines.megaplan.resident.knowledge_context import (
+    CAUSAL_DOCUMENTS_OVERALL_LIMIT,
+    CAUSAL_DOCUMENTS_PER_INITIATIVE_LIMIT,
     KNOWLEDGE_LIFECYCLE,
     build_knowledge_context,
     is_durable_document_path,
@@ -240,6 +242,208 @@ def test_multiple_recent_documents_surface_the_related_initiative_once(tmp_path:
 
     assert _names(context, "initiatives_added_or_edited") == ["One Owner"]
     assert len(_names(context, "documents_added_or_edited")) == 2
+
+
+def test_initiative_rollup_exposes_precise_document_cause_without_claiming_frontdoor_edit(
+    tmp_path: Path,
+) -> None:
+    old = NOW - timedelta(days=1)
+    initiative = tmp_path / ".megaplan" / "initiatives" / "causal-owner"
+    readme = _write_document(initiative / "README.md")
+    readme.write_text("# Causal Owner\n\nCommitted outcome.\n", encoding="utf-8")
+    _set_mtime(readme, old)
+    cause = _write_document(
+        initiative / "research" / "finding.md",
+        created_at=old,
+        edited_at=NOW - timedelta(minutes=4),
+    )
+    _set_mtime(cause, old)
+
+    context = build_knowledge_context(tmp_path, now=NOW)
+    compatibility = context.recent_activity["initiatives_added_or_edited"]
+    causal = context.recent_activity["initiative_document_causes"]
+
+    assert compatibility["names"] == ["Causal Owner"]
+    assert "not evidence that an initiative front-door" in compatibility["label"]
+    assert causal["items"] == [
+        {
+            "initiative_slug": "causal-owner",
+            "initiative_name": "Causal Owner",
+            "initiative_path": ".megaplan/initiatives/causal-owner",
+            "caused_by_recent_document_events": [
+                {
+                    "document_path": ".megaplan/initiatives/causal-owner/research/finding.md",
+                    "evidence_source": "document_frontmatter",
+                    "change": "edited",
+                    "occurred_at": "2026-07-15T11:56:00Z",
+                    "recommended_next_action": (
+                        "Open this document and inspect its recorded recent change."
+                    ),
+                }
+            ],
+            "causal_documents_omitted_count": 0,
+        }
+    ]
+    assert "README.md" not in json.dumps(causal["items"])
+    root = build_context_root(
+        status={},
+        agents={},
+        initiatives=[],
+        todos={},
+        runtime={},
+        conversation={},
+        recent_activity=context.recent_activity,
+    )
+    rendered_event = root["recent_knowledge_activity"]["initiative_document_causes"][
+        "items"
+    ][0]["caused_by_recent_document_events"][0]
+    assert rendered_event["document_path"].endswith("research/finding.md")
+
+
+def test_git_causal_events_report_authoritative_added_edited_commit_evidence(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+    subprocess.run(("git", "config", "user.email", "tests@example.com"), cwd=tmp_path, check=True)
+    subprocess.run(("git", "config", "user.name", "Tests"), cwd=tmp_path, check=True)
+    initiative = tmp_path / ".megaplan" / "initiatives" / "git-owner"
+    readme = _write_document(initiative / "README.md")
+    readme.write_text("# Git Owner\n\nCommitted outcome.\n", encoding="utf-8")
+    edited = _write_document(initiative / "research" / "edited.md")
+    subprocess.run(("git", "add", "."), cwd=tmp_path, check=True)
+    old_environment = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-07-13T12:00:00Z",
+        "GIT_COMMITTER_DATE": "2026-07-13T12:00:00Z",
+    }
+    subprocess.run(
+        ("git", "commit", "-q", "-m", "old initiative"),
+        cwd=tmp_path,
+        check=True,
+        env=old_environment,
+    )
+
+    edited.write_text("# edited\n\nChanged.\n", encoding="utf-8")
+    added = _write_document(initiative / "decisions" / "added.md")
+    subprocess.run(("git", "add", "."), cwd=tmp_path, check=True)
+    recent_environment = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-07-15T11:55:00Z",
+        "GIT_COMMITTER_DATE": "2026-07-15T11:55:00Z",
+    }
+    subprocess.run(
+        ("git", "commit", "-q", "-m", "recent documents"),
+        cwd=tmp_path,
+        check=True,
+        env=recent_environment,
+    )
+    commit = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    context = build_knowledge_context(tmp_path, now=NOW)
+    events = context.recent_activity["initiative_document_causes"]["items"][0][
+        "caused_by_recent_document_events"
+    ]
+    by_path = {event["document_path"]: event for event in events}
+
+    assert by_path[added.relative_to(tmp_path).as_posix()]["change"] == "added"
+    assert by_path[edited.relative_to(tmp_path).as_posix()]["change"] == "edited"
+    assert {event["commit"] for event in events} == {commit}
+    assert {event["occurred_at"] for event in events} == {"2026-07-15T11:55:00Z"}
+
+
+def test_causal_document_caps_and_omitted_counts_are_enforced(tmp_path: Path) -> None:
+    old = NOW - timedelta(days=1)
+    for initiative_index in range(4):
+        initiative = tmp_path / ".megaplan" / "initiatives" / f"owner-{initiative_index}"
+        readme = _write_document(initiative / "README.md")
+        readme.write_text(
+            f"# Owner {initiative_index}\n\nCommitted outcome.\n", encoding="utf-8"
+        )
+        _set_mtime(readme, old)
+        for document_index in range(4):
+            document = _write_document(
+                initiative / "research" / f"doc-{document_index}.md",
+                edited_at=NOW - timedelta(minutes=document_index + 1),
+            )
+            _set_mtime(document, old)
+
+    causal = build_knowledge_context(tmp_path, now=NOW).recent_activity[
+        "initiative_document_causes"
+    ]
+
+    assert causal["per_initiative_document_limit"] == CAUSAL_DOCUMENTS_PER_INITIATIVE_LIMIT == 3
+    assert causal["overall_document_limit"] == CAUSAL_DOCUMENTS_OVERALL_LIMIT == 8
+    assert causal["document_pointers_included_count"] == 8
+    assert causal["causal_document_pointers_omitted_count"] == 8
+    assert [len(item["caused_by_recent_document_events"]) for item in causal["items"]] == [2, 2, 2, 2]
+    assert [item["causal_documents_omitted_count"] for item in causal["items"]] == [2, 2, 2, 2]
+
+
+def test_causal_overall_cap_reports_omitted_initiatives_and_their_documents(
+    tmp_path: Path,
+) -> None:
+    old = NOW - timedelta(days=1)
+    for index in range(10):
+        initiative = tmp_path / ".megaplan" / "initiatives" / f"many-{index}"
+        readme = _write_document(initiative / "README.md")
+        readme.write_text(f"# Many {index}\n\nCommitted outcome.\n", encoding="utf-8")
+        _set_mtime(readme, old)
+        document = _write_document(
+            initiative / "research" / "cause.md",
+            edited_at=NOW - timedelta(minutes=index + 1),
+        )
+        _set_mtime(document, old)
+
+    context = build_knowledge_context(tmp_path, now=NOW, limit=20)
+    compatibility = context.recent_activity["initiatives_added_or_edited"]
+    causal = context.recent_activity["initiative_document_causes"]
+
+    assert len(compatibility["names"]) == 8
+    assert compatibility["omitted_count"] == 2
+    assert len(causal["items"]) == 8
+    assert causal["initiatives_omitted_count"] == 2
+    assert causal["document_pointers_included_count"] == 8
+    assert causal["causal_document_pointers_omitted_count"] == 2
+
+
+def test_per_initiative_cap_and_incomplete_metadata_fallback_do_not_fabricate_evidence(
+    tmp_path: Path,
+) -> None:
+    old = NOW - timedelta(days=1)
+    initiative = tmp_path / ".megaplan" / "initiatives" / "fallback-owner"
+    readme = _write_document(initiative / "README.md")
+    readme.write_text("# Fallback Owner\n\nCommitted outcome.\n", encoding="utf-8")
+    _set_mtime(readme, old)
+    for index in range(5):
+        document = _write_document(initiative / "notes" / f"note-{index}.md")
+        _set_mtime(document, NOW - timedelta(minutes=index + 1))
+
+    causal = build_knowledge_context(tmp_path, now=NOW).recent_activity[
+        "initiative_document_causes"
+    ]
+    item = causal["items"][0]
+    rendered = json.dumps(causal)
+
+    assert len(item["caused_by_recent_document_events"]) == 3
+    assert item["causal_documents_omitted_count"] == 2
+    assert causal["causal_document_pointers_omitted_count"] == 2
+    for event in item["caused_by_recent_document_events"]:
+        assert event["evidence_source"] == "filesystem_mtime"
+        assert "change" not in event
+        assert "occurred_at" not in event
+        assert "commit" not in event
+        assert event["document_path"].startswith(
+            ".megaplan/initiatives/fallback-owner/notes/"
+        )
+    assert "line_count" not in rendered
+    assert "line count" not in rendered.casefold()
+    assert "summary" not in rendered.casefold()
 
 
 def test_git_tracked_checkout_mtime_is_not_activity_but_dirty_added_and_edited_files_are(tmp_path: Path) -> None:
