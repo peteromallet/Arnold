@@ -464,8 +464,14 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     investigation = _mapping(
         _mapping(finding.get("repair_data_summary")).get("meta_investigation_summary")
     )
-    access_failure = str(investigation.get("failure_code") or "").startswith(
-        "investigator_"
+    failure_codes = {
+        _text(item.get("failure_code"))
+        for item in _list(meta.get("meta_run_refs"))
+        if isinstance(item, Mapping) and item.get("failure_code")
+    }
+    access_failure = bool(
+        str(investigation.get("failure_code") or "").startswith("investigator_")
+        or any(code.startswith("investigator_") for code in failure_codes)
     )
     l1 = _l1_failure_fingerprint(finding)
     due = bool(
@@ -494,6 +500,7 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "false_success": false_success,
         "recursion_guard_blocked": recursion_blocked,
         "investigator_access_failure": access_failure,
+        "failure_codes": sorted(failure_codes),
         "trigger": _text(meta.get("trigger")),
     }
 

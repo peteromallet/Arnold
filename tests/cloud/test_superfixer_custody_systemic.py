@@ -100,6 +100,18 @@ def test_l3_treats_recursion_and_investigator_access_failure_as_backstop_failure
         "meta_repair_summary": {"should_dispatch": True},
     }
     assert _l2_failure_fingerprint(base)["investigator_access_failure"] is True
+    retained_log_failure = {
+        "repair_data_summary": {"outcome": "repair_exhausted"},
+        "meta_repair_summary": {
+            "should_dispatch": True,
+            "meta_run_refs": [
+                {"failure_code": "investigator_read_sandbox_unavailable"}
+            ],
+        },
+    }
+    retained = _l2_failure_fingerprint(retained_log_failure)
+    assert retained["investigator_access_failure"] is True
+    assert retained["failure_codes"] == ["investigator_read_sandbox_unavailable"]
     recurrence = {
         **base,
         "repair_data_summary": {"outcome": "repair_exhausted"},
