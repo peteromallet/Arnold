@@ -1,21 +1,29 @@
 {
   "integrity": [
     {
-      "actual": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
+      "actual": "sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e",
       "code": "index_divergence",
-      "expected": "sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850' != 'sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9'",
+      "expected": "sha256:c80e774f7316d4fa869ed9a42a2df17c77b0134b71fb0ade0acd8093ac4703d8",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e' != 'sha256:c80e774f7316d4fa869ed9a42a2df17c77b0134b71fb0ade0acd8093ac4703d8'",
       "projection": "incidents",
       "recommendation": "system.integrity_repair",
       "severity": "error"
     },
     {
-      "actual": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
+      "actual": "sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e",
       "code": "index_divergence",
-      "expected": "sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9",
-      "message": "problems projection source metadata diverged for digest: 'sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850' != 'sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9'",
+      "expected": "sha256:c80e774f7316d4fa869ed9a42a2df17c77b0134b71fb0ade0acd8093ac4703d8",
+      "message": "problems projection source metadata diverged for digest: 'sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e' != 'sha256:c80e774f7316d4fa869ed9a42a2df17c77b0134b71fb0ade0acd8093ac4703d8'",
       "projection": "problems",
       "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
+      "code": "loop_break_repeated_attempt_no_new_evidence",
+      "incident_id": "inc-custody-control-plane-20260714",
+      "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
+      "recommendation": "system.integrity_repair",
+      "seq": 530,
       "severity": "error"
     },
     {
@@ -97,21 +105,40 @@
       "first_seen_seq": 487,
       "first_seen_ts": "2026-07-13T22:44:54.539079+00:00",
       "fix_commits": [],
-      "last_seen_seq": 523,
-      "last_seen_ts": "2026-07-14T19:41:07.805526+00:00",
+      "last_seen_seq": 544,
+      "last_seen_ts": "2026-07-15T07:41:03.400078+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair accepted execution custody",
-      "occurrence_count": 4,
+      "occurrence_count": 7,
       "owner_actor": "six_hour_auditor",
       "problem_id": "problem-51b6859a7c76",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "managed automatic_repair accepted execution custody"
+    },
+    {
+      "first_seen_seq": 532,
+      "first_seen_ts": "2026-07-15T02:07:53.638543+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 542,
+      "last_seen_ts": "2026-07-15T07:15:54.112018+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair request claim failed",
+      "occurrence_count": 6,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-5b2d4b8c99c1",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair request claim failed"
     },
     {
       "first_seen_seq": 348,
@@ -213,14 +240,14 @@
       "first_seen_seq": 134,
       "first_seen_ts": "2026-07-04T16:05:39.851549+00:00",
       "fix_commits": [],
-      "last_seen_seq": 501,
-      "last_seen_ts": "2026-07-14T01:53:00.931749+00:00",
+      "last_seen_seq": 525,
+      "last_seen_ts": "2026-07-14T19:41:20.907666+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind plan workspace private var folders w b tthv m c dbyzvk gn t pytest of peteromalley pytest test repair loop serializes sa ws",
-      "occurrence_count": 5,
+      "occurrence_count": 6,
       "owner_actor": "github_sync",
       "problem_id": "problem-6eaee57d9632",
       "recurred_after_fix": false,
@@ -251,9 +278,10 @@
       "first_seen_seq": 202,
       "first_seen_ts": "2026-07-07T01:45:04.474384+00:00",
       "fix_commits": [],
-      "last_seen_seq": 517,
-      "last_seen_ts": "2026-07-14T07:53:39.561955+00:00",
+      "last_seen_seq": 530,
+      "last_seen_ts": "2026-07-15T00:04:03.800842+00:00",
       "linked_incident_ids": [
+        "inc-custody-control-plane-20260714",
         "inc-megaplan-north-star-sense-checks-revise-design",
         "inc-repository-strategy-roadmap",
         "inc-runauthority-epic-cloud",
@@ -262,8 +290,8 @@
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome partial liveness kind chain workspace transient path",
-      "occurrence_count": 15,
-      "owner_actor": "github_sync",
+      "occurrence_count": 19,
+      "owner_actor": "immediate_repair",
       "problem_id": "problem-72f87afd3954",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -347,6 +375,25 @@
       "title": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
     },
     {
+      "first_seen_seq": 531,
+      "first_seen_ts": "2026-07-15T02:07:51.598220+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 541,
+      "last_seen_ts": "2026-07-15T07:15:52.147389+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "chain state advertises last state done but only milestones are complete treating as incomplete stuck instead of terminal artifact transient path",
+      "occurrence_count": 6,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-a923a5d15e23",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "chain state advertises last_state=done but only 1/10 milestones are complete; treating as incomplete/stuck instead of terminal; artifact=/workspace/.megaplan/cloud-sessions/repair-data/custody-control-plane-20260714.chain-health.json"
+    },
+    {
       "first_seen_seq": 154,
       "first_seen_ts": "2026-07-05T02:27:34.712582+00:00",
       "fix_commits": [],
@@ -369,16 +416,16 @@
       "first_seen_seq": 488,
       "first_seen_ts": "2026-07-13T22:44:54.540909+00:00",
       "fix_commits": [],
-      "last_seen_seq": 519,
-      "last_seen_ts": "2026-07-14T19:07:18.421227+00:00",
+      "last_seen_seq": 527,
+      "last_seen_ts": "2026-07-14T19:41:26.239004+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair execution started",
-      "occurrence_count": 2,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 3,
+      "owner_actor": "github_sync",
       "problem_id": "problem-bca9d501eede",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -467,10 +514,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9",
-    "event_count": 523,
-    "journal_line_count": 523,
-    "last_seq": 523,
+    "digest": "sha256:c80e774f7316d4fa869ed9a42a2df17c77b0134b71fb0ade0acd8093ac4703d8",
+    "event_count": 544,
+    "journal_line_count": 544,
+    "last_seq": 544,
     "malformed_line_count": 0
   }
 }

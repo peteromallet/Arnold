@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-14T13:45:50.952021+00:00",
-  "incident_count": 9,
+  "generated_at": "2026-07-15T07:36:20.507775+00:00",
+  "incident_count": 10,
   "incidents": [
     {
       "incident_id": "inc-canonical-run-state-control-plane",
@@ -9,6 +9,10 @@
     {
       "incident_id": "inc-custody-control-plane",
       "path": ".megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane.json"
+    },
+    {
+      "incident_id": "inc-custody-control-plane-20260714",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane-20260714.json"
     },
     {
       "incident_id": "inc-demo-session",
@@ -39,7 +43,7 @@
       "path": ".megaplan/incident-ledger/summaries/incidents/incident-42.json"
     }
   ],
-  "problem_count": 21,
+  "problem_count": 24,
   "problems": [
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-3bc7a5eaa27e.json",
@@ -58,12 +62,20 @@
       "problem_id": "problem-51b6859a7c76"
     },
     {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-5b2d4b8c99c1.json",
+      "problem_id": "problem-5b2d4b8c99c1"
+    },
+    {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
       "problem_id": "problem-67a765759422"
     },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-68a048c70af7.json",
       "problem_id": "problem-68a048c70af7"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-690ba3ad3bda.json",
+      "problem_id": "problem-690ba3ad3bda"
     },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-6a1177eb343e.json",
@@ -100,6 +112,10 @@
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-9e338df241c5.json",
       "problem_id": "problem-9e338df241c5"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-a923a5d15e23.json",
+      "problem_id": "problem-a923a5d15e23"
     },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-b3c4cc0b2599.json",

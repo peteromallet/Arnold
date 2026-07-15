@@ -1,6 +1,6 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 358,
+  "evidence_ref_count": 362,
   "evidence_refs": [
     {
       "action": "commented",
@@ -15,6 +15,13 @@
       "number": 240,
       "repo": "peteromallet/Arnold",
       "url": "https://github.com/peteromallet/Arnold/issues/240#issuecomment-4966662089"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 241,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/241#issuecomment-4973260804"
     },
     {
       "action": "created",
@@ -165,10 +172,7 @@
       "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
-    },
-    {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -243,12 +247,12 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-14T13:45:50.921778+00:00",
+  "generated_at": "2026-07-15T07:36:20.477447+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
   "latest_actor": "github_sync",
   "next_expected_event": "six_hour_auditor.diagnosis",
-  "omitted_evidence_ref_count": 294,
+  "omitted_evidence_ref_count": 298,
   "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
@@ -265,10 +269,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
-    "last_seq": 516,
+    "digest": "sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e",
+    "last_seq": 525,
     "projection": "incidents"
   },
   "state": "github_sync.issue_published",
-  "summary_text": "inc-demo-session: Published persistent problem problem-6e386e382223 update to GitHub issue #240"
+  "summary_text": "inc-demo-session: Published persistent problem problem-6eaee57d9632 update to GitHub issue #241"
 }

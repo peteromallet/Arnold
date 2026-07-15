@@ -1,6 +1,6 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-14T19:36:15.109830+00:00",
+  "generated_at": "2026-07-15T07:36:20.503262+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-custody-control-plane-20260714"
@@ -12,7 +12,7 @@
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:b9e00b9015dccf525eeed0f0dc694918cee5c4fa1fe7dac5261a891228040212",
+    "digest": "sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e",
     "last_seq": 521,
     "projection": "problems"
   },
