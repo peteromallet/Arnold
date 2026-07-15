@@ -39,7 +39,7 @@ fi
 
 MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_META_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
-ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-/workspace/arnold}"
+ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
 SELF_PATH="${MEGAPLAN_META_SELF_PATH:-${BASH_SOURCE[0]:-$0}}"
 if command -v readlink >/dev/null 2>&1; then
   SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"

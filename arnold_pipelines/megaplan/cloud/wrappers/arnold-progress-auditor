@@ -56,7 +56,7 @@ fi
 # Keep the installed container entrypoint tiny and load-bearing only as a
 # trampoline.  The editable checkout is the deployed recovery implementation
 # and is what the watchdog already treats as its current source of truth.
-AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+AUDITOR_SOURCE_ROOT="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}}"
 SOURCE_AUDITOR="$AUDITOR_SOURCE_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor"
 if [[ -x "$SOURCE_AUDITOR" ]]; then
   self_real="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
@@ -78,7 +78,7 @@ export ARNOLD_REPAIR_QUEUE_ROOT="$REPAIR_QUEUE_ROOT"
 REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"
 REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
-ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}}"
 SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
