@@ -35,6 +35,15 @@ from arnold_pipelines.megaplan.orchestration.completion_contract import (
     is_fail_closed_mode,
     normalize_contract_mode,
 )
+from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+    AcceptanceSnapshot,
+    AcceptanceTransaction,
+)
+from arnold_pipelines.megaplan.orchestration.completion_io import (
+    commit_acceptance_transaction,
+    prepare_acceptance_transaction,
+    store_acceptance_snapshot,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -104,6 +113,63 @@ def _make_chain_state(
         completion_contract_mode=completion_contract_mode,
         completed=completed or [],
         current_milestone_index=1,
+    )
+
+
+_FULL_SHA = "a" * 40
+
+
+def _make_committed_acceptance_state(
+    tmp_path: Path,
+    *,
+    transaction_id: str = "tx-001",
+    milestone_label: str = "M5A",
+    milestone_index: int = 1,
+    plan_name: str = "m5a-plan",
+    source_commit_ref: str = _FULL_SHA,
+    runtime_identity: str = "ci-main",
+) -> ChainState:
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    snapshot = AcceptanceSnapshot(
+        transaction_id=transaction_id,
+        chain_run_id="chain-run",
+        milestone_label=milestone_label,
+        milestone_index=milestone_index,
+        plan_name=plan_name,
+        source_commit_ref=source_commit_ref,
+        runtime_identity=runtime_identity,
+    )
+    store_acceptance_snapshot(plan_dir, snapshot)
+    transaction = AcceptanceTransaction(
+        transaction_id=transaction_id,
+        snapshot_hash=snapshot.content_hash,
+        accepted=True,
+        mode="atomic",
+        tested_commit_ref=source_commit_ref,
+        tested_runtime_identity=runtime_identity,
+    )
+    prepare_acceptance_transaction(plan_dir, transaction)
+    commit_acceptance_transaction(plan_dir, transaction_id)
+    record = _make_completed_record(
+        label=milestone_label,
+        plan=plan_name,
+        milestone_index=milestone_index,
+        acceptance_receipt=snapshot.with_receipt().to_dict(),
+    )
+    record.update(
+        {
+            "transaction_id": transaction_id,
+            "snapshot_hash": snapshot.content_hash,
+            "source_commit_ref": source_commit_ref,
+            "runtime_identity": runtime_identity,
+        }
+    )
+    return ChainState(
+        completion_contract_mode="enforce",
+        completed=[record],
+        current_milestone_index=milestone_index,
+        metadata={"acceptance_plan_dirs": {milestone_label: str(plan_dir), plan_name: str(plan_dir)}},
     )
 
 
@@ -473,10 +539,7 @@ class TestM5ARejectedReceipt:
             completion_contract_mode="enforce",
             completed=[record],
         )
-        # has_acceptance_receipt matches by label; receipt IS present but its
-        # identity fields mismatch → the record validation would catch this
-        # on load, but has_acceptance_receipt purely checks presence
-        assert state.has_acceptance_receipt("M5A") is True
+        assert state.has_acceptance_receipt("M5A") is False
 
 
 class TestM5AStaleAcceptance:
@@ -691,17 +754,7 @@ class TestResumeAcceptanceGate:
             _check_acceptance_gate_for_resume_write,
         )
 
-        receipt = _make_acceptance_receipt()
-        state = ChainState(
-            completion_contract_mode="enforce",
-            completed=[
-                _make_completed_record(
-                    label="M5A",
-                    plan="m5a-plan",
-                    acceptance_receipt=receipt,
-                ),
-            ],
-        )
+        state = _make_committed_acceptance_state(tmp_path)
         # Should not raise
         _check_acceptance_gate_for_resume_write(
             tmp_path,
@@ -783,13 +836,8 @@ class TestResumeAcceptanceGate:
                 milestone_label="M5A",
             )
 
-    def test_resume_gate_allows_different_identity_receipt(self, tmp_path: Path) -> None:
-        """The resume gate only checks receipt PRESENCE, not identity matching.
-
-        Identity validation is done by the caller (acceptance transaction layer).
-        If a receipt IS present for the milestone, the resume gate passes.
-        Actual identity mismatches are caught on ChainState load in atomic mode.
-        """
+    def test_resume_gate_blocks_different_identity_receipt(self, tmp_path: Path) -> None:
+        """The resume gate rejects receipts without matching committed evidence."""
         from arnold_pipelines.megaplan.runtime.resume import (
             _check_acceptance_gate_for_resume_write,
         )
@@ -809,13 +857,12 @@ class TestResumeAcceptanceGate:
                 ),
             ],
         )
-        # Receipt IS present for M5A — resume gate passes (identity validation
-        # is handled by the acceptance transaction boundary, not the resume gate).
-        _check_acceptance_gate_for_resume_write(
-            tmp_path,
-            chain_state=state,
-            milestone_label="M5A",
-        )
+        with pytest.raises(ValueError, match="no accepted acceptance transaction receipt"):
+            _check_acceptance_gate_for_resume_write(
+                tmp_path,
+                chain_state=state,
+                milestone_label="M5A",
+            )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

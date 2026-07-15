@@ -681,6 +681,12 @@ def prepare_acceptance_commit(
     # deep-ish copies of the mutable containers so the source state is untouched
     completed_list = [dict(r) if isinstance(r, dict) else r for r in new_state.get("completed", [])]
     evidence_map = dict(new_state.get("milestone_boundary_evidence") or {})
+    metadata = dict(new_state.get("metadata") or {})
+    acceptance_plan_dirs = dict(metadata.get("acceptance_plan_dirs") or {})
+    acceptance_plan_dirs[milestone_label] = str(plan_dir)
+    acceptance_plan_dirs[plan_name] = str(plan_dir)
+    metadata["acceptance_plan_dirs"] = acceptance_plan_dirs
+    metadata.setdefault("chain_spec_path", str(spec_path))
     # remove any prior completed record for this label so the receipt attaches cleanly
     completed_list = [r for r in completed_list if not (isinstance(r, dict) and r.get("label") == milestone_label)]
 
@@ -715,6 +721,7 @@ def prepare_acceptance_commit(
 
     new_state["completed"] = completed_list
     new_state["milestone_boundary_evidence"] = evidence_map
+    new_state["metadata"] = metadata
     # cursor advance: never move the cursor backwards (idempotent on re-stage)
     prior_index = int(new_state.get("current_milestone_index", -1))
     new_state["current_milestone_index"] = max(prior_index, int(milestone_index))

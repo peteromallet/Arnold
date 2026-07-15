@@ -143,19 +143,7 @@ def _normalize_stale_current_plan_reference(state: "ChainState") -> "ChainState"
                 is_fail_closed_mode,
             )
             if is_fail_closed_mode(state.completion_contract_mode):
-                receipt = completed.get("acceptance_receipt")
-                if not isinstance(receipt, dict):
-                    # No validated acceptance evidence — keep the marker.
-                    return state
-                # Cross-check receipt identity against the record.
-                rec_label = completed.get("label")
-                rec_plan = completed.get("plan")
-                rec_mi = completed.get("milestone_index")
-                if (
-                    receipt.get("milestone_label") != rec_label
-                    or receipt.get("plan_name") != rec_plan
-                    or receipt.get("milestone_index") != rec_mi
-                ):
+                if not state.has_acceptance_receipt(str(completed.get("label") or "")):
                     return state
             state.last_state = "done"
         return state
@@ -236,10 +224,11 @@ def _atomic_acceptance_gate_allows_rewrite(
     """Return ``True`` when the completed record for *milestone_label* carries
     a validated acceptance receipt, or the chain is NOT in fail-closed mode.
 
-    In shadow/warn/off modes this gate is always open (returns ``True``) —
+    In shadow/warn/off modes this gate is always open (returns ``True``) -
     legacy normalization behaviour is unchanged.  In atomic/enforce mode the
-    gate is closed unless the completed record for the given milestone carries
-    an ``acceptance_receipt`` dict whose identity fields match the record.
+    gate is closed unless the completed record for the given milestone resolves
+    to an accepted committed transaction and a matching content-addressed
+    snapshot.
     """
     from arnold_pipelines.megaplan.orchestration.completion_contract import (
         is_fail_closed_mode,
@@ -252,20 +241,7 @@ def _atomic_acceptance_gate_allows_rewrite(
             continue
         if record.get("label") != milestone_label:
             continue
-        receipt = record.get("acceptance_receipt")
-        if not isinstance(receipt, dict):
-            return False
-        # Cross-check receipt identity against the record.
-        rec_label = record.get("label")
-        rec_plan = record.get("plan")
-        rec_mi = record.get("milestone_index")
-        if (
-            receipt.get("milestone_label") != rec_label
-            or receipt.get("plan_name") != rec_plan
-            or receipt.get("milestone_index") != rec_mi
-        ):
-            return False
-        return True
+        return state.has_acceptance_receipt(milestone_label)
     # No completed record found — the prerequisite check already failed.
     return True
 
@@ -1405,23 +1381,34 @@ class ChainState:
                         f"atomic/enforce mode (completion_contract_mode={completion_contract_mode!r}). "
                         f"Legacy shadow-mode states cannot be loaded in fail-closed mode.",
                     )
-                # Validate receipt identity matches the record.
                 rec_label = record.get("label")
                 rec_plan = record.get("plan")
                 rec_mi = record.get("milestone_index")
-                if (
-                    receipt.get("milestone_label") != rec_label
-                    or receipt.get("plan_name") != rec_plan
-                    or receipt.get("milestone_index") != rec_mi
+                for field in (
+                    "transaction_id",
+                    "snapshot_hash",
+                    "source_commit_ref",
+                    "runtime_identity",
                 ):
+                    if not isinstance(record.get(field), str) or not str(record.get(field)).strip():
+                        raise CliError(
+                            "invalid_chain_state",
+                            f"completed[{idx}] is missing required atomic acceptance field "
+                            f"{field!r}",
+                        )
+                if not cls._receipt_identity_matches_record(record, receipt):
                     raise CliError(
                         "invalid_chain_state",
                         f"completed[{idx}] acceptance_receipt identity mismatch: "
                         f"receipt(milestone_label={receipt.get('milestone_label')!r}, "
                         f"plan_name={receipt.get('plan_name')!r}, "
-                        f"milestone_index={receipt.get('milestone_index')!r}) vs "
+                        f"milestone_index={receipt.get('milestone_index')!r}, "
+                        f"transaction_id={receipt.get('transaction_id')!r}, "
+                        f"snapshot_hash={receipt.get('snapshot_hash')!r}) vs "
                         f"record(label={rec_label!r}, plan={rec_plan!r}, "
-                        f"milestone_index={rec_mi!r})",
+                        f"milestone_index={rec_mi!r}, "
+                        f"transaction_id={record.get('transaction_id')!r}, "
+                        f"snapshot_hash={record.get('snapshot_hash')!r})",
                     )
         # ──────────────────────────────────────────────────────────────
 
@@ -1527,19 +1514,186 @@ class ChainState:
 
     # ── Acceptance receipt helpers ──────────────────────────────────────
 
-    def has_acceptance_receipt(self, label: str) -> bool:
-        """Return ``True`` when the completed record for *label* carries an acceptance receipt."""
+    def _completed_record_for_label(self, label: str) -> dict[str, Any] | None:
         for record in self.completed:
             if isinstance(record, dict) and record.get("label") == label:
-                return isinstance(record.get("acceptance_receipt"), dict)
+                return record
+        return None
+
+    def _acceptance_plan_dir_for_record(
+        self,
+        label: str,
+        record: dict[str, Any],
+        *,
+        plan_dir: Path | None = None,
+    ) -> Path | None:
+        if plan_dir is not None:
+            return Path(plan_dir)
+
+        plan_name = record.get("plan")
+        if not isinstance(plan_name, str) or not plan_name.strip():
+            return None
+
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        acceptance_plan_dirs = metadata.get("acceptance_plan_dirs")
+        if isinstance(acceptance_plan_dirs, dict):
+            for key in (label, plan_name):
+                value = acceptance_plan_dirs.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidate = Path(value)
+                    if candidate.exists():
+                        return candidate
+
+        for root_value in (
+            metadata.get("chain_spec_path"),
+            self.resolved_workspace,
+            str(Path.cwd()),
+        ):
+            if not isinstance(root_value, str) or not root_value.strip():
+                continue
+            root_path = Path(root_value)
+            if root_path.is_file() or root_path.suffix:
+                root = _project_root_for_chain_spec(root_path)
+            else:
+                root = root_path
+            try:
+                candidate = resolve_plan_dir(root, plan_name)
+            except CliError:
+                candidate = root / ".megaplan" / "plans" / plan_name
+            if candidate.exists():
+                return candidate
+        return None
+
+    @staticmethod
+    def _receipt_identity_matches_record(
+        record: dict[str, Any],
+        receipt: dict[str, Any],
+    ) -> bool:
+        if receipt.get("milestone_label") != record.get("label"):
+            return False
+        if receipt.get("plan_name") != record.get("plan"):
+            return False
+        try:
+            receipt_index = int(receipt.get("milestone_index"))
+            record_index = int(record.get("milestone_index"))
+        except (TypeError, ValueError):
+            return False
+        if receipt_index != record_index:
+            return False
+        for field in ("transaction_id", "snapshot_hash"):
+            value = record.get(field)
+            if isinstance(value, str) and value and receipt.get(field) != value:
+                return False
+        return True
+
+    def validate_acceptance_receipt(
+        self,
+        label: str,
+        *,
+        plan_dir: Path | None = None,
+        require_committed: bool | None = None,
+    ) -> bool:
+        """Return ``True`` only for accepted, identity-bound receipt evidence.
+
+        Shadow/warn/off callers keep the legacy lightweight check unless
+        ``require_committed`` is explicitly true.  Fail-closed modes require
+        the receipt to resolve to a committed acceptance transaction, the
+        transaction to be accepted, the content-addressed snapshot to load, and
+        transaction/snapshot/record identity to agree on milestone, plan,
+        source commit, and runtime identity.
+        """
+        record = self._completed_record_for_label(label)
+        if record is None:
+            return False
+        receipt = record.get("acceptance_receipt")
+        if not isinstance(receipt, dict):
+            return False
+        try:
+            from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+                AcceptanceReceipt,
+            )
+
+            AcceptanceReceipt.from_dict(receipt)
+        except (TypeError, ValueError):
+            return False
+        if not self._receipt_identity_matches_record(record, receipt):
+            return False
+
+        from arnold_pipelines.megaplan.orchestration.completion_contract import (
+            is_fail_closed_mode,
+        )
+
+        needs_committed = (
+            is_fail_closed_mode(self.completion_contract_mode)
+            if require_committed is None
+            else bool(require_committed)
+        )
+        if not needs_committed:
+            return True
+
+        source_commit_ref = record.get("source_commit_ref")
+        runtime_identity = record.get("runtime_identity")
+        if not isinstance(source_commit_ref, str) or not source_commit_ref.strip():
+            return False
+        if not isinstance(runtime_identity, str) or not runtime_identity.strip():
+            return False
+
+        resolved_plan_dir = self._acceptance_plan_dir_for_record(
+            label,
+            record,
+            plan_dir=plan_dir,
+        )
+        if resolved_plan_dir is None:
+            return False
+
+        from arnold_pipelines.megaplan.orchestration.completion_io import (
+            list_committed_acceptance_transactions,
+            load_acceptance_snapshot,
+        )
+
+        snapshot_hash = str(receipt.get("snapshot_hash") or "")
+        transaction_id = str(receipt.get("transaction_id") or "")
+        snapshot = load_acceptance_snapshot(resolved_plan_dir, snapshot_hash)
+        if snapshot is None:
+            return False
+        if getattr(snapshot, "transaction_id", None) != transaction_id:
+            return False
+        if getattr(snapshot, "milestone_label", None) != record.get("label"):
+            return False
+        if getattr(snapshot, "plan_name", None) != record.get("plan"):
+            return False
+        if getattr(snapshot, "milestone_index", None) != record.get("milestone_index"):
+            return False
+        if getattr(snapshot, "source_commit_ref", None) != source_commit_ref:
+            return False
+        if getattr(snapshot, "runtime_identity", None) != runtime_identity:
+            return False
+
+        committed = list_committed_acceptance_transactions(resolved_plan_dir)
+        for transaction in committed.values():
+            if getattr(transaction, "transaction_id", None) != transaction_id:
+                continue
+            if getattr(transaction, "snapshot_hash", None) != snapshot_hash:
+                continue
+            if getattr(transaction, "accepted", None) is not True:
+                continue
+            if getattr(transaction, "tested_commit_ref", None) != source_commit_ref:
+                continue
+            if getattr(transaction, "tested_runtime_identity", None) != runtime_identity:
+                continue
+            return True
         return False
+
+    def has_acceptance_receipt(self, label: str) -> bool:
+        """Return ``True`` when *label* carries validated acceptance evidence."""
+        return self.validate_acceptance_receipt(label)
 
     def get_acceptance_receipt(self, label: str) -> dict[str, Any] | None:
         """Return the acceptance receipt dict for *label*, or ``None``."""
-        for record in self.completed:
-            if isinstance(record, dict) and record.get("label") == label:
-                receipt = record.get("acceptance_receipt")
-                return dict(receipt) if isinstance(receipt, dict) else None
+        record = self._completed_record_for_label(label)
+        if record is not None:
+            receipt = record.get("acceptance_receipt")
+            return dict(receipt) if isinstance(receipt, dict) else None
         return None
 
     def set_acceptance_receipt(
