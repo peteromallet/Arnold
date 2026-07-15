@@ -180,3 +180,20 @@ def test_explicit_authorization_gate_terminates_with_exact_gate_evidence(tmp_pat
     gate = result["evaluation"]["approval_gate"]
     assert gate["gate_state"] == "awaiting_authorization"
     assert gate["plan_state_path"] == str(state_path)
+
+
+def test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity() -> None:
+    wrapper = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-watchdog"
+    ).read_text(encoding="utf-8")
+
+    assert 'inherited_goal_path="${ARNOLD_REPAIR_RETRY_GOAL_PATH:-}"' in wrapper
+    assert 'managed_identity="${managed_identity}:goal:${inherited_goal_id}:retry:' in wrapper
+    assert '--link "repair_goal_path=$inherited_goal_path"' in wrapper
+    assert 'ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path"' in wrapper
+    assert 'ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest"' in wrapper

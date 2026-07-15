@@ -4683,7 +4683,8 @@ dispatch_kimi_repair() {
   local workspace="$2"
   local remote_spec="$3"
   local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
-  local run_id_file launch_evidence child_pid
+  local run_id_file launch_evidence child_pid inherited_goal_id inherited_goal_path
+  local inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
   REPAIR_DISPATCH_RUN_ID=""
@@ -4693,6 +4694,35 @@ dispatch_kimi_repair() {
   if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
+  fi
+  inherited_goal_id="${ARNOLD_REPAIR_RETRY_GOAL_ID:-}"
+  inherited_goal_path="${ARNOLD_REPAIR_RETRY_GOAL_PATH:-}"
+  inherited_checkpoint_digest=""
+  inherited_goal_blocker=""
+  inherited_goal_request=""
+  inherited_retry_sequence=""
+  if [[ -n "$inherited_goal_path" && -f "$inherited_goal_path" ]]; then
+    IFS=$'\t' read -r inherited_goal_id inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence <<< "$(
+      PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$inherited_goal_path" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+requests = payload.get("request_ids") if isinstance(payload.get("request_ids"), list) else []
+owners = payload.get("owners") if isinstance(payload.get("owners"), list) else []
+print("\t".join((
+    str(payload.get("goal_id") or ""),
+    str(payload.get("checkpoint_digest") or ""),
+    str(target.get("blocker_id") or ""),
+    str(requests[-1] if requests else ""),
+    str(len(owners) + 1),
+)))
+PY
+    )" || return 1
+    blocker_id="${inherited_goal_blocker:-$blocker_id}"
+    request_id="${inherited_goal_request:-$request_id}"
   fi
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop binary unavailable" "unavailable" "immediate_repair"
@@ -4732,6 +4762,9 @@ dispatch_kimi_repair() {
   esac
   pgid_path="$(kimi_pgid_path "$session")"
   managed_identity="${request_id:-watchdog-${session}-$(date +%s%N)}"
+  if [[ -n "$inherited_goal_id" ]]; then
+    managed_identity="${managed_identity}:goal:${inherited_goal_id}:retry:${inherited_retry_sequence:-1}"
+  fi
   run_id_file="$MARKER_DIR/$(safe_name "$session").repair-managed-run-id"
   rm -f "$run_id_file"
   incident_id="$(json_field "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json" incident_id 2>/dev/null || true)"
@@ -4762,6 +4795,9 @@ dispatch_kimi_repair() {
     --link "chain=$remote_spec"
     --link "plan=${PLAN_STATUS_PLAN_NAME:-}"
     --link "phase=watchdog_dispatch"
+    --link "repair_goal_id=$inherited_goal_id"
+    --link "repair_goal_path=$inherited_goal_path"
+    --link "repair_checkpoint_digest=$inherited_checkpoint_digest"
     --
     "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec"
   )
@@ -4771,6 +4807,9 @@ dispatch_kimi_repair() {
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
+    ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
+    ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
     setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
@@ -4779,6 +4818,9 @@ dispatch_kimi_repair() {
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
+    ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
+    ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
     "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
