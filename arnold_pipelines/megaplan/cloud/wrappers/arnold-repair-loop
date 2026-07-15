@@ -3944,18 +3944,25 @@ else:
 
 mismatch_lines = []
 if state_mismatch.get("detected"):
+    mismatch_cleared = state_mismatch.get("cleared") is True
     mismatch_lines = [
         "",
-        "## STATE MISMATCH DETECTED + CLEARED",
-        f"- Plan state: {state_mismatch.get('plan_state') or 'unknown'} (ready to execute)",
         (
-            f"- Chain state was: {state_mismatch.get('chain_last_state') or 'unknown'} "
-            "(STALE - from a prior run)"
+            "## STATE MISMATCH DETECTED + CLEARED"
+            if mismatch_cleared
+            else "## STATE MISMATCH DETECTED — NOT CLEARED"
         ),
-        "- Action taken: cleared chain last_state to match plan current_state",
+        f"- Plan state: {state_mismatch.get('plan_state') or 'unknown'}",
+        f"- Chain state: {state_mismatch.get('chain_last_state') or 'unknown'}",
         (
-            "- The chain should now proceed. If it still stops, investigate WHY the "
-            "execute phase re-blocks despite the plan being ready."
+            f"- Action taken: {state_mismatch.get('action_taken') or 'supported synchronization completed'}"
+            if mismatch_cleared
+            else "- Action taken: none; the mismatch remains authoritative until a supported, guard-authorized recovery succeeds"
+        ),
+        (
+            "- Continue from fresh post-recovery evidence; do not infer progress from this historical mismatch."
+            if mismatch_cleared
+            else "- Do not claim synchronization, edit chain state directly, or bypass external/acceptance guards."
         ),
     ]
 
