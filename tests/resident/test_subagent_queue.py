@@ -714,6 +714,67 @@ def test_cross_request_queue_fails_closed_if_authorization_or_source_record_chan
     assert result.failed_closed == 1
     assert terminal["status"] == "failed"
     assert terminal["queue"]["attention"] == "invalid_dependency_contract"
+    assert terminal["queue"]["last_validation_error"]["error_class"] == (
+        "SubagentQueueError"
+    )
+
+
+def test_idempotent_replay_recovers_zero_attempt_cross_request_false_terminal(
+    tmp_path, monkeypatch
+) -> None:
+    _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+    subagent._queue_terminalize(
+        successor_path,
+        successor,
+        status="failed",
+        reason="invalid_dependency_contract",
+        predecessor_status="unknown",
+        now=datetime(2026, 7, 15, 12, 3, tzinfo=timezone.utc),
+    )
+
+    replayed = _queue_cross_request(tmp_path)
+    recovered = json.loads(successor_path.read_text())
+    sweep = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+
+    assert replayed.run_id == queued.run_id
+    assert replayed.status == "queued"
+    assert recovered["status"] == "queued"
+    assert recovered["queue"]["state"] == "waiting_predecessor"
+    assert recovered["queue"]["attempt_count"] == 0
+    assert recovered["queue"]["recovery_reason"] == (
+        "idempotent_replay_revalidated_dependency_contract"
+    )
+    assert sweep.waiting == 1
+
+
+def test_idempotent_replay_does_not_recover_already_delivered_false_terminal(
+    tmp_path, monkeypatch
+) -> None:
+    _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+    subagent._queue_terminalize(
+        successor_path,
+        successor,
+        status="failed",
+        reason="invalid_dependency_contract",
+        predecessor_status="unknown",
+        now=datetime(2026, 7, 15, 12, 3, tzinfo=timezone.utc),
+    )
+    terminal = json.loads(successor_path.read_text())
+    terminal["completion_delivery"]["status"] = "delivered"
+    successor_path.write_text(json.dumps(terminal))
+
+    replayed = _queue_cross_request(tmp_path)
+
+    assert replayed.run_id == queued.run_id
+    assert replayed.status == "failed"
 
 
 def test_cross_request_queue_denies_delivered_aggregation_owner(
