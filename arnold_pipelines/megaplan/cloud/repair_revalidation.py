@@ -1,8 +1,14 @@
-"""Post-action repair target custody and liveness revalidation."""
+"""Post-action repair target custody and liveness revalidation.
+
+Also provides acceptance-aware revalidation so that after a repair result the
+prior acceptance candidate is invalidated and the acceptance boundary is forced
+to use the full suite (not a focused/scoped selector).
+"""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Mapping
 
 
@@ -39,6 +45,10 @@ class TargetRevalidation:
     progress_observed: bool
     recovery_verified: bool
     reason: str
+    # ── acceptance-aware fields (T14) ────────────────────────────────
+    full_boundary_required: bool = False
+    acceptance_candidates_invalidated: int = 0
+    acceptance_invalidation_reason: str = ""
 
     def as_json(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -107,4 +117,140 @@ def revalidate_repair_target(
         progress_observed=progress_observed,
         recovery_verified=verified,
         reason=reason,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T14 — acceptance-aware revalidation
+# ──────────────────────────────────────────────────────────────────────
+
+
+def invalidate_acceptance_candidates_after_repair(
+    plan_dir: str | Path,
+    *,
+    milestone_label: str = "",
+    repair_reason: str = "",
+) -> tuple[int, str]:
+    """Invalidate any uncommitted acceptance candidates after a repair.
+
+    After a repair result, every prior uncommitted acceptance candidate is
+    stale — the evidence changed, so the old candidate cannot be reused.
+    This ensures a newly built snapshot PLUS a full fresh boundary run is
+    always required before any acceptance commit.
+
+    Returns ``(count_invalidated, details)`` where *count_invalidated* is
+    the number of candidates that were invalidated and *details* is a
+    human-readable description.
+
+    When *plan_dir* does not exist or has no acceptance candidates, this
+    is a no-op returning ``(0, \"\")``.
+    """
+    plan = Path(plan_dir)
+    if not plan.is_dir():
+        return 0, ""
+
+    try:
+        from arnold_pipelines.megaplan.orchestration.completion_io import (
+            list_uncommitted_acceptance_candidates,
+        )
+    except ImportError:
+        return 0, ""
+
+    candidates = list_uncommitted_acceptance_candidates(plan)
+    if not candidates:
+        return 0, ""
+
+    reason = repair_reason or "evidence changed due to repair"
+    invalidated = 0
+    for tx_id in list(candidates.keys()):
+        try:
+            from arnold_pipelines.megaplan.orchestration.completion_io import (
+                discard_acceptance_transaction,
+            )
+            discard_acceptance_transaction(plan, tx_id)
+            invalidated += 1
+        except Exception:
+            pass
+
+    details = (
+        f"invalidated {invalidated} acceptance candidate(s) "
+        f"after repair (reason: {reason})"
+        if invalidated
+        else ""
+    )
+    return invalidated, details
+
+
+def require_full_boundary_after_repair(
+    plan_dir: str | Path,
+    *,
+    had_repair: bool = False,
+) -> bool:
+    """Return ``True`` when the acceptance boundary must use the full suite.
+
+    After a repair, focused/scoped selector success cannot satisfy
+    acceptance — the full boundary runner is required.  This function
+    returns ``True`` whenever *had_repair* is true **or** there are
+    uncommitted candidates still present in *plan_dir* (which indicates
+    a repair that hasn't yet invalidated them).
+    """
+    if had_repair:
+        return True
+
+    plan = Path(plan_dir)
+    if not plan.is_dir():
+        return False
+
+    try:
+        from arnold_pipelines.megaplan.orchestration.completion_io import (
+            list_uncommitted_acceptance_candidates,
+        )
+        candidates = list_uncommitted_acceptance_candidates(plan)
+        return bool(candidates)
+    except ImportError:
+        return False
+
+
+def acceptance_revalidation_after_repair(
+    plan_dir: str | Path,
+    *,
+    had_repair: bool = False,
+    repair_reason: str = "",
+    milestone_label: str = "",
+) -> TargetRevalidation:
+    """Run acceptance-aware revalidation after a repair.
+
+    Combines candidate invalidation with the full-boundary requirement
+    into a single :class:`TargetRevalidation` record.  This is the
+    primary entry point for repair-result handling that must feed back
+    into the acceptance boundary.
+
+    Returns a ``TargetRevalidation`` whose *recovery_verified* is always
+    ``False`` (the acceptance boundary must rerun) and whose
+    *full_boundary_required* reflects whether focused selectors are
+    insufficient.
+    """
+    invalidated_count, invalidation_details = invalidate_acceptance_candidates_after_repair(
+        plan_dir,
+        milestone_label=milestone_label,
+        repair_reason=repair_reason,
+    )
+    full_required = require_full_boundary_after_repair(
+        plan_dir,
+        had_repair=had_repair,
+    )
+    return TargetRevalidation(
+        changed_fields=(),
+        superseded=True,
+        runner_live=False,
+        active_worker_live=False,
+        progress_observed=False,
+        recovery_verified=False,
+        reason=(
+            f"repair result requires full acceptance boundary rerun"
+            + (f"; {invalidation_details}" if invalidation_details else "")
+        ),
+        full_boundary_required=full_required,
+        acceptance_candidates_invalidated=invalidated_count,
+        acceptance_invalidation_reason=invalidation_details,
     )

@@ -1079,7 +1079,27 @@ def build_milestone_boundary_evidence(
 
 @dataclass
 class ChainState:
-    """Persisted progress for a chain run."""
+    """Persisted progress for a chain run.
+
+    Acceptance receipt fields (SD2)
+    -------------------------------
+    Each completed record MAY carry an ``acceptance_receipt`` sub-dict with
+    ``transaction_id``, ``snapshot_hash``, ``milestone_label``,
+    ``milestone_index``, and ``plan_name`` — the lightweight pointer defined
+    by :class:`AcceptanceReceipt`.  Shadow-mode chains omit this field;
+    atomic/enforce mode chains MUST have a valid receipt for every completed
+    record and the receipt content must match the completed record's own
+    identity fields.
+
+    Candidate invalidation metadata
+    -------------------------------
+    ``candidate_invalidation`` is a dict keyed by milestone label whose value
+    is a list of invalidation records.  Each record is a dict with at minimum
+    ``transaction_id`` (the candidate that was invalidated) and ``reason``
+    (a short machine-readable reason tag, e.g. ``"stale-evidence"``,
+    ``"repair-result"``, ``"content-hash-mismatch"``).  This field is
+    informational for audit; it does not gate transitions on its own.
+    """
 
     current_milestone_index: int = -1
     current_plan_name: str | None = None
@@ -1109,6 +1129,7 @@ class ChainState:
     metadata: dict[str, Any] = field(default_factory=dict)
     schema_version: int = 0
     milestone_boundary_evidence: dict[str, dict[str, Any]] = field(default_factory=dict)
+    candidate_invalidation: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1140,6 +1161,10 @@ class ChainState:
             "enforce_revise_counts": dict(self.enforce_revise_counts),
             "metadata": dict(self.metadata),
             "milestone_boundary_evidence": dict(self.milestone_boundary_evidence),
+            "candidate_invalidation": {
+                label: [dict(rec) for rec in recs]
+                for label, recs in self.candidate_invalidation.items()
+            },
         }
 
     @classmethod
@@ -1166,14 +1191,18 @@ class ChainState:
         if not isinstance(extra_repo_sync, list):
             extra_repo_sync = []
 
-        from arnold_pipelines.megaplan.orchestration.completion_contract import normalize_contract_mode
+        from arnold_pipelines.megaplan.orchestration.completion_contract import (
+            CONTRACT_MODE_ATOMIC,
+            CONTRACT_MODE_ENFORCE,
+            FAIL_CLOSED_CONTRACT_MODES,
+            normalize_contract_mode,
+        )
         from arnold_pipelines.megaplan.orchestration.full_suite_backstop import (
             normalize_full_suite_backstop_mode,
         )
 
-        completion_contract_mode = normalize_contract_mode(
-            raw.get("completion_contract_mode")
-        )
+        raw_mode = raw.get("completion_contract_mode")
+        completion_contract_mode = normalize_contract_mode(raw_mode)
         full_suite_backstop_mode = normalize_full_suite_backstop_mode(
             raw.get("full_suite_backstop_mode")
         )
@@ -1211,6 +1240,55 @@ class ChainState:
             if isinstance(key, str) and isinstance(val, dict):
                 milestone_boundary_evidence[key] = val
 
+        # ── candidate_invalidation ────────────────────────────────────
+        candidate_invalidation_raw = raw.get("candidate_invalidation")
+        candidate_invalidation: dict[str, list[dict[str, Any]]] = {}
+        if isinstance(candidate_invalidation_raw, dict):
+            for label, recs in candidate_invalidation_raw.items():
+                if isinstance(label, str) and isinstance(recs, list):
+                    candidate_invalidation[label] = [
+                        dict(r) for r in recs if isinstance(r, dict)
+                    ]
+        # ──────────────────────────────────────────────────────────────
+
+        # ── atomic-mode completed-record validation ──────────────────
+        # In fail-closed modes every completed record MUST carry a valid
+        # acceptance_receipt that matches its own identity fields.  Missing
+        # or mismatched receipts raise :class:`CliError` so the load is
+        # refused rather than silently normalizing invalid evidence.
+        completed_raw = list(raw.get("completed") or [])
+        if completion_contract_mode in FAIL_CLOSED_CONTRACT_MODES or completion_contract_mode == CONTRACT_MODE_ENFORCE:
+            for idx, record in enumerate(completed_raw):
+                if not isinstance(record, dict):
+                    continue
+                receipt = record.get("acceptance_receipt")
+                if not isinstance(receipt, dict):
+                    raise CliError(
+                        "invalid_chain_state",
+                        f"completed[{idx}] is missing an acceptance_receipt in "
+                        f"atomic/enforce mode (completion_contract_mode={completion_contract_mode!r}). "
+                        f"Legacy shadow-mode states cannot be loaded in fail-closed mode.",
+                    )
+                # Validate receipt identity matches the record.
+                rec_label = record.get("label")
+                rec_plan = record.get("plan")
+                rec_mi = record.get("milestone_index")
+                if (
+                    receipt.get("milestone_label") != rec_label
+                    or receipt.get("plan_name") != rec_plan
+                    or receipt.get("milestone_index") != rec_mi
+                ):
+                    raise CliError(
+                        "invalid_chain_state",
+                        f"completed[{idx}] acceptance_receipt identity mismatch: "
+                        f"receipt(milestone_label={receipt.get('milestone_label')!r}, "
+                        f"plan_name={receipt.get('plan_name')!r}, "
+                        f"milestone_index={receipt.get('milestone_index')!r}) vs "
+                        f"record(label={rec_label!r}, plan={rec_plan!r}, "
+                        f"milestone_index={rec_mi!r})",
+                    )
+        # ──────────────────────────────────────────────────────────────
+
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
@@ -1239,6 +1317,7 @@ class ChainState:
             enforce_revise_counts=_str_int_map(raw.get("enforce_revise_counts")),
             metadata=dict(metadata),
             milestone_boundary_evidence=milestone_boundary_evidence,
+            candidate_invalidation=candidate_invalidation,
         )
 
     # ── Milestone boundary evidence helpers ──────────────────────────────
@@ -1309,6 +1388,64 @@ class ChainState:
         # state_snapshot_ref is intentionally None here — it is filled in
         # by the caller when a plan state snapshot path is available.
         return enriched
+
+    # ── Acceptance receipt helpers ──────────────────────────────────────
+
+    def has_acceptance_receipt(self, label: str) -> bool:
+        """Return ``True`` when the completed record for *label* carries an acceptance receipt."""
+        for record in self.completed:
+            if isinstance(record, dict) and record.get("label") == label:
+                return isinstance(record.get("acceptance_receipt"), dict)
+        return False
+
+    def get_acceptance_receipt(self, label: str) -> dict[str, Any] | None:
+        """Return the acceptance receipt dict for *label*, or ``None``."""
+        for record in self.completed:
+            if isinstance(record, dict) and record.get("label") == label:
+                receipt = record.get("acceptance_receipt")
+                return dict(receipt) if isinstance(receipt, dict) else None
+        return None
+
+    def set_acceptance_receipt(
+        self,
+        label: str,
+        receipt: dict[str, Any],
+    ) -> None:
+        """Attach or overwrite *receipt* on the completed record for *label*.
+
+        Raises :class:`ValueError` when no completed record matches *label*.
+        """
+        for record in self.completed:
+            if isinstance(record, dict) and record.get("label") == label:
+                record["acceptance_receipt"] = dict(receipt)
+                record.setdefault("milestone_index", receipt.get("milestone_index", -1))
+                return
+        raise ValueError(f"No completed record found for milestone {label!r}")
+
+    # ── Candidate invalidation helpers ─────────────────────────────────
+
+    def invalidate_candidate(
+        self,
+        label: str,
+        *,
+        transaction_id: str,
+        reason: str,
+        **extra: Any,
+    ) -> None:
+        """Record that a candidate acceptance transaction was invalidated.
+
+        Appends an invalidation record to ``candidate_invalidation[label]``.
+        """
+        rec: dict[str, Any] = {
+            "transaction_id": transaction_id,
+            "reason": reason,
+        }
+        rec.update(extra)
+        self.candidate_invalidation.setdefault(label, []).append(rec)
+
+    def get_candidate_invalidations(self, label: str) -> list[dict[str, Any]]:
+        """Return all invalidation records for *label*, or an empty list."""
+        return list(self.candidate_invalidation.get(label, []))
 
 
 def _state_path_for(spec_path: Path) -> Path:
