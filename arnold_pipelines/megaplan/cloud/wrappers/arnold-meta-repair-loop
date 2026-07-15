@@ -96,6 +96,12 @@ RUN_DIR="${MEGAPLAN_META_RUN_DIR:-/workspace/.megaplan/meta-runs}"
 BRIEF_PREFLIGHT_MAX_CHARS="${MEGAPLAN_META_BRIEF_PREFLIGHT_MAX_CHARS:-900000}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_LOG="$RUN_DIR/${TS}-${SAFE_SESSION}.log"
+META_INVESTIGATION_CONTEXT_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-investigation-context.json"
+META_INVESTIGATION_PROMPT_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-investigator-prompt.md"
+META_INVESTIGATION_RECEIPT_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-investigator-receipt.json"
+META_INVESTIGATION_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-investigator-run-id"
+META_INVESTIGATION_CONTEXT_DIGEST=""
+META_INVESTIGATION_RUN_ID=""
 
 load_resident_delegation_context() {
   local marker_path encoded rc
@@ -156,6 +162,7 @@ load_resident_delegation_context || exit $?
 
 if PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_DIR/$SESSION.json" <<'PY'
 import json
+import subprocess
 import sys
 from pathlib import Path
 from arnold_pipelines.megaplan.chain.operator_pause import is_paused
@@ -347,6 +354,160 @@ fi
 TRIGGER_TYPE="$(echo "$CLASSIFICATION_RESULT" | sed -n 's/^TRIGGER://p')"
 log "trigger=$TRIGGER_TYPE"
 
+run_meta_repair_investigation() {
+  if ! command -v codex >/dev/null 2>&1; then
+    log "L2 investigation unavailable: codex CLI missing; refusing mutation"
+    return 1
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+    arnold_pipelines.megaplan.cloud.repair_investigation build-meta \
+    --session "$SESSION" --trigger "$TRIGGER_TYPE" \
+    --repair-data-dir "$REPAIR_DATA_DIR" --marker-dir "$MARKER_DIR" \
+    --arnold-src "$ARNOLD_SRC" --output "$META_INVESTIGATION_CONTEXT_PATH" >>"$RUN_LOG" 2>&1 || return 1
+  META_INVESTIGATION_CONTEXT_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$META_INVESTIGATION_CONTEXT_PATH")"
+  {
+    cat <<EOF
+You are the read-only L2 investigator for broken automatic repair session $SESSION.
+The bounded authoritative context below uses the same evidence-source, custody-contradiction, intended-recovery, safe-target, handoff, and TRACKED/FIXED/INTENT/CONTEXT semantics as L1 and the six-hour auditor. Its digest is $META_INVESTIGATION_CONTEXT_DIGEST.
+
+<authoritative_meta_repair_context>
+EOF
+    cat "$META_INVESTIGATION_CONTEXT_PATH"
+    cat <<EOF
+</authoritative_meta_repair_context>
+
+Establish the actual L1/L2 failure before any mutation. Reconcile evidence and custody, identify the intended original-target recovery condition, and authorize at most one safe Arnold repair-system target. Unknown/conflicting evidence, no safe target, or guard-weakening risk must recommend replan. Do not edit files, change chain/plan/repair state, launch a mutating owner, commit, push, or restart anything. Return ONLY one JSON object matching the embedded required_investigator_output schema_version="arnold-repair-investigator-receipt-v2".
+EOF
+  } > "$META_INVESTIGATION_PROMPT_PATH"
+  redact_file_in_place "$META_INVESTIGATION_PROMPT_PATH"
+  local -a managed_cmd
+  managed_cmd=(
+    python3 -m arnold_pipelines.megaplan.managed_agent run
+    --run-kind automatic_research_subagent
+    --identity-key "meta-repair-investigator:${SESSION}:${TRIGGER_TYPE}:${META_INVESTIGATION_CONTEXT_DIGEST}"
+    --project-dir "$ARNOLD_SRC" --task-kind root_cause --difficulty 8
+    --model "$META_CODEX_MODEL" --reasoning-effort high
+    --route-class meta_repair_read_only_investigator --backend codex
+    --command-display "read-only L2 repair investigation $SESSION"
+    --description "Investigate L1/L2 failure $TRIGGER_TYPE for $SESSION and produce a durable safe mutation handoff"
+    --origin-kind meta_repair_worker --origin-id "$SESSION"
+    --origin-component arnold-meta-repair-loop --trigger-id "investigator:$META_INVESTIGATION_CONTEXT_DIGEST"
+    --require-output --lineage-key "meta-repair-investigator:$SESSION"
+    --run-id-file "$META_INVESTIGATION_RUN_ID_PATH" --stdin-file "$META_INVESTIGATION_PROMPT_PATH"
+    --link "cloud_session=$SESSION" --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+    --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" --link "phase=meta_repair_investigator"
+  )
+  if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
+    managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
+  fi
+  managed_cmd+=(-- timeout "$SUBAGENT_TIMEOUT" codex exec --skip-git-repo-check --sandbox read-only -c model="$META_CODEX_MODEL" -c model_reasoning_effort=high --output-last-message "$META_INVESTIGATION_RECEIPT_PATH" -)
+  (cd "$ARNOLD_SRC" && "${managed_cmd[@]}") >>"$RUN_LOG" 2>&1 || return 1
+  META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+    arnold_pipelines.megaplan.cloud.repair_investigation validate \
+    --receipt "$META_INVESTIGATION_RECEIPT_PATH" --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" >>"$RUN_LOG" 2>&1 || return 1
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" \
+    "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RUN_ID" <<'PY' >>"$RUN_LOG" 2>&1
+import pathlib
+import sys
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
+from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+
+data_path, context_path, receipt_path, digest, run_id = sys.argv[1:]
+payload = load_json(pathlib.Path(data_path), default={})
+validated = validate_investigator_receipt(
+    load_json(pathlib.Path(receipt_path), default={}), expected_context_digest=digest
+)
+payload["meta_investigation"] = {
+    "context_path": context_path, "context_digest": digest, "receipt_path": receipt_path,
+    "receipt_digest": validated.get("receipt_digest"), "investigator_run_id": run_id,
+    "target_kind": validated.get("target_kind"), "actual_failure": validated.get("actual_failure"),
+    "evidence_source_kinds": sorted({str(item.get("kind")) for item in validated.get("evidence_sources") or [] if isinstance(item, dict)}),
+    "custody_status": validated.get("custody_status"), "custody_contradictions": validated.get("custody_contradictions"),
+    "intended_recovery": validated.get("intended_recovery"), "safe_repair_target": validated.get("safe_repair_target"),
+    "handoff": validated.get("handoff"), "four_axis": validated.get("four_axis"),
+    "recommended_action": validated.get("recommended_action"), "bounded": True,
+}
+save_repair_data(pathlib.Path(data_path), payload)
+PY
+  log "accepted durable L2 investigation session=$SESSION run_id=$META_INVESTIGATION_RUN_ID digest=$META_INVESTIGATION_CONTEXT_DIGEST"
+}
+
+require_meta_investigation_before_mutation() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" <<'PY' >>"$RUN_LOG" 2>&1
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+context_path, receipt_path, digest = sys.argv[1:]
+context = json.loads(Path(context_path).read_text(encoding="utf-8"))
+validated = validate_investigator_receipt(
+    json.loads(Path(receipt_path).read_text(encoding="utf-8")), expected_context_digest=digest
+)
+recomputed = hashlib.sha256(json.dumps(
+    {key: value for key, value in context.items() if key != "context_digest"},
+    sort_keys=True, separators=(",", ":"), default=str,
+).encode("utf-8")).hexdigest()
+if context.get("context_digest") != digest or recomputed != digest or validated.get("target_kind") != "l2_repair_system":
+    raise SystemExit("L2 investigation/context custody mismatch")
+source = context.get("source_tree") or {}
+root = str(source.get("path") or context.get("arnold_src") or "")
+head = subprocess.run(
+    ["git", "-C", root, "rev-parse", "HEAD"], check=False, capture_output=True, text=True
+).stdout.strip()
+status = subprocess.run(
+    ["git", "-C", root, "status", "--porcelain", "--untracked-files=no"],
+    check=False, capture_output=True, text=True,
+).stdout.strip()
+if head != str(source.get("head") or "") or bool(status) != source.get("dirty"):
+    raise SystemExit("Arnold source custody changed after L2 investigation")
+if validated.get("recommended_action") != "repair_source":
+    raise SystemExit("L2 investigation did not authorize source mutation")
+if (validated.get("safe_repair_target") or {}).get("kind") not in {"arnold_source", "repair_custody"}:
+    raise SystemExit("L2 investigation did not name a safe repair-system target")
+print(validated.get("receipt_digest"))
+PY
+}
+
+persist_meta_investigation_failure() {
+  local reason="${1:-investigation failed}"
+  META_INVESTIGATION_RUN_ID="${META_INVESTIGATION_RUN_ID:-$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" \
+    "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RUN_ID" "$reason" <<'PY' >>"$RUN_LOG" 2>&1
+import pathlib
+import sys
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
+data_path, context_path, receipt_path, digest, run_id, reason = sys.argv[1:]
+payload = load_json(pathlib.Path(data_path), default={})
+payload["meta_investigation"] = {
+    "status": "failed",
+    "reason": reason,
+    "context_path": context_path,
+    "context_digest": digest,
+    "receipt_path": receipt_path,
+    "investigator_run_id": run_id,
+    "bounded": True,
+}
+save_repair_data(pathlib.Path(data_path), payload)
+PY
+}
+
+if ! run_meta_repair_investigation; then
+  persist_meta_investigation_failure "L2 investigator failed or returned no valid receipt"
+  log "L2 investigation failed or returned no valid receipt; refusing all repair mutation"
+  exit 1
+fi
+if ! require_meta_investigation_before_mutation; then
+  persist_meta_investigation_failure "L2 investigation handoff became stale or unsafe before mutation"
+  log "L2 investigation handoff failed closed; refusing repair mutation"
+  exit 1
+fi
+
 # Extract the prompt (between PROMPT_START and PROMPT_END markers)
 PROMPT="$(echo "$CLASSIFICATION_RESULT" | sed -n '/^PROMPT_START$/,/^PROMPT_END$/{//!p}')"
 if [[ -z "$PROMPT" ]]; then
@@ -407,11 +568,20 @@ PY
   echo "**Trigger:** \`$TRIGGER_TYPE\`"
   echo "**Session:** \`$SESSION\`"
   echo "**Repair Data Directory:** \`$REPAIR_DATA_DIR\`"
+  echo "**Validated L2 investigation context:** \`$META_INVESTIGATION_CONTEXT_PATH\`"
+  echo "**Validated L2 investigator receipt:** \`$META_INVESTIGATION_RECEIPT_PATH\`"
+  echo "**L2 investigation digest:** \`$META_INVESTIGATION_CONTEXT_DIGEST\`"
   if [[ -s "$SUPERVISOR_GAP_EVIDENCE" ]]; then
     echo "**Dependency-independent launch-gap evidence:** \`$SUPERVISOR_GAP_EVIDENCE\`"
   fi
   echo
   echo "$PROMPT"
+  echo
+  echo "## Durable investigate-to-repair handoff"
+  echo
+  echo '```json'
+  cat "$META_INVESTIGATION_RECEIPT_PATH"
+  echo '```'
   echo
   cat <<'PROMPT_POLICY'
 ## Meta-Repair Policy
@@ -493,11 +663,20 @@ if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS 
     echo "**Trigger:** \`$TRIGGER_TYPE\`"
     echo "**Session:** \`$SESSION\`"
     echo "**Repair Data Directory:** \`$REPAIR_DATA_DIR\`"
+    echo "**Validated L2 investigation context:** \`$META_INVESTIGATION_CONTEXT_PATH\`"
+    echo "**Validated L2 investigator receipt:** \`$META_INVESTIGATION_RECEIPT_PATH\`"
+    echo "**L2 investigation digest:** \`$META_INVESTIGATION_CONTEXT_DIGEST\`"
     if [[ -s "$SUPERVISOR_GAP_EVIDENCE" ]]; then
       echo "**Dependency-independent launch-gap evidence:** \`$SUPERVISOR_GAP_EVIDENCE\`"
     fi
     echo
     echo "$PROMPT"
+    echo
+    echo "## Durable investigate-to-repair handoff"
+    echo
+    echo '```json'
+    cat "$META_INVESTIGATION_RECEIPT_PATH"
+    echo '```'
     echo
     cat <<'PROMPT_POLICY'
 ## Meta-Repair Policy

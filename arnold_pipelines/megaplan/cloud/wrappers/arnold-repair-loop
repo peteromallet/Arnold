@@ -5217,6 +5217,7 @@ exit_if_repair_target_recovered() {
 }
 
 recover_blocked_after_dev_fix_if_possible() {
+  require_investigation_before_mutation "blocked-state-recovery"
   require_repair_lock_held
   local iteration="${1:-0}"
   local attempt_id="${2:-0}"
@@ -5468,6 +5469,7 @@ kill_tmux_session_if_present() {
 }
 
 mechanical_launch_step() {
+  require_investigation_before_mutation "mechanical-launch"
   require_repair_lock_held
   ensure_repair_budget_available "mechanical-relaunch-$1"
   local iteration="$1"
@@ -5925,11 +5927,12 @@ write_dev_prompt() {
   local dispatch_model="$3"
   local report_path="$4"
   local recurrence_mode="${5:-0}"
-  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks
+  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks investigation_receipt
   failure_summary="$(render_failure_summary "$DATA_FILE")"
   chain_health_block="$(render_chain_health_block)"
   recurrence_block="$(render_recurrence_block)"
   canonical_block="$(render_canonical_block)"
+  investigation_receipt="$(cat "$INVESTIGATOR_RECEIPT_PATH" 2>/dev/null || true)"
   if [[ "$recurrence_mode" == "1" ]]; then
     mode_tasks="$(cat <<EOF
 10. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
@@ -5980,13 +5983,17 @@ Frozen acceptance checkpoint digest: $ARNOLD_REPAIR_CHECKPOINT_DIGEST
 Bounded investigator context: $INVESTIGATION_CONTEXT_PATH
 Validated investigator receipt: $INVESTIGATOR_RECEIPT_PATH
 Investigator context digest: ${INVESTIGATION_CONTEXT_DIGEST:-unavailable}
+Accepted investigation handoff (authoritative for mutation scope):
+<investigation_handoff>
+$investigation_receipt
+</investigation_handoff>
 Persistent findings doc: $FINDINGS_DOC
 JSON report path (write this before exiting): $report_path
 Requested model label for this iteration: $requested_model
 Actual dispatch model: $dispatch_model
 
 Task:
-0. You are the sole high-reasoning goal owner for this repair cycle. Read the validated investigator receipt first. Keep working through productive evidence-changing iterations inside this turn, but report \`replan\` when the same deterministic failure/progress token repeats. Never launch or retain a second mutating owner.
+0. You are the sole high-reasoning goal owner for this repair cycle. Consume the embedded validated investigator handoff. Cite its context_digest, actual_failure, evidence_sources, safe_repair_target, and intended_recovery in your report; do not independently choose a different mutation target. Keep working through productive evidence-changing iterations inside this turn, but report \`replan\` when the same deterministic failure/progress token repeats. Never launch or retain a second mutating owner.
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
    Read the LAST EXECUTE ATTEMPT summary first. The root cause might be in the Arnold SOURCE (a code bug) OR in the PLAN STATE (a deferred task, a missing baseline, stale tests for deleted modules). If a task was deferred or blocked rather than failed, investigate the task-level deferral reason; the fix might be to clear or resolve the deferral/state, not to change source code.
    Classification guide:
@@ -6082,6 +6089,59 @@ repair_agent_workdir() {
   fi
 }
 
+require_investigation_before_mutation() {
+  require_repair_lock_held
+  local mutation_label="${1:-mutation}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$INVESTIGATION_CONTEXT_DIGEST" "$mutation_label" <<'PY' >>"$LOG" 2>&1
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.repair_goal import capture_checkpoint
+from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+
+context_path, receipt_path, expected_digest, mutation_label = sys.argv[1:]
+context = json.loads(Path(context_path).read_text(encoding="utf-8"))
+receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+validated = validate_investigator_receipt(receipt, expected_context_digest=expected_digest)
+recomputed = hashlib.sha256(json.dumps(
+    {key: value for key, value in context.items() if key != "context_digest"},
+    sort_keys=True, separators=(",", ":"), default=str,
+).encode("utf-8")).hexdigest()
+if context.get("context_digest") != expected_digest or recomputed != expected_digest:
+    raise SystemExit("investigation context digest changed before mutation")
+fresh = capture_checkpoint(
+    workspace=context.get("workspace") or ".",
+    plan_name=str((context.get("current") or {}).get("plan_name") or ""),
+    remote_spec=str(context.get("remote_spec") or ""),
+)
+investigated = context.get("current") or {}
+for field in ("plan_name", "target_stage", "plan_state", "latest_failure"):
+    if fresh.get(field) != investigated.get(field):
+        raise SystemExit(f"target evidence changed after investigation: {field}")
+fresh_worker = fresh.get("active_worker") or {}
+investigated_worker = investigated.get("active_worker") or {}
+for field in ("run_id", "worker_pid"):
+    if fresh_worker.get(field) != investigated_worker.get(field):
+        raise SystemExit(f"target worker custody changed after investigation: {field}")
+if validated.get("target_kind") != "l1_repair_target":
+    raise SystemExit("investigation target kind does not authorize L1 mutation")
+if validated.get("recommended_action") in {"preserve_live", "replan"}:
+    raise SystemExit("investigator handoff does not authorize mutation")
+target = validated.get("safe_repair_target") or {}
+if target.get("kind") == "none":
+    raise SystemExit("investigator handoff has no safe repair target")
+print(json.dumps({
+    "mutation_label": mutation_label,
+    "receipt_digest": validated.get("receipt_digest"),
+    "recommended_action": validated.get("recommended_action"),
+    "safe_repair_target": target,
+}, sort_keys=True))
+PY
+}
+
 run_repair_investigator_turn() {
   require_repair_lock_held
   local request_path context_digest run_id_file investigator_run_id rc investigator_timeout recommended_action
@@ -6113,7 +6173,7 @@ EOF
   cat >> "$INVESTIGATOR_PROMPT_PATH" <<EOF
 </authoritative_repair_context>
 
-Determine the real blocker mechanism and whether the correct target worker must be preserved. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object with schema_version="arnold-repair-investigator-receipt-v1", context_digest="$context_digest", non-empty real_blocker, evidence_paths, prior_repairs_considered, boolean preserve_live, recommended_action (preserve_live|repair_source|repair_target|recover_state|replan), and guard_weakening_risk.
+Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. Unknown or conflicting custody, guard-weakening risk, or no safe target must recommend replan. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
 EOF
   redact_file_in_place "$INVESTIGATOR_PROMPT_PATH"
   investigator_timeout="$(cap_timeout_to_repair_budget "$DEV_ROOT_CAUSE_TIMEOUT" "repair-investigator")"
@@ -6160,6 +6220,24 @@ EOF
       --receipt "$INVESTIGATOR_RECEIPT_PATH" \
       --context-digest "$context_digest" >>"$LOG" 2>&1; then
     repair_data_set_outcome "fixer_infrastructure_failure"
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+      "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY' >>"$LOG" 2>&1
+import pathlib
+import sys
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
+data_path, context_path, receipt_path, digest, run_id = sys.argv[1:]
+payload = load_json(pathlib.Path(data_path), default={})
+payload["investigation"] = {
+    "status": "failed",
+    "reason": "investigator failed or returned no valid receipt",
+    "context_path": context_path,
+    "context_digest": digest,
+    "receipt_path": receipt_path,
+    "investigator_run_id": run_id,
+    "bounded": True,
+}
+save_repair_data(pathlib.Path(data_path), payload)
+PY
     log "repair investigator failed or returned an invalid receipt session=$SESSION run_id=${investigator_run_id:-unknown}"
     return 1
   fi
@@ -6169,11 +6247,29 @@ import pathlib, sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 data_path, context_path, receipt_path, digest, run_id = sys.argv[1:]
 payload = load_json(pathlib.Path(data_path), default={})
+from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+receipt = load_json(pathlib.Path(receipt_path), default={})
+validated = validate_investigator_receipt(receipt, expected_context_digest=digest)
 payload["investigation"] = {
     "context_path": context_path,
     "context_digest": digest,
     "receipt_path": receipt_path,
     "investigator_run_id": run_id,
+    "receipt_digest": validated.get("receipt_digest"),
+    "target_kind": validated.get("target_kind"),
+    "actual_failure": validated.get("actual_failure"),
+    "evidence_source_kinds": sorted({
+        str(item.get("kind"))
+        for item in validated.get("evidence_sources") or []
+        if isinstance(item, dict)
+    }),
+    "custody_status": validated.get("custody_status"),
+    "custody_contradictions": validated.get("custody_contradictions"),
+    "intended_recovery": validated.get("intended_recovery"),
+    "safe_repair_target": validated.get("safe_repair_target"),
+    "handoff": validated.get("handoff"),
+    "four_axis": validated.get("four_axis"),
+    "recommended_action": validated.get("recommended_action"),
     "bounded": True,
 }
 save_repair_data(pathlib.Path(data_path), payload)
@@ -6191,6 +6287,7 @@ PY
 
 run_dev_fix_turn() {
   require_repair_lock_held
+  require_investigation_before_mutation "dev-fix"
   local iteration="$1"
   local attempt_id="$2"
   local recurring="$3"
@@ -6275,6 +6372,7 @@ run_dev_fix_turn() {
 
 run_kimi_launch_turn() {
   require_repair_lock_held
+  require_investigation_before_mutation "kimi-launch"
   ensure_repair_budget_available "kimi-launch-$1"
   local iteration="$1"
   local run_kind="$2"
@@ -6741,6 +6839,7 @@ fi
 
 repair_dependency_manifests_if_possible() {
   require_repair_lock_held
+  require_investigation_before_mutation "dependency-manifest-repair"
   ensure_repair_budget_available "dependency-manifest-repair"
   local result_path="" status=0
   result_path="$RUN_DIR/dependency-manifest-repair.json"
@@ -6759,6 +6858,7 @@ repair_dependency_manifests_if_possible() {
 
 repair_source_initiative_if_possible() {
   require_repair_lock_held
+  require_investigation_before_mutation "source-initiative-repair"
   ensure_repair_budget_available "source-initiative-repair"
   local result_path="" status=0
   result_path="$RUN_DIR/source-initiative-repair.json"
@@ -6799,6 +6899,7 @@ PY
 
 repair_source_workspace_if_possible() {
   require_repair_lock_held
+  require_investigation_before_mutation "source-workspace-repair"
   ensure_repair_budget_available "source-workspace-repair"
   local result_path="" tmp_root="" tmp_clone="" status=1 entry base source_origin="" workspace_origin="" expected_origin=""
   result_path="$RUN_DIR/source-workspace-repair.json"
@@ -7041,7 +7142,26 @@ PY
   return 0
 }
 
-if repair_source_initiative_if_possible; then
+investigator_rc=0
+run_repair_investigator_turn || investigator_rc=$?
+if [[ "$investigator_rc" == "2" ]]; then
+  log "investigator requires L2 replan before any target mutation session=$SESSION"
+  exit 1
+elif [[ "$investigator_rc" != "0" ]]; then
+  log "investigation failed or produced no valid handoff; target remains unchanged session=$SESSION"
+  exit 1
+fi
+if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "preserve_live" ]]; then
+  if wait_for_repair_goal_progress_if_live "investigator-preserve-live"; then
+    exit 0
+  elif [[ "$?" == "2" ]]; then
+    exit 1
+  fi
+  log "preserve_live handoff did not authorize a fallback mutation; leaving goal for fresh investigation session=$SESSION"
+  exit 1
+fi
+
+if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_source_initiative_if_possible; then
   exit_if_repair_target_complete "post-source-initiative-repair"
   mechanical_status="$(mechanical_launch_step "1" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
     repair_data_record_mechanical "1" "0" "$mechanical_status" "after source initiative repair: $mechanical_status"
@@ -7052,7 +7172,7 @@ if repair_source_initiative_if_possible; then
   fi
 fi
 
-if repair_source_workspace_if_possible; then
+if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_source_workspace_if_possible; then
   exit_if_repair_target_complete "post-source-workspace-repair"
   mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
     repair_data_record_mechanical "0" "0" "$mechanical_status" "after source workspace repair: $mechanical_status"
@@ -7063,7 +7183,7 @@ if repair_source_workspace_if_possible; then
   fi
 fi
 
-if repair_dependency_manifests_if_possible; then
+if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_dependency_manifests_if_possible; then
   mechanical_status="$(mechanical_launch_step "1" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
     repair_data_record_mechanical "1" "0" "$mechanical_status" "after dependency-manifest repair: $mechanical_status"
   }
@@ -7073,7 +7193,11 @@ if repair_dependency_manifests_if_possible; then
   fi
 fi
 
-STALE_CLEAR_STATUS="$(repair_clear_stale_state_if_needed 2>>"$LOG" || true)"
+STALE_CLEAR_STATUS=""
+if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
+  require_investigation_before_mutation "stale-state-recovery"
+  STALE_CLEAR_STATUS="$(repair_clear_stale_state_if_needed 2>>"$LOG" || true)"
+fi
 if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   log "stale state cleared before dev-fix: ${STALE_CLEAR_STATUS#cleared:}"
   mechanical_status="$(mechanical_launch_step "1" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
@@ -7085,34 +7209,21 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   fi
 fi
 
-mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
-  repair_data_record_mechanical "0" "0" "$mechanical_status" "baseline mechanical relaunch: $mechanical_status"
-}
-if [[ "${mechanical_status:-}" == "running" ]]; then
-  repair_data_record_mechanical "0" "0" "running" "baseline mechanical relaunch came up and held"
-  repair_goal_evaluate_or_exit "post-baseline-mechanical-launch" || true
-elif [[ "${mechanical_status:-}" == preserved:* ]]; then
-  repair_data_record_mechanical "0" "0" "preserved_live" "$mechanical_status"
-  if wait_for_repair_goal_progress_if_live "baseline-preserved-live"; then
-    exit 0
-  elif [[ "$?" == "2" ]]; then
-    exit 1
-  fi
-fi
-
-investigator_rc=0
-run_repair_investigator_turn || investigator_rc=$?
-if [[ "$investigator_rc" == "2" ]]; then
-  log "investigator requires L2 replan before a mutating owner is launched session=$SESSION"
-  exit 1
-elif [[ "$investigator_rc" != "0" ]]; then
-  exit 1
-fi
-if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "preserve_live" ]]; then
-  if wait_for_repair_goal_progress_if_live "investigator-preserve-live"; then
-    exit 0
-  elif [[ "$?" == "2" ]]; then
-    exit 1
+if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
+  require_investigation_before_mutation "baseline-mechanical-relaunch"
+  mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
+    repair_data_record_mechanical "0" "0" "$mechanical_status" "baseline mechanical relaunch: $mechanical_status"
+  }
+  if [[ "${mechanical_status:-}" == "running" ]]; then
+    repair_data_record_mechanical "0" "0" "running" "investigator-authorized state recovery came up and held"
+    repair_goal_evaluate_or_exit "post-baseline-mechanical-launch" || true
+  elif [[ "${mechanical_status:-}" == preserved:* ]]; then
+    repair_data_record_mechanical "0" "0" "preserved_live" "$mechanical_status"
+    if wait_for_repair_goal_progress_if_live "baseline-preserved-live"; then
+      exit 0
+    elif [[ "$?" == "2" ]]; then
+      exit 1
+    fi
   fi
 fi
 
