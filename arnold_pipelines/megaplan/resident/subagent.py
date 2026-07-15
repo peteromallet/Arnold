@@ -94,7 +94,10 @@ _VALID_DELEGATED_EFFORTS = frozenset(
     {"minimal", "low", "medium", "high", "xhigh", "max"}
 )
 _ACTIVE_STATUSES = SHARED_ACTIVE_STATUSES
-_TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
+_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "interrupted", "cancelled", "superseded"}
+)
+_CONTROL_TERMINAL_STATUSES = frozenset({"cancelled", "superseded"})
 _DELIVERY_RETRY_BASE_S = 30
 _DELIVERY_RETRY_MAX_S = 60 * 60
 _DELIVERY_MAX_ATTEMPTS = 8
@@ -2168,6 +2171,12 @@ def _run_codex_manifest(manifest_path: Path) -> int:
         # stream is inherited by the supervisor and appended to run.log.
         result_path.touch(exist_ok=True)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        control_status = str(manifest.get("status") or "")
+        if control_status in _CONTROL_TERMINAL_STATUSES:
+            # The manifest-bound controller is the terminal-state authority.
+            # A worker exit racing an explicit cancel/supersede must never
+            # rewrite that durable intent as a generic failure/completion.
+            return int(manifest.get("returncode") or returncode or 0)
         observed_session_ids = _manifest_session_ids(manifest_path, manifest)
         if session_id:
             observed_session_ids.add(session_id)
@@ -2212,6 +2221,23 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 worker.kill()
                 worker.wait()
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        control_status = str(manifest.get("status") or "")
+        if control_status in _CONTROL_TERMINAL_STATUSES:
+            history = list(manifest.get("status_history") or [])
+            history.append(
+                {
+                    "status": control_status,
+                    "at": _utc_now(),
+                    "evidence": "managed_codex_supervisor_acknowledged_control_terminal",
+                }
+            )
+            manifest["status_history"] = history[-100:]
+            manifest["updated_at"] = history[-1]["at"]
+            _atomic_json(manifest_path, manifest)
+            return int(
+                manifest.get("returncode")
+                or (128 + interrupted_signal if interrupted_signal is not None else 1)
+            )
         status = "interrupted" if interrupted_signal is not None else "failed"
         manifest.update(
             {

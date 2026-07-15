@@ -456,6 +456,63 @@ def test_codex_worker_finalizes_manifest_with_actual_worker_pid(tmp_path, monkey
     assert result_path.is_file()
 
 
+@pytest.mark.parametrize("control_status", ["cancelled", "superseded"])
+def test_codex_worker_preserves_manifest_bound_control_terminal_on_signal_race(
+    tmp_path, monkeypatch, control_status
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prompt_path = run_dir / "prompt.md"
+    result_path = run_dir / "result.md"
+    manifest_path = run_dir / "manifest.json"
+    prompt_path.write_text("do it")
+    manifest_path.write_text(json.dumps({
+        "schema_version": "arnold-resident-agent-run-v1",
+        "run_kind": "resident_delegated_agent",
+        "custodian": "arnold.megaplan.resident",
+        "status": "running",
+        "pid": 111,
+        "prompt_path": str(prompt_path),
+        "result_path": str(result_path),
+        "project_dir": str(tmp_path),
+        "model": "gpt-test",
+        "reasoning_effort": "xhigh",
+    }))
+
+    class _Worker:
+        pid = 222
+
+        def wait(self, timeout=None):
+            manifest = json.loads(manifest_path.read_text())
+            manifest.update({
+                "status": control_status,
+                "terminal_outcome": control_status,
+                "finished_at": "2026-07-15T10:41:38+00:00",
+                "returncode": 143,
+                "status_history": [{
+                    "status": control_status,
+                    "at": "2026-07-15T10:41:38+00:00",
+                    "evidence": "managed_agent_explicit_transition",
+                }],
+            })
+            manifest_path.write_text(json.dumps(manifest))
+            raise KeyboardInterrupt
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(subagent_module.subprocess, "Popen", lambda *args, **kwargs: _Worker())
+
+    assert subagent_module._run_codex_manifest(manifest_path) == 143
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == control_status
+    assert manifest["terminal_outcome"] == control_status
+    assert manifest["finished_at"] == "2026-07-15T10:41:38+00:00"
+    assert manifest["status_history"][-1]["evidence"] == (
+        "managed_codex_supervisor_acknowledged_control_terminal"
+    )
+
+
 def test_managed_agent_hot_context_separates_running_and_recent(tmp_path, monkeypatch) -> None:
     run_root = tmp_path / ".megaplan/plans/resident-subagents"
     running = run_root / "running"
