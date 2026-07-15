@@ -429,6 +429,13 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "Trace the actual mechanism end-to-end" in text
 
 
+def test_repair_loop_dev_fix_prompt_escapes_replan_backticks() -> None:
+    text = _repair_wrapper()
+
+    assert "report \\`replan\\` when" in text
+    assert "report `replan` when" not in text
+
+
 def test_repair_loop_large_failure_context_is_passed_by_file() -> None:
     text = _repair_wrapper()
 
