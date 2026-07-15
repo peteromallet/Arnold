@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -2060,6 +2061,23 @@ def build_auditor_completion_evidence(
     """
     findings = list(audit_findings) if audit_findings is not None else []
     evidence_ts = timestamp or _auditor_utc_now_iso()
+
+    # Repair dispatch consumes a historical evidence window.  A zero,
+    # negative, NaN, or infinite window is only a probe; it cannot establish
+    # health and must not produce a successful empty audit.
+    valid_window = math.isfinite(audited_window_hours) and audited_window_hours > 0
+    if not valid_window:
+        return SixHourAuditorCompletionEvidence(
+            audited_window_hours=audited_window_hours,
+            audit_timestamp=evidence_ts,
+            finding_count=len(findings),
+            highest_severity="error",
+            next_expected_event="auditor.retry_with_valid_evidence_window",
+            outcome="invalid_evidence_window",
+            repair_dispatch_count=0,
+            repair_dispatch_refs=(),
+            evidence_timestamp=evidence_ts,
+        )
 
     missing_repair_verdict = _extract_missing_repair_verdict_findings(findings)
     stale_repair_data = _extract_stale_repair_data_findings(findings)

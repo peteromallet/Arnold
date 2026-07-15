@@ -1431,6 +1431,20 @@ class TestBuildAuditorCompletionEvidence:
         evidence = build_auditor_completion_evidence()
         assert evidence.audited_window_hours == 6.0
 
+    @pytest.mark.parametrize("window", [0.0, -1.0, float("nan"), float("inf")])
+    def test_invalid_evidence_window_cannot_certify_empty_audit(self, window: float) -> None:
+        evidence = build_auditor_completion_evidence(
+            audit_findings=[],
+            audit_outcome="audit_cycle_complete",
+            audited_window_hours=window,
+            repair_dispatch_refs=("spurious-dispatch",),
+        )
+
+        assert evidence.outcome == "invalid_evidence_window"
+        assert evidence.highest_severity == "error"
+        assert evidence.next_expected_event == "auditor.retry_with_valid_evidence_window"
+        assert evidence.repair_dispatch_count == 0
+
 
 class TestSaveAuditorCompletionEvidence:
     """save_auditor_completion_evidence persists and returns payload."""

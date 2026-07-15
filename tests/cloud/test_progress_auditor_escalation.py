@@ -192,8 +192,11 @@ def test_live_slow_chain_with_fresh_heartbeat_is_a_hard_noop() -> None:
     gate = classify_true_stall(finding)
 
     assert gate["eligible"] is False
-    assert "fresh_progress_or_heartbeat" in gate["blocks"]
-    assert gate["progress"]["fresh_sources"] == [
+    assert "healthy_live_process" in gate["blocks"]
+    assert gate["progress"]["fresh"] is False
+    assert "token_heartbeat" in gate["progress"]["liveness_sources"]
+    assert gate["progress"]["fresh_sources"] == []
+    assert gate["progress"]["liveness_sources"] == [
         "events",
         "chain_log",
         "token_heartbeat",
@@ -297,6 +300,65 @@ def test_open_pr_or_pending_external_state_is_an_intentional_wait() -> None:
     assert gate["eligible"] is False
     assert gate["evidence_sources"]["external_state"]["intentional_wait"] is True
     assert "intentional_pause_or_human_gate" in gate["blocks"]
+
+
+def test_open_pr_does_not_hide_blocked_unowned_active_repair_goal() -> None:
+    finding = _true_stall()
+    finding["resolver_state"] = {"canonical_state": "UNKNOWN", "confidence": "low"}
+    finding["chain_state_summary"]["current"].update(
+        {"last_state": "blocked", "pr_number": 255, "pr_state": "open"}
+    )
+    finding["current_target"]["ci_health"] = {
+        "status": "failure", "available": True, "pr_number": 255
+    }
+    finding["repair_data_summary"].update(
+        {"outcome": "deterministic_failure", "mtime_age_min": 130}
+    )
+    finding["repair_custody_summary"]["retry_budget"] = {
+        "claim_retries_used": 0, "claim_retries_remaining": 3
+    }
+    finding["meta_repair_summary"]["repair_goal"] = {
+        "goal_id": "repair-goal-original-epic",
+        "status": "active",
+        "owner_live": False,
+        "control_action": "investigate",
+    }
+    # Hourly control-plane writes are liveness, not semantic progress.
+    finding["events_mtime_age_min"] = 2
+    finding["chain_log"]["mtime_age_min"] = 3
+    finding["acceptance_progress"] = {
+        "advanced": False, "accepted_event_age_min": 150
+    }
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is True
+    assert gate["custody_walk"]["L1"]["failure"]["active_unowned_goal"] is True
+    assert gate["progress"]["fresh"] is False
+    assert gate["progress"]["liveness_sources"] == ["events", "chain_log"]
+    assert gate["evidence_sources"]["external_state"]["intentional_wait"] is False
+
+
+def test_preserve_live_goal_does_not_create_unowned_goal_failure() -> None:
+    finding = _true_stall()
+    finding["repair_custody_summary"]["accepted_unclaimed_request_ids"] = []
+    finding["repair_data_summary"]["outcome"] = "partial_liveness"
+    finding["meta_repair_summary"]["repair_goal"] = {
+        "status": "active", "owner_live": False, "control_action": "preserve_live"
+    }
+    finding["meta_repair_summary"].update(
+        {"should_dispatch": False, "missing_meta_run_evidence": False}
+    )
+    finding["deterministic_superfixer_evidence"]["actionable"] = False
+    finding["deterministic_superfixer_evidence"]["absent_or_stale_l2"] = False
+    finding["deterministic_retry_evidence"]["count"] = 0
+    finding["reasons"] = []
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is False
+    assert gate["custody_walk"]["L1"]["failure"]["active_unowned_goal"] is False
+    assert "preserve_live_repair_goal" in gate["blocks"]
 
 
 def test_applicable_external_state_must_match_the_exact_pr() -> None:

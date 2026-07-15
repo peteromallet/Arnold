@@ -4708,16 +4708,19 @@ import json
 import pathlib
 import sys
 
+from arnold_pipelines.megaplan.cloud.repair_goal import next_repair_goal_retry_sequence
+
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
 requests = payload.get("request_ids") if isinstance(payload.get("request_ids"), list) else []
-owners = payload.get("owners") if isinstance(payload.get("owners"), list) else []
+goal_id = str(payload.get("goal_id") or "")
+retry_sequence = next_repair_goal_retry_sequence(payload)
 print("\t".join((
-    str(payload.get("goal_id") or ""),
+    goal_id,
     str(payload.get("checkpoint_digest") or ""),
     str(target.get("blocker_id") or ""),
     str(requests[-1] if requests else ""),
-    str(len(owners) + 1),
+    str(retry_sequence),
 )))
 PY
     )" || return 1
@@ -7148,6 +7151,14 @@ repair_unintended_stop() {
     else
       report_item "$report_items" "$session" "repair" "repair_dispatched" "$reason" "$workspace" "$remote_spec"
     fi
+    return 0
+  fi
+
+  # A confirmed L1 launch failure is itself deterministic L2 evidence.  The
+  # retained-goal path used to return repair_unavailable here and strand the
+  # goal forever; transfer custody to the existing bounded meta-repair route.
+  if route_l1_launch_failure_to_meta_repair \
+    "$session" "$workspace" "$remote_spec" "$report_items"; then
     return 0
   fi
 
