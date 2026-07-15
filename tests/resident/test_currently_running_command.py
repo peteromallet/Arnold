@@ -15,6 +15,7 @@ from arnold_pipelines.megaplan.resident.currently_running import (
     collect_currently_running,
     discover_attention_sessions,
     discover_live_managed_agents,
+    discover_recently_completed_managed_agents,
     discover_running_sessions,
     render_currently_running,
 )
@@ -41,6 +42,7 @@ def test_discovers_running_and_repairing_sessions_and_only_live_managed_agents()
         "running": [
             {"run_id": "live", "status": "running", "live": True},
             {"run_id": "stale", "status": "running", "live": False},
+            {"run_id": "terminal", "status": "completed", "live": True},
         ]
     }
 
@@ -49,6 +51,90 @@ def test_discovers_running_and_repairing_sessions_and_only_live_managed_agents()
         "repair",
     ]
     assert [row["run_id"] for row in discover_live_managed_agents(managed)] == ["live"]
+
+
+def test_managed_agents_render_running_and_completed_sections_with_hour_boundary() -> None:
+    snapshot = datetime(2026, 7, 14, 13, tzinfo=UTC)
+    report = CurrentlyRunningReport(
+        status_node={"generated_at": "2026-07-14T13:00:00Z", "sessions": []},
+        managed_agents={
+            "running": [
+                {
+                    "run_id": "live",
+                    "description": "Live managed task",
+                    "status": "running",
+                    "live": True,
+                }
+            ],
+            "recent": [
+                {
+                    "run_id": "at-boundary",
+                    "description": "Boundary completion",
+                    "status": "completed",
+                    "finished_at": "2026-07-14T12:00:00Z",
+                },
+                {
+                    "run_id": "recent-completion",
+                    "description": "Recent completion",
+                    "status": "completed",
+                    "finished_at": "2026-07-14T12:59:59Z",
+                },
+                {
+                    "run_id": "old-completion",
+                    "description": "Old completion",
+                    "status": "completed",
+                    "finished_at": "2026-07-14T11:59:59Z",
+                },
+                {
+                    "run_id": "failed",
+                    "description": "Failed task",
+                    "status": "failed",
+                    "finished_at": "2026-07-14T12:59:59Z",
+                },
+                {
+                    "run_id": "mismatched-terminal-outcome",
+                    "description": "Mismatched terminal outcome",
+                    "status": "completed",
+                    "terminal_outcome": "failed",
+                    "finished_at": "2026-07-14T12:59:59Z",
+                },
+            ],
+        },
+    )
+
+    completed = discover_recently_completed_managed_agents(
+        report.managed_agents, snapshot_at=snapshot
+    )
+    rendered = render_currently_running(report, now=snapshot)
+
+    assert [row["run_id"] for row in completed] == [
+        "at-boundary",
+        "recent-completion",
+    ]
+    assert "### 🟢 Running · 1" in rendered
+    assert "### ✅ Recently completed · 2" in rendered
+    assert "Live managed task" in rendered
+    assert "Boundary completion" in rendered
+    assert "Recent completion" in rendered
+    assert "Old completion" not in rendered
+    assert "Failed task" not in rendered
+    assert "Mismatched terminal outcome" not in rendered
+
+
+def test_managed_agent_subsections_have_truthful_empty_states() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"generated_at": "2026-07-14T13:00:00Z", "sessions": []},
+            managed_agents={"running": [], "recent": []},
+        ),
+        now=datetime(2026, 7, 14, 13, tzinfo=UTC),
+    )
+
+    assert "### 🟢 Running · 0\n_No live resident-managed agents._" in rendered
+    assert (
+        "### ✅ Recently completed · 0\n"
+        "_No recently completed resident-managed agents._"
+    ) in rendered
 
 
 def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> None:
@@ -77,7 +163,7 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
 
     assert "## ⛓️ Epics & chains · 1 active" in rendered
     assert "### 🟢 Running · 1" in rendered
-    assert "**Custody control plane · m7-runtime-adoption**" in rendered
+    assert "`Custody control plane` · `m7-runtime-adoption`" in rendered
     assert "`executing`" in rendered
     assert "42.5% overall" in rendered
     assert "+2.5 pp in the past hour" in rendered
@@ -100,10 +186,10 @@ def test_render_shows_truthful_hourly_percentage_point_deltas_only_with_telemetr
         )
     )
 
-    assert "**positive**\n  `running` · 50% overall · +4 pp in the past hour" in rendered
-    assert "**zero**\n  `running` · 50% overall · +0 pp in the past hour" in rendered
-    assert "**negative**\n  `running` · 50% overall · -3 pp in the past hour" in rendered
-    assert "**no-history**\n  `running` · 50% overall\n" in rendered
+    assert "`positive`\n  `running` · 50% overall · +4 pp in the past hour" in rendered
+    assert "`zero`\n  `running` · 50% overall · +0 pp in the past hour" in rendered
+    assert "`negative`\n  `running` · 50% overall · -3 pp in the past hour" in rendered
+    assert "`no-history`\n  `running` · 50% overall\n" in rendered
 
 
 def test_active_executing_attention_remains_listed_with_overlay_visible() -> None:
@@ -217,8 +303,8 @@ def test_needs_attention_only_shows_authoritative_activity_in_preceding_twelve_h
     )
 
     assert "### ⚠️ Needs attention · 2" in rendered
-    assert "**just-inside**" in rendered
-    assert "**exact-boundary**" in rendered
+    assert "`just-inside`" in rendered
+    assert "`exact-boundary`" in rendered
     for session in ("just-outside", "missing-activity", "invalid-activity"):
         assert f"**{session}**" not in rendered
 
@@ -246,7 +332,7 @@ def test_recently_active_installed_session_remains_visible_as_attention() -> Non
     )
 
     assert "### ⚠️ Needs attention · 1" in rendered
-    assert "**Custody control plane**" in rendered
+    assert "`Custody control plane`" in rendered
     assert "`executed` · 0% overall · ⚠️ attention · workspace missing or unreadable" in rendered
 
 
@@ -269,7 +355,7 @@ def test_active_execute_phase_is_executing_when_display_state_is_absent() -> Non
 
     rendered = render_currently_running(report)
 
-    assert "**epic**" in rendered
+    assert "`epic`" in rendered
     assert "`executing` · overall progress unavailable" in rendered
 
 
@@ -289,7 +375,7 @@ def test_plan_state_is_used_only_when_display_state_and_execute_are_absent() -> 
         )
     )
 
-    assert "**blocked-plan**" in rendered
+    assert "`blocked-plan`" in rendered
     assert "`blocked` · overall progress unavailable · chain running" in rendered
 
 
@@ -322,12 +408,15 @@ def test_render_uses_epics_parent_and_nonempty_h3_status_subsections() -> None:
         "# Currently running\n"
         "## ⛓️ Epics & chains · 1 active\n"
         "### 🟢 Running · 1\n"
-        "• **status-refresh**\n"
+        "• `status-refresh`\n"
         "  `executing` · 25% overall · chain running\n"
         "\n"
-        "## 🤖 Managed agents · 1 live\n"
+        "## 🤖 Managed agents · 1 live · 0 recently completed\n"
+        "### 🟢 Running · 1\n"
         "• **Refresh resident status**\n"
-        "  `running` · agent `status-agent`"
+        "  `running` · agent `status-agent`\n"
+        "### ✅ Recently completed · 0\n"
+        "_No recently completed resident-managed agents._"
     )
 
 
@@ -424,10 +513,10 @@ def test_render_keeps_terminal_plan_without_chain_completion_in_attention() -> N
     )
 
     assert "### ⚠️ Needs attention · 1" in rendered
-    assert "**repository-strategy-roadmap**" in rendered
+    assert "`repository-strategy-roadmap`" in rendered
     assert "`done` · 100% overall · 100% in-flight plan · ⚠️ attention" in rendered
     assert "terminal plan requires chain reconciliation" in rendered
-    assert "Recently completed" not in rendered
+    assert "Recently completed · 1 shown" not in rendered
     assert "`completed`" not in rendered
 
 
@@ -622,7 +711,7 @@ def test_degraded_status_is_labeled_without_hiding_available_canonical_items() -
     rendered = render_currently_running(report)
 
     assert "Canonical epic/chain status is degraded: watchdog report missing." in rendered
-    assert "**degraded-epic**\n  `planned` · 12% overall" in rendered
+    assert "`degraded-epic`\n  `planned` · 12% overall" in rendered
 
 
 def test_collection_uses_typed_bounded_status_tool_and_managed_agent_inventory(
@@ -764,11 +853,11 @@ def test_currently_running_command_is_registered_with_discord_tree() -> None:
 
     registered = register_discord_application_commands(tree, Service())
 
-    assert registered == ("currently-running", "restart-resident", "dropped-threads")
-    assert set(tree.commands) == {"currently-running", "restart-resident", "dropped-threads"}
-    assert tree.commands["currently-running"][0].startswith("Show running Megaplan")
+    assert registered == ("whats-cooking", "restart-resident", "dropped-threads")
+    assert set(tree.commands) == {"whats-cooking", "restart-resident", "dropped-threads"}
+    assert tree.commands["whats-cooking"][0].startswith("Show running Megaplan")
     assert [command.name for command in DISCORD_APPLICATION_COMMANDS] == [
-        "currently-running",
+        "whats-cooking",
         "restart-resident",
         "dropped-threads",
     ]
@@ -795,8 +884,8 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
         def __init__(self):
             self.messages = []
 
-        async def send(self, content):
-            self.messages.append(content)
+        async def send(self, content, **kwargs):
+            self.messages.append((content, kwargs))
 
     async def fake_collect(runtime):
         assert runtime.authorizer.__class__ is Authorizer
@@ -810,7 +899,7 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
     client = discord.Client(intents=discord.Intents.none())
     tree = discord.app_commands.CommandTree(client)
     register_discord_application_commands(tree, service)
-    command = tree.get_command("currently-running")
+    command = tree.get_command("whats-cooking")
     interaction = SimpleNamespace(
         user=SimpleNamespace(id=42),
         guild_id=None,
@@ -825,9 +914,86 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
     assert [(subject.user_id, subject.channel_id) for subject in subjects] == [
         ("42", "99")
     ]
-    assert interaction.response.deferred == [{"thinking": True}]
+    assert interaction.response.deferred == [{"thinking": True, "ephemeral": True}]
     assert len(interaction.followup.messages) == 1
-    assert interaction.followup.messages[0].startswith("# Currently running\n")
+    content, kwargs = interaction.followup.messages[0]
+    assert content.startswith("# Currently running\n")
+    assert kwargs == {"ephemeral": True}
+
+
+def test_currently_running_error_response_is_ephemeral(monkeypatch) -> None:
+    class Response:
+        def __init__(self):
+            self.deferred = []
+
+        async def defer(self, **kwargs):
+            self.deferred.append(kwargs)
+
+    class Followup:
+        def __init__(self):
+            self.messages = []
+
+        async def send(self, content, **kwargs):
+            self.messages.append((content, kwargs))
+
+    async def failed_collect(_runtime):
+        raise RuntimeError("status store unavailable")
+
+    monkeypatch.setattr(discord_module, "collect_currently_running", failed_collect)
+    service = object.__new__(ResidentDiscordService)
+    service.runtime = SimpleNamespace(
+        authorizer=SimpleNamespace(
+            authorize_inbound=lambda _subject: AuthorizationDecision(True)
+        )
+    )
+    interaction = SimpleNamespace(
+        user=SimpleNamespace(id=42),
+        guild_id=None,
+        channel=None,
+        channel_id=99,
+        response=Response(),
+        followup=Followup(),
+    )
+
+    asyncio.run(service.handle_currently_running_interaction(interaction))
+
+    assert interaction.response.deferred == [{"thinking": True, "ephemeral": True}]
+    assert interaction.followup.messages == [
+        (
+            "# Currently running\n"
+            "⚠️ Canonical status is temporarily unavailable; no running-state claims were made.",
+            {"ephemeral": True},
+        )
+    ]
+
+
+def test_currently_running_unauthorized_response_is_ephemeral() -> None:
+    class Response:
+        def __init__(self):
+            self.messages = []
+
+        async def send_message(self, content, **kwargs):
+            self.messages.append((content, kwargs))
+
+    service = object.__new__(ResidentDiscordService)
+    service.runtime = SimpleNamespace(
+        authorizer=SimpleNamespace(
+            authorize_inbound=lambda _subject: AuthorizationDecision(False)
+        )
+    )
+    interaction = SimpleNamespace(
+        user=SimpleNamespace(id=42),
+        guild_id=None,
+        channel=None,
+        channel_id=99,
+        response=Response(),
+    )
+
+    asyncio.run(service.handle_currently_running_interaction(interaction))
+
+    assert interaction.response.messages == [
+        ("This command is not authorized in this Discord context.", {"ephemeral": True})
+    ]
 
 
 def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
@@ -885,3 +1051,47 @@ def test_repairing_chain_remains_distinct_from_its_progress_display_state() -> N
     )
 
     assert "`executing` · 25% overall · chain repairing" in rendered
+
+
+def test_session_and_plan_names_are_individually_copyable_inline_code() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [
+                    {
+                        "display_name": "Epic `one`",
+                        "status": "running",
+                        "current_plan": "plan `two`",
+                    }
+                ]
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "• `Epic 'one'` · `plan 'two'`" in rendered
+
+
+def test_repairing_signal_overrides_stale_failed_state_but_not_genuine_failure() -> None:
+    repairing = {
+        "session": "repairing-epic",
+        "status": "failed",
+        "repairing": True,
+        "progress": {"plan_state": "failed"},
+    }
+    failed = {
+        "session": "failed-epic",
+        "status": "failed",
+        "progress": {"plan_state": "failed"},
+    }
+
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"sessions": [repairing]}, managed_agents={"running": []}
+        )
+    )
+
+    assert discover_running_sessions({"sessions": [repairing, failed]}) == [repairing]
+    assert "`repairing` · overall progress unavailable" in rendered
+    assert "failed" not in rendered
+    assert "`failed` · overall progress unavailable" in module._render_session(failed)

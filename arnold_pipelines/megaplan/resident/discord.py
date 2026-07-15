@@ -1243,7 +1243,7 @@ class ResidentDiscordService:
         await client.start(self.token)
 
     async def handle_currently_running_interaction(self, interaction: Any) -> None:
-        """Serve ``/currently-running`` without invoking the resident model."""
+        """Serve ``/whats-cooking`` without invoking the resident model."""
 
         user_id = _optional_snowflake(
             getattr(getattr(interaction, "user", None), "id", None)
@@ -1270,18 +1270,18 @@ class ResidentDiscordService:
             )
             return
 
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             report = await collect_currently_running(self.runtime)
             rendered = render_currently_running(report)
         except Exception:
-            LOGGER.exception("Resident currently-running command failed")
+            LOGGER.exception("Resident whats-cooking command failed")
             rendered = (
                 "# Currently running\n"
                 "⚠️ Canonical status is temporarily unavailable; no running-state claims were made."
             )
         for chunk in split_discord_message(rendered):
-            await interaction.followup.send(chunk)
+            await interaction.followup.send(chunk, ephemeral=True)
 
     async def handle_restart_resident_interaction(self, interaction: Any) -> None:
         """Authorize and hand ``/restart-resident`` to the guarded lifecycle API."""
