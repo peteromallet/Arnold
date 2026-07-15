@@ -1073,6 +1073,111 @@ def test_failed_resident_verifier_delivers_truthful_unknown_summary(tmp_path) ->
     assert persisted["resident_completion_turn"]["verification_outcome"] == "unknown"
 
 
+def test_terminal_verifier_cannot_lead_with_handoff_success_when_recovery_blocked(
+    tmp_path,
+) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+    store = FileStore(tmp_path / ".megaplan/resident")
+    config = ResidentConfig(allowed_user_ids=("42",))
+    authorizer = ResidentAuthorizer(config)
+
+    class _Runner:
+        async def run(self, _request, _tools):
+            return AgentResponse(
+                final_text=(
+                    "The message was durably sent, and the verification outcome for the handoff "
+                    "is successful.\n\n"
+                    "The underlying recovery remains blocked at a genuine authorization gate: "
+                    "human approval is required."
+                )
+            )
+
+    class _Outbound:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, message):
+            self.sent.append(message)
+            message.metadata["discord_message_ids"] = ["blocked-reply"]
+
+    outbound = _Outbound()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=MegaplanResidentProfile(store=store, authorizer=authorizer, config=config),
+        runner=_Runner(),
+        outbound=outbound,
+    )
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=runtime.run_managed_completion_turn,
+        )
+    )
+
+    persisted = json.loads(manifest_path.read_text())
+    delivered = outbound.sent[0].content
+    assert result.delivered == 1
+    assert delivered.startswith("Forward motion remains blocked")
+    assert "handoff is successful" not in delivered
+    assert "human approval is required" in delivered
+    assert persisted["resident_completion_turn"]["verification_outcome"] == "blocked"
+    assert persisted["completion_delivery"]["payload"]["verification_outcome"] == "blocked"
+
+
+def test_terminal_verifier_fails_closed_on_active_repair_goal(tmp_path) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+    goal_path = tmp_path / "repair-goal.json"
+    goal_path.write_text(
+        json.dumps({"status": "active", "goal_id": "goal-1"}), encoding="utf-8"
+    )
+    manifest = json.loads(manifest_path.read_text())
+    manifest["links"] = {"repair_goal_path": str(goal_path)}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    store = FileStore(tmp_path / ".megaplan/resident")
+    config = ResidentConfig(allowed_user_ids=("42",))
+    authorizer = ResidentAuthorizer(config)
+
+    class _Runner:
+        async def run(self, _request, _tools):
+            return AgentResponse(
+                final_text="Everything completed. The verification outcome is success."
+            )
+
+    class _Outbound:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, message):
+            self.sent.append(message)
+            message.metadata["discord_message_ids"] = ["goal-blocked-reply"]
+
+    outbound = _Outbound()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=MegaplanResidentProfile(store=store, authorizer=authorizer, config=config),
+        runner=_Runner(),
+        outbound=outbound,
+    )
+    asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=runtime.run_managed_completion_turn,
+        )
+    )
+
+    persisted = json.loads(manifest_path.read_text())
+    assert outbound.sent[0].content.startswith("Forward motion remains blocked")
+    assert persisted["resident_completion_turn"]["verification_outcome"] == "blocked"
+
+
 def test_production_completion_sweep_suppresses_pytest_fixture_manifest(tmp_path) -> None:
     manifest_path = _terminal_manifest(tmp_path)
 
