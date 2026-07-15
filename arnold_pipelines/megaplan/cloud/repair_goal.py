@@ -329,11 +329,55 @@ def _latest_acceptance_event(events_path: Path) -> dict[str, Any]:
     return latest
 
 
+def _same_path(left: object, right: object) -> bool | None:
+    left_text = str(left or "").strip()
+    right_text = str(right or "").strip()
+    if not left_text or not right_text:
+        return None
+    return Path(left_text).resolve(strict=False) == Path(right_text).resolve(strict=False)
+
+
+def _session_identity_observation(
+    *,
+    marker_dir: str | Path | None,
+    session: str,
+    workspace: Path,
+    remote_spec: str,
+) -> dict[str, Any]:
+    """Fence target evidence to the exact session marker that owns the goal."""
+
+    marker_path = Path(marker_dir) / f"{session}.json" if marker_dir and session else None
+    marker = _load_json(marker_path)
+    marker_session = str(marker.get("session") or "")
+    session_matches = marker_session == session if marker_session else None
+    workspace_matches = _same_path(marker.get("workspace"), workspace)
+    remote_spec_matches = _same_path(marker.get("remote_spec"), remote_spec)
+    explicit_matches = [
+        value
+        for value in (session_matches, workspace_matches, remote_spec_matches)
+        if value is not None
+    ]
+    return {
+        "expected_session": session,
+        "marker_path": str(marker_path) if marker_path is not None else "",
+        "marker_present": bool(marker),
+        "marker_session": marker_session,
+        "marker_workspace": str(marker.get("workspace") or ""),
+        "marker_remote_spec": str(marker.get("remote_spec") or ""),
+        "session_matches": session_matches,
+        "workspace_matches": workspace_matches,
+        "remote_spec_matches": remote_spec_matches,
+        "identity_matches": all(explicit_matches) if explicit_matches else None,
+    }
+
+
 def capture_checkpoint(
     *,
     workspace: str | Path,
     plan_name: str = "",
     remote_spec: str = "",
+    marker_dir: str | Path | None = None,
+    session: str = "",
 ) -> dict[str, Any]:
     root = Path(workspace)
     chain_path, chain = _select_chain_state(root, plan_name, remote_spec)
@@ -356,6 +400,12 @@ def capture_checkpoint(
     )
     target_stage = _target_stage(state, chain)
     workspace_head = _git_head(root)
+    session_identity = _session_identity_observation(
+        marker_dir=marker_dir,
+        session=session,
+        workspace=root,
+        remote_spec=remote_spec,
+    )
     checkpoint = {
         "captured_at": captured_at,
         "plan_name": resolved_plan,
@@ -377,6 +427,7 @@ def capture_checkpoint(
         "latest_failure_cleared": not bool(latest_failure),
         "active_worker": active_worker,
         "runner_transition": runner_transition,
+        "session_identity": session_identity,
         "workspace_head": workspace_head,
     }
     progress_facts = {
@@ -396,6 +447,7 @@ def capture_checkpoint(
         "active_worker_last_activity_at": active_worker.get("last_activity_at", ""),
         "runner_transition_pid": runner_transition.get("runner_pid"),
         "runner_transition_fresh": runner_transition.get("fresh", False),
+        "session_identity_matches": session_identity.get("identity_matches"),
     }
     checkpoint["progress_token"] = _digest(progress_facts)
     # Productive source changes reset only the deterministic-owner breaker;
@@ -426,6 +478,34 @@ def _approval_gate(observation: Mapping[str, Any]) -> dict[str, Any] | None:
 def evaluate_checkpoint(
     frozen: Mapping[str, Any], observation: Mapping[str, Any]
 ) -> dict[str, Any]:
+    frozen_identity = (
+        frozen.get("session_identity")
+        if isinstance(frozen.get("session_identity"), Mapping)
+        else {}
+    )
+    observed_identity = (
+        observation.get("session_identity")
+        if isinstance(observation.get("session_identity"), Mapping)
+        else {}
+    )
+    if (
+        frozen_identity.get("identity_matches") is False
+        or observed_identity.get("identity_matches") is False
+    ):
+        return {
+            "status": GOAL_ACTIVE,
+            "reason": "replacement-session evidence cannot satisfy the original repair goal",
+            "authoritative_progress": False,
+            "blocker_cleared": False,
+            "fresh_progress": False,
+            "stage_advanced": False,
+            "correct_worker_alive": None,
+            "control_action": "investigate",
+            "replacement_session_evidence_rejected": True,
+            "expected_session_identity": dict(frozen_identity),
+            "observed_session_identity": dict(observed_identity),
+        }
+
     gate = _approval_gate(observation)
     if gate is not None:
         return {
@@ -567,6 +647,8 @@ def ensure_repair_goal(
                 workspace=workspace,
                 plan_name=plan_name,
                 remote_spec=remote_spec,
+                marker_dir=marker_dir,
+                session=session,
             )
             identity = {
                 "session": session,
@@ -582,6 +664,7 @@ def ensure_repair_goal(
                 "updated_at": utc_now(),
                 "target": {
                     "session": session,
+                    "marker_dir": str(Path(marker_dir)),
                     "workspace": str(Path(workspace)),
                     "remote_spec": remote_spec,
                     "plan_name": frozen.get("plan_name") or plan_name,
@@ -682,6 +765,8 @@ def evaluate_repair_goal(
             workspace=str(target.get("workspace") or ""),
             plan_name=str(target.get("plan_name") or ""),
             remote_spec=str(target.get("remote_spec") or ""),
+            marker_dir=str(target.get("marker_dir") or path.parents[2]),
+            session=str(target.get("session") or ""),
         )
         frozen = payload.get("frozen_checkpoint") if isinstance(payload.get("frozen_checkpoint"), dict) else {}
         contract = payload.get("recovery_contract") if isinstance(payload.get("recovery_contract"), dict) else {}
@@ -781,6 +866,63 @@ def evaluate_repair_goal(
         }
 
 
+def record_terminal_failure(
+    goal_path: str | Path,
+    *,
+    outcome: str,
+    phase: str,
+    reason: str,
+    owner_run_id: str = "",
+    owner_manifest_path: str = "",
+) -> dict[str, Any]:
+    """Record a bounded owner failure without pretending the goal succeeded."""
+
+    path = Path(goal_path)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        payload = _load_json(path)
+        if payload.get("schema_version") != REPAIR_GOAL_SCHEMA:
+            raise ValueError(f"repair goal is missing or invalid: {path}")
+        frozen = (
+            payload.get("frozen_checkpoint")
+            if isinstance(payload.get("frozen_checkpoint"), Mapping)
+            else {}
+        )
+        failure = {
+            "recorded_at": utc_now(),
+            "owner_terminal": True,
+            "semantic_completion": False,
+            "outcome": outcome,
+            "phase": phase,
+            "reason": reason,
+            "owner_run_id": owner_run_id,
+            "owner_manifest_path": owner_manifest_path,
+            "goal_id": str(payload.get("goal_id") or ""),
+            "checkpoint_digest": str(payload.get("checkpoint_digest") or ""),
+            "unresolved_checkpoint": deepcopy(dict(frozen)),
+            "last_evaluation": deepcopy(payload.get("last_evaluation") or {}),
+            "last_observation": deepcopy(payload.get("last_observation") or {}),
+            "escalation_required": True,
+        }
+        failures = payload.setdefault("terminal_failures", [])
+        failures.append(failure)
+        if len(failures) > 20:
+            del failures[:-20]
+        payload["last_terminal_failure"] = failure
+        payload["updated_at"] = utc_now()
+        _atomic_write(path, payload)
+        return {
+            "goal_id": payload["goal_id"],
+            "goal_path": str(path),
+            "checkpoint_digest": payload["checkpoint_digest"],
+            "status": payload["status"],
+            "semantic_completion": payload["semantic_completion"],
+            "terminal_failure": failure,
+        }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -799,6 +941,13 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--action", required=True)
     evaluate.add_argument("--owner-run-id", default="")
     evaluate.add_argument("--owner-manifest-path", default="")
+    fail = sub.add_parser("record-terminal-failure")
+    fail.add_argument("--goal-path", required=True)
+    fail.add_argument("--outcome", required=True)
+    fail.add_argument("--phase", required=True)
+    fail.add_argument("--reason", required=True)
+    fail.add_argument("--owner-run-id", default="")
+    fail.add_argument("--owner-manifest-path", default="")
     return parser
 
 
@@ -824,10 +973,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "semantic_completion": payload["semantic_completion"],
             "frozen_checkpoint": payload["frozen_checkpoint"],
         }
-    else:
+    elif args.command == "evaluate":
         result = evaluate_repair_goal(
             args.goal_path,
             action=args.action,
+            owner_run_id=args.owner_run_id,
+            owner_manifest_path=args.owner_manifest_path,
+        )
+    else:
+        result = record_terminal_failure(
+            args.goal_path,
+            outcome=args.outcome,
+            phase=args.phase,
+            reason=args.reason,
             owner_run_id=args.owner_run_id,
             owner_manifest_path=args.owner_manifest_path,
         )
@@ -849,5 +1007,6 @@ __all__ = [
     "ensure_repair_goal",
     "evaluate_checkpoint",
     "evaluate_repair_goal",
+    "record_terminal_failure",
     "repair_goal_path",
 ]

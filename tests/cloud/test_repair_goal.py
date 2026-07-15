@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan.cloud.repair_goal import (
     ensure_repair_goal,
     evaluate_checkpoint,
     evaluate_repair_goal,
+    record_terminal_failure,
 )
 
 
@@ -174,6 +175,35 @@ def test_later_authoritative_transition_beyond_checkpoint_completes_goal(tmp_pat
     assert result["evaluation"]["acceptance_event"]["seq"] == 14
 
 
+def test_replacement_session_evidence_cannot_complete_original_goal(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+    marker_path = Path(target["marker_dir"]) / "demo-session.json"
+    _write_json(
+        marker_path,
+        {
+            "session": "replacement-session",
+            "workspace": target["workspace"],
+            "remote_spec": target["remote_spec"],
+        },
+    )
+    chain_path = Path(goal["frozen_checkpoint"]["chain_state_path"])
+    chain = json.loads(chain_path.read_text(encoding="utf-8"))
+    chain["current_milestone_index"] = 5
+    chain["completed"].append({"plan": "replacement-plan"})
+    _write_json(chain_path, chain)
+
+    result = evaluate_repair_goal(path, action="post-redrive-replacement-session")
+
+    assert result["status"] == GOAL_ACTIVE
+    assert result["semantic_completion"] is False
+    assert result["evaluation"]["authoritative_progress"] is False
+    assert result["evaluation"]["replacement_session_evidence_rejected"] is True
+    assert result["evaluation"]["observed_session_identity"]["marker_session"] == (
+        "replacement-session"
+    )
+
+
 def test_live_execute_worker_is_preserved_until_review_stage(tmp_path: Path) -> None:
     workspace, marker_dir, plan, spec = _target(tmp_path)
     state_path = workspace / ".megaplan" / "plans" / plan / "state.json"
@@ -234,6 +264,32 @@ def test_same_owner_failure_twice_opens_replan_circuit(tmp_path: Path) -> None:
     assert second["evaluation"]["control_action"] == "replan"
     assert second["evaluation"]["circuit_breaker_required"] is True
     assert second["evaluation"]["deterministic_repeat_count"] == 2
+
+
+def test_bounded_terminal_failure_records_exact_unresolved_checkpoint(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+
+    result = record_terminal_failure(
+        path,
+        outcome="deterministic_failure",
+        phase="deterministic-owner-circuit-breaker",
+        reason="same owner repeated without progress",
+        owner_run_id="repair-owner-1",
+        owner_manifest_path="/manifests/repair-owner-1.json",
+    )
+
+    assert result["status"] == GOAL_ACTIVE
+    assert result["semantic_completion"] is False
+    failure = result["terminal_failure"]
+    assert failure["owner_terminal"] is True
+    assert failure["escalation_required"] is True
+    assert failure["checkpoint_digest"] == goal["checkpoint_digest"]
+    assert failure["unresolved_checkpoint"]["digest"] == goal["checkpoint_digest"]
+    assert failure["unresolved_checkpoint"]["latest_failure"] == (
+        goal["frozen_checkpoint"]["latest_failure"]
+    )
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["last_terminal_failure"] == failure
 
 
 def test_productive_target_commit_resets_breaker_without_completing_goal(tmp_path: Path) -> None:
@@ -409,3 +465,9 @@ def test_repair_loop_fences_mechanical_relaunch_and_uses_two_stage_owner() -> No
     investigator = investigator[: investigator.index("\n}\n")]
     assert '--link "repair_goal_id=' not in investigator
     assert '--link "repair_goal_path=' not in investigator
+
+    terminal = wrapper[wrapper.index("if [[ \"${BREAKER_TRIPPED:-0}\" == \"1\" ]]") :]
+    terminal = terminal[: terminal.index("\nfi\n")]
+    assert 'repair_data_set_outcome "deterministic_failure"' in terminal
+    assert 'repair_goal_record_terminal_failure' in terminal
+    assert 'repair_data_set_outcome "recurring_retry_pending"' not in terminal

@@ -385,7 +385,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or retry_used >= 2
         or repeated >= 3
     )
-    failed = bool(false_success or missing_manifest or (accepted and exhausted) or outcome in {
+    failed = bool(false_success or missing_manifest or liveness_without_custody or (accepted and exhausted) or outcome in {
         "repair_timeout",
         "repair_exhausted",
         "failed",
@@ -537,7 +537,11 @@ def classify_true_stall(
             "TRACKED": not bool(l1.get("missing_canonical_manifest")),
             "FIXED": not bool(l1.get("false_success")) and not bool(l1.get("failed")),
             "INTENT": not any("guard_weakening" in item for item in _reason_tokens(finding)),
-            "CONTEXT": not bool(l1.get("accepted_unclaimed_count")),
+            "CONTEXT": not bool(
+                l1.get("accepted_unclaimed_count")
+                or l1.get("missing_custody_links")
+                or l1.get("liveness_without_custody")
+            ),
             "failure": l1,
         },
         "L2": {

@@ -4925,8 +4925,8 @@ claim_active_repair_launch() {
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
   fi
   if [[ -z "$blocker_id" || -z "$request_id" ]]; then
-    printf '\n'
-    return 0
+    printf 'missing_identity\n'
+    return 1
   fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
     "$MARKER_DIR" \
