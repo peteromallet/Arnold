@@ -123,6 +123,16 @@ def test_delegation_policy_pack_preserves_decomposition_and_safety_exceptions() 
     ]
     assert "never expands" in policy["exceptions"]["authorization"]
     assert "returned durable run ID" in policy["launch_evidence"]
+    assert policy["schema_version"] == "megaplan-resident-delegation-policy-v2"
+    assert "implements, verifies, and delivers" in policy["execution_default"]
+    assert "isolated worktree and feature branch" in policy["workspace_default"]
+    assert "Never infer literal `main`" in policy["integration_default"]
+    assert "Local integration does not authorize" in policy["integration_default"]
+    assert "explicit approval" in policy["external_actions"]
+    assert "label it unintegrated" in policy["tentative_work"]
+    assert "durable ancestry evidence" in policy["completion_evidence"]
+    assert "observed remote ref" in policy["completion_evidence"]
+    assert "outcome probe" in policy["completion_evidence"]
     assert all(
         fragment in rendered
         for fragment in (
@@ -132,6 +142,12 @@ def test_delegation_policy_pack_preserves_decomposition_and_safety_exceptions() 
             "trivial or non-independent fragments",
             "authorization boundaries",
             "returned durable run ID",
+            "implements, verifies, and delivers",
+            "isolated worktree and feature branch",
+            "Never infer literal `main`",
+            "Local integration does not authorize",
+            "label it unintegrated",
+            "durable ancestry evidence",
         )
     )
 
