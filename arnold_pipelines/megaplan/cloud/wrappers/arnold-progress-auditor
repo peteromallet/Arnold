@@ -647,6 +647,29 @@ from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
 )
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
+try:
+    from arnold_pipelines.megaplan.cloud.progress_auditor_ownership import (
+        inspect_existing_ownership,
+    )
+except ImportError:
+    # A source-overlay or temporarily skewed deployment must stay actionable.
+    # Missing ownership code can never be interpreted as proof of an owner.
+    def inspect_existing_ownership(_finding, **_kwargs):
+        return {
+            "schema_version": "arnold-progress-auditor-existing-ownership-v1",
+            "decision": "ownership_evidence_unavailable",
+            "rationale": "deployed source does not provide ownership inspection",
+            "suppress_new_repair_launch": False,
+            "actionable": True,
+            "matching_run_ids": [],
+            "healthy_aligned_run_ids": [],
+            "ambiguous_run_ids": [],
+            "candidate_count": 0,
+            "malformed_manifest_count": 0,
+            "uncertainties": ["ownership_inspector_import_failed"],
+            "candidates": [],
+            "candidates_omitted_count": 0,
+        }
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 try:
     from arnold_pipelines.megaplan.managed_agent import (
@@ -4404,6 +4427,12 @@ for entry in plans:
         })
         continue
     ev["reasons"] = reasons
+    ev["existing_agent_ownership"] = inspect_existing_ownership(
+        ev,
+        project_root=arnold_src,
+        workspace_root="/workspace",
+        now=now,
+    )
     findings.append(ev)
 
 stage_metrics = _build_stage_metrics(stage_metric_entries, stall_summary)
@@ -4657,6 +4686,8 @@ Missing chain log, chain state, chain.yaml, milestones, and base-ref evidence is
 expected for kind=plan and is not itself a failure.
 
 Return one of:
+- NO_NEW_LAUNCH: a healthy, correctly scoped existing owner already pursues
+  this exact repair objective; document the no-op and do not create a child.
 - STALE: stale latest_failure or stale block replay detected; request repair-system handling.
 - REPAIR_REQUEST: you found an Arnold source or run-state bug that the repair authority should handle.
 - ESCALATE: no code change made, but operator action or ledger reconciliation is required.
@@ -4716,6 +4747,13 @@ Evaluate these questions in order:
   DeepSeek/Hermes children, patched source, committed, pushed, or relaunched a
   repairer. Return a typed repair request; the central repair authority owns
   any subsequent mutation or managed child launch.
+- Inspect `existing_agent_ownership` before recommending or launching anything.
+  `existing_owner_no_new_launch` means one canonical live manifest has stable
+  objective alignment and is plausibly moving in the right direction: return
+  NO_NEW_LAUNCH and cite its run/custody evidence. Stale, failed, terminal,
+  wrong-scope, or wrong-direction matches remain actionable. An
+  `ambiguous_overlap_requires_judgement` result is uncertainty, not ownership;
+  surface it and do not guess from prose alone.
 - The desired outcome is that the next watchdog/auditor cycle can repair the
   class of failures automatically. Do not patch the running workspace merely to
   make this one session green when the repairer is the broken component.
@@ -4773,8 +4811,8 @@ If no source fix is appropriate: do NOT fix. Return a hypothesis (likely cause
 of the lack of convergence/inefficiency/gate stop) + a recommendation
 (highest-leverage next action for the operator).
 
-Start with your verdict on its own line — REPAIR_REQUEST, ESCALATE, STALE,
-INEFFICIENT, or PASSIVE — then cite SPECIFIC evidence (plan state/events/logs,
+Start with your verdict on its own line — NO_NEW_LAUNCH, REPAIR_REQUEST,
+ESCALATE, STALE, INEFFICIENT, or PASSIVE — then cite SPECIFIC evidence (plan state/events/logs,
 stale_state_evidence flags, repair-data iterations, user_action IDs, exact stderr,
 iteration/attempt counts, gate verdicts, plan_v churn, and chain log/state evidence
 only when kind=chain). Under 350 words.
@@ -4784,6 +4822,55 @@ EOF
   redact_file_in_place "$brief"
 
   local resp_path="$GATHER_DIR/resp-${plan}.txt"
+  if python3 - "$gather_file" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+ownership = payload.get("existing_agent_ownership") or {}
+raise SystemExit(
+    0
+    if ownership.get("decision") == "existing_owner_no_new_launch"
+    and ownership.get("suppress_new_repair_launch") is True
+    and len(ownership.get("healthy_aligned_run_ids") or []) == 1
+    else 1
+)
+PY
+  then
+    python3 - "$gather_file" "$resp_path" <<'PY'
+import json
+import pathlib
+import sys
+
+finding_path = pathlib.Path(sys.argv[1])
+response_path = pathlib.Path(sys.argv[2])
+payload = json.loads(finding_path.read_text(encoding="utf-8"))
+ownership = payload["existing_agent_ownership"]
+run_id = ownership["healthy_aligned_run_ids"][0]
+response = (
+    "NO_NEW_LAUNCH\n"
+    f"Canonical live owner {run_id} has stable objective alignment; "
+    "the six-hour auditor recorded a no-op and launched no reviewer or repair agent.\n"
+)
+response_path.write_text(response, encoding="utf-8")
+payload["hypothesis"] = response.strip()
+payload["existing_agent_judgement"] = {
+    "decision": "no_new_launch_no_op",
+    "owner_run_id": run_id,
+    "basis": "healthy_live_manifest_with_stable_objective_alignment",
+    "reviewer_launched": False,
+    "repair_launched": False,
+}  # Keep the shell-function extractor from mistaking this for its closing brace.
+payload["codex_launch_attempted"] = False
+finding_path.write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+    : > "$GATHER_DIR/resp-${plan}.err"
+    log "plan=$plan decision=existing_owner_no_new_launch reviewer_launch=noop"
+    return 0
+  fi
   local launch_attempted=0
   if [[ "${AUDIT_MUTATION_AUTHORIZED_FLAG:-0}" != "1" ]]; then
     log "observed: L3 Codex dispatch blocked (requires ARNOLD_AUTONOMY and ARNOLD_AUDIT_AUTOFIX_ENABLED)"
