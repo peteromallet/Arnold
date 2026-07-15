@@ -15,6 +15,10 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold_pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    validate_gate_input_custody,
+)
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold_pipelines.megaplan.schema_projection import (
@@ -85,7 +89,17 @@ def _build_gate_signals_artifact(
     iteration: int,
     root: Path,
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    try:
+        critique_custody = validate_gate_input_custody(plan_dir, state)
+    except CritiqueCustodyError as error:
+        raise CliError(
+            error.code,
+            str(error),
+            valid_next=["critique"],
+            extra={"issues": list(error.issues)},
+        ) from error
     gate_signals = build_gate_signals(plan_dir, state, root=root)
+    gate_signals.setdefault("signals", {})["critique_custody"] = critique_custody
     gate_checks = run_gate_checks(plan_dir, state, command_lookup=find_command)
     signals_artifact = {
         "robustness": gate_signals["robustness"],
@@ -94,6 +108,7 @@ def _build_gate_signals_artifact(
         "criteria_check": gate_checks["criteria_check"],
         "preflight_results": gate_checks["preflight_results"],
         "unresolved_flags": gate_checks["unresolved_flags"],
+        "critique_custody": critique_custody,
     }
     signals_filename = f"gate_signals_v{iteration}.json"
     atomic_write_json(plan_dir / signals_filename, signals_artifact)

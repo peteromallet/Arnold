@@ -72,6 +72,18 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
             },
         },
         "validation_jobs": {"type": "array"},
+        "critique_resolution_coverage": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["finding_id", "task_ids", "resolution_evidence"],
+                "properties": {
+                    "finding_id": {"type": "string"},
+                    "task_ids": {"type": "array", "items": {"type": "string"}},
+                    "resolution_evidence": {"type": "string"},
+                },
+            },
+        },
         "sense_checks": {"type": "array"},
         "watch_items": {"type": "array"},
         "meta_commentary": {"type": "string"},

@@ -66,6 +66,10 @@ from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_res
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     assert_admitted_task_feasibility,
 )
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    assert_finalize_custody,
+)
 
 log = logging.getLogger(__name__)
 
@@ -447,6 +451,15 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 "finalized_task_graph_changed",
                 str(exc),
                 valid_next=["finalize", "revise"],
+            ) from exc
+        try:
+            assert_finalize_custody(plan_dir, finalize_data)
+        except CritiqueCustodyError as exc:
+            raise CliError(
+                exc.code,
+                str(exc),
+                valid_next=["finalize", "revise", "critique"],
+                extra={"issues": list(exc.issues)},
             ) from exc
         # Loud operator warning if the resolved sandbox root is narrower than
         # the plan's stored project_dir. Silent divergence here cost entire

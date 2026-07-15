@@ -200,3 +200,14 @@ def test_parallel_critique_flags_only_scope_payload_preserves_blocking_findings(
     assert payload["findings"] == [
         {"detail": "The step spans protocol, migration, and broad tests.", "flagged": True}
     ]
+    assert worker.payload["flags"] == [
+        {
+            "id": "god-task",
+            "category": "completeness",
+            "producer_category": "scope",
+            "concern": "Step 2 combines independent objectives.",
+            "evidence": "The step spans protocol, migration, and broad tests.",
+            "severity_hint": "uncertain",
+            "source_check_id": "scope",
+        }
+    ]

@@ -26,6 +26,12 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     gate = _gate_summary_or_skipped(plan_dir)
+    clearance_path = plan_dir / "critique_clearance.json"
+    critique_clearance = (
+        read_json(clearance_path)
+        if clearance_path.exists()
+        else {"admitted": False, "reason": "handler custody precondition not materialized"}
+    )
     plan_mode = state.get("config", {}).get("mode", "code")
     robustness = configured_robustness(state)
     if is_prose_mode(state):
@@ -96,6 +102,9 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         Gate summary:
         {json_dump(gate).strip()}
 
+        Critique custody clearance (handler-owned, immutable input):
+        {json_dump(critique_clearance).strip()}
+
         Your output template is at: {output_path}
         Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
         Fill the JSON structure with your results and write the file back.
@@ -103,6 +112,8 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
 
         Requirements:
         - Produce structured JSON only.
+        - Preserve every cleared critique obligation in the task DAG and watch items. The handler will bind this clearance to the exact final graph and revalidate it before execution; do not omit, reinterpret, or replace finding IDs.
+        - Return `critique_resolution_coverage` with exactly one row for every `finding_id` in critique custody clearance. Each row must name one or more real finalized `task_ids` that preserve the resolved plan mutation and a concrete `resolution_evidence` explanation. Return `[]` when clearance has no findings. Partial, duplicate, unknown, or empty mappings fail finalization.
         - Set `task_contract_version` to `2` and `validation_jobs` to `[]`. The harness derives and runs integration/full-suite validation jobs; model tasks must not duplicate them.
         - For each `## Step N:` in the plan, emit 1-N tasks.
         - For each task, emit one sense_check.
