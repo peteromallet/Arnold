@@ -1630,6 +1630,72 @@ def test_completion_sweep_retries_inflight_restart_with_stable_nonce(tmp_path) -
     )
 
 
+def test_completion_fallback_acceptance_is_durable_and_not_redriven(tmp_path) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+
+    class _Outbound:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, message):
+            self.sent.append(message)
+            message.metadata["discord_message_ids"] = ["fallback-reply-1"]
+            message.metadata["discord_delivery_evidence"] = {
+                "schema_version": "arnold-discord-delivery-evidence-v1",
+                "authoritative_conversation_key": message.conversation_key,
+                "delivery_mode": "fallback_plain",
+                "fallback_reason": "reply_reference_rejected",
+                "provider_outcome": "accepted",
+                "provider_message_ids": ["fallback-reply-1"],
+                "provider_rejections": [
+                    {
+                        "outcome": "rejected",
+                        "scope": "reply_reference",
+                        "error_class": "NotFound",
+                        "http_status": 404,
+                        "discord_error_code": 10008,
+                    }
+                ],
+                "resolved_channel_id": "301463647895683072",
+                "resolved_thread_id": None,
+                "user_notification_visibility": "unknown",
+            }
+
+    outbound = _Outbound()
+    first = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound, project_root=tmp_path, workspace_root=None
+        )
+    )
+    second = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound, project_root=tmp_path, workspace_root=None
+        )
+    )
+
+    delivery = json.loads(manifest_path.read_text())["completion_delivery"]
+    assert first.delivered == 1
+    assert second.delivered == 0
+    assert len(outbound.sent) == 1
+    assert delivery["status"] == "delivered"
+    assert delivery["provider_outcome"] == "accepted"
+    assert delivery["user_notification_visibility"] == "unknown"
+    assert delivery["delivery_evidence"]["delivery_mode"] == "fallback_plain"
+    assert delivery["delivery_evidence"]["authoritative_conversation_key"] == (
+        outbound.sent[0].conversation_key
+    )
+    assert any(
+        item["status"] == "rejected"
+        and item["evidence"] == "provider_rejected_reply_or_thread_target"
+        for item in delivery["state_history"]
+    )
+    assert any(
+        item["status"] == "delivered"
+        and item["evidence"] == "provider_fallback_message_ids_persisted"
+        for item in delivery["state_history"]
+    )
+
+
 def test_completion_delivery_failure_is_persisted_and_retried(tmp_path) -> None:
     manifest_path = _terminal_manifest(tmp_path)
     first_now = datetime(2026, 7, 10, tzinfo=timezone.utc)
@@ -1681,6 +1747,34 @@ def test_completion_delivery_failure_is_persisted_and_retried(tmp_path) -> None:
     assert final_manifest["completion_delivery"]["attempt_count"] == 2
     assert len(final_manifest["completion_delivery"]["error_history"]) == 1
     assert final_manifest["completion_delivery"]["payload"]["content"] == "Done safely."
+
+
+def test_completion_timeout_records_unknown_provider_outcome(tmp_path) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+
+    class _Outbound:
+        async def send(self, message):
+            raise TimeoutError("provider response timed out")
+
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=_Outbound(),
+            project_root=tmp_path,
+            workspace_root=None,
+            now=datetime(2026, 7, 10, tzinfo=timezone.utc),
+        )
+    )
+
+    delivery = json.loads(manifest_path.read_text())["completion_delivery"]
+    assert result.retry_pending == 1
+    assert delivery["status"] == "retry_pending"
+    assert delivery["provider_outcome"] == "unknown"
+    assert delivery["user_notification_visibility"] == "unknown"
+    assert any(
+        item["status"] == "unknown"
+        and item["evidence"] == "provider_acceptance_outcome_unknown"
+        for item in delivery["state_history"]
+    )
 
 
 def test_completion_delivery_persists_redacted_discord_http_evidence(tmp_path) -> None:
