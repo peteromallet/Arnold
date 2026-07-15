@@ -1570,6 +1570,84 @@ def _validate_queue_authorization(
         )
 
 
+def _recover_idempotent_cross_request_queue(
+    manifest_path: Path, manifest: dict[str, Any]
+) -> dict[str, Any]:
+    """Requeue one zero-attempt false terminal after its contract validates again."""
+
+    queue = manifest.get("queue")
+    delivery = manifest.get("completion_delivery")
+    if (
+        manifest.get("status") != "failed"
+        or not isinstance(queue, dict)
+        or queue.get("attention") != "invalid_dependency_contract"
+        or int(queue.get("attempt_count") or 0) != 0
+        or not isinstance(queue.get("cross_request_authorization"), Mapping)
+        or not isinstance(delivery, Mapping)
+        or delivery.get("status") != "pending"
+    ):
+        return manifest
+    predecessor_run_id = str(queue.get("predecessor_run_id") or "")
+    predecessor_path = manifest_path.parent.parent / predecessor_run_id / "manifest.json"
+    try:
+        predecessor = _read_managed_resident_manifest(predecessor_path)
+        ancestors = _queue_ancestor_ids(
+            manifest_path.parent.parent, predecessor_run_id
+        )
+        if queue.get("ancestor_run_ids") != ancestors:
+            raise SubagentQueueError("queued dependency ancestry changed after commit")
+        if queue.get("trigger_policy") != QUEUE_TRIGGER_POLICY:
+            raise SubagentQueueError("queued trigger policy is unsupported")
+        if queue.get("predecessor_references") != _queue_predecessor_references(
+            predecessor_path, predecessor
+        ):
+            raise SubagentQueueError("queued predecessor references changed after commit")
+        _validate_queue_authorization(
+            predecessor, manifest, manifest_path=manifest_path
+        )
+    except (SubagentFollowupError, SubagentQueueError, OSError, ValueError):
+        return manifest
+
+    recovered_at = _utc_now()
+    for field in ("failed_at", "last_validation_error"):
+        queue.pop(field, None)
+    queue.update(
+        {
+            "state": "waiting_predecessor",
+            "attention": "waiting_for_predecessor",
+            "predecessor_status": str(predecessor.get("status") or "unknown"),
+            "recovered_at": recovered_at,
+            "recovery_reason": "idempotent_replay_revalidated_dependency_contract",
+            "updated_at": recovered_at,
+        }
+    )
+    for field in (
+        "terminal_outcome",
+        "finished_at",
+        "error",
+        "error_class",
+    ):
+        manifest.pop(field, None)
+    manifest.update(
+        {
+            "status": "queued",
+            "queue": queue,
+            "updated_at": recovered_at,
+        }
+    )
+    history = list(manifest.get("status_history") or [])
+    history.append(
+        {
+            "status": "queued",
+            "at": recovered_at,
+            "evidence": "idempotent_replay_revalidated_dependency_contract",
+        }
+    )
+    manifest["status_history"] = history[-100:]
+    _atomic_json(manifest_path, manifest)
+    return manifest
+
+
 def _queue_result_is_valid(
     predecessor_path: Path, predecessor: Mapping[str, Any]
 ) -> tuple[bool, str | None]:
@@ -2432,6 +2510,13 @@ def launch_codex_subagent_detached(
     fcntl.flock(launch_handle.fileno(), fcntl.LOCK_EX)
     existing = _existing_idempotent_launch(root, launch_key)
     if existing is not None:
+        existing_path, existing_manifest = existing
+        existing = (
+            existing_path,
+            _recover_idempotent_cross_request_queue(
+                existing_path, existing_manifest
+            ),
+        )
         fcntl.flock(launch_handle.fileno(), fcntl.LOCK_UN)
         launch_handle.close()
         return _result_from_manifest(*existing)
@@ -3373,7 +3458,13 @@ def reconcile_managed_subagent_queues(
                 _validate_queue_authorization(
                     predecessor, manifest, manifest_path=manifest_path
                 )
-            except (SubagentFollowupError, SubagentQueueError, OSError, ValueError):
+            except (SubagentFollowupError, SubagentQueueError, OSError, ValueError) as exc:
+                queue["last_validation_error"] = {
+                    "error_class": exc.__class__.__name__,
+                    "message": " ".join(redact_text(str(exc)).split())[:240],
+                    "at": observed_at.isoformat(),
+                }
+                manifest["queue"] = queue
                 _queue_terminalize(
                     manifest_path,
                     manifest,
