@@ -29,13 +29,15 @@ from typing import Any, Callable, Mapping
 from .hermes_fanout import GenericScatterResult, scatter_gather_processes
 from arnold_pipelines.megaplan.agent_runtime import AgentRequest, AgentSpec, ResultProvenance
 from arnold_pipelines.megaplan.fallback_chains import (
+    ExecuteFallbackMutationUnsafe,
     ExecuteFallbackUnsafe,
-    classify_retryability,
+    classify_failure,
     is_retryable_classification,
     is_same_family_operational_classification,
     normalize_fallback_spec_list,
     provider_family,
 )
+from arnold_pipelines.megaplan.execute_attempt_safety import WorkspaceSnapshot
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
 from arnold_pipelines.megaplan.types import (
@@ -493,38 +495,12 @@ def _run_worker_unit_with_ordered_fallback(
     prompt_override: str,
     worker_options: dict[str, Any] | None,
 ) -> tuple[Any, WorkerUnit]:
-    if unit.step in {"execute", "loop_execute"}:
-        if unit.attempt_index > 0:
-            raise ExecuteFallbackUnsafe(
-                phase=unit.step,
-                configured_specs=unit.configured_specs,
-                attempted_index=unit.attempt_index,
-            )
-        try:
-            return (
-                _dispatch_worker_unit_attempt(
-                    unit,
-                    state=state,
-                    plan_dir=plan_dir,
-                    root=root,
-                    args=args,
-                    run_step_with_worker=run_step_with_worker,
-                    prompt_override=prompt_override,
-                    worker_options=worker_options,
-                ),
-                unit,
-            )
-        except Exception as exc:
-            classification = classify_retryability(exc)
-            next_index = _next_fallback_index(unit, unit.attempt_index, classification)
-            if next_index is None:
-                raise
-            raise ExecuteFallbackUnsafe(
-                phase=unit.step,
-                configured_specs=unit.configured_specs,
-                attempted_index=next_index,
-            ) from exc
-
+    if unit.step in {"execute", "loop_execute"} and unit.attempt_index > 0:
+        raise ExecuteFallbackUnsafe(
+            phase=unit.step,
+            configured_specs=unit.configured_specs,
+            attempted_index=unit.attempt_index,
+        )
     if len(unit.configured_specs) == 1:
         return (
             _dispatch_worker_unit_attempt(
@@ -542,6 +518,11 @@ def _run_worker_unit_with_ordered_fallback(
 
     current = unit
     while True:
+        attempt_baseline: WorkspaceSnapshot | None = None
+        if current.step in {"execute", "loop_execute"}:
+            raw_project_dir = state.get("config", {}).get("project_dir")
+            if isinstance(raw_project_dir, (str, Path)):
+                attempt_baseline = WorkspaceSnapshot.capture(Path(raw_project_dir))
         try:
             return (
                 _dispatch_worker_unit_attempt(
@@ -557,10 +538,44 @@ def _run_worker_unit_with_ordered_fallback(
                 current,
             )
         except Exception as exc:
-            classification = classify_retryability(exc)
+            disposition = classify_failure(exc)
+            classification = disposition.classification
             next_index = _next_fallback_index(current, current.attempt_index, classification)
             if next_index is None:
                 raise
+            if current.step in {"execute", "loop_execute"}:
+                evidence = (
+                    attempt_baseline.compare(
+                        WorkspaceSnapshot.capture(attempt_baseline.root)
+                    )
+                    if attempt_baseline is not None
+                    else None
+                )
+                if evidence is None or not evidence.safe:
+                    raise ExecuteFallbackMutationUnsafe(
+                        configured_specs=current.configured_specs,
+                        attempted_index=current.attempt_index,
+                        trigger=disposition.reason_code,
+                        changed_paths=evidence.changed_paths if evidence is not None else (),
+                        guard_error=(
+                            evidence.error
+                            if evidence is not None
+                            else "mutation snapshot was not captured"
+                        ),
+                    ) from exc
+                if disposition.mutation_safe_to_retry is not True:
+                    raise ExecuteFallbackMutationUnsafe(
+                        configured_specs=current.configured_specs,
+                        attempted_index=current.attempt_index,
+                        trigger=disposition.reason_code,
+                        guard_error=(
+                            "executor observed tool activity with possible external "
+                            "side effects"
+                            if disposition.mutation_safe_to_retry is False
+                            else "executor did not provide a mutation-safe retry "
+                            "attestation"
+                        ),
+                    ) from exc
             next_spec = current.configured_specs[next_index]
             current = WorkerUnit(
                 step=current.step,
@@ -581,9 +596,9 @@ def _run_worker_unit_with_ordered_fallback(
                 ),
                 failed_attempt_reasons=(
                     *current.failed_attempt_reasons,
-                    classification,
+                    disposition.reason_code,
                 ),
-                fallback_trigger=classification,
+                fallback_trigger=disposition.reason_code,
             )
 
 

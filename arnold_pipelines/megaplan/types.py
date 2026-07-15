@@ -530,6 +530,21 @@ DEFAULTS = {
     # Claude turns past the stream-idle bound). Default True to make execution of
     # large plans converge; set False to restore cross-batch session continuity.
     "execution.fresh_session_per_batch": True,
+    # Productive-progress policy for long-lived streams. Transport heartbeats
+    # are observed but cannot extend an attempt indefinitely. The mapping is
+    # validated and snapshotted into plan state at init.
+    "execution.slow_output_policy": {
+        "enabled": True,
+        "initial_grace_s": 180.0,
+        "observation_window_s": 300.0,
+        "silence_timeout_s": 180.0,
+        "min_visible_chars_per_s": 0.05,
+        "reasoning_grace_s": 600.0,
+        "tool_grace_s": 900.0,
+        "heartbeat_grace_s": 60.0,
+        "escalation_grace_s": 30.0,
+        "surface_streaming_timeouts": True,
+    },
     "orchestration.max_critique_concurrency": 6,
     "orchestration.mode": "subagent",
     "execution.adaptive_critique": False,

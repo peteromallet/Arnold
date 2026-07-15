@@ -26,6 +26,7 @@ class Receipt(TypedDict):
     selected_spec_total: int
     fallback_trigger: str | None
     failed_attempt_reasons: list[str]
+    mutation_safety: NotRequired[dict[str, Any] | None]
     session_id: str | None
     megaplan_version: str
     schema_version: int

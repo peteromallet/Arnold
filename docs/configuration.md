@@ -49,6 +49,36 @@ This would set `worker_timeout_seconds` to 120, `test_command` to `"pytest"`,
 and `auto_approve` to `true` for every plan initialized in this project,
 regardless of the user's global JSON config.
 
+### Productive stream progress policy
+
+Long-lived execute streams use `execution.slow_output_policy` to distinguish
+productive work from a connection that is merely alive. The conservative
+defaults allow 180 seconds of initial grace, measure visible output over 300
+seconds, bound reasoning-only progress to 600 seconds and an active tool to 900
+seconds, and require 30 seconds of sustained suspicion before a slow/silent
+stream becomes fallback-eligible. A provider heartbeat alone has only 60
+seconds of grace. Streaming transport timeouts surface immediately with the
+`streaming_timeout` reason instead of being hidden inside an executor retry.
+
+```toml
+[execution.slow_output_policy]
+enabled = true
+initial_grace_s = 180
+observation_window_s = 300
+silence_timeout_s = 180
+min_visible_chars_per_s = 0.05
+reasoning_grace_s = 600
+tool_grace_s = 900
+heartbeat_grace_s = 60
+escalation_grace_s = 30
+surface_streaming_timeouts = true
+```
+
+Set `enabled = false` to retain transport/runtime timeouts without proactive
+slow-output fallback. Unknown keys, wrong types, negative durations, and zero
+silence/observation windows are rejected during plan initialization. The
+validated effective policy is copied into plan state so a run is reproducible.
+
 ### Distinction from user-level `~/.config/megaplan/config.toml`
 
 | File | Scope | Role |

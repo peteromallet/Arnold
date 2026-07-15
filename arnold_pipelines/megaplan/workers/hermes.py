@@ -48,6 +48,15 @@ from arnold_pipelines.megaplan.model_seam import (
     render_step_message,
 )
 from arnold_pipelines.megaplan.execute.status_constants import TERMINAL_TASK_STATUSES
+from arnold_pipelines.megaplan.progress_liveness import (
+    ProgressAction,
+    ProgressDecision,
+    ProgressLivenessMonitor,
+    ProgressReason,
+    ProgressSample,
+    ProviderProgressCapabilities,
+    SlowOutputPolicy,
+)
 
 
 def _pre_dispatch_budget_check(
@@ -671,21 +680,31 @@ class _StreamTracker:
 
     def __init__(self) -> None:
         self.tokens_emitted: int = 0
+        self.visible_chars_emitted: int = 0
         self.last_token_at: float = 0.0
         self.reasoning_emitted: int = 0
+        self.reasoning_chars_emitted: int = 0
         self.last_reasoning_at: float = 0.0
+        self.provider_event_count: int = 0
+        self.last_provider_event_at: float = 0.0
         self.request_id: str | None = None
 
     def __call__(self, text: str) -> None:
         import time as _t
         self.tokens_emitted += 1  # rough: one "token" per chunk; fine-grained enough for heartbeat
+        self.visible_chars_emitted += len(text.strip())
         self.last_token_at = _t.monotonic()
 
     def on_reasoning(self, text: str) -> None:
         """Increment the reasoning counter. Wired in as ``reasoning_callback``."""
         import time as _t
         self.reasoning_emitted += 1
+        self.reasoning_chars_emitted += len(text.strip())
         self.last_reasoning_at = _t.monotonic()
+
+    def on_provider_event(self) -> None:
+        self.provider_event_count += 1
+        self.last_provider_event_at = time.monotonic()
 
 
 _StreamTracker._megaplan_force_stream = True  # type: ignore[attr-defined]
@@ -874,6 +893,8 @@ def _emit_worker_stalled(
     stderr_tail: str | None = None,
     exception_type: str | None = None,
     exception_message: str | None = None,
+    reason_code: str = "worker_stall",
+    progress_decision: ProgressDecision | None = None,
 ) -> None:
     """Emit a structured ``worker_stalled`` (LLM_CALL_ERROR) diagnostic event.
 
@@ -895,8 +916,18 @@ def _emit_worker_stalled(
             "reasoning_emitted": reasoning_emitted,
             "seconds_since_last_token": round(seconds_since_progress, 1),
             "stall_timeout_s": timeout_s,
-            "provider_error_code": "worker_stall",
+            "provider_error_code": reason_code,
+            "progress_reason": reason_code,
         }
+        if progress_decision is not None:
+            payload["progress_decision"] = {
+                "action": progress_decision.action.value,
+                "reason": progress_decision.reason.value,
+                "elapsed_s": progress_decision.elapsed_s,
+                "silence_s": progress_decision.silence_s,
+                "visible_rate_chars_per_s": progress_decision.visible_rate_chars_per_s,
+                "suspect_for_s": progress_decision.suspect_for_s,
+            }
         if subprocess_pid is not None:
             payload["subprocess_pid"] = subprocess_pid
         if stderr_tail:
@@ -916,39 +947,60 @@ def _emit_worker_stalled(
 
 
 class _WorkerStallWatchdog:
-    """Daemon-thread watchdog that aborts a wedged ``run_conversation``.
+    """Apply productive-progress policy to an in-process model stream.
 
-    Polls the shared ``_StreamTracker`` every second. The clock resets whenever
-    EITHER ``tokens_emitted`` or ``reasoning_emitted`` advances (i.e. any new
-    chunk arrived) OR a tool call is in flight on the agent. If none of those
-    hold for the full ``timeout`` AND the agent has not already been interrupted,
-    it calls ``agent.interrupt()`` — the same clean abort the gateway uses, which
-    aborts the in-flight request client and raises ``InterruptedError`` inside
-    the agent loop — and records the trip.
-
-    Tool-in-flight is read from ``agent._executing_tools`` (set True by
-    ``AIAgent._execute_tool_calls`` for the full duration of a tool batch,
-    including a single long Bash/terminal call). A worker BLOCKED awaiting a
-    tool_result emits zero stream chunks — that is expected, not a wedge — so we
-    must NOT count that silence. Only genuine LLM-token silence (no tool running,
-    no new chunk) advances toward the timeout. A truly dead worker (no tool in
-    flight, no tokens) is still aborted.
-
-    ``tripped`` is read back by ``_run_attempt`` after ``run_conversation``
-    returns/raises so the stall is re-raised as a retryable ``worker_stall``
-    rather than mistaken for a normal (empty) completion.
+    Visible output rate, reasoning deltas, provider events, and tool state have
+    separate bounded grace periods. Concerns use staged escalation; the legacy
+    coarse silence timeout remains only as a final hard backstop. A trip is
+    surfaced as a reason-coded ``CliError`` after ``run_conversation`` exits so
+    the top-level configured-chain state machine—not an internal executor
+    retry—owns model advancement.
     """
 
-    def __init__(self, agent, tracker: "_StreamTracker", timeout: float) -> None:
+    def __init__(
+        self,
+        agent,
+        tracker: "_StreamTracker",
+        timeout: float,
+        policy: SlowOutputPolicy,
+    ) -> None:
         self._agent = agent
         self._tracker = tracker
         self._timeout = timeout
+        self._started_at = time.monotonic()
+        self._monitor = ProgressLivenessMonitor(
+            policy,
+            ProviderProgressCapabilities(
+                visible_output=True,
+                reasoning=True,
+                tool_activity=True,
+                provider_events=True,
+            ),
+            started_at=self._started_at,
+        )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.tripped = False
         self.seconds_since_progress = 0.0
         self.tokens_at_trip = 0
         self.reasoning_at_trip = 0
+        self.reason_code = ProgressReason.NO_OBSERVABLE_ACTIVITY.value
+        self.progress_decision: ProgressDecision | None = None
+        self._tool_active_since: float | None = None
+        self._tool_was_active = False
+        self._tool_result_count = 0
+        self._tool_activity_count = 0
+
+    @property
+    def tool_activity_observed(self) -> bool:
+        """Whether this attempt entered a tool execution boundary."""
+
+        return self._tool_activity_count > 0
+
+    def record_tool_activity(self) -> None:
+        """Record the executor's authoritative per-tool dispatch callback."""
+
+        self._tool_activity_count += 1
 
     def __enter__(self) -> "_WorkerStallWatchdog":
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -970,6 +1022,27 @@ class _WorkerStallWatchdog:
         """
         return bool(getattr(self._agent, "_executing_tools", False))
 
+    def record_streaming_timeout(self) -> None:
+        decision = self._monitor.streaming_timeout(now=time.monotonic())
+        if decision.action is ProgressAction.FALLBACK:
+            self._trip(decision)
+
+    def _trip(self, decision: ProgressDecision) -> None:
+        if self.tripped:
+            return
+        self.tripped = True
+        self.progress_decision = decision
+        self.reason_code = decision.reason.value
+        self.seconds_since_progress = decision.silence_s
+        self.tokens_at_trip = self._tracker.tokens_emitted
+        self.reasoning_at_trip = self._tracker.reasoning_emitted
+        try:
+            self._agent.interrupt(
+                f"progress liveness policy requested fallback: {self.reason_code}"
+            )
+        except Exception:
+            pass
+
     def _run(self) -> None:
         last_progress_at = time.monotonic()
         last_tokens = self._tracker.tokens_emitted
@@ -978,13 +1051,40 @@ class _WorkerStallWatchdog:
             now = time.monotonic()
             tokens = self._tracker.tokens_emitted
             reasoning = self._tracker.reasoning_emitted
+            tool_active = self._tool_in_flight()
+            if tool_active and not self._tool_was_active:
+                self._tool_active_since = now
+            elif not tool_active and self._tool_was_active:
+                self._tool_result_count += 1
+                self._tool_active_since = None
+            self._tool_was_active = tool_active
+
+            decision = self._monitor.observe(
+                ProgressSample(
+                    now=now,
+                    visible_chars=self._tracker.visible_chars_emitted,
+                    reasoning_chars=self._tracker.reasoning_chars_emitted,
+                    last_visible_at=(self._tracker.last_token_at or None),
+                    last_reasoning_at=(self._tracker.last_reasoning_at or None),
+                    tool_active=tool_active,
+                    tool_active_since=self._tool_active_since,
+                    tool_result_count=self._tool_result_count,
+                    provider_event_count=self._tracker.provider_event_count,
+                    last_provider_event_at=(
+                        self._tracker.last_provider_event_at or None
+                    ),
+                )
+            )
+            if decision.action is ProgressAction.FALLBACK:
+                self._trip(decision)
+                return
             if tokens != last_tokens or reasoning != last_reasoning:
                 # Any new chunk (content OR reasoning) is real progress.
                 last_tokens = tokens
                 last_reasoning = reasoning
                 last_progress_at = now
                 continue
-            if self._tool_in_flight():
+            if tool_active:
                 # A tool is running (e.g. a multi-minute `pytest --cov`). The
                 # LLM is BLOCKED awaiting its tool_result and legitimately emits
                 # zero chunks — this is NOT a wedge. Hold the clock so the long
@@ -994,14 +1094,16 @@ class _WorkerStallWatchdog:
                 last_progress_at = now
                 continue
             if now - last_progress_at >= self._timeout:
-                self.tripped = True
-                self.seconds_since_progress = now - last_progress_at
-                self.tokens_at_trip = tokens
-                self.reasoning_at_trip = reasoning
-                try:
-                    self._agent.interrupt("worker stall watchdog: no stream progress")
-                except Exception:
-                    pass
+                self._trip(
+                    ProgressDecision(
+                        ProgressAction.FALLBACK,
+                        ProgressReason.NO_OBSERVABLE_ACTIVITY,
+                        now - self._started_at,
+                        now - last_progress_at,
+                        self._tracker.visible_chars_emitted
+                        / max(now - self._started_at, 1.0),
+                    )
+                )
                 return
 
 
@@ -1013,7 +1115,7 @@ def _start_heartbeat(
     *,
     run_id: str | None = None,
 ) -> None:
-    """Start a daemon thread that emits llm_token_heartbeat every ~1s.
+    """Emit productive-progress heartbeats plus bounded transport heartbeats.
 
     When ``run_id`` is provided the beat also bumps ``state.json``'s
     ``active_step.last_activity_at`` via ``touch_active_step`` whenever the
@@ -1037,17 +1139,24 @@ def _start_heartbeat(
         # allowed to idle-timeout.
         last_tokens = 0
         last_reasoning = 0
+        last_transport_heartbeat_at = 0.0
         while not stop_event.wait(1.0):
+            content_progress = tracker.tokens_emitted != last_tokens
+            reasoning_progress = tracker.reasoning_emitted != last_reasoning
+            now = time.monotonic()
+            transport_heartbeat = now - last_transport_heartbeat_at >= 30.0
             try:
                 from arnold_pipelines.megaplan.observability.events import emit, EventKind
 
-                emit(
-                    EventKind.LLM_TOKEN_HEARTBEAT,
-                    plan_dir=plan_dir,
-                    phase=step,
-                    payload={
-                        "tokens_emitted_so_far": tracker.tokens_emitted,
-                        "last_token_at": tracker.last_token_at,
+                if content_progress or reasoning_progress or transport_heartbeat:
+                    emit(
+                        EventKind.LLM_TOKEN_HEARTBEAT,
+                        plan_dir=plan_dir,
+                        phase=step,
+                        payload={
+                            "tokens_emitted_so_far": tracker.tokens_emitted,
+                            "visible_chars_emitted_so_far": tracker.visible_chars_emitted,
+                            "last_token_at": tracker.last_token_at,
                         # Reasoning-stream visibility: a reasoning model that
                         # spends minutes in the "thinking" phase before its
                         # first content delta now shows non-zero progress here
@@ -1055,10 +1164,22 @@ def _start_heartbeat(
                         # this, the only liveness signal during a long thinking
                         # phase was the elapsed wall-clock — masking real
                         # wedges (see 2026-05-24 DeepSeek-V4-Pro wedge).
-                        "reasoning_emitted_so_far": tracker.reasoning_emitted,
-                        "last_reasoning_at": tracker.last_reasoning_at,
-                    },
-                )
+                            "reasoning_emitted_so_far": tracker.reasoning_emitted,
+                            "reasoning_chars_emitted_so_far": tracker.reasoning_chars_emitted,
+                            "last_reasoning_at": tracker.last_reasoning_at,
+                            "productive_progress": bool(
+                                content_progress or reasoning_progress
+                            ),
+                            "heartbeat_kind": (
+                                "content"
+                                if content_progress
+                                else "reasoning"
+                                if reasoning_progress
+                                else "transport"
+                            ),
+                        },
+                    )
+                    last_transport_heartbeat_at = now
             except Exception:
                 pass
             # Liveness: only touch state when the provider is actually
@@ -1066,11 +1187,7 @@ def _start_heartbeat(
             # stream is still allowed to idle-timeout. touch_active_step
             # no-ops unless the on-disk run_id matches, preserving the
             # stale-worker guard.
-            content_progress = tracker.tokens_emitted != last_tokens
-            reasoning_progress = tracker.reasoning_emitted != last_reasoning
             if run_id and (content_progress or reasoning_progress):
-                last_tokens = tracker.tokens_emitted
-                last_reasoning = tracker.reasoning_emitted
                 try:
                     touch_active_step(
                         plan_dir,
@@ -1083,6 +1200,8 @@ def _start_heartbeat(
                     )
                 except Exception:
                     pass
+            last_tokens = tracker.tokens_emitted
+            last_reasoning = tracker.reasoning_emitted
 
     t = threading.Thread(target=_beat, daemon=True)
     t.start()
@@ -2204,6 +2323,10 @@ def run_hermes_step(
                 tracker = _StreamTracker()
                 run_kwargs["stream_callback"] = tracker
             is_streaming = isinstance(tracker, _StreamTracker)
+            watchdog: "_WorkerStallWatchdog | None" = None
+            original_tool_progress_callback = getattr(
+                current_agent, "tool_progress_callback", None
+            )
 
             # Wire the reasoning_callback to the tracker so reasoning_emitted_so_far
             # advances on every reasoning_content delta. Without this, a reasoning
@@ -2216,8 +2339,9 @@ def run_hermes_step(
                 # Surface silent in-agent retries (TimeoutError / APITimeoutError
                 # that the retry loop catches and reissues without emitting any
                 # event) as llm_call_error so observability sees the wedge fast.
-                current_agent._megaplan_retry_error_callback = (
-                    lambda info: _emit_llm_error(
+                def _record_internal_retry(info: dict) -> None:
+                    tracker.on_provider_event()
+                    _emit_llm_error(
                         plan_dir,
                         step,
                         (
@@ -2230,7 +2354,26 @@ def run_hermes_step(
                         ),
                         retry_after_s=None,
                     )
-                )
+                    if (
+                        watchdog is not None
+                        and bool(info.get("is_streaming_timeout"))
+                    ):
+                        watchdog.record_streaming_timeout()
+
+                current_agent._megaplan_retry_error_callback = _record_internal_retry
+
+                def _record_tool_progress(*callback_args, **callback_kwargs) -> None:
+                    is_model_thinking = bool(
+                        callback_args and callback_args[0] == "_thinking"
+                    )
+                    if watchdog is not None and not is_model_thinking:
+                        watchdog.record_tool_activity()
+                    if callable(original_tool_progress_callback):
+                        original_tool_progress_callback(
+                            *callback_args, **callback_kwargs
+                        )
+
+                current_agent.tool_progress_callback = _record_tool_progress
 
             # Emit llm_call_start
             prompt_text = rendered_prompt or prompt_override or ""
@@ -2255,10 +2398,16 @@ def run_hermes_step(
             # Claude/anthropic transports.
             from contextlib import nullcontext
 
-            watchdog: "_WorkerStallWatchdog | None" = None
             if is_streaming and tracker is not None:
+                slow_policy = SlowOutputPolicy.from_config(
+                    state.get("config", {}).get("slow_output_policy"),
+                    phase=step,
+                )
                 watchdog = _WorkerStallWatchdog(
-                    current_agent, tracker, _worker_stall_timeout_seconds()
+                    current_agent,
+                    tracker,
+                    _worker_stall_timeout_seconds(),
+                    slow_policy,
                 )
             watchdog_ctx = watchdog if watchdog is not None else nullcontext()
 
@@ -2272,6 +2421,8 @@ def run_hermes_step(
                 here so the stall is never mistaken for a normal completion.
                 """
                 timeout_s = _worker_stall_timeout_seconds()
+                decision = watchdog.progress_decision
+                reason_code = watchdog.reason_code
                 _emit_worker_stalled(
                     plan_dir,
                     step,
@@ -2284,18 +2435,43 @@ def run_hermes_step(
                     transport="hermes_in_process",
                     exception_type=type(cause).__name__ if cause is not None else None,
                     exception_message=str(cause) if cause is not None else None,
+                    reason_code=reason_code,
+                    progress_decision=decision,
                 )
                 return CliError(
-                    "worker_stall",
+                    reason_code,
                     (
-                        f"Hermes worker stalled on step '{step}': no stream "
-                        f"progress (content or reasoning) for "
+                        f"Hermes progress policy requested fallback on step '{step}': "
+                        f"reason={reason_code}; no productive stream progress for "
                         f"{watchdog.seconds_since_progress:.0f}s "
                         f"(timeout={timeout_s:.0f}s, "
                         f"tokens={watchdog.tokens_at_trip}, "
                         f"reasoning={watchdog.reasoning_at_trip})"
                     ),
-                    extra={"raw_output": ""},
+                    extra={
+                        "raw_output": "",
+                        "progress_reason": reason_code,
+                        "provider_error_code": (
+                            "timeout"
+                            if reason_code == ProgressReason.STREAMING_TIMEOUT.value
+                            else "slow_progress"
+                        ),
+                        "retryable": True,
+                        # Repository snapshots cannot detect external effects.
+                        # Only a stalled attempt that never crossed a tool
+                        # boundary is eligible for automatic execute fallback.
+                        "mutation_safe_to_retry": not watchdog.tool_activity_observed,
+                        "progress_decision": {
+                            "action": decision.action.value,
+                            "reason": decision.reason.value,
+                            "elapsed_s": decision.elapsed_s,
+                            "silence_s": decision.silence_s,
+                            "visible_rate_chars_per_s": decision.visible_rate_chars_per_s,
+                            "suspect_for_s": decision.suspect_for_s,
+                        }
+                        if decision is not None
+                        else None,
+                    },
                 )
 
             # _pre_dispatch_budget_check sentinel: budget guard for dispatch
@@ -2330,6 +2506,12 @@ def run_hermes_step(
                 if is_streaming and tracker is not None:
                     try:
                         current_agent._megaplan_retry_error_callback = None
+                    except Exception:
+                        pass
+                    try:
+                        current_agent.tool_progress_callback = (
+                            original_tool_progress_callback
+                        )
                     except Exception:
                         pass
                 # Clear any interrupt flag so a retry on the same agent object

@@ -15,6 +15,10 @@ from arnold_pipelines.megaplan.cloud.spec import (
     load_spec as load_cloud_spec,
 )
 from arnold_pipelines.megaplan._core.state import make_history_entry
+from arnold_pipelines.megaplan.fallback_chains import (
+    ExecuteFallbackMutationUnsafe,
+    FailureDisposition,
+)
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan.workers import _impl
 
@@ -89,7 +93,7 @@ def test_sequential_same_family_fallback_is_non_writing_and_operational_only(
 
     advanced = _impl._advance_configured_spec_fallback(
         metadata,
-        failure_class,
+        FailureDisposition(failure_class, failure_class),
         mode="persistent",
         step="critique",
         read_only=True,
@@ -115,18 +119,19 @@ def test_sequential_same_family_fallback_rejects_semantic_and_writing_failures()
 
     assert _impl._advance_configured_spec_fallback(
         metadata,
-        "semantic",
+        FailureDisposition("semantic", "semantic"),
         mode="persistent",
         step="critique",
         read_only=True,
     ) is None
-    assert _impl._advance_configured_spec_fallback(
-        metadata,
-        "availability",
-        mode="persistent",
-        step="execute",
-        read_only=False,
-    ) is None
+    with pytest.raises(ExecuteFallbackMutationUnsafe):
+        _impl._advance_configured_spec_fallback(
+            metadata,
+            FailureDisposition("availability", "availability", True),
+            mode="persistent",
+            step="execute",
+            read_only=False,
+        )
 
 
 def test_unknown_codex_model_is_explicitly_unpriced() -> None:

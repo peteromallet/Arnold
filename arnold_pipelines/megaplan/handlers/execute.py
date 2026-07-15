@@ -12,7 +12,7 @@ from arnold_pipelines.megaplan.execute.batch import (
     handle_execute_one_batch,
     normalize_tier_map,
 )
-from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.fallback_chains import FallbackSpecChain
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
 from arnold_pipelines.megaplan.types import (
@@ -107,40 +107,43 @@ def _record_execute_blocked(plan_dir: Path, response: StepResponse) -> None:
     )
 
 
-def _extract_execute_tier_map(tier_models: object) -> dict[int, str] | None:
-    """Return the execute tier map in the legacy int-keyed routing shape."""
+def _extract_execute_tier_map(
+    tier_models: object,
+) -> dict[int, FallbackSpecChain] | None:
+    """Return a validated, typed execute tier map without collapsing chains."""
     if not isinstance(tier_models, dict):
         return None
     execute_tiers = tier_models.get("execute")
     if not isinstance(execute_tiers, dict) or not execute_tiers:
         return None
-    normalized: dict[int, str] = {}
+    normalized: dict[int, FallbackSpecChain] = {}
     for raw_tier, raw_spec in execute_tiers.items():
         if isinstance(raw_tier, bool):
-            continue
-        selected_spec: str | None = None
-        if isinstance(raw_spec, str) and raw_spec.strip():
-            selected_spec = raw_spec
-        elif isinstance(raw_spec, list):
-            selected_spec = select_fallback_spec(
-                raw_spec,
-                0,
-                path=f"tier_models.execute.{raw_tier}",
-            )
-        if not selected_spec:
-            continue
+            raise ValueError("tier_models.execute boolean tier keys are invalid")
+        chain = FallbackSpecChain.from_value(
+            raw_spec,
+            path=f"tier_models.execute.{raw_tier}",
+        )
         if isinstance(raw_tier, int):
-            normalized[raw_tier] = selected_spec
-            continue
-        if isinstance(raw_tier, str) and raw_tier.isdigit():
-            normalized[int(raw_tier)] = selected_spec
+            tier = raw_tier
+        elif isinstance(raw_tier, str) and raw_tier.isdigit():
+            tier = int(raw_tier)
+        else:
+            raise ValueError(
+                f"tier_models.execute.{raw_tier!r} must use an integer tier key"
+            )
+        if tier < 1 or tier > 10:
+            raise ValueError(f"tier_models.execute.{tier} must be in range 1..10")
+        if tier in normalized:
+            raise ValueError(f"tier_models.execute.{tier} is duplicated")
+        normalized[tier] = chain
     return normalized or None
 
 
 def _apply_execute_tier_cap(
-    tier_map: dict[int, str] | None,
+    tier_map: dict[int, FallbackSpecChain] | None,
     max_execute_tier: object,
-) -> dict[int, str] | None:
+) -> dict[int, FallbackSpecChain] | None:
     if tier_map is None:
         return None
     if isinstance(max_execute_tier, bool):

@@ -24,12 +24,19 @@ from typing import Any, Callable, Literal
 from arnold_pipelines.megaplan.audits.robustness import build_empty_template
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
 from arnold_pipelines.megaplan.fallback_chains import (
+    ExecuteFallbackMutationUnsafe,
+    FailureDisposition,
+    classify_failure,
     classify_retryability,
     configured_fallback_chain_for_phase,
     decode_phase_model_value,
     fallback_observability_fields,
     is_same_family_operational_classification,
     provider_family,
+)
+from arnold_pipelines.megaplan.execute_attempt_safety import (
+    MutationSafetyEvidence,
+    WorkspaceSnapshot,
 )
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
 from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
@@ -702,6 +709,7 @@ class WorkerResult:
     attempted_specs: tuple[str, ...] = ()
     failed_attempt_reasons: tuple[str, ...] = ()
     fallback_trigger: str | None = None
+    mutation_safety: dict[str, Any] | None = None
 
     @classmethod
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
@@ -735,6 +743,7 @@ class WorkerResult:
             attempted_specs=tuple(metadata.get("attempted_specs", ())),
             failed_attempt_reasons=tuple(metadata.get("failed_attempt_reasons", ())),
             fallback_trigger=metadata.get("fallback_trigger"),
+            mutation_safety=metadata.get("mutation_safety"),
         )
 
     def to_agent_result(self) -> Any:
@@ -754,6 +763,7 @@ class WorkerResult:
                 "attempted_specs": list(self.attempted_specs),
                 "failed_attempt_reasons": list(self.failed_attempt_reasons),
                 "fallback_trigger": self.fallback_trigger,
+                "mutation_safety": self.mutation_safety,
             }.items()
             if value is not None
         }
@@ -4493,6 +4503,7 @@ def _initial_fallback_metadata(
         "attempted_specs": (normalized_specs[0],),
         "failed_attempt_reasons": (),
         "fallback_trigger": None,
+        "mutation_safety": None,
     }
 
 
@@ -4502,6 +4513,7 @@ def _assign_worker_fallback_metadata(worker: WorkerResult, metadata: dict[str, A
     worker.attempted_specs = tuple(metadata["attempted_specs"])
     worker.failed_attempt_reasons = tuple(metadata["failed_attempt_reasons"])
     worker.fallback_trigger = metadata["fallback_trigger"]
+    worker.mutation_safety = metadata.get("mutation_safety")
 
 
 _CONFIGURED_SPEC_FALLBACK_CLASSES = frozenset(
@@ -4517,16 +4529,20 @@ _CONFIGURED_SPEC_FALLBACK_CLASSES = frozenset(
 )
 
 
-def _configured_spec_failure_class(error: CliError) -> str:
+def _configured_spec_failure_disposition(error: CliError) -> FailureDisposition:
     external = error.extra.get("_external_error")
     if external is not None:
-        return classify_retryability(external)
-    return classify_retryability(
+        return classify_failure(external)
+    return classify_failure(
         {
             "code": error.code,
             "message": str(error),
+            "progress_reason": error.extra.get("progress_reason"),
+            "error_layer": error.extra.get("error_layer"),
+            "provider_error_code": error.extra.get("provider_error_code"),
             "status_code": error.extra.get("status_code"),
             "retryable": error.extra.get("retryable"),
+            "mutation_safe_to_retry": error.extra.get("mutation_safe_to_retry"),
         }
     )
 
@@ -4551,41 +4567,76 @@ def _agent_mode_from_configured_spec(
     )
 
 
-def _configured_spec_worker_failure_class(worker: WorkerResult) -> str | None:
+def _configured_spec_worker_failure_disposition(
+    worker: WorkerResult,
+) -> FailureDisposition | None:
     payload = worker.payload
     if not isinstance(payload, dict) or payload.get("success") is not False:
         return None
     details = payload.get("details")
     external = details.get("_external_error") if isinstance(details, dict) else None
     if external is not None:
-        return classify_retryability(external)
-    return classify_retryability(
+        return classify_failure(external)
+    return classify_failure(
         {
             "code": payload.get("error"),
             "message": payload.get("message"),
+            "mutation_safe_to_retry": (
+                details.get("mutation_safe_to_retry")
+                if isinstance(details, dict)
+                else None
+            ),
         }
     )
 
 
 def _advance_configured_spec_fallback(
     fallback_metadata: dict[str, Any],
-    failure_class: str | None,
+    disposition: FailureDisposition | None,
     *,
     mode: str,
     step: str,
     read_only: bool,
+    mutation_safety: MutationSafetyEvidence | None = None,
 ) -> tuple[AgentMode, dict[str, Any]] | None:
-    # Never redispatch after a worker may have mutated the checkout. This is
-    # stricter than the provider/model relationship and keeps mid-write
-    # failures fail-closed for both explicit and profile-provided chains.
-    if not read_only or step in _EXECUTE_STEPS:
+    if disposition is None:
         return None
+    failure_class = disposition.classification
     if failure_class not in _CONFIGURED_SPEC_FALLBACK_CLASSES:
         return None
     configured_specs = tuple(fallback_metadata["configured_specs"])
     attempt_index = int(fallback_metadata["attempt_index"])
     next_index = attempt_index + 1
     if next_index >= len(configured_specs):
+        return None
+    if step in _EXECUTE_STEPS:
+        if mutation_safety is None or not mutation_safety.safe:
+            raise ExecuteFallbackMutationUnsafe(
+                configured_specs=configured_specs,
+                attempted_index=attempt_index,
+                trigger=disposition.reason_code,
+                changed_paths=(
+                    mutation_safety.changed_paths if mutation_safety is not None else ()
+                ),
+                guard_error=(
+                    mutation_safety.error
+                    if mutation_safety is not None
+                    else "mutation snapshot was not captured"
+                ),
+            )
+        if disposition.mutation_safe_to_retry is not True:
+            raise ExecuteFallbackMutationUnsafe(
+                configured_specs=configured_specs,
+                attempted_index=attempt_index,
+                trigger=disposition.reason_code,
+                guard_error=(
+                    "executor observed tool activity with possible external side "
+                    "effects"
+                    if disposition.mutation_safe_to_retry is False
+                    else "executor did not provide a mutation-safe retry attestation"
+                ),
+            )
+    elif not read_only:
         return None
     next_spec = configured_specs[next_index]
     current_spec = configured_specs[attempt_index]
@@ -4597,6 +4648,27 @@ def _advance_configured_spec_fallback(
         mode=mode,
         refreshed=True,
     )
+    mutation_receipt: dict[str, Any] | None = None
+    if mutation_safety is not None:
+        evidence_receipt = mutation_safety.to_receipt()
+        previous = fallback_metadata.get("mutation_safety")
+        previous_attempts = (
+            list(previous.get("attempts", ()))
+            if isinstance(previous, dict)
+            else []
+        )
+        mutation_receipt = {
+            **evidence_receipt,
+            "attempts": [
+                *previous_attempts,
+                {
+                    "attempt_index": attempt_index,
+                    "spec": current_spec,
+                    "trigger": disposition.reason_code,
+                    **evidence_receipt,
+                },
+            ],
+        }
     next_metadata = {
         "configured_specs": configured_specs,
         "attempt_index": next_index,
@@ -4606,9 +4678,10 @@ def _advance_configured_spec_fallback(
         ),
         "failed_attempt_reasons": (
             *fallback_metadata["failed_attempt_reasons"],
-            failure_class,
+            disposition.reason_code,
         ),
-        "fallback_trigger": failure_class,
+        "fallback_trigger": disposition.reason_code,
+        "mutation_safety": mutation_receipt,
     }
     return next_mode, next_metadata
 
@@ -4643,6 +4716,8 @@ def _patch_active_step_fallback_metadata(
         if model:
             current_active["model"] = model
         current_active.update(fields)
+        if metadata.get("mutation_safety") is not None:
+            current_active["mutation_safety"] = metadata["mutation_safety"]
         current_active["last_activity_at"] = now_utc()
         current_active["last_activity_kind"] = "fallback"
         current_active["last_activity_detail"] = f"advanced to {fields['selected_spec']}"
@@ -4715,6 +4790,7 @@ def run_step_with_worker(
             "attempted_specs": tuple(ledger_fields["attempted_specs"]),
             "failed_attempt_reasons": tuple(ledger_fields["failed_attempt_reasons"]),
             "fallback_trigger": ledger_fields["fallback_trigger"],
+            "mutation_safety": None,
         }
     else:
         fallback_metadata = _initial_fallback_metadata(
@@ -4725,6 +4801,11 @@ def run_step_with_worker(
             effort=effort,
         )
     while True:
+        attempt_baseline: WorkspaceSnapshot | None = None
+        if step in _EXECUTE_STEPS and len(fallback_metadata["configured_specs"]) > 1:
+            raw_project_dir = state.get("config", {}).get("project_dir")
+            if isinstance(raw_project_dir, (str, Path)):
+                attempt_baseline = WorkspaceSnapshot.capture(Path(raw_project_dir))
         attempted_agents.add(agent)
         try:
             if os.getenv("MEGAPLAN_USE_AGENT_DISPATCHER") != "1":
@@ -4933,10 +5014,17 @@ def run_step_with_worker(
                 worker = WorkerResult.from_agent_result(_dispatcher.dispatch(_request))
             fallback_attempt = _advance_configured_spec_fallback(
                 fallback_metadata,
-                _configured_spec_worker_failure_class(worker),
+                _configured_spec_worker_failure_disposition(worker),
                 mode=mode,
                 step=step,
                 read_only=read_only,
+                mutation_safety=(
+                    attempt_baseline.compare(
+                        WorkspaceSnapshot.capture(attempt_baseline.root)
+                    )
+                    if attempt_baseline is not None
+                    else None
+                ),
             )
             if fallback_attempt is not None:
                 next_mode, fallback_metadata = fallback_attempt
@@ -4978,15 +5066,23 @@ def run_step_with_worker(
                     attempted_specs=worker.attempted_specs,
                     failed_attempt_reasons=worker.failed_attempt_reasons,
                     fallback_trigger=worker.fallback_trigger,
-            )
+                    mutation_safety=worker.mutation_safety,
+                )
             return worker, agent, mode, effective_refreshed
         except CliError as error:
             fallback_attempt = _advance_configured_spec_fallback(
                 fallback_metadata,
-                _configured_spec_failure_class(error),
+                _configured_spec_failure_disposition(error),
                 mode=mode,
                 step=step,
                 read_only=read_only,
+                mutation_safety=(
+                    attempt_baseline.compare(
+                        WorkspaceSnapshot.capture(attempt_baseline.root)
+                    )
+                    if attempt_baseline is not None
+                    else None
+                ),
             )
             if fallback_attempt is not None:
                 next_mode, fallback_metadata = fallback_attempt

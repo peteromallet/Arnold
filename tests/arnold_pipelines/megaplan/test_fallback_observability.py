@@ -27,6 +27,14 @@ def test_record_step_routing_includes_fallback_observability_fields(tmp_path: Pa
         attempted_specs=("codex:gpt-5.5:high", "claude:claude-sonnet-4-6:high"),
         failed_attempt_reasons=("availability",),
         fallback_trigger="availability",
+        mutation_safety={
+            "guard": "git_workspace_and_index_content_v2",
+            "safe": True,
+            "baseline_digest": "abc",
+            "current_digest": "abc",
+            "changed_paths": [],
+            "error": None,
+        },
     )
 
     rows = (tmp_path / LEDGER_FILE).read_text(encoding="utf-8").splitlines()
@@ -45,6 +53,7 @@ def test_record_step_routing_includes_fallback_observability_fields(tmp_path: Pa
     assert payload["selected_spec_total"] == 2
     assert payload["fallback_trigger"] == "availability"
     assert payload["failed_attempt_reasons"] == ["availability"]
+    assert payload["mutation_safety"]["guard"] == "git_workspace_and_index_content_v2"
 
 
 def test_record_step_routing_ignores_removed_plan_directory(tmp_path: Path, caplog) -> None:
@@ -94,6 +103,14 @@ def test_build_receipt_prefers_selected_attempt_and_emits_fallback_fields(tmp_pa
         attempted_specs=("codex:gpt-5.5:high", "claude:claude-sonnet-4-6:high"),
         failed_attempt_reasons=("availability",),
         fallback_trigger="availability",
+        mutation_safety={
+            "guard": "git_workspace_and_index_content_v2",
+            "safe": True,
+            "baseline_digest": "abc",
+            "current_digest": "abc",
+            "changed_paths": [],
+            "error": None,
+        },
     )
 
     receipt = build_receipt(
@@ -122,6 +139,14 @@ def test_build_receipt_prefers_selected_attempt_and_emits_fallback_fields(tmp_pa
     assert receipt["selected_spec_total"] == 2
     assert receipt["fallback_trigger"] == "availability"
     assert receipt["failed_attempt_reasons"] == ["availability"]
+    assert receipt["mutation_safety"] == {
+        "guard": "git_workspace_and_index_content_v2",
+        "safe": True,
+        "baseline_digest": "abc",
+        "current_digest": "abc",
+        "changed_paths": [],
+        "error": None,
+    }
 
 
 def test_status_payload_exposes_active_step_fallback_fields(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from arnold_pipelines.megaplan.forms import available_form_ids
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, apply_profile_expansion, load_profile_metadata
 from arnold_pipelines.megaplan.profiles import ROBUSTNESS_LEVELS, normalize_robustness
 from arnold_pipelines.megaplan.types import CliError, PlanState, StepResponse
+from arnold_pipelines.megaplan.progress_liveness import SlowOutputPolicy
 from arnold_pipelines.megaplan.planning.state import STATE_INITIALIZED
 from arnold_pipelines.megaplan._core import (
     append_history,
@@ -243,6 +245,11 @@ def _build_state_config(
     if test_baseline_timeout is None:
         test_baseline_timeout = get_effective("execution", "test_baseline_timeout", project_dir=project_dir)
 
+    slow_output_policy = SlowOutputPolicy.from_config(
+        get_effective("execution", "slow_output_policy", project_dir=project_dir),
+        phase="execute",
+    )
+
     config: dict[str, Any] = {
         "project_dir": str(project_dir),
         "auto_approve": auto_approve,
@@ -259,6 +266,7 @@ def _build_state_config(
         "full_suite_backstop_mode": full_suite_backstop_mode,
         "test_command": test_command,
         "test_baseline_timeout": test_baseline_timeout,
+        "slow_output_policy": asdict(slow_output_policy),
     }
     if pipeline is not None:
         config["pipeline"] = pipeline

@@ -12,7 +12,10 @@ from typing import Any, Callable, Iterable
 
 from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 import arnold_pipelines.megaplan.workers as worker_module
-from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.fallback_chains import (
+    FallbackSpecChain,
+    fallback_observability_fields,
+)
 from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
@@ -373,11 +376,15 @@ class _TierResolution:
     confidence).  ``spec`` is ``None`` when no usable tier could be resolved.
     """
 
-    spec: str | None
+    chain: FallbackSpecChain | None
     source: str  # "toml" or "calibration_query"
     projected_tier: int | None
     counterfactual_tag: str | None
     low_confidence: bool
+
+    @property
+    def spec(self) -> str | None:
+        return self.chain.selected() if self.chain is not None else None
 
 
 def _legacy_next_step_for_execute_policy(
@@ -400,7 +407,7 @@ def _legacy_next_step_for_execute_policy(
 def _calibration_tier_spec(
     *,
     plan_dir: Path,
-    tier_map: dict[int, str],
+    tier_map: dict[int, FallbackSpecChain],
     batch_task_ids: Iterable[str],
     batch_complexity: int,
 ) -> _TierResolution:
@@ -412,15 +419,21 @@ def _calibration_tier_spec(
     Returns a :class:`_TierResolution` whose ``spec`` field is the selected
     tier spec string (or ``None`` when no spec could be resolved).
     """
+    primary_tier_map = {tier: chain.selected() for tier, chain in tier_map.items()}
     fallback_decision = resolve_batch_tier(
-        tier_map=tier_map,
+        tier_map=primary_tier_map,
         batch_complexity=batch_complexity,
     )
-    fallback_spec = fallback_decision.spec if fallback_decision.has_spec else None
+    fallback_chain = (
+        tier_map.get(fallback_decision.selected_tier)
+        if fallback_decision.has_spec and fallback_decision.selected_tier is not None
+        else None
+    )
+    fallback_spec = fallback_chain.selected() if fallback_chain is not None else None
     fallback_tier = fallback_decision.selected_tier
     if not calibration_query_route_on():
         return _TierResolution(
-            spec=fallback_spec,
+            chain=fallback_chain,
             source="toml",
             projected_tier=fallback_tier,
             counterfactual_tag=None,
@@ -432,11 +445,11 @@ def _calibration_tier_spec(
         taint_class=None,
         exploration_budget=0.0,
         default_tier=batch_complexity,
-        tier_models={"execute": {str(k): str(v) for k, v in tier_map.items()}},
+        tier_models={"execute": {str(k): v.selected() for k, v in tier_map.items()}},
     )
     if suggestion is None:
         return _TierResolution(
-            spec=fallback_spec,
+            chain=fallback_chain,
             source="toml",
             projected_tier=fallback_tier,
             counterfactual_tag=None,
@@ -446,17 +459,20 @@ def _calibration_tier_spec(
     if (
         not isinstance(suggested_spec, str)
         or not suggested_spec.strip()
-        or suggested_spec not in {str(spec) for spec in tier_map.values()}
+        or suggested_spec not in {chain.selected() for chain in tier_map.values()}
     ):
         return _TierResolution(
-            spec=fallback_spec,
+            chain=fallback_chain,
             source="toml",
             projected_tier=fallback_tier,
             counterfactual_tag=None,
             low_confidence=False,
         )
+    suggested_chain = next(
+        chain for chain in tier_map.values() if chain.selected() == suggested_spec
+    )
     return _TierResolution(
-        spec=suggested_spec,
+        chain=suggested_chain,
         source="calibration_query",
         projected_tier=suggestion.projected_tier,
         counterfactual_tag=suggestion.counterfactual_tag,
@@ -465,7 +481,7 @@ def _calibration_tier_spec(
 
 def _resolve_tier_spec(
     args: argparse.Namespace,
-    tier_spec: str | list[str],
+    tier_chain: FallbackSpecChain,
     *,
     phase: str = "execute",
 ) -> tuple[str, str, str | None]:
@@ -479,11 +495,7 @@ def _resolve_tier_spec(
     """
     import copy
 
-    selected_spec = (
-        tier_spec
-        if isinstance(tier_spec, str)
-        else select_fallback_spec(tier_spec, 0, path=f"tier_models.{phase}")
-    )
+    selected_spec = tier_chain.selected()
     tier_args = copy.copy(args)
     tier_args.phase_model = [f"{phase}={selected_spec}"]
     resolved = worker_module.resolve_agent_mode(phase, tier_args)
@@ -1178,20 +1190,31 @@ class BatchResult:
     routing_degradations: list[str] = field(default_factory=list)
 
 
-def normalize_tier_map(tier_map: dict[Any, Any] | None) -> dict[int, str] | None:
+def normalize_tier_map(
+    tier_map: dict[Any, Any] | None,
+) -> dict[int, FallbackSpecChain] | None:
     if not isinstance(tier_map, dict) or not tier_map:
         return None
-    normalized: dict[int, str] = {}
+    normalized: dict[int, FallbackSpecChain] = {}
     for raw_key, raw_value in tier_map.items():
+        if isinstance(raw_key, bool):
+            raise ValueError("tier_models.execute boolean tier keys are invalid")
         try:
             key = int(raw_key)
         except (TypeError, ValueError):
-            continue
-        if isinstance(raw_value, str) and raw_value:
-            normalized[key] = raw_value
-            continue
-        if isinstance(raw_value, list):
-            normalized[key] = select_fallback_spec(raw_value, 0, path=f"tier_models.execute.{key}")
+            raise ValueError(f"tier_models.execute.{raw_key!r} must use an integer key")
+        if key < 1 or key > 10:
+            raise ValueError(f"tier_models.execute.{key} must be in range 1..10")
+        if key in normalized:
+            raise ValueError(f"tier_models.execute.{key} is duplicated")
+        normalized[key] = (
+            raw_value
+            if isinstance(raw_value, FallbackSpecChain)
+            else FallbackSpecChain.from_value(
+                raw_value,
+                path=f"tier_models.execute.{key}",
+            )
+        )
     return normalized or None
 
 
@@ -1739,6 +1762,7 @@ def _run_and_merge_batch(
     batch_number: int,
     batches_total: int,
     quality_config: dict[str, Any],
+    configured_specs: FallbackSpecChain | None = None,
     routing_record: dict[str, Any] | None = None,
     capture_git_status_snapshot_fn: Callable[
         [Path], tuple[dict[str, str], str | None]
@@ -1784,6 +1808,21 @@ def _run_and_merge_batch(
         root=root,
         resolved=am_for_worker,
         prompt_override=rendered_prompt_override,
+        read_only=False,
+        record_routing=False,
+        ledger_configured_specs=(
+            configured_specs.specs if configured_specs is not None else None
+        ),
+        ledger_phase="execute",
+        ledger_step_label=f"batch_{batch_number}",
+        ledger_selected_spec=(
+            configured_specs.selected() if configured_specs is not None else None
+        ),
+        ledger_tier=(routing_record or {}).get("selected_tier"),
+        ledger_complexity=(routing_record or {}).get("batch_complexity"),
+        ledger_tier_routing_active=bool(
+            (routing_record or {}).get("tier_routing_active")
+        ),
     )
     maybe_run_channel_shadow(
         root=root,
@@ -1823,6 +1862,12 @@ def _run_and_merge_batch(
             tier=routing_record.get("selected_tier"),
             complexity=routing_record.get("batch_complexity"),
             tier_routing_active=bool(routing_record.get("tier_routing_active")),
+            configured_specs=worker.configured_specs,
+            attempt_index=worker.attempt_index,
+            attempted_specs=worker.attempted_specs,
+            failed_attempt_reasons=worker.failed_attempt_reasons,
+            fallback_trigger=worker.fallback_trigger,
+            mutation_safety=worker.mutation_safety,
         )
     if routing_record is not None:
         payload["routing"] = routing_record
@@ -2020,7 +2065,7 @@ def handle_execute_one_batch(
     model: str | None = None,
     effort: str | None = None,
     resolved_model: str | None = None,
-    tier_map: dict[int, str] | None = None,
+    tier_map: dict[int, FallbackSpecChain] | None = None,
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -2163,6 +2208,7 @@ def handle_execute_one_batch(
     raw_batch_complexity: int | None = None
     tier_complexity: int | None = None
     tier_spec_raw: str | None = None
+    tier_chain_raw: FallbackSpecChain | None = None
     tier_resolved_model: str | None = None
     # New T14 metadata fields.
     tier_routing_source: str | None = None
@@ -2183,10 +2229,11 @@ def handle_execute_one_batch(
         tier_projected = resolution.projected_tier
         tier_counterfactual_tag = resolution.counterfactual_tag
         tier_low_confidence = resolution.low_confidence
-        if resolution.spec:
+        if resolution.chain is not None:
             tier_spec_raw = resolution.spec
+            tier_chain_raw = resolution.chain
             tier_agent, tier_mode, tier_model = _resolve_tier_spec(
-                args, resolution.spec
+                args, resolution.chain
             )
             tier_resolved_model = tier_model
             agent, mode, model = tier_agent, tier_mode, tier_model
@@ -2201,21 +2248,14 @@ def handle_execute_one_batch(
             # diverge from the on-disk state and the liveness heartbeat would
             # silently no-op for every batch after the first.
             set_active_step(
-                state, step="execute", agent=agent, mode=mode, model=model
+                state,
+                step="execute",
+                agent=agent,
+                mode=mode,
+                model=model,
+                **fallback_observability_fields(resolution.chain),
             )
             save_state_merge_meta(plan_dir, state)
-    selected_resolved_model = model if model is not None else resolved_model
-    routing_record = _build_routing_record(
-        batch_complexity=raw_batch_complexity,
-        selected_tier=tier_complexity,
-        selected_spec=tier_spec_raw,
-        resolved_agent=agent,
-        resolved_mode=mode,
-        resolved_model=selected_resolved_model,
-        tier_map_configured=bool(tier_map),
-        tier_routing_active=tier_routing_active,
-    )
-
     selected_resolved_model = model if model is not None else resolved_model
     routing_record = _build_routing_record(
         batch_complexity=raw_batch_complexity,
@@ -2247,6 +2287,7 @@ def handle_execute_one_batch(
             batch_number=batch_number,
             batches_total=batches_total,
             quality_config=quality_config,
+            configured_specs=tier_chain_raw,
             routing_record=routing_record,
             capture_git_status_snapshot_fn=_capture_git_status_snapshot,
         )
@@ -3383,7 +3424,7 @@ def handle_execute_auto_loop(
     model: str | None = None,
     effort: str | None = None,
     resolved_model: str | None = None,
-    tier_map: dict[int, str] | None = None,
+    tier_map: dict[int, FallbackSpecChain] | None = None,
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -4025,6 +4066,7 @@ def handle_execute_auto_loop(
         batch_raw_complexity: int | None = None
         batch_tier_complexity: int | None = None
         batch_tier_spec: str | None = None
+        batch_tier_chain: FallbackSpecChain | None = None
         batch_tier_source: str | None = None
         batch_tier_projected: int | None = None
         batch_tier_counterfactual_tag: str | None = None
@@ -4045,10 +4087,11 @@ def handle_execute_auto_loop(
             batch_tier_projected = resolution.projected_tier
             batch_tier_counterfactual_tag = resolution.counterfactual_tag
             batch_tier_low_confidence = resolution.low_confidence
-            if resolution.spec:
+            if resolution.chain is not None:
                 batch_tier_spec = resolution.spec
+                batch_tier_chain = resolution.chain
                 tier_agent, tier_mode, tier_model = _resolve_tier_spec(
-                    args, resolution.spec
+                    args, resolution.chain
                 )
                 batch_agent, batch_mode, batch_model = (
                     tier_agent, tier_mode, tier_model
@@ -4073,6 +4116,7 @@ def handle_execute_auto_loop(
                     agent=batch_agent,
                     mode=batch_mode,
                     model=batch_model,
+                    **fallback_observability_fields(resolution.chain),
                 )
                 save_state_merge_meta(plan_dir, state)
 
@@ -4115,6 +4159,7 @@ def handle_execute_auto_loop(
                 batch_number=batch_number_for_artifact,
                 batches_total=batches_total_for_observation,
                 quality_config=quality_config,
+                configured_specs=batch_tier_chain,
                 routing_record=routing_record,
                 capture_git_status_snapshot_fn=_capture_git_status_snapshot,
             )

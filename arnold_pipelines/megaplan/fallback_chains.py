@@ -79,6 +79,12 @@ _AVAILABILITY_TOKENS = frozenset(
         "timeout",
         "timed_out",
         "worker_timeout",
+        "streaming_timeout",
+        "slow_output",
+        "slow_visible_output",
+        "no_observable_activity",
+        "reasoning_grace_exhausted",
+        "tool_activity_timeout",
         "stalled_stream",
         "stream_content_stall",
         "codex_pre_first_byte_stall",
@@ -416,6 +422,66 @@ def classify_retryability(value: object | None) -> RetryabilityClass:
     return "unknown"
 
 
+@dataclass(frozen=True, slots=True)
+class FailureDisposition:
+    """Eligibility class plus the stable reason emitted in receipts."""
+
+    classification: RetryabilityClass
+    reason_code: str
+    mutation_safe_to_retry: bool | None = None
+
+
+def _mutation_safe_attestation(value: object | None) -> bool | None:
+    """Return an executor's explicit retry-safety attestation, if present.
+
+    An unchanged checkout proves only that repository files did not change.  It
+    cannot prove that a tool did not mutate an external system, so execute
+    fallback additionally requires the executor to attest that no tool activity
+    capable of side effects was observed.  Missing or malformed evidence is
+    deliberately unknown and therefore fails closed at the execute boundary.
+    """
+
+    raw = _object_field(value, "mutation_safe_to_retry")
+    if isinstance(raw, bool):
+        return raw
+    extra = getattr(value, "extra", None)
+    if isinstance(extra, dict):
+        raw = extra.get("mutation_safe_to_retry")
+        if isinstance(raw, bool):
+            return raw
+    return None
+
+
+def failure_reason_code(value: object | None) -> str:
+    """Return a stable, specific reason without conflating semantic failure."""
+
+    if value is None:
+        return "unknown"
+    for field_name in (
+        "progress_reason",
+        "error_layer",
+        "provider_error_code",
+        "code",
+        "error_kind",
+        "failure_kind",
+        "reason",
+        "kind",
+        "category",
+    ):
+        raw = _object_field(value, field_name)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower().replace("-", "_").replace(" ", "_")
+    return classify_retryability(value)
+
+
+def classify_failure(value: object | None) -> FailureDisposition:
+    return FailureDisposition(
+        classification=classify_retryability(value),
+        reason_code=failure_reason_code(value),
+        mutation_safe_to_retry=_mutation_safe_attestation(value),
+    )
+
+
 def is_retryable_classification(classification: RetryabilityClass) -> bool:
     return classification in {"availability", "infrastructure"}
 
@@ -433,7 +499,7 @@ def is_retryable_failure(value: object | None) -> bool:
 
 
 class ExecuteFallbackUnsafe(ArnoldError):
-    """Raised when v1 fallback would advance execute/loop_execute beyond index 0."""
+    """Raised when execute resumes at a fallback index without attempt evidence."""
 
     def __init__(
         self,
@@ -452,9 +518,10 @@ class ExecuteFallbackUnsafe(ArnoldError):
         super().__init__(
             "execute_fallback_unsafe",
             (
-                f"Automatic fallback is disabled for phase '{phase}' in v1; "
-                f"refusing to advance to fallback index {attempted_index} "
-                f"of {total} ({selected_spec})."
+                f"Phase '{phase}' entered fallback index {attempted_index} "
+                "without mutation-safety evidence from the preceding attempt; "
+                f"refusing to dispatch index {attempted_index} of {total} "
+                f"({selected_spec})."
             ),
         )
         self.phase = phase
@@ -462,3 +529,42 @@ class ExecuteFallbackUnsafe(ArnoldError):
         self.attempted_index = attempted_index
         self.attempted_total = total
         self.selected_spec = selected_spec
+
+
+class ExecuteFallbackMutationUnsafe(ArnoldError):
+    """A failed execute attempt changed the project, so retry is prohibited."""
+
+    def __init__(
+        self,
+        *,
+        configured_specs: FallbackSpecChain | str | list[str] | tuple[str, ...],
+        attempted_index: int,
+        trigger: str,
+        changed_paths: tuple[str, ...] = (),
+        guard_error: str | None = None,
+    ) -> None:
+        chain = (
+            configured_specs
+            if isinstance(configured_specs, FallbackSpecChain)
+            else FallbackSpecChain.from_value(configured_specs, path="configured_specs")
+        )
+        path_summary = ", ".join(changed_paths[:8]) if changed_paths else "unknown"
+        detail = (
+            f"workspace changed ({path_summary})"
+            if changed_paths
+            else f"mutation proof unavailable ({guard_error or 'unknown guard error'})"
+        )
+        super().__init__(
+            "execute_fallback_mutation_unsafe",
+            (
+                "Execute fallback was eligible but was not mutation-safe: "
+                f"attempt {attempted_index + 1}/{len(chain)} failed with {trigger}; "
+                f"{detail}. Resolve or roll back the partial attempt explicitly "
+                "before selecting another model."
+            ),
+        )
+        self.configured_specs = chain.specs
+        self.attempted_index = attempted_index
+        self.trigger = trigger
+        self.changed_paths = changed_paths
+        self.guard_error = guard_error

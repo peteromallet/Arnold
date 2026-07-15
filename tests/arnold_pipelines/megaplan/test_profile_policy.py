@@ -444,9 +444,14 @@ def test_profile_expansion_execute_tiers_survive_profile_fallback_pin(tmp_path: 
     assert "execute=codex:gpt-5.4" in args.phase_model
     tier_map = _extract_execute_tier_map(args.tier_models)
     assert tier_map is not None
-    assert tier_map[1] == "hermes:deepseek:deepseek-v4-flash"
-    assert tier_map[3] == "hermes:deepseek:deepseek-v4-pro"
-    assert tier_map[5] == "codex:gpt-5.5"
+    assert tier_map[1].specs == ("hermes:deepseek:deepseek-v4-flash",)
+    assert tier_map[3].specs == ("hermes:deepseek:deepseek-v4-pro",)
+    assert tier_map[5].specs == ("hermes:deepseek:deepseek-v4-pro",)
+    assert tier_map[7].specs == (
+        "hermes:zhipu:glm-5.2",
+        "hermes:fireworks:accounts/fireworks/models/glm-5p2",
+        "codex:gpt-5.4",
+    )
 
 
 def test_profile_expansion_with_persisted_execute_pin_keeps_execute_pinned_and_suppressed(

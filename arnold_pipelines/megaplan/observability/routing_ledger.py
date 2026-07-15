@@ -92,6 +92,7 @@ def record_step_routing(
     attempted_specs: list[str] | tuple[str, ...] | str | None = None,
     failed_attempt_reasons: list[str] | tuple[str, ...] | None = None,
     fallback_trigger: str | None = None,
+    mutation_safety: dict[str, Any] | None = None,
 ) -> None:
     """Append one routing ledger row; never raise to phase control flow."""
     try:
@@ -116,6 +117,8 @@ def record_step_routing(
                 fallback_trigger=fallback_trigger,
             )
         )
+        if mutation_safety is not None:
+            record["mutation_safety"] = dict(mutation_safety)
         lock_path = plan_dir / _LOCK_FILE
         ledger_path = plan_dir / LEDGER_FILE
         if not plan_dir.is_dir():

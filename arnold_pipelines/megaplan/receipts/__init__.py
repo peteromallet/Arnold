@@ -107,7 +107,7 @@ def build_receipt(
         fallback_trigger=getattr(worker, "fallback_trigger", None),
     )
 
-    return {
+    receipt: Receipt = {
         "receipt_id": str(uuid.uuid4()),
         "plan_id": plan_id,
         "phase": phase,
@@ -140,3 +140,7 @@ def build_receipt(
         "auth_channel": getattr(worker, "auth_channel", None),
         "auth_metadata": getattr(worker, "auth_metadata", None),
     }
+    mutation_safety = getattr(worker, "mutation_safety", None)
+    if isinstance(mutation_safety, dict):
+        receipt["mutation_safety"] = dict(mutation_safety)
+    return receipt

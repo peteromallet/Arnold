@@ -180,11 +180,11 @@ review = ["codex:gpt-5.5", "claude:sonnet"]
 
 Internally, multi-spec phase values are persisted in `state.json` using the compact `__fallback_json__:<json-array>` encoding. This encoding is an implementation detail of the persistence bridge — you never write it by hand. The harness decodes it transparently; every downstream consumer sees the selected spec (first element) as the legacy scalar value.
 
-**Fallback advancement rules (v1):**
-- **Allowed:** Fallback advances to the next spec only on retryable **availability** or **infrastructure** failures (connection errors, timeouts, crashes, service unavailable, internal errors).
-- **Blocked:** Fallback does **not** advance for malformed output, schema failures, test/evidence failures, blocked results, gate/review rejection, semantic failures, auth errors, quota exhaustion, rate limits, bad requests, unsupported models, or context-window errors.
-- **Cross-provider requirement:** The next spec must belong to a different provider family than the failing spec (e.g., `claude` → `codex`, or `hermes:deepseek` → `hermes:fireworks`). Same-provider advancement is rejected.
-- **execute / loop_execute:** Fallback chains are preserved in state but advancement beyond the first spec is **blocked** in v1 — the harness raises `ExecuteFallbackUnsafe` if a retryable failure would trigger a second attempt. This protects against duplicate side effects (file mutations, checkpoints, merges).
+**Fallback advancement rules:**
+- **Operational failures:** Availability, infrastructure, authentication, quota, rate-limit, unsupported-model, and context-window failures may advance across a configured provider-family boundary. Same-family advancement is narrower: only availability, rate-limit, and unsupported-model failures qualify.
+- **Progress failures:** A streaming timeout, prolonged silence, bounded reasoning-grace exhaustion, or persistently low visible-output rate may advance with its exact reason code. Provider heartbeats and unobservable thinking are bounded evidence, not proof of progress forever.
+- **Semantic failures stay terminal:** Malformed output, schema/test/evidence failures, blocked results, gate/review rejection, and other semantic task failures do not advance unless a future explicit policy opts them in.
+- **execute / loop_execute safety:** Automatic advancement requires two independent proofs: the tracked and untracked workspace is byte-for-byte unchanged, and the executor attests that the attempt never crossed a tool boundary with possible external side effects. Any changed path, observed tool activity, or missing evidence raises `ExecuteFallbackMutationUnsafe` and leaves the partial attempt intact for explicit recovery.
 
 When an explicit fallback chain is configured for a phase, ambient runtime fallback (e.g., automatic provider retry) is **suppressed** — only the declared chain controls advancement.
 ## Bakeoff

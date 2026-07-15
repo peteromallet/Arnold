@@ -14,7 +14,10 @@ from arnold_pipelines.megaplan._core.worker_fanout import (
     scatter_worker_units,
 )
 from arnold_pipelines.megaplan._core.hermes_fanout import GenericScatterResult
-from arnold_pipelines.megaplan.fallback_chains import ExecuteFallbackUnsafe
+from arnold_pipelines.megaplan.fallback_chains import (
+    ExecuteFallbackMutationUnsafe,
+    ExecuteFallbackUnsafe,
+)
 from arnold_pipelines.megaplan.types import AgentMode, CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
 
@@ -305,8 +308,8 @@ def test_scatter_worker_unit_advances_explicit_chain_for_retryable_cross_provide
         "codex:gpt-5.5:high",
         "claude:claude-sonnet-4-6:high",
     )
-    assert unit_result.failed_attempt_reasons == ("availability",)
-    assert unit_result.fallback_trigger == "availability"
+    assert unit_result.failed_attempt_reasons == ("worker_timeout",)
+    assert unit_result.fallback_trigger == "worker_timeout"
 
 
 @pytest.mark.parametrize(
@@ -437,7 +440,7 @@ def test_scatter_worker_unit_keeps_writing_same_family_failure_fail_closed(monke
 
 
 @pytest.mark.parametrize("step", ["execute", "loop_execute"])
-def test_scatter_worker_unit_raises_unsafe_before_execute_chain_advances(
+def test_scatter_worker_unit_requires_execute_mutation_attestation(
     monkeypatch,
     step: str,
 ) -> None:
@@ -453,7 +456,7 @@ def test_scatter_worker_unit_raises_unsafe_before_execute_chain_advances(
         fake_run_step_with_worker,
     )
 
-    with pytest.raises(ExecuteFallbackUnsafe) as raised:
+    with pytest.raises(ExecuteFallbackMutationUnsafe) as raised:
         scatter_worker_unit(
             0,
             _chain_unit(step=step),
@@ -464,12 +467,12 @@ def test_scatter_worker_unit_raises_unsafe_before_execute_chain_advances(
         )
 
     assert calls == 1
-    assert raised.value.phase == step
     assert raised.value.configured_specs == (
         "codex:gpt-5.5:high",
         "claude:claude-sonnet-4-6:high",
     )
-    assert raised.value.attempted_index == 1
+    assert raised.value.attempted_index == 0
+    assert "attestation" in (raised.value.guard_error or "")
 
 
 @pytest.mark.parametrize("step", ["execute", "loop_execute"])
