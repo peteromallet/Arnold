@@ -1,5 +1,7 @@
 # Task sizing, dependency graph, and test budget investigation
 
+Companion architecture: [Megaplan bounded parallel execution: evidence and architecture](parallel-execution-architecture-investigation-20260715.md)
+
 ## Scope and ownership boundary
 
 This investigation owns planner/finalizer task shape, DAG feasibility, write-set
@@ -428,4 +430,3 @@ Required focused tests:
 - telemetry reconciliation accounts for model, general tool, narrow test,
   harness validation, retry, replay, compaction, and queue time or records an
   `unavailable_reason`.
-
