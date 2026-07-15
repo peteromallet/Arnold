@@ -61,6 +61,10 @@ expansion, or declaring legitimate implementation/review time waste.
 - Budget exhaustion creates a typed checkpoint/blocker. Two equivalent
   normalized `worker_budget_exhausted` occurrences open a plan circuit before a
   third blind retry, while exact task/attempt identity remains preserved.
+- Review-cycle exhaustion uses the same bounded-circuit discipline. Structured
+  status families such as `failed: <detail>` retain their deterministic command,
+  criterion, and artifact evidence instead of collapsing to unknown merely
+  because a legacy parser expected the exact token `failed`.
 - Invalid ref/model/import/provenance and exhausted timeout/compaction/rework
   budgets fail visibly. Ambient or implicit fallback cannot bypass the circuit.
 - Repair adoption is verify-only and never trusts a receipt label or rewrites
@@ -102,6 +106,10 @@ backed, and cannot grant authority outside the compiled plan.
   six-task rework fixtures converge within configured bounds with exact reasons.
 - Two normalized budget failures open the plan circuit before a third retry;
   unrelated failure signatures do not collide.
+- Captured `review_quality_blocked_unknown` evidence with `failed: <detail>`
+  rows normalizes to one exact deterministic quality-block signature, preserves
+  its commands and artifact hashes, and stops at the configured review budget;
+  malformed or genuinely unstructured rows remain typed unknown.
 - Valid T7/T12-style repair receipts use verify-only adoption and avoid full
   replay; altered revision/task/tree/test/fence fixtures quarantine and execute
   normally.

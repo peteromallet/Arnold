@@ -1,11 +1,23 @@
 {
   "m1-foundation": [
-    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json",
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/finalize.json",
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/finalize_snapshot.json",
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/phase_result.json"
   ],
   "m2-enforcement": [
-    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json",
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/finalize.json",
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/finalize_snapshot.json",
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/phase_result.json"
   ],
   "m3-consumers": [
-    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json",
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json",
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/finalize.json",
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/finalize_snapshot.json",
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/phase_result.json"
   ]
 }

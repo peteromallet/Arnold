@@ -1,0 +1,39 @@
+{
+  "schema": "m5.selector_path_reconciliation.v1",
+  "generated_at": "2026-07-14T20:26:23Z",
+  "subject_revision": "a20daa0f96735dcb7166920fc166c76ce6f5dbc6",
+  "selection_artifact": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/m5-green-suite-selections.json",
+  "policy": "Preserve every lifecycle selector. Restore the two selected active path identities with current CLI conformance coverage; make explicitly selected archived modules report their existing retired status before importing deleted runtime surfaces.",
+  "restored_active_paths": [
+    "tests/cli/test_arnold_parser_snapshot.py",
+    "tests/test_arnold_cli.py"
+  ],
+  "retired_archive_modules": [
+    "tests/archive/m5/pipelines/megaplan/execute/test_merge.py",
+    "tests/archive/m5/_pipeline/test_contracts.py",
+    "tests/archive/m5/_pipeline/test_step_protocol_test_locals.py",
+    "tests/archive/m5/pipelines/test_jokes_pipeline.py",
+    "tests/archive/m5/pipelines/test_select_tournament_pipeline.py",
+    "tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/test_executor_selection.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_cursor.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_runtime_e2e.py"
+  ],
+  "verification": {
+    "command": "Run the review-provided Python loop invoking pytest --collect-only -q --tb=short for every exact milestone node_ids list in m5-green-suite-selections.json",
+    "exit_code": 0,
+    "missing_selector_paths": 0,
+    "collection_errors": 0,
+    "milestones": {
+      "m1-foundation": {"exit_code": 0, "collected": 4479},
+      "m2-enforcement": {"exit_code": 0, "collected": 4554},
+      "m3-consumers": {"exit_code": 0, "collected": 4709}
+    },
+    "focused_current_cli": "4 passed in 0.05s"
+  },
+  "scope_change": {
+    "selectors_removed": 0,
+    "selectors_added": 0,
+    "legacy_product_surface_restored": false
+  }
+}

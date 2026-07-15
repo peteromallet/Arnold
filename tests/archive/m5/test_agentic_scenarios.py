@@ -1,4 +1,4 @@
-"""Focused pytest tests for the three agentic scenario YAML files.
+"""Archived pytest tests for the retired sisypy agentic scenario YAML files.
 
 Loads the scenario YAML files from ``megaplan/tests/agentic/scenarios/`` and
 asserts:
