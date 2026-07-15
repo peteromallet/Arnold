@@ -33,11 +33,15 @@ EVIDENCE_SOURCE_KINDS = frozenset(
         "plan_state",
         "phase_result",
         "event_log",
+        "chain_log",
         "repair_data",
         "repair_queue",
         "repair_goal",
         "meta_repair",
         "source_tree",
+        "source_contract",
+        "resident_delegation",
+        "automatic_system",
         "external_state",
     }
 )

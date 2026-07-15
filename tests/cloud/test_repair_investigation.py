@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    EVIDENCE_SOURCE_KINDS,
     MAX_CONTEXT_BYTES,
     META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA,
     REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
@@ -521,6 +522,19 @@ def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path)
     assert "attempts" not in context
     assert "required_investigator_output" not in context
     assert validate_meta_investigation_context(context)["context_digest"] == context["context_digest"]
+
+    context_path = tmp_path / "meta-context.json"
+    _write(context_path, context)
+    observation = build_meta_observation_bundle(context_path)
+    observed_kinds = {item["kind"] for item in observation["observations"]}
+    assert {"resident_delegation", "source_contract"} <= observed_kinds
+    assert observed_kinds <= EVIDENCE_SOURCE_KINDS
+
+    receipt = _receipt(context["context_digest"], target_kind="l2_repair_system")
+    receipt["evidence_sources"] = observation["observations"]
+    assert validate_investigator_receipt(
+        receipt, expected_context_digest=context["context_digest"]
+    )["target_kind"] == "l2_repair_system"
 
     context["authorization"]["mutation_authorized"] = True
     with pytest.raises(ValueError, match="must not authorize mutation"):
