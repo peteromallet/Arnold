@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-14T19:23:13.208976Z",
+  "subject_head": "9b59c629e1ee16160fd0fa3328a7439896bf67ff",
+  "receipts": [
+    {
+      "label": "m1-foundation",
+      "plan": "sprint-1-authority-freeze-and-20260710-1935",
+      "path": ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json",
+      "accepted": true,
+      "failures": [],
+      "evidence": [
+        {
+          "kind": "phase_coverage",
+          "status": "satisfied",
+          "summary": "all batch tasks done"
+        },
+        {
+          "kind": "landed_diff",
+          "status": "satisfied",
+          "summary": "diff present and claim-consistent"
+        },
+        {
+          "kind": "worker_did_work",
+          "status": "satisfied",
+          "summary": "worker activity present"
+        },
+        {
+          "kind": "green_suite",
+          "status": "satisfied",
+          "summary": "verification suite has only pre-existing baseline failures (1); no new regressions"
+        },
+        {
+          "kind": "execution_acceptance_contract",
+          "status": "satisfied",
+          "summary": "verification suite satisfied the execute acceptance contract for 6 check(s) with no new regressions"
+        },
+        {
+          "kind": "review_disposition",
+          "status": "satisfied",
+          "summary": "review reported success"
+        },
+        {
+          "kind": "declared_noop",
+          "status": "not_applicable",
+          "summary": "no declared no-op/waiver artifact (absence is not a failure)"
+        }
+      ]
+    },
+    {
+      "label": "m2-enforcement",
+      "plan": "sprint-2-dispatch-grants-and-20260710-2200",
+      "path": ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json",
+      "accepted": true,
+      "failures": [],
+      "evidence": [
+        {
+          "kind": "phase_coverage",
+          "status": "satisfied",
+          "summary": "all batch tasks done"
+        },
+        {
+          "kind": "landed_diff",
+          "status": "satisfied",
+          "summary": "diff present and claim-consistent"
+        },
+        {
+          "kind": "worker_did_work",
+          "status": "satisfied",
+          "summary": "worker activity present"
+        },
+        {
+          "kind": "green_suite",
+          "status": "satisfied",
+          "summary": "verification suite has only pre-existing baseline failures (1); no new regressions"
+        },
+        {
+          "kind": "execution_acceptance_contract",
+          "status": "satisfied",
+          "summary": "verification suite satisfied the execute acceptance contract for 6 check(s) with no new regressions"
+        },
+        {
+          "kind": "review_disposition",
+          "status": "satisfied",
+          "summary": "review reported success"
+        },
+        {
+          "kind": "declared_noop",
+          "status": "not_applicable",
+          "summary": "no declared no-op/waiver artifact (absence is not a failure)"
+        }
+      ]
+    },
+    {
+      "label": "m3-consumers",
+      "plan": "sprint-3-consumer-migration-20260711-0130",
+      "path": ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json",
+      "accepted": true,
+      "failures": [],
+      "evidence": [
+        {
+          "kind": "phase_coverage",
+          "status": "satisfied",
+          "summary": "all batch tasks done"
+        },
+        {
+          "kind": "landed_diff",
+          "status": "satisfied",
+          "summary": "diff present and claim-consistent"
+        },
+        {
+          "kind": "worker_did_work",
+          "status": "satisfied",
+          "summary": "worker activity present"
+        },
+        {
+          "kind": "green_suite",
+          "status": "satisfied",
+          "summary": "verification suite has only pre-existing baseline failures (1); no new regressions"
+        },
+        {
+          "kind": "execution_acceptance_contract",
+          "status": "satisfied",
+          "summary": "verification suite satisfied the execute acceptance contract for 4 check(s) with no new regressions"
+        },
+        {
+          "kind": "review_disposition",
+          "status": "satisfied",
+          "summary": "review reported success"
+        },
+        {
+          "kind": "declared_noop",
+          "status": "not_applicable",
+          "summary": "no declared no-op/waiver artifact (absence is not a failure)"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "schema": "arnold.megaplan.runtime_posture.v1",
+  "created_at": "2026-07-14T15:11:38Z",
+  "by_plan": "m5-run-authority-receipt-20260714-1428",
+  "canonical_identity": {
+    "initiative": "runauthority-epic",
+    "session": "runauthority-epic-cloud",
+    "chain_spec_path": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/initiatives/runauthority-epic/chain.yaml",
+    "chain_spec_sha256": "f87b408c148b550d3ba15a31dfd0161c45517a82aa2adb596c085c127606ef33",
+    "cloud_session_config_path": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/initiatives/runauthority-epic/cloud.yaml",
+    "confirmed_sprint_plans": [
+      "sprint-1-authority-freeze-and-20260710-1935",
+      "sprint-2-dispatch-grants-and-20260710-2200",
+      "sprint-3-consumer-migration-20260711-0130"
+    ]
+  },
+  "pre_posture": {
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow"
+  },
+  "post_posture": {
+    "completion_contract_mode": "enforce",
+    "full_suite_backstop_mode": "enforce"
+  },
+  "local_chain_state": {
+    "path": ".megaplan/plans/.chains/chain-21fa156d252d.json",
+    "sha256": "b45199fb403f3b65f3758c2a8f4016b29ee8027501aca227b31432f500283a1d",
+    "source_cloud_path": "/workspace/runauthority-epic-cloud/Arnold/.megaplan/plans/.chains/chain-21fa156d252d.json"
+  },
+  "verification": {
+    "command": "sha256sum .megaplan/plans/.chains/chain-21fa156d252d.json",
+    "exit_status": 0,
+    "stdout_digest_match": true
+  },
+  "retired_marker": {
+    "present": false,
+    "path": ".megaplan/initiatives/runauthority-epic/.retired"
+  }
+}

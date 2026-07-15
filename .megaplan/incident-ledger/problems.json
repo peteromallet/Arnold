@@ -1,17 +1,19 @@
 {
   "integrity": [
     {
+      "actual": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
       "code": "index_divergence",
-      "error": "Expecting property name enclosed in double quotes: line 10717 column 1 (char 366136)",
-      "message": "incidents projection is not valid JSON",
+      "expected": "sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850' != 'sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9'",
       "projection": "incidents",
       "recommendation": "system.integrity_repair",
       "severity": "error"
     },
     {
+      "actual": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
       "code": "index_divergence",
-      "error": "Expecting property name enclosed in double quotes: line 233 column 1 (char 9511)",
-      "message": "problems projection is not valid JSON",
+      "expected": "sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9",
+      "message": "problems projection source metadata diverged for digest: 'sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850' != 'sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9'",
       "projection": "problems",
       "recommendation": "system.integrity_repair",
       "severity": "error"
@@ -95,15 +97,16 @@
       "first_seen_seq": 487,
       "first_seen_ts": "2026-07-13T22:44:54.539079+00:00",
       "fix_commits": [],
-      "last_seen_seq": 487,
-      "last_seen_ts": "2026-07-13T22:44:54.539079+00:00",
+      "last_seen_seq": 523,
+      "last_seen_ts": "2026-07-14T19:41:07.805526+00:00",
       "linked_incident_ids": [
+        "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair accepted execution custody",
-      "occurrence_count": 1,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 4,
+      "owner_actor": "six_hour_auditor",
       "problem_id": "problem-51b6859a7c76",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -114,15 +117,16 @@
       "first_seen_seq": 348,
       "first_seen_ts": "2026-07-11T15:36:45.288233+00:00",
       "fix_commits": [],
-      "last_seen_seq": 507,
-      "last_seen_ts": "2026-07-14T01:53:16.558412+00:00",
+      "last_seen_seq": 520,
+      "last_seen_ts": "2026-07-14T19:07:31.053883+00:00",
       "linked_incident_ids": [
+        "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing kind chain workspace transient path",
-      "occurrence_count": 26,
-      "owner_actor": "github_sync",
+      "occurrence_count": 27,
+      "owner_actor": "immediate_repair",
       "problem_id": "problem-67a765759422",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -147,6 +151,25 @@
       "scope": "repair_system",
       "status": "open",
       "title": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
+    },
+    {
+      "first_seen_seq": 521,
+      "first_seen_ts": "2026-07-14T19:08:55.195650+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 521,
+      "last_seen_ts": "2026-07-14T19:08:55.195650+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome deterministic failure kind chain workspace transient path",
+      "occurrence_count": 1,
+      "owner_actor": "immediate_repair",
+      "problem_id": "problem-690ba3ad3bda",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair-data outcome=deterministic_failure kind=chain workspace=/workspace/custody-control-plane-20260714/Arnold"
     },
     {
       "first_seen_seq": 468,
@@ -346,14 +369,15 @@
       "first_seen_seq": 488,
       "first_seen_ts": "2026-07-13T22:44:54.540909+00:00",
       "fix_commits": [],
-      "last_seen_seq": 488,
-      "last_seen_ts": "2026-07-13T22:44:54.540909+00:00",
+      "last_seen_seq": 519,
+      "last_seen_ts": "2026-07-14T19:07:18.421227+00:00",
       "linked_incident_ids": [
+        "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair execution started",
-      "occurrence_count": 1,
+      "occurrence_count": 2,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-bca9d501eede",
       "recurred_after_fix": false,
@@ -443,10 +467,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:5594767a59b2bdfe1f8d8cc7a6fbb0ea9442ac4833074e63d7fa31eef9456850",
-    "event_count": 517,
-    "journal_line_count": 517,
-    "last_seq": 517,
+    "digest": "sha256:c717853714642e5a2e4973a8985916b0a67eee5fe5e4a3f432757ebef17525b9",
+    "event_count": 523,
+    "journal_line_count": 523,
+    "last_seq": 523,
     "malformed_line_count": 0
   }
 }

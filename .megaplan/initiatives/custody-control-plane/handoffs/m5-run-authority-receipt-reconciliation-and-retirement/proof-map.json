@@ -1,0 +1,34 @@
+{
+  "schema": "arnold.megaplan.proof_map.v1",
+  "description": "M5 Run Authority receipt reconciliation and retirement \u2014 proof map binding all milestone verification artifacts.",
+  "m1-foundation": [
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json",
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/finalize.json",
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/phase_result.json",
+    ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/finalize_snapshot.json",
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+  ],
+  "m2-enforcement": [
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json",
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/finalize.json",
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/phase_result.json",
+    ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/finalize_snapshot.json",
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+  ],
+  "m3-consumers": [
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json",
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/finalize.json",
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/phase_result.json",
+    ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/finalize_snapshot.json",
+    ".megaplan/initiatives/runauthority-epic/dependency-completion-proof.json"
+  ],
+  "m5-handoff": [
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/attestation.json",
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/evidence-manifest.json",
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/runtime-posture.json",
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/m5-green-suite-selections.json",
+    ".megaplan/plans/m5-run-authority-receipt-20260714-1428/execute_batches/batch_16/chain_verify_raw.json",
+    ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json",
+    ".megaplan/plans/m5-run-authority-receipt-20260714-1428/execute_batches/batch_21/t21_scoped_suite.log"
+  ]
+}

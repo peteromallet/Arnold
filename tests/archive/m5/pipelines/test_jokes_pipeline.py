@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+pytest.skip("archived legacy jokes pipeline; native contract coverage is active elsewhere", allow_module_level=True)
+
 from arnold.pipeline import Pipeline, Stage, run_pipeline
 from arnold.pipeline.discovery.manifest import Manifest, read_manifest
 from arnold.pipeline.native import NativeProgram

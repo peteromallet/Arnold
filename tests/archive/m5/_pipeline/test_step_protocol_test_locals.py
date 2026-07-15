@@ -1,6 +1,10 @@
 """T3c — verify test-local Step subclasses satisfy Step Protocol."""
 from __future__ import annotations
 
+import pytest
+
+pytest.skip("archived legacy step protocol surface", allow_module_level=True)
+
 from arnold.pipelines.megaplan._pipeline.types import Step
 
 

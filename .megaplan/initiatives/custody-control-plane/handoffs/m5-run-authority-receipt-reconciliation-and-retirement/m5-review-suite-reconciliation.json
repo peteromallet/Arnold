@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-14T19:56:35.627654Z",
+  "command": "/root/.pyenv/versions/3.11.11/bin/python -m pytest -q tests/arnold_pipelines/megaplan/test_authority_batch_scope.py tests/arnold_pipelines/megaplan/test_authority_inventory.py tests/arnold_pipelines/megaplan/test_authority_inventory_cli.py tests/arnold_pipelines/megaplan/test_authority_views.py tests/arnold_pipelines/megaplan/test_authority_incident_cycles.py tests/arnold_pipelines/run_authority/test_contracts.py tests/arnold_pipelines/run_authority/test_reducer.py tests/cloud/test_status_snapshot.py tests/execute/test_merge_scope.py tests/arnold_pipelines/megaplan/test_authority_dispatch_grants.py tests/execute/test_authority_dispatch_validation.py tests/execute/test_execute_frontier_authority.py tests/arnold_pipelines/megaplan/test_chain_authority_shadow.py tests/arnold_pipelines/megaplan/test_cloud_status_authority_shadow.py tests/arnold_pipelines/megaplan/test_epic_chain.py tests/arnold_pipelines/megaplan/test_human_gate_view.py tests/arnold_pipelines/megaplan/test_semantic_health.py tests/cloud/test_human_blockers.py tests/cloud/test_repair_contract.py tests/cloud/test_repair_custody.py tests/test_state_reader_audit.py",
+  "subject_head": "0c188edc3a371dd28fe218d6e02fa3405b557334",
+  "runs": [
+    {
+      "phase": "baseline",
+      "run_id": "4e48f3aae777",
+      "status": "failed",
+      "collected": 0,
+      "collected_ids": 645,
+      "failures": [
+        "tests/test_state_reader_audit.py::test_m2_authority_reader_grep_audit_classifies_all_raw_authority_patterns"
+      ],
+      "collection_errors": [],
+      "collections_parse_ok": true,
+      "code_hash": "sha256:84f7e85e3dc327eeede83ed75efe67c01b321c4d2da5b1943f315cd1a4ffe856"
+    },
+    {
+      "phase": "verification",
+      "run_id": "07cf64a1969c",
+      "status": "failed",
+      "collected": 0,
+      "collected_ids": 645,
+      "failures": [
+        "tests/test_state_reader_audit.py::test_m2_authority_reader_grep_audit_classifies_all_raw_authority_patterns"
+      ],
+      "collection_errors": [],
+      "collections_parse_ok": true,
+      "code_hash": "sha256:84f7e85e3dc327eeede83ed75efe67c01b321c4d2da5b1943f315cd1a4ffe856"
+    }
+  ]
+}
