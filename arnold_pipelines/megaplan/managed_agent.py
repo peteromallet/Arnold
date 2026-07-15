@@ -319,6 +319,7 @@ def _repair_goal_semantics(payload: Mapping[str, Any]) -> dict[str, Any] | None:
         }
     status = str(goal.get("status") or "unknown")
     terminal = status in {"progressed", "approval_required"}
+    semantic_success = status == "progressed"
     return {
         "goal_id": str(goal.get("goal_id") or links.get("repair_goal_id") or ""),
         "goal_path": goal_path,
@@ -326,11 +327,16 @@ def _repair_goal_semantics(payload: Mapping[str, Any]) -> dict[str, Any] | None:
             goal.get("checkpoint_digest") or links.get("repair_checkpoint_digest") or ""
         ),
         "status": status,
-        "semantic_completion": terminal,
+        "terminal": terminal,
+        "semantic_completion": semantic_success,
         "reason": (
-            "authoritative target progress or approval gate verified"
-            if terminal
-            else "worker lifecycle completion does not complete the durable repair goal"
+            "authoritative target progress verified"
+            if semantic_success
+            else (
+                "explicit human approval or authorization gate verified"
+                if status == "approval_required"
+                else "worker lifecycle completion does not complete the durable repair goal"
+            )
         ),
     }
 
@@ -890,7 +896,7 @@ def _run_managed_command_locked(
         goal_semantics = _repair_goal_semantics(manifest)
         goal_incomplete = bool(
             goal_semantics
-            and not goal_semantics["semantic_completion"]
+            and not goal_semantics["terminal"]
             and spec.run_kind != "automatic_repair_retry"
             and returncode == 0
         )
@@ -923,7 +929,11 @@ def _run_managed_command_locked(
                 "status": (
                     "completed"
                     if goal_semantics["semantic_completion"]
-                    else "continuing"
+                    else (
+                        "blocked"
+                        if goal_semantics["status"] == "approval_required"
+                        else "continuing"
+                    )
                 ),
                 "complete": goal_semantics["semantic_completion"],
                 "authority": "repair_goal",

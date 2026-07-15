@@ -175,7 +175,8 @@ def test_explicit_authorization_gate_terminates_with_exact_gate_evidence(tmp_pat
     result = evaluate_repair_goal(path, action="approval_gate_check")
 
     assert result["status"] == GOAL_APPROVAL_REQUIRED
-    assert result["semantic_completion"] is True
+    assert result["terminal"] is True
+    assert result["semantic_completion"] is False
     assert result["evaluation"]["authoritative_progress"] is False
     gate = result["evaluation"]["approval_gate"]
     assert gate["gate_state"] == "awaiting_authorization"
@@ -197,3 +198,19 @@ def test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity(
     assert '--link "repair_goal_path=$inherited_goal_path"' in wrapper
     assert 'ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path"' in wrapper
     assert 'ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest"' in wrapper
+
+
+def test_repair_loop_refuses_goal_custody_without_request_and_blocker_links() -> None:
+    wrapper = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert 'blocker_id="${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"' in wrapper
+    assert 'request_id="${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"' in wrapper
+    assert 'if [[ -z "$blocker_id" || -z "$request_id" ]]; then' in wrapper
+    assert "blocker:session:$SESSION" not in wrapper
