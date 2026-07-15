@@ -56,6 +56,12 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     compile_task_feasibility,
 )
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    bind_finalize_custody,
+    validate_finalize_resolution_coverage,
+    write_critique_clearance,
+)
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan.schema_projection import (
     project_schema_owned_fields,
@@ -447,6 +453,12 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
 
     # Residual semantic checks the schema subset cannot express.
     _finalize_semantic_postcheck(plan_dir, state, worker, _reject)
+    clearance_path = plan_dir / "critique_clearance.json"
+    if clearance_path.exists():
+        try:
+            validate_finalize_resolution_coverage(payload, read_json(clearance_path))
+        except CritiqueCustodyError as error:
+            _reject(str(error))
 
 
 def _finalize_semantic_postcheck(
@@ -2011,6 +2023,18 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     _attach_calibration_route_reports(plan_dir, payload, state)
     _write_capability_claims_from_finalize(plan_dir, payload, state)
     _reconcile_validation_after_mutation(payload)
+    # Finalization and baseline helpers may mutate the graph after the first
+    # feasibility pass. Recompile at the final persistence boundary and bind
+    # critique clearance only to these exact bytes.
+    if state["config"].get("mode", "code") == "code":
+        feasibility = compile_task_feasibility(payload, state.get("config", {}))
+        atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
+        if not feasibility["admitted"]:
+            raise TaskFeasibilityError(feasibility)
+        payload["graph_report"] = feasibility
+    clearance_path = plan_dir / "critique_clearance.json"
+    if clearance_path.exists():
+        bind_finalize_custody(plan_dir, payload, read_json(clearance_path))
     atomic_write_json(plan_dir / "contract.json", contract_payload)
     write_plan_artifact_json(
         plan_dir, "finalize.json", payload,
@@ -2081,6 +2105,16 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         if robustness == "bare" or (is_creative_mode(state) and robustness == "light"):
             allowed_states.add(STATE_PLANNED)
         require_state(state, "finalize", allowed_states)
+
+        try:
+            write_critique_clearance(plan_dir, state)
+        except CritiqueCustodyError as error:
+            raise CliError(
+                error.code,
+                str(error),
+                valid_next=["critique", "revise", "gate"],
+                extra={"issues": list(error.issues)},
+            ) from error
 
         from arnold_pipelines.megaplan.handlers.structured_output import (
             require_scratch_filename_for_phase,

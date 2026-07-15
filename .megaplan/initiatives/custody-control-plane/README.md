@@ -96,6 +96,27 @@ The delivery-level mapping from every missed behavior through call sites,
 milestones, tests, gates, and actual final verification is
 `research/end-state-coverage-matrix-20260714.md`.
 
+## Implemented adjacent M8A slice: critique custody
+
+Resident run `subagent-20260715-122715-f5ca5724` implements a fail-closed
+Megaplan-local critique custody contract on the reconciled runtime target. Raw
+and normalized critique evidence now receives stable finding identity and an
+immutable production receipt; gate validates the receipt-to-registry join;
+finalize requires plan-mutation clearance plus an exact typed
+finding-to-final-task map, revalidates the final DAG after all mutations, and
+binds clearance to the exact task graph; execute rejects missing or stale
+custody/feasibility evidence. The captured 35-task linear-plan shape is an
+adversarial rejection fixture.
+
+This is partial M8A delivery, not milestone completion or runtime activation.
+M8A already owned graph feasibility and post-finalize validation but did not
+spell out the finding production/normalization/resolution join. M8 and M11 must
+still register/prove cross-runtime boundary adoption and bypass retirement;
+M6A/M7 provide WBC storage and action custody but do not decide semantic
+critique resolution. The root cause, invariants, adjacent loss paths, exact run
+provenance, and milestone gap assessment are curated in
+`research/critique-custody-contract-20260715.md`.
+
 ## Launch posture
 
 The chain is deliberately unlaunched and fail-closed until its revision pin is
