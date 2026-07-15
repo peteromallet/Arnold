@@ -93,6 +93,10 @@ class ContextCompressor:
         )
         self.threshold_tokens = int(self.context_length * threshold_percent)
         self.compression_count = 0
+        # The public ``compress`` API remains list-in/list-out for compatibility,
+        # while this flag lets stateful callers distinguish a committed
+        # compaction from a fail-closed no-op.
+        self.last_compaction_succeeded = False
 
         if not quiet_mode:
             logger.info(
@@ -242,9 +246,8 @@ class ContextCompressor:
         inspired by Pi-mono and OpenCode. When a previous summary exists,
         generates an iterative update instead of summarizing from scratch.
 
-        Returns None if all attempts fail — the caller should drop
-        the middle turns without a summary rather than inject a useless
-        placeholder.
+        Returns None if the provider/model cannot produce a non-empty summary.
+        The caller must preserve the original messages in that case.
         """
         summary_budget = self._compute_summary_budget(turns_to_summarize)
         content_to_summarize = self._serialize_for_summary(turns_to_summarize)
@@ -345,12 +348,15 @@ Write only the summary body. Do not include any preamble or prefix."""
             if not isinstance(content, str):
                 content = str(content) if content else ""
             summary = content.strip()
-            # Store for iterative updates on next compaction
-            self._previous_summary = summary
+            if not summary:
+                logging.warning(
+                    "Context compression returned an empty summary; preserving original messages."
+                )
+                return None
             return self._with_summary_prefix(summary)
         except RuntimeError:
             logging.warning("Context compression: no provider available for "
-                            "summary. Middle turns will be dropped without summary.")
+                            "summary. Original messages will be preserved.")
             return None
         except Exception as e:
             logging.warning("Failed to generate context summary: %s", e)
@@ -524,7 +530,27 @@ Write only the summary body. Do not include any preamble or prefix."""
     # Main compression entry point
     # ------------------------------------------------------------------
 
-    def compress(self, messages: List[Dict[str, Any]], current_tokens: int = None) -> List[Dict[str, Any]]:
+    def compress(
+        self,
+        messages: List[Dict[str, Any]],
+        current_tokens: int = None,
+    ) -> List[Dict[str, Any]]:
+        """Attempt compaction transactionally, preserving input on any failure."""
+        self.last_compaction_succeeded = False
+        try:
+            return self._compress_speculatively(messages, current_tokens=current_tokens)
+        except Exception as exc:
+            logger.warning(
+                "Context compression failed before commit; preserving original messages: %s",
+                exc,
+            )
+            return messages
+
+    def _compress_speculatively(
+        self,
+        messages: List[Dict[str, Any]],
+        current_tokens: int = None,
+    ) -> List[Dict[str, Any]]:
         """Compress conversation messages by summarizing middle turns.
 
         Algorithm:
@@ -537,6 +563,10 @@ Write only the summary body. Do not include any preamble or prefix."""
         After compression, orphaned tool_call / tool_result pairs are cleaned
         up so the API never receives mismatched IDs.
         """
+        # Compaction is speculative until a non-empty summary has been
+        # generated and the resulting message list has passed sanitation.
+        # Every failure path returns the exact input list object unchanged.
+        original_messages = messages
         n_messages = len(messages)
         if n_messages <= self.protect_first_n + self.protect_last_n + 1:
             if not self.quiet_mode:
@@ -593,6 +623,14 @@ Write only the summary body. Do not include any preamble or prefix."""
         # Phase 3: Generate structured summary
         summary = self._generate_summary(turns_to_summarize)
 
+        if not summary:
+            if not self.quiet_mode:
+                logger.warning(
+                    "Context compression aborted: no non-empty summary was produced; "
+                    "original messages were preserved"
+                )
+            return original_messages
+
         # Phase 4: Assemble compressed message list
         compressed = []
         for i in range(compress_start):
@@ -605,32 +643,28 @@ Write only the summary body. Do not include any preamble or prefix."""
             compressed.append(msg)
 
         _merge_summary_into_tail = False
-        if summary:
-            last_head_role = messages[compress_start - 1].get("role", "user") if compress_start > 0 else "user"
-            first_tail_role = messages[compress_end].get("role", "user") if compress_end < n_messages else "user"
-            # Pick a role that avoids consecutive same-role with both neighbors.
-            # Priority: avoid colliding with head (already committed), then tail.
-            if last_head_role in ("assistant", "tool"):
-                summary_role = "user"
-            else:
-                summary_role = "assistant"
-            # If the chosen role collides with the tail AND flipping wouldn't
-            # collide with the head, flip it.
-            if summary_role == first_tail_role:
-                flipped = "assistant" if summary_role == "user" else "user"
-                if flipped != last_head_role:
-                    summary_role = flipped
-                else:
-                    # Both roles would create consecutive same-role messages
-                    # (e.g. head=assistant, tail=user — neither role works).
-                    # Merge the summary into the first tail message instead
-                    # of inserting a standalone message that breaks alternation.
-                    _merge_summary_into_tail = True
-            if not _merge_summary_into_tail:
-                compressed.append({"role": summary_role, "content": summary})
+        last_head_role = messages[compress_start - 1].get("role", "user") if compress_start > 0 else "user"
+        first_tail_role = messages[compress_end].get("role", "user") if compress_end < n_messages else "user"
+        # Pick a role that avoids consecutive same-role with both neighbors.
+        # Priority: avoid colliding with head (already committed), then tail.
+        if last_head_role in ("assistant", "tool"):
+            summary_role = "user"
         else:
-            if not self.quiet_mode:
-                logger.warning("No summary model available — middle turns dropped without summary")
+            summary_role = "assistant"
+        # If the chosen role collides with the tail AND flipping wouldn't
+        # collide with the head, flip it.
+        if summary_role == first_tail_role:
+            flipped = "assistant" if summary_role == "user" else "user"
+            if flipped != last_head_role:
+                summary_role = flipped
+            else:
+                # Both roles would create consecutive same-role messages
+                # (e.g. head=assistant, tail=user — neither role works).
+                # Merge the summary into the first tail message instead
+                # of inserting a standalone message that breaks alternation.
+                _merge_summary_into_tail = True
+        if not _merge_summary_into_tail:
+            compressed.append({"role": summary_role, "content": summary})
 
         for i in range(compress_end, n_messages):
             msg = messages[i].copy()
@@ -640,9 +674,14 @@ Write only the summary body. Do not include any preamble or prefix."""
                 _merge_summary_into_tail = False
             compressed.append(msg)
 
-        self.compression_count += 1
-
-        compressed = self._sanitize_tool_pairs(compressed)
+        try:
+            compressed = self._sanitize_tool_pairs(compressed)
+        except Exception as exc:
+            logger.warning(
+                "Context compression sanitation failed; preserving original messages: %s",
+                exc,
+            )
+            return original_messages
 
         if not self.quiet_mode:
             new_estimate = estimate_messages_tokens_rough(compressed)
@@ -653,6 +692,13 @@ Write only the summary body. Do not include any preamble or prefix."""
                 len(compressed),
                 saved_estimate,
             )
-            logger.info("Compression #%d complete", self.compression_count)
+        if not self.quiet_mode:
+            logger.info("Compression #%d complete", self.compression_count + 1)
+
+        # Commit compressor state as the final operation. Iterative summaries
+        # must never inherit an empty or failed attempt.
+        self._previous_summary = summary[len(SUMMARY_PREFIX):].lstrip()
+        self.compression_count += 1
+        self.last_compaction_succeeded = True
 
         return compressed
