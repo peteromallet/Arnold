@@ -1434,6 +1434,18 @@ def _meta_repair_summary(
         else {}
     )
     goal_control_action = str(goal_evaluation.get("control_action") or "").strip()
+    request_gate_recommendation = str(
+        request_signature.get("gate_recommendation") or ""
+    ).strip()
+    request_failure_kind = str(request_signature.get("failure_kind") or "").strip()
+    repair_dispatch_during_preserve_live = bool(
+        request_payload
+        and request_failure_kind == "repair_goal_owner_missing"
+        and (
+            goal_control_action == "preserve_live"
+            or request_gate_recommendation.startswith("preserve_live")
+        )
+    )
     if repair_goal_active and request_target_mismatch:
         should_dispatch = True
         trigger = "repair_context_target_mismatch"
@@ -1448,7 +1460,14 @@ def _meta_repair_summary(
         rationale = [
             "durable repair goal recorded deterministic repeated owner failure and explicitly requires replan"
         ]
-    if repair_goal_active and not repair_goal_owner_live:
+    elif repair_goal_active and not repair_goal_owner_live and goal_control_action == "preserve_live":
+        should_dispatch = False
+        trigger = ""
+        rationale = [
+            "durable repair goal explicitly requires preserving a fresh matching worker; "
+            "an observation goal may remain active without a mutating owner"
+        ]
+    elif repair_goal_active and not repair_goal_owner_live:
         should_dispatch = True
         trigger = "repair_goal_owner_missing"
         rationale = [
@@ -1515,6 +1534,8 @@ def _meta_repair_summary(
             "control_action": _redact_scalar(goal_control_action),
             "request_id": _redact_scalar(request_id),
             "request_target_mismatch": request_target_mismatch,
+            "request_gate_recommendation": _redact_scalar(request_gate_recommendation),
+            "repair_dispatch_during_preserve_live": repair_dispatch_during_preserve_live,
         },
         "meta_record_count": len(meta_refs or []),
         "meta_run_log_count": len(run_refs),
@@ -3611,6 +3632,18 @@ def _human_gate_evidence_disagreement_reason(ev):
         )
     return ""
 
+def _repair_dispatch_during_preserve_live_reason(ev):
+    meta = ev.get("meta_repair_summary") if isinstance(ev, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    goal = meta.get("repair_goal") if isinstance(meta.get("repair_goal"), dict) else {}
+    if goal.get("repair_dispatch_during_preserve_live") is not True:
+        return ""
+    return (
+        "repair_dispatch_during_preserve_live: watchdog created owner-missing repair custody "
+        f"for goal={goal.get('goal_id') or 'unknown'} request={goal.get('request_id') or 'unknown'} "
+        "while durable evidence required preserving the fresh matching worker"
+    )
+
 def _active_step_liveness(active):
     if not isinstance(active, dict) or not active:
         return {"present": False}
@@ -4575,6 +4608,7 @@ for entry in plans:
         _liveness_without_acceptance_progress_reason(ev),
         _auto_policy_external_evidence_gap_reason(ev),
         _human_gate_evidence_disagreement_reason(ev),
+        _repair_dispatch_during_preserve_live_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
         _marker_present_stopped_without_chain_state_reason(ev),
         _dependency_independent_launch_gap_reason(ev),
