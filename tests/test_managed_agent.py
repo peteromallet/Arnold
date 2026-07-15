@@ -551,8 +551,9 @@ def test_automatic_v2_without_canonical_contract_is_visible_but_not_live_evidenc
     assert row["live"] is False
 
 
+@pytest.mark.parametrize("split_options", [False, True])
 def test_nested_hermes_launch_reenters_shared_manager(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, split_options: bool
 ) -> None:
     parent = spec(tmp_path, identity="nested-parent")
     assert run_managed_command(parent) == 0
@@ -574,16 +575,25 @@ def test_nested_hermes_launch_reenters_shared_manager(
         "ARNOLD_MANAGED_AGENT_ORIGIN",
         json.dumps(parent_payload["launch_provenance"]),
     )
-    monkeypatch.setattr(
-        sys,
-        "argv",
+    launcher_args = (
         [
+            str(launcher_path),
+            "--model",
+            "deepseek:deepseek-v4-pro",
+            "--project_dir",
+            str(tmp_path),
+            "--query_file",
+            str(prompt),
+        ]
+        if split_options
+        else [
             str(launcher_path),
             "--model=deepseek:deepseek-v4-pro",
             f"--project_dir={tmp_path}",
             f"--query_file={prompt}",
-        ],
+        ]
     )
+    monkeypatch.setattr(sys, "argv", launcher_args)
     launched: list[str] = []
 
     def fake_run(command, **_kwargs):
@@ -596,6 +606,7 @@ def test_nested_hermes_launch_reenters_shared_manager(
     assert "automatic_research_subagent" in launched
     assert str(parent_payload["run_id"]) in launched
     assert "@managed-stdin@" in "\n".join(launched)
+    assert str(tmp_path.resolve()) in launched
 
 
 def test_root_authority_ceiling_is_durable_and_inherited_by_child(

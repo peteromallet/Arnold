@@ -302,7 +302,10 @@ def _automatic_managed_reexec() -> int | None:
     project_dir = str(Path.cwd())
     query_file = ""
     child_args: list[str] = []
-    for argument in sys.argv[1:]:
+    arguments = sys.argv[1:]
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
         if argument.startswith(("--model=",)):
             model = argument.split("=", 1)[1]
         elif argument.startswith(("--project_dir=", "--project-dir=")):
@@ -311,10 +314,29 @@ def _automatic_managed_reexec() -> int | None:
             query_file = argument.split("=", 1)[1]
             option = argument.split("=", 1)[0]
             child_args.append(f"{option}=@managed-stdin@")
+            index += 1
             continue
         elif argument.startswith("--query="):
             raise RuntimeError("automatic nested agent requires sealed --query-file input")
+        elif argument in {"--model", "--project_dir", "--project-dir", "--query_file", "--query-file"}:
+            if index + 1 >= len(arguments):
+                raise RuntimeError(f"automatic nested agent option {argument} requires a value")
+            value = arguments[index + 1]
+            if argument == "--model":
+                model = value
+                child_args.extend((argument, value))
+            elif argument in {"--project_dir", "--project-dir"}:
+                project_dir = value
+                child_args.extend((argument, value))
+            else:
+                query_file = value
+                child_args.extend((argument, "@managed-stdin@"))
+            index += 2
+            continue
+        elif argument == "--query":
+            raise RuntimeError("automatic nested agent requires sealed --query-file input")
         child_args.append(argument)
+        index += 1
     if not query_file:
         raise RuntimeError("automatic nested agent requires --query-file")
     query_path = Path(query_file).expanduser().resolve()
