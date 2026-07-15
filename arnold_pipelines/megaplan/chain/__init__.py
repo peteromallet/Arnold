@@ -3515,11 +3515,92 @@ def _handle_completion_guard_failure(
     reason: str,
     events: list[dict[str, Any]],
     writer,
+    predicate_failures: list[dict[str, Any]] | None = None,
+    acceptance_transaction_id: str = "",
+    acceptance_snapshot_hash: str = "",
 ) -> dict[str, Any]:
     writer(
         f"[chain] milestone {milestone.label} completion guard rejected terminal "
         f"claim for {plan_name}: {reason}\n"
     )
+
+    # ── Build typed acceptance repair targets ──────────────────────────
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+    )
+
+    repair_targets: list[dict[str, Any]] = []
+    if predicate_failures:
+        # Caller provided typed V2 context — use it directly.
+        for pf in predicate_failures:
+            if not isinstance(pf, dict):
+                continue
+            target: dict[str, Any] = {
+                "kind": str(pf.get("kind") or PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE),
+                "evidence_kind": str(pf.get("evidence_kind") or "completion_guard"),
+                "summary": str(pf.get("summary") or reason),
+                "details": dict(pf.get("details") or {}),
+            }
+            if acceptance_transaction_id:
+                target["acceptance_transaction_id"] = acceptance_transaction_id
+            if acceptance_snapshot_hash:
+                target["acceptance_snapshot_hash"] = acceptance_snapshot_hash
+            repair_targets.append(target)
+    else:
+        # Legacy caller — no V2 context available.  Emit a fail-closed
+        # unknown acceptance failure so downstream repair tooling knows
+        # the guard blocked but cannot yet attribute it to a specific
+        # predicate.
+        legacy_target: dict[str, Any] = {
+            "kind": PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+            "evidence_kind": "completion_guard",
+            "summary": reason,
+            "details": {
+                "legacy": True,
+                "plan_name": plan_name,
+                "milestone_label": milestone.label,
+                "outcome_status": outcome_status,
+            },
+        }
+        if acceptance_transaction_id:
+            legacy_target["acceptance_transaction_id"] = acceptance_transaction_id
+        if acceptance_snapshot_hash:
+            legacy_target["acceptance_snapshot_hash"] = acceptance_snapshot_hash
+        repair_targets.append(legacy_target)
+
+    state.metadata["completion_guard_repair_targets"] = repair_targets
+
+    # ── T14 — invalidate prior acceptance candidates ───────────────────
+    # After a completion guard blocks, any prior uncommitted acceptance
+    # candidate is stale.  The caller must produce a new snapshot and run
+    # the full acceptance boundary before committing.
+    try:
+        plan_path = resolve_plan_dir(root, plan_name) if plan_name else None
+    except Exception:
+        plan_path = None
+    if plan_path is not None and plan_path.is_dir():
+        now_iso = datetime.now(timezone.utc).isoformat()
+        state.invalidate_candidate(
+            milestone.label,
+            transaction_id=acceptance_transaction_id or "",
+            reason=reason or "completion guard blocked",
+            superseded_by="",
+            invalidated_at=now_iso,
+        )
+        # Also call the cloud-level candidate invalidation to discard
+        # any uncommitted candidate files on disk.
+        try:
+            from arnold_pipelines.megaplan.cloud.repair_revalidation import (
+                invalidate_acceptance_candidates_after_repair,
+            )
+            invalidate_acceptance_candidates_after_repair(
+                plan_path,
+                milestone_label=milestone.label,
+                repair_reason=f"completion guard blocked: {reason}",
+            )
+        except Exception:
+            pass
+
     synthetic = DriverOutcome(
         plan=plan_name,
         status="blocked",

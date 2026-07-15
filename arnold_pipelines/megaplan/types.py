@@ -588,7 +588,7 @@ _SETTABLE_BOOL = {
 _SETTABLE_ENUM = {
     "execution.robustness": _ROBUSTNESS_ACCEPTED,
     "execution.critic_model": CRITIC_MODEL_CHOICES,
-    "execution.completion_contract_mode": ("off", "shadow", "warn", "enforce"),
+    "execution.completion_contract_mode": ("off", "shadow", "warn", "enforce", "atomic"),
     "execution.full_suite_backstop_mode": ("off", "shadow", "enforce"),
 }
 
