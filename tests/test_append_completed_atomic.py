@@ -9,6 +9,7 @@ preserves the original legacy behavior exactly.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -345,8 +346,9 @@ def test_atomic_cas_violation_leaves_state_unchanged_and_emits_divergent_target(
             },
         }
     )
-    prior_completed = [dict(r) for r in state.completed]
     save_chain_state(spec_path, state)
+    state_path = next((tmp_path / ".megaplan" / "plans" / ".chains").glob("*.json"))
+    prior_state_payload = json.loads(state_path.read_text(encoding="utf-8"))
 
     result = _accepted_result()
 
@@ -410,9 +412,12 @@ def test_atomic_cas_violation_leaves_state_unchanged_and_emits_divergent_target(
     assert "CAS violation" in reason
     # Prior in-memory state unchanged.
     assert [c["label"] for c in state.completed] == ["m0"]
-    # Durable state unchanged.
-    disk = load_chain_state(spec_path)
-    assert [c["label"] for c in disk.completed] == ["m0"]
+    # Durable state unchanged.  This fixture intentionally keeps a legacy
+    # prior record, so compare raw JSON instead of asking fail-closed load
+    # validation to accept the old record shape.
+    disk_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert disk_payload == prior_state_payload
+    assert [c["label"] for c in disk_payload["completed"]] == ["m0"]
     # Staged transaction was discarded.
     mock_discard.assert_called_once_with(fake_plan)
     # Divergent repair target emitted.

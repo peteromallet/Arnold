@@ -13,11 +13,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
-import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan.chain import _mark_plan_completed_by_chain
 from arnold_pipelines.megaplan.chain.spec import ChainState
+from arnold_pipelines.megaplan.orchestration.acceptance_transaction import (
+    AcceptanceSnapshot,
+    AcceptanceTransaction,
+)
+from arnold_pipelines.megaplan.orchestration.completion_io import (
+    commit_acceptance_transaction,
+    prepare_acceptance_transaction,
+    store_acceptance_snapshot,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +78,65 @@ def _state_with_receipt(
             },
         }
     )
+    return state
+
+
+_FULL_SHA = "a" * 40
+
+
+def _state_with_committed_receipt(
+    root: Path,
+    *,
+    mode: str = "atomic",
+    label: str = "m1",
+    milestone_index: int = 0,
+    plan_name: str = "plan-m1",
+    transaction_id: str = "tx-abc123",
+    source_commit_ref: str = _FULL_SHA,
+    runtime_identity: str = "ci-runner-7",
+) -> ChainState:
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    snapshot = AcceptanceSnapshot(
+        transaction_id=transaction_id,
+        chain_run_id="chain-run-1",
+        milestone_label=label,
+        milestone_index=milestone_index,
+        plan_name=plan_name,
+        source_commit_ref=source_commit_ref,
+        runtime_identity=runtime_identity,
+    )
+    store_acceptance_snapshot(plan_dir, snapshot)
+    transaction = AcceptanceTransaction(
+        transaction_id=transaction_id,
+        snapshot_hash=snapshot.content_hash,
+        accepted=True,
+        mode=mode,
+        tested_commit_ref=source_commit_ref,
+        tested_runtime_identity=runtime_identity,
+    )
+    prepare_acceptance_transaction(plan_dir, transaction)
+    commit_acceptance_transaction(plan_dir, transaction_id)
+
+    state = ChainState()
+    state.completion_contract_mode = mode
+    state.completed.append(
+        {
+            "label": label,
+            "plan": plan_name,
+            "status": "done",
+            "milestone_index": milestone_index,
+            "transaction_id": transaction_id,
+            "snapshot_hash": snapshot.content_hash,
+            "source_commit_ref": source_commit_ref,
+            "runtime_identity": runtime_identity,
+            "acceptance_receipt": snapshot.with_receipt().to_dict(),
+        }
+    )
+    state.metadata["acceptance_plan_dirs"] = {
+        label: str(plan_dir),
+        plan_name: str(plan_dir),
+    }
     return state
 
 
@@ -144,7 +210,7 @@ def test_enforce_without_receipt_does_not_write_plan_done(tmp_path):
 
 
 def test_atomic_with_receipt_writes_plan_done(tmp_path):
-    """Plan-done marker succeeds when mode=atomic with a receipt."""
+    """Plan-done marker succeeds only with committed atomic acceptance evidence."""
     root = tmp_path / "project"
     root.mkdir()
     _write_plan_state(root, "plan-m1", "executed")
@@ -155,7 +221,7 @@ def test_atomic_with_receipt_writes_plan_done(tmp_path):
         milestone_label="m1",
         completion_reason="atomic with receipt",
         writer=lambda _: None,
-        state=_state_with_receipt(label="m1"),
+        state=_state_with_committed_receipt(root, label="m1", plan_name="plan-m1"),
     )
 
     plan = _plan_state(root, "plan-m1")
