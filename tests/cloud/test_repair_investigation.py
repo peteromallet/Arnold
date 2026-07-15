@@ -189,6 +189,43 @@ def test_fresh_quality_phase_result_is_exact_error_when_latest_failure_cleared(t
     assert context["current_phase_result"]["path"].endswith("phase_result.json")
 
 
+def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    access = tmp_path / "meta-observations.json"
+    _write(
+        access,
+        {
+            "access_verified": True,
+            "observations": [
+                {
+                    "kind": "external_state",
+                    "observed": {
+                        "external_guard": {
+                            "status": "failed",
+                            "failing_checks": [{"name": "test", "conclusion": "FAILURE"}],
+                        }
+                    },
+                }
+            ],
+        },
+    )
+    payload = json.loads(repair_data.read_text(encoding="utf-8"))
+    payload["meta_investigation"] = {"access_receipt_path": str(access)}
+    _write(repair_data, payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    assert context["exact_error"]["failure_kind"] == "external_pr_ci_guard_failed"
+    assert any(item["kind"] == "external_state" for item in context["evidence_sources"])
+
+
 def _receipt(digest: str = "digest-1", *, target_kind: str = "l1_repair_target") -> dict:
     return {
         "schema_version": REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
@@ -254,6 +291,36 @@ def test_investigator_receipt_is_bound_to_context_and_requires_evidence() -> Non
         validate_investigator_receipt(receipt, expected_context_digest="digest-2")
 
 
+def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
+    receipt = _receipt(target_kind="l2_repair_system")
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported recovery CLI"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "repair_custody",
+        "scope": "repair custody",
+        "rationale": "reconcile stale state",
+    }
+    observation = {
+        "context_digest": "digest-1",
+        "observations": [
+            {
+                "kind": "external_state",
+                "observed": {"external_guard": {"status": "failed"}},
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="cannot bypass"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            observation_bundle=observation,
+        )
+
+
 def test_context_tells_investigator_the_fail_closed_action_target_contract(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     context = build_investigation_context(
@@ -275,6 +342,7 @@ def test_context_tells_investigator_the_fail_closed_action_target_contract(tmp_p
     receipt = _receipt()
     receipt["recommended_action"] = "replan"
     receipt["handoff"]["action"] = "replan"
+    receipt["handoff"]["allowed_mutations"] = ["none"]
     receipt["safe_repair_target"]["kind"] = "repair_custody"
     validated = validate_investigator_receipt(
         receipt, expected_context_digest="digest-1"

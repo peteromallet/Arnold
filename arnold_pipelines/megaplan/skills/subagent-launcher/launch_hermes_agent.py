@@ -540,7 +540,9 @@ def run(
     try:
         agent = AIAgent(
             model=resolved_model,
-            enabled_toolsets=toolset_list or None,
+            # [] is an explicit no-tools capability set.  None means "use the
+            # runtime default" and silently grants file/web tools.
+            enabled_toolsets=toolset_list,
             session_id=session_id,
             session_db=SessionDB(),
             max_tokens=max_tokens,

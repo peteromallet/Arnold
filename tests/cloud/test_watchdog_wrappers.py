@@ -13543,7 +13543,7 @@ def test_l2_pathological_evidence_builds_minimal_envelope_and_launches_investiga
         encoding="utf-8",
     )
     (marker_dir / "demo.json").write_text(
-        json.dumps({"workspace": "/workspace/demo", "history": huge}), encoding="utf-8"
+        json.dumps({"workspace": str(tmp_path), "history": huge}), encoding="utf-8"
     )
     receipt = {
         "schema_version": "arnold-repair-investigator-receipt-v2",
@@ -13596,6 +13596,7 @@ def test_l2_pathological_evidence_builds_minimal_envelope_and_launches_investiga
     context_path = tmp_path / "context.json"
     prompt_path = tmp_path / "prompt.md"
     receipt_path = tmp_path / "receipt.json"
+    observation_path = tmp_path / "observations.json"
     run_id_path = tmp_path / "run-id"
     launch_log = tmp_path / "launch.log"
     run_log = tmp_path / "run.log"
@@ -13632,6 +13633,7 @@ def test_l2_pathological_evidence_builds_minimal_envelope_and_launches_investiga
             f"META_INVESTIGATION_CONTEXT_PATH={shlex.quote(str(context_path))}",
             f"META_INVESTIGATION_PROMPT_PATH={shlex.quote(str(prompt_path))}",
             f"META_INVESTIGATION_RECEIPT_PATH={shlex.quote(str(receipt_path))}",
+            f"META_INVESTIGATION_OBSERVATION_PATH={shlex.quote(str(observation_path))}",
             f"META_INVESTIGATION_RUN_ID_PATH={shlex.quote(str(run_id_path))}",
             f"RECEIPT_TEMPLATE={shlex.quote(str(receipt_template))}",
             f"LAUNCH_LOG={shlex.quote(str(launch_log))}",
@@ -13639,6 +13641,8 @@ def test_l2_pathological_evidence_builds_minimal_envelope_and_launches_investiga
             "SESSION=demo",
             "TRIGGER_TYPE=l1_custody_failure",
             "META_CODEX_MODEL=test-model",
+            "DEEPSEEK_MODEL=test-deepseek",
+            "MEGAPLAN_META_FORCE_INVESTIGATOR_MODE=codex_read_only",
             "SUBAGENT_TIMEOUT=30",
             "META_INVESTIGATION_MAX_BYTES=65536",
             "META_INVESTIGATION_CONTEXT_DIGEST=",
@@ -13674,7 +13678,9 @@ PY
     assert context_path.stat().st_size < 16 * 1024
     assert prompt_path.stat().st_size <= 65536
     assert envelope["identity"]["repair_request_id"] == "request-1"
-    assert envelope["identity"]["blocker_id"] == "blocker-1"
+    assert envelope["identity"]["blocker_id"] == "blocker-pathological"
+    assert envelope["identity"]["dispatch_blocker_id"] == "blocker-1"
+    assert envelope["identity"]["blocker_identity_drift"] is True
     assert set(envelope) == {
         "schema_version",
         "target_kind",

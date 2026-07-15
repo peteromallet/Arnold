@@ -5008,17 +5008,26 @@ PY
 
 check_meta_repair_recursion_guard() {
   local session="$1"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" <<'PY'
+  local blocker_id="${2:-}"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$blocker_id" <<'PY'
 import sys
 
-from arnold_pipelines.megaplan.cloud.meta_repair_policy import check_meta_repair_recursion
+from arnold_pipelines.megaplan.cloud.meta_repair_policy import (
+    check_meta_repair_recursion,
+    resolve_authoritative_blocker_id,
+)
 
-session, repair_data_dir = sys.argv[1:3]
-result = check_meta_repair_recursion(session, repair_data_dir=repair_data_dir)
+session, repair_data_dir, supplied = sys.argv[1:4]
+blocker_id, drift = resolve_authoritative_blocker_id(
+    session, repair_data_dir=repair_data_dir, supplied_blocker_id=supplied
+)
+result = check_meta_repair_recursion(
+    session, repair_data_dir=repair_data_dir, blocker_id=blocker_id
+)
 if result.recursing:
-    print(f"RECURSION:{result.recommendation}")
+    print(f"RECURSION:{blocker_id}:{result.recommendation}")
 else:
-    print(f"OK:{result.recommendation}")
+    print(f"OK:{blocker_id}:{'drift' if drift else 'matched'}:{result.recommendation}")
 PY
 }
 
@@ -5405,8 +5414,15 @@ dispatch_meta_repair() {
     return 0
   fi
 
-  # Recursion guard: must not launch meta-repair when one already exists
-  recursion_result="$(check_meta_repair_recursion_guard "$session" 2>&1)" || true
+  # Resolve durable custody before applying a blocker-scoped recursion budget.
+  request_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" request_id 2>/dev/null || true)"
+  blocker_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" blocker_id 2>/dev/null || true)"
+  # Recursion guard: must not launch meta-repair for the same blocker twice.
+  if ! recursion_result="$(check_meta_repair_recursion_guard "$session" "$blocker_id" 2>&1)"; then
+    log "meta-repair blocker custody unresolved; refusing dispatch session=$session detail=$(redact_inline_text "$recursion_result")"
+    REPAIR_DISPATCH_RESULT="unavailable"
+    return 1
+  fi
   if [[ "$recursion_result" == RECURSION:* ]]; then
     log "meta-repair recursion guard blocked dispatch session=$session detail=$(redact_inline_text "$recursion_result")"
     REPAIR_DISPATCH_RESULT="recursive"
@@ -5420,8 +5436,6 @@ dispatch_meta_repair() {
 
   # Marker and pgid tracking
   pgid_path="$(meta_pgid_path "$session")"
-  request_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" request_id 2>/dev/null || true)"
-  blocker_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" blocker_id 2>/dev/null || true)"
   incident_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" incident_id 2>/dev/null || true)"
   incident_id="${incident_id:-inc-$session}"
   parent_run_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" managed_agent_run_id 2>/dev/null || true)"
