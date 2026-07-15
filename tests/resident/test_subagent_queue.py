@@ -919,6 +919,57 @@ def test_cross_request_queue_stale_rejection_recovery_remains_fail_closed_on_tam
     assert "revalidated_at" not in terminal["queue"]
 
 
+def test_cross_request_queue_stale_rejection_does_not_recover_after_delivery(
+    tmp_path, monkeypatch
+) -> None:
+    _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+    rejected_at = "2026-07-15T21:20:43.605255+00:00"
+    successor.update(
+        {
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "finished_at": rejected_at,
+            "error": "queued successor dependency failed closed",
+            "error_class": "ResidentSubagentDependencyFailure",
+        }
+    )
+    successor["queue"].update(
+        {
+            "state": "dependency_failed",
+            "attention": "invalid_dependency_contract",
+            "predecessor_status": "unknown",
+            "failed_at": rejected_at,
+        }
+    )
+    successor["completion_delivery"].update(
+        {"status": "delivered", "attempt_count": 1, "delivered_at": rejected_at}
+    )
+    successor["status_history"].append(
+        {
+            "status": "failed",
+            "at": rejected_at,
+            "evidence": "invalid_dependency_contract",
+            "predecessor_status": "unknown",
+        }
+    )
+    successor_path.write_text(json.dumps(successor))
+
+    result = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    terminal = json.loads(successor_path.read_text())
+
+    assert result.skipped == 1
+    assert result.waiting == 0
+    assert terminal["status"] == "failed"
+    assert terminal["completion_delivery"]["status"] == "delivered"
+    assert terminal["queue"]["attention"] == "invalid_dependency_contract"
+    assert "revalidated_at" not in terminal["queue"]
+
+
 def test_cross_request_queue_preserves_failure_propagation(
     tmp_path, monkeypatch
 ) -> None:

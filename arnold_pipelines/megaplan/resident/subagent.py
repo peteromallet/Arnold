@@ -3383,6 +3383,7 @@ def _is_cross_revision_contract_rejection(manifest: Mapping[str, Any]) -> bool:
     """
 
     queue = manifest.get("queue")
+    delivery = manifest.get("completion_delivery")
     authorization = (
         queue.get("cross_request_authorization") if isinstance(queue, Mapping) else None
     )
@@ -3398,6 +3399,9 @@ def _is_cross_revision_contract_rejection(manifest: Mapping[str, Any]) -> bool:
         and queue.get("attention") == "invalid_dependency_contract"
         and queue.get("predecessor_status") == "unknown"
         and queue.get("attempt_count") in {None, 0, "0"}
+        and isinstance(delivery, Mapping)
+        and delivery.get("status") == "pending"
+        and delivery.get("attempt_count") in {None, 0, "0"}
         and isinstance(authorization, Mapping)
         and authorization.get("schema_version")
         == QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA
