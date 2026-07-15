@@ -391,6 +391,69 @@ def test_required_output_failure_is_terminal_and_durable(tmp_path: Path) -> None
     assert result["output_size_bytes"] == 0
 
 
+def test_active_repair_goal_cannot_be_completed_by_worker_exit(tmp_path: Path) -> None:
+    goal_path = tmp_path / "active-repair-goal.json"
+    goal_path.write_text(
+        json.dumps(
+            {
+                "goal_id": "goal-active",
+                "checkpoint_digest": "checkpoint-active",
+                "status": "active",
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = spec(
+        tmp_path,
+        identity="active-goal-worker-exit",
+        run_kind="automatic_repair",
+        links={"repair_goal_path": str(goal_path)},
+    )
+
+    assert run_managed_command(item) == 75
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    assert payload["status"] == "failed"
+    assert payload["error_class"] == "RepairGoalIncomplete"
+    assert payload["semantic_completion"]["status"] == "continuing"
+    assert payload["semantic_completion"]["complete"] is False
+
+
+def test_approval_gate_is_terminal_non_success_not_autonomous_failure(
+    tmp_path: Path,
+) -> None:
+    goal_path = tmp_path / "approval-repair-goal.json"
+    goal_path.write_text(
+        json.dumps(
+            {
+                "goal_id": "goal-approval",
+                "checkpoint_digest": "checkpoint-approval",
+                "status": "approval_required",
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = spec(
+        tmp_path,
+        identity="approval-goal-worker-exit",
+        run_kind="automatic_repair",
+        links={"repair_goal_path": str(goal_path)},
+    )
+
+    assert run_managed_command(item) == 0
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    assert payload["status"] == "completed"
+    assert payload.get("error_class") is None
+    assert payload["repair_goal"]["status"] == "approval_required"
+    assert payload["semantic_completion"] == {
+        "status": "blocked",
+        "complete": False,
+        "authority": "repair_goal",
+        "goal_id": "goal-approval",
+        "checkpoint_digest": "checkpoint-approval",
+        "reason": "explicit human approval or authorization gate verified",
+    }
+
+
 def test_automatic_child_gets_machine_origin_not_resident_reply_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

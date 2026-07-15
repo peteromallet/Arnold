@@ -4750,8 +4750,12 @@ PY
 
 ensure_repair_goal_custody() {
   local blocker_id request_id result
-  blocker_id="${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-blocker:session:$SESSION}"
+  blocker_id="${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
   request_id="${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+  if [[ -z "$blocker_id" || -z "$request_id" ]]; then
+    log "durable repair goal custody missing request/blocker identity session=$SESSION request_present=$([[ -n "$request_id" ]] && printf yes || printf no) blocker_present=$([[ -n "$blocker_id" ]] && printf yes || printf no)"
+    return 1
+  fi
   result="$(
     PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
       arnold_pipelines.megaplan.cloud.repair_goal ensure \
