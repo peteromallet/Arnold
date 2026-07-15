@@ -92,6 +92,81 @@ def _load_superfixer_cycle_functions() -> dict[str, object]:
     return namespace
 
 
+def test_nested_repair_queue_drift_is_a_deterministic_finding() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _nested_repair_queue_custody_drift_reason(ev):")
+    end = text.index("\ndef _queue_coalesced_without_live_owner_reason", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+    }
+    exec(text[start:end], namespace)
+    reason = namespace["_nested_repair_queue_custody_drift_reason"]({
+        "repair_custody_summary": {
+            "nested_queue_root": "/workspace/demo/.megaplan/repair-queue",
+            "nested_accepted_unclaimed_request_ids": ["request-1"],
+        },
+        "chain_state_summary": {"current": {"last_state": "blocked"}},
+    })
+
+    assert reason.startswith("nested_repair_queue_custody_drift:")
+    assert "request-1" in reason
+
+
+def test_repair_custody_gather_correlates_nested_and_central_queues(
+    tmp_path: Path,
+) -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_custody_summary(session, plan_state, current_target):")
+    end = text.index("\ndef _load_events", start)
+    central = tmp_path / ".megaplan" / "repair-queue"
+    nested = tmp_path / "workspace" / ".megaplan" / "repair-queue"
+    (nested / "requests").mkdir(parents=True)
+    (nested / "decisions").mkdir()
+
+    def project_repair_custody(**kwargs):
+        queue_root = Path(kwargs["queue_root"])
+        if queue_root == nested:
+            return {
+                "active_request_ids": ["nested-request"],
+                "accepted_unclaimed_request_ids": ["nested-request"],
+                "claim_count": 0,
+                "attempt_count": 0,
+            }
+        return {
+            "active_request_ids": [],
+            "accepted_unclaimed_request_ids": [],
+            "claim_count": 0,
+            "attempt_count": 0,
+        }
+
+    namespace: dict[str, object] = {
+        "os": os,
+        "pathlib": __import__("pathlib"),
+        "REPAIR_QUEUE_ROOT": central,
+        "iter_repair_requests": lambda *_args, **_kwargs: [],
+        "iter_repair_decisions": lambda queue, **_kwargs: (
+            [{"request_id": "nested-request", "decision": "accepted"}]
+            if Path(queue) == nested
+            else []
+        ),
+        "iter_repair_attempts": lambda *_args, **_kwargs: [],
+        "project_repair_custody": project_repair_custody,
+        "repair_request_runtime_available": True,
+        "_redact_scalar": str,
+    }
+    exec(text[start:end], namespace)
+
+    summary = namespace["_repair_custody_summary"](
+        "demo",
+        {"current_state": "blocked"},
+        {"current_refs": {"workspace": str(tmp_path / "workspace")}},
+    )
+
+    assert summary["queue_root"] == str(central)
+    assert summary["nested_queue_root"] == str(nested)
+    assert summary["nested_accepted_unclaimed_request_ids"] == ["nested-request"]
+
+
 def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
     return {
         "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},

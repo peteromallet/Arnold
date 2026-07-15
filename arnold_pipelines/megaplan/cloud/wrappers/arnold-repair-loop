@@ -5547,6 +5547,10 @@ set -euo pipefail
 # turn a valid canonical relaunch into a false failed:stopped result.
 rm -f -- "\${BASH_SOURCE[0]}"
 cd $(printf '%q' "$workspace")
+export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "${ARNOLD_REPAIR_QUEUE_ROOT:-$REPAIR_QUEUE_DIR}")
+export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
+export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
+export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
 exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
 EOF
   chmod +x "$launch_script"

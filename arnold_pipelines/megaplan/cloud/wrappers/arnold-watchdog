@@ -8358,6 +8358,10 @@ export ARNOLD_SUPERVISE_SESSION=$(printf '%q' "$session")
 export ARNOLD_SUPERVISE_WORKSPACE=$(printf '%q' "$workspace")
 export ARNOLD_SUPERVISE_REMOTE_SPEC=$(printf '%q' "$remote_spec")
 export ARNOLD_SUPERVISE_RUN_KIND=$(printf '%q' "$run_kind")
+export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "${ARNOLD_REPAIR_QUEUE_ROOT:-$(dirname "$MARKER_DIR")/repair-queue}")
+export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
+export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
+export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
 exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $quoted_command_shell
 EOF
   chmod +x "$launch_script"

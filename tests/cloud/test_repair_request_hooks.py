@@ -149,6 +149,42 @@ class TestLifecycleFailureEnqueue:
         assert request["problem_signature"]["failure_kind"] == "phase_failed"
         assert request["problem_signature"]["blocked_task_id"] == "T19"
 
+    def test_terminal_handler_failure_is_enqueued_without_rewriting_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_terminal_failure_request
+
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "blocked-plan"
+        plan_dir.mkdir(parents=True)
+        state = {
+            "current_state": "blocked",
+            "latest_failure": {
+                "kind": "quality_gate_blocked",
+                "message": "deterministic review check failed",
+                "phase": "review",
+                "suggested_action": "dispatch bounded automatic repair",
+                "metadata": {"blocked_task_id": "T24"},
+            },
+        }
+        state_path = plan_dir / "state.json"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        queue_root = tmp_path / "central" / ".megaplan" / "repair-queue"
+        marker_dir = tmp_path / "central" / ".megaplan" / "cloud-sessions"
+        monkeypatch.setenv("ARNOLD_REPAIR_QUEUE_ROOT", str(queue_root))
+        monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(marker_dir))
+        monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "blocked-chain")
+        monkeypatch.setenv("ARNOLD_REPAIR_RUN_KIND", "chain")
+
+        _enqueue_terminal_failure_request(plan_dir)
+
+        request = _read_requests(queue_root)[0]
+        assert request["session"] == "blocked-chain"
+        assert request["run_kind"] == "chain"
+        assert request["problem_signature"]["failure_kind"] == "quality_gate_blocked"
+        assert request["problem_signature"]["blocked_task_id"] == "T24"
+        assert json.loads(state_path.read_text(encoding="utf-8")) == state
+
     def test_lifecycle_marker_content(self, tmp_path: Path) -> None:
         """Enqueued request carries correct source, signature fields, and
         redacted hint hash — no raw failure text stored."""

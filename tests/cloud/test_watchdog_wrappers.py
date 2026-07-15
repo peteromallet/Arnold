@@ -42,6 +42,16 @@ def _repair_wrapper() -> str:
     return _wrapper("arnold-repair-loop")
 
 
+def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
+    watchdog = _wrapper("arnold-watchdog")
+    repair_loop = _repair_wrapper()
+    for text in (watchdog, repair_loop):
+        assert "export ARNOLD_REPAIR_QUEUE_ROOT=" in text
+        assert "export ARNOLD_REPAIR_MARKER_DIR=" in text
+        assert "export ARNOLD_REPAIR_SESSION=" in text
+        assert "export ARNOLD_REPAIR_RUN_KIND=" in text
+
+
 def _extract_repair_function(name: str) -> str:
     text = _repair_wrapper()
     start = text.index(f"{name}() {{")
@@ -13397,7 +13407,8 @@ def test_meta_repair_recursion_check_embedded_python_matches_contract(
 ) -> None:
     """The recursion_check embedded Python must match the meta_repair_policy API."""
     marker = (
-        'python3 - "$SESSION" "$REPAIR_DATA_DIR" <<'
+        'python3 - "$SESSION" "$REPAIR_DATA_DIR" '
+        '"${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'
     )
     text = _meta_repair_wrapper()
 
@@ -13419,7 +13430,7 @@ def test_meta_repair_recursion_check_embedded_python_matches_contract(
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
     result = subprocess.run(
-        [sys.executable, str(prog_path), "test-session", str(repair_data)],
+        [sys.executable, str(prog_path), "test-session", str(repair_data), "blocker-1"],
         capture_output=True,
         text=True,
         env=env,
@@ -13433,6 +13444,7 @@ def test_meta_repair_recursion_check_embedded_python_matches_contract(
     record = {
         "meta_repair_id": "existing-001",
         "session": "test-session",
+        "blocker_id": "blocker-1",
         "trigger": "repair_timeout",
         "outcome": "FIXED",
     }
@@ -13443,7 +13455,7 @@ def test_meta_repair_recursion_check_embedded_python_matches_contract(
     )
 
     result2 = subprocess.run(
-        [sys.executable, str(prog_path), "test-session", str(repair_data)],
+        [sys.executable, str(prog_path), "test-session", str(repair_data), "blocker-1"],
         capture_output=True,
         text=True,
         env=env,

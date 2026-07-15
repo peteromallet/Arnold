@@ -2901,6 +2901,9 @@ def _chain_start_command(
     one_shot: bool = False,
     no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
+    repair_session: str | None = None,
+    repair_run_kind: str = "chain",
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     """Construct the ``python -m arnold_pipelines.megaplan chain start`` command with canonical quoting.
 
@@ -2924,6 +2927,15 @@ def _chain_start_command(
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
+    if repair_session:
+        prefix += (
+            "export ARNOLD_REPAIR_QUEUE_ROOT="
+            '"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"; '
+            "export ARNOLD_REPAIR_MARKER_DIR="
+            f"{shlex.quote(repair_marker_dir)}; "
+            f"export ARNOLD_REPAIR_SESSION={shlex.quote(repair_session)}; "
+            f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(repair_run_kind)}; "
+        )
     if engine_dir:
         cwd = shlex.quote(project_dir or engine_dir)
         engine_path = shlex.quote(engine_dir)
@@ -3069,6 +3081,9 @@ def _refresh_then_chain_start_command(
     no_git_refresh: bool = False,
     force_clean_editable_install: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
+    repair_session: str | None = None,
+    repair_run_kind: str = "chain",
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     runtime_src_path = (
         str(PurePosixPath(project_dir) / ".megaplan" / "runtime" / "editable-engine")
@@ -3083,7 +3098,7 @@ def _refresh_then_chain_start_command(
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
-        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
+        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir)}"
     )
 
 
@@ -3112,6 +3127,7 @@ def _tmux_chain_launch_command(
     name = session_name or CHAIN_SESSION_NAME
     if log_relative == _CHAIN_LOG_RELATIVE and name != CHAIN_SESSION_NAME:
         log_relative = f".megaplan/cloud-chain-{name}.log"
+    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     chain_cmd = _refresh_then_chain_start_command(
         remote_spec_path,
         spec=spec,
@@ -3120,8 +3136,10 @@ def _tmux_chain_launch_command(
         no_git_refresh=no_git_refresh,
         force_clean_editable_install=force_clean_editable_install,
         log_relative=log_relative,
+        repair_session=name,
+        repair_run_kind="chain",
+        repair_marker_dir=str(PurePosixPath(marker).parent),
     )
-    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     digest = identity_digest or ""
     marker_payload = marker_payload or {
         "session": name,
@@ -3375,13 +3393,17 @@ def _tmux_chain_restart_command(
     name = session_name or CHAIN_SESSION_NAME
     if log_relative == _CHAIN_LOG_RELATIVE and name != CHAIN_SESSION_NAME:
         log_relative = f".megaplan/cloud-chain-{name}.log"
+    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     chain_cmd = _refresh_then_chain_start_command(
         remote_spec_path,
         spec=spec,
+        project_dir=workspace,
         one_shot=True,
         log_relative=log_relative,
+        repair_session=name,
+        repair_run_kind="chain",
+        repair_marker_dir=str(PurePosixPath(marker).parent),
     )
-    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
         " && "
@@ -4237,6 +4259,9 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             log_relative=launch_ctx.log_relative,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
             force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
+            repair_session=launch_session,
+            repair_run_kind="chain",
+            repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
         ),
         "editable_source_branch": launch_spec.megaplan.ref,
         "editable_source_head": (

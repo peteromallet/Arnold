@@ -78,6 +78,7 @@ class RecursionCheckResult:
 
     session: str
     recursing: bool
+    blocker_id: str = ""
     existing_meta_repair_ids: tuple[str, ...] = field(default_factory=tuple)
     recommendation: str = ""
 
@@ -92,11 +93,13 @@ def check_meta_repair_recursion(
     *,
     repair_data_dir: str | Path,
     max_meta_repair_attempts: int = 1,
+    blocker_id: str = "",
 ) -> RecursionCheckResult:
     """Check whether meta-repair would recurse for *session*.
 
     Scans ``repair-data/meta/`` for existing meta-repair records that
-    belong to *session*.  When the number of existing records is *>=*
+    belong to *session* and, when supplied, the same *blocker_id*.  When the
+    number of existing records is *>=*
     *max_meta_repair_attempts* the result flags recursion and recommends
     escalation to ``NEEDS_HUMAN``.
 
@@ -105,6 +108,9 @@ def check_meta_repair_recursion(
         repair_data_dir: Root of the repair-data tree.
         max_meta_repair_attempts: Maximum number of meta-repair attempts
             allowed before escalation (default ``1`` — no recursion at all).
+        blocker_id: Canonical blocker identity.  Supplying it prevents a prior
+            blocker episode in the same long-lived cloud session from poisoning
+            the recursion budget for the current blocker.
 
     Returns:
         A :class:`RecursionCheckResult` with the verdict.
@@ -116,6 +122,7 @@ def check_meta_repair_recursion(
         return RecursionCheckResult(
             session=session,
             recursing=False,
+            blocker_id=blocker_id,
             recommendation="no prior meta-repair records; safe to proceed",
         )
 
@@ -126,6 +133,8 @@ def check_meta_repair_recursion(
         try:
             data = load_json(record_file, default={})
             if isinstance(data, dict) and data.get("session") == session:
+                if blocker_id and str(data.get("blocker_id") or "") != blocker_id:
+                    continue
                 if _is_unrecordable_launch_failure(data):
                     continue
                 record_id = record_file.stem
@@ -148,7 +157,8 @@ def check_meta_repair_recursion(
 
     if recursing:
         recommendation = (
-            f"Meta-repair recursion detected for session {session!r}: "
+            f"Meta-repair recursion detected for session {session!r}"
+            f" blocker {blocker_id!r}: "
             f"found {len(matching_ids)} existing meta-repair record(s) "
             f"({', '.join(matching_ids)}), threshold={max_meta_repair_attempts}. "
             f"Escalate to {NEEDS_HUMAN!r} instead of launching another meta-repair."
@@ -156,13 +166,15 @@ def check_meta_repair_recursion(
     else:
         recommendation = (
             f"Found {len(matching_ids)} existing meta-repair record(s) "
-            f"for session {session!r}, below threshold {max_meta_repair_attempts}; "
+            f"for session {session!r} blocker {blocker_id!r}, "
+            f"below threshold {max_meta_repair_attempts}; "
             f"safe to proceed."
         )
 
     return RecursionCheckResult(
         session=session,
         recursing=recursing,
+        blocker_id=blocker_id,
         existing_meta_repair_ids=tuple(matching_ids),
         recommendation=recommendation,
     )

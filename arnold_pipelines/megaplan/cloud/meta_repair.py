@@ -1663,6 +1663,7 @@ class MetaRepairRecord:
     meta_repair_id: str
     session: str
     trigger: MetaRepairTrigger | None
+    blocker_id: str = ""
     diagnosis: str = ""
     subagent_results: dict[str, Any] = field(default_factory=dict)
     changes: list[dict[str, Any]] = field(default_factory=list)
@@ -1684,6 +1685,7 @@ class MetaRepairRecord:
             "meta_repair_id": self.meta_repair_id,
             "session": self.session,
             "trigger": self.trigger.value if self.trigger is not None else None,
+            "blocker_id": self.blocker_id,
             "diagnosis": self.diagnosis,
             "subagent_results": self.subagent_results,
             "changes": self.changes,
@@ -1708,6 +1710,7 @@ class MetaRepairRecord:
             meta_repair_id=str(data.get("meta_repair_id", "")),
             session=str(data.get("session", "")),
             trigger=trigger,
+            blocker_id=str(data.get("blocker_id", "")),
             diagnosis=str(data.get("diagnosis", "")),
             subagent_results=dict(data.get("subagent_results", {})),
             changes=list(data.get("changes", [])),
