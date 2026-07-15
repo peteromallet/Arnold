@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "775fcc31f673283b9077a09391c44263b96b8ed6e57681efe510d9006a8a7f32",
+  "created_at": "2026-07-15T09:51:37Z",
+  "source": "lifecycle_failure",
+  "session": "m5a-atomic-fail-closed-20260715-0149",
+  "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5a-atomic-fail-closed-20260715-0149",
+  "queue_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5a-atomic-fail-closed-20260715-0149",
+    "plan_name": "m5a-atomic-fail-closed-20260715-0149",
+    "workspace_path": "/workspace/custody-control-plane-20260714/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "execution_blocked",
+    "current_state": "blocked",
+    "phase_or_step": "execute",
+    "milestone_or_plan": "m5a-atomic-fail-closed-20260715-0149",
+    "gate_recommendation": "Inspect the prerequisite evidence or resolve the blocked task dependency before rerunning execute.",
+    "blocked_task_id": "",
+    "event_signature": ""
+  },
+  "problem_signature_key": "eae5fb8e118c72d109089a8fe2a6271bc864ff3c358b3e8bcb767d4b1f1908dc",
+  "root_cause_hint_hash": "e86786062343b5d0fb45a5d82255ace680b2f00a0d7ac9859f28544b2f62745f",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "applicable",
+    "transport": "discord",
+    "correlation_id": "discord-corr-540b51d8728ae9cbc5944f7d",
+    "custody_id": "discord-custody-540b51d8728ae9cbc5944f7d",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "source_record_id": "msg_e3dd29ec9684",
+    "conversation_key": "discord:dm:301463647895683072",
+    "discord_message_id": "1526766119220936715",
+    "reply_to_message_id": "1526766119220936715",
+    "guild_id": null,
+    "channel_id": "1451308037074714654",
+    "thread_id": null,
+    "dm_user_id": "301463647895683072",
+    "resident_turn_id": "turn_f416d6f18f05",
+    "root_run_id": "subagent-20260715-014415-7dfbbaa7",
+    "source_kind": "discord_inbound_message",
+    "timezone_name": "UTC"
+  }
+}
