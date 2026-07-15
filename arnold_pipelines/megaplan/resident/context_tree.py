@@ -270,6 +270,10 @@ def build_context_root(
             ],
             "sessions_omitted_count": max(0, len(attention_candidates) - len(attention)),
             "running_agent_count": (agents or {}).get("running_count", 0),
+            "queued_agent_count": (agents or {}).get("queued_count", 0),
+            "agent_queue_attention_count": (agents or {}).get(
+                "queue_attention_count", 0
+            ),
             "agent_delivery_attention_count": (agents or {}).get("delivery_attention_count", 0),
             "pending_todo_count": (todos or {}).get("pending_count", 0),
         },
@@ -279,7 +283,7 @@ def build_context_root(
         "recent_knowledge_activity": _safe(recent_activity or {}, depth=7),
         "routes": [
             {"node_id": "status", "contains": "cloud sessions, progress, failures, repair evidence"},
-            {"node_id": "agents", "contains": "managed agent lifecycle and delivery"},
+            {"node_id": "agents", "contains": "managed agent lifecycle, queued dependencies, and delivery"},
             {"node_id": "conversation", "contains": "current transcript and reply/search guidance"},
             {"node_id": "tickets", "contains": "canonical ticket records and authoritative UTC timestamps"},
             {"node_id": "initiatives", "contains": "canonical initiative index and document navigation"},
@@ -369,7 +373,7 @@ def read_context_node(
     if head == "agents":
         agents = sources.get("agents") if isinstance(sources.get("agents"), Mapping) else {}
         branch = tail or "running"
-        if branch not in {"running", "recent"}:
+        if branch not in {"running", "queued", "recent"}:
             return _error(normalized, "unknown agents branch")
         return _page(normalized, list(agents.get(branch) or []), cursor, limit)
     if head == "conversation":

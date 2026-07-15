@@ -111,6 +111,7 @@ _INITIATIVE_HOT_CONTEXT_LIMIT = 5
 _INITIATIVE_CONTEXT_ROUTE_LIMIT = 200
 _RESIDENT_AGENT_RUNNING_LIMIT = 12
 _RESIDENT_AGENT_RECENT_LIMIT = 3
+_RESIDENT_AGENT_QUEUE_LIMIT = 8
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
 
 
@@ -301,7 +302,39 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
 
     def compact(row: Mapping[str, Any]) -> dict[str, Any]:
         delivery = row.get("completion_delivery")
-        return {
+        queue = row.get("queue")
+        queue_links = row.get("queue_links")
+        compact_queue = None
+        if isinstance(queue, Mapping):
+            authored = queue.get("authored_prompt")
+            compact_queue = {}
+            for key, limit in (
+                ("schema_version", 80),
+                ("state", 48),
+                ("trigger_policy", 48),
+                ("attention", 120),
+                ("predecessor_run_id", 96),
+                ("successor_run_id", 96),
+                ("predecessor_status", 48),
+                ("next_attempt_at", 48),
+            ):
+                if queue.get(key) is not None:
+                    compact_queue[key] = str(queue.get(key))[:limit]
+            for key in ("attempt_count", "max_launch_attempts"):
+                value = queue.get(key)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    compact_queue[key] = max(0, min(value, 10_000))
+            if isinstance(authored, Mapping):
+                compact_queue["authored_prompt"] = {
+                    "description": str(authored.get("description") or "")[:180],
+                    "size_chars": (
+                        max(0, min(authored["size_chars"], 40_000))
+                        if isinstance(authored.get("size_chars"), int)
+                        and not isinstance(authored.get("size_chars"), bool)
+                        else None
+                    ),
+                }
+        compact_row = {
             key: row.get(key)
             for key in (
                 "run_id",
@@ -333,6 +366,38 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
             if isinstance(delivery, Mapping)
             else None
         }
+        if compact_queue is not None:
+            compact_row.pop("query_relationship", None)
+            compact_row.pop("aggregation", None)
+            for key, limit in (("run_id", 96), ("parent_run_id", 96), ("description", 180)):
+                if key in compact_row:
+                    compact_row[key] = str(compact_row[key])[:limit]
+            queue_delivery = compact_row.get("completion_delivery")
+            if isinstance(queue_delivery, dict):
+                compact_row["completion_delivery"] = {
+                    key: (
+                        max(0, min(value, 10_000))
+                        if key == "attempt_count"
+                        and isinstance(value, int)
+                        and not isinstance(value, bool)
+                        else str(value)[:120]
+                    )
+                    for key, value in queue_delivery.items()
+                    if value is not None
+                }
+            compact_row["queue"] = compact_queue
+        if isinstance(queue_links, Mapping):
+            compact_row["queue_links"] = {
+                "successor_run_ids": [
+                    str(value)[:96]
+                    for value in list(queue_links.get("successor_run_ids") or [])[:3]
+                ],
+                "successor_omitted_count": int(
+                    queue_links.get("successor_omitted_count") or 0
+                )
+                + max(0, len(list(queue_links.get("successor_run_ids") or [])) - 3),
+            }
+        return compact_row
 
     running = [
         compact(row)
@@ -344,6 +409,11 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
         for row in list(value.get("recent") or [])[:_RESIDENT_AGENT_RECENT_LIMIT]
         if isinstance(row, Mapping)
     ]
+    queued = [
+        compact(row)
+        for row in list(value.get("queued") or [])[:_RESIDENT_AGENT_QUEUE_LIMIT]
+        if isinstance(row, Mapping)
+    ]
     return {
         "schema_version": value.get("schema_version"),
         "scope": value.get("scope"),
@@ -351,6 +421,13 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
         "running": running,
         "running_omitted_count": max(0, int(value.get("running_count") or 0) - len(running)),
         "recent_count": value.get("recent_count", len(recent)),
+        "queued_count": value.get("queued_count", len(queued)),
+        "queued": queued,
+        "queued_preview_limit": _RESIDENT_AGENT_QUEUE_LIMIT,
+        "queued_omitted_count": max(
+            0, int(value.get("queued_count") or 0) - len(queued)
+        ),
+        "queue_attention_count": value.get("queue_attention_count", 0),
         "recent": recent,
         "recent_preview_limit": _RESIDENT_AGENT_RECENT_LIMIT,
         "delivery_status_counts": value.get("delivery_status_counts", {}),
@@ -853,6 +930,15 @@ class LaunchSubagentInput(ToolInput):
     reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     request_id: str | None = None
     retry_of_run_id: str | None = None
+    depends_on_run_id: str | None = Field(
+        default=None,
+        description=(
+            "Queue this run behind one resident-managed predecessor. The successor inherits "
+            "immutable provenance, project/effect authorization, and sole delivery ownership; "
+            "it launches only after validated terminal success."
+        ),
+    )
+    queue_max_launch_attempts: int = Field(default=3, ge=1, le=10)
     continue_turn: bool = Field(
         default=False,
         description=(
@@ -1180,6 +1266,22 @@ class MegaplanResidentProfile:
                         "terminal Discord-origin launches reply to the original inbound message; "
                         "manifest status is idempotent and retry-aware"
                     ),
+                    "queued_successors": {
+                        "resident_tool": "launch_subagent with depends_on_run_id",
+                        "cli_create": (
+                            "python -P -m arnold_pipelines.megaplan resident "
+                            "queue-subagent-successor --after-run-id <run-id> --description "
+                            "'<concise purpose>' --prompt '<check the output of this agent and use it to XYZ>'"
+                        ),
+                        "cli_inspect": (
+                            "python -P -m arnold_pipelines.megaplan resident "
+                            "inspect-subagent-queue --run-id <run-id>"
+                        ),
+                        "policy": (
+                            "success-only; failure or invalid result fails closed; cancellation and "
+                            "supersession propagate; launch retries are bounded and cycle-safe"
+                        ),
+                    },
                     "run_root": ".megaplan/plans/resident-subagents",
                     "resident_tool": "launch_subagent",
                     "codex_usage": {
@@ -1518,7 +1620,7 @@ class MegaplanResidentProfile:
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("reconcile_todo_item", "Resolve a pending launch intent as superseded by an already-existing canonical run. Requires the stable run id, durable evidence location, and reconciliation reason; never use task-text overlap alone.", "write", ReconcileTodoItemInput, ToolResult, self._reconcile_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
-            ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, concise one-line description, full log, and result path. Multiple launches for one logical query have one newest synthesis/delivery owner; prior runs become internal contributors. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("launch_subagent", "Launch or durably queue a resident-managed Codex agent with a manifest, bounded predecessor references, concise description, full log, and result path. `depends_on_run_id` creates a success-gated successor that inherits provenance/authorization and becomes the one synthesis/delivery owner. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -2894,6 +2996,8 @@ class MegaplanResidentProfile:
             launch_origin=launch_origin,
             retry_of_run_id=payload.retry_of_run_id,
             query_relationship=query_relationship,
+            depends_on_run_id=payload.depends_on_run_id,
+            queue_max_launch_attempts=payload.queue_max_launch_attempts,
         )
         if not result.ok:
             return ToolResult(
@@ -2920,7 +3024,13 @@ class MegaplanResidentProfile:
                 return _fail(str(exc), run_id=result.run_id, id=todo_item["id"])
         return ToolResult(
             ok=True,
-            message=("subagent launched" if result.status == "running" else "subagent completed"),
+            message=(
+                "subagent queued"
+                if result.status == "queued"
+                else "subagent launched"
+                if result.status == "running"
+                else "subagent completed"
+            ),
             data={
                 "final_text": result.final_text,
                 "returncode": result.returncode,
