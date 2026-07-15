@@ -73,6 +73,7 @@ _STAGE_ORDER = {
     "completed": 11,
 }
 _FRESH_WORKER_SECONDS = 600
+_FRESH_RUNNER_TRANSITION_SECONDS = 180
 _DETERMINISTIC_OWNER_REPEAT_LIMIT = 2
 
 
@@ -206,6 +207,50 @@ def _active_worker_observation(state: Mapping[str, Any], *, captured_at: str) ->
     }
 
 
+def _runner_transition_observation(
+    *,
+    remote_spec: str,
+    plan_name: str,
+    plan_path: Path | None,
+    captured_at: str,
+) -> dict[str, Any]:
+    """Boundedly preserve a driver while it consumes a completed step result."""
+
+    target_pid: int | None = None
+    for proc_path in Path("/proc").glob("[0-9]*"):
+        try:
+            argv = [
+                item.decode("utf-8", errors="replace")
+                for item in (proc_path / "cmdline").read_bytes().split(b"\0")
+                if item
+            ]
+        except OSError:
+            continue
+        is_chain = all(item in argv for item in ("arnold_pipelines.megaplan", "chain", "start"))
+        is_plan = all(item in argv for item in ("arnold_pipelines.megaplan", "auto"))
+        matches_spec = bool(remote_spec and "--spec" in argv and remote_spec in argv)
+        matches_plan = bool(plan_name and "--plan" in argv and plan_name in argv)
+        if (is_chain and matches_spec) or (is_plan and matches_plan):
+            target_pid = int(proc_path.name)
+            break
+
+    captured_time = _parse_time(captured_at) or datetime.now(timezone.utc)
+    state_age: float | None = None
+    if plan_path is not None:
+        try:
+            state_time = datetime.fromtimestamp(plan_path.stat().st_mtime, timezone.utc)
+            state_age = max(0.0, (captured_time - state_time).total_seconds())
+        except OSError:
+            pass
+    live = _pid_live(target_pid)
+    return {
+        "runner_pid": target_pid,
+        "runner_pid_live": live,
+        "plan_state_age_seconds": state_age,
+        "fresh": bool(live and state_age is not None and state_age <= _FRESH_RUNNER_TRANSITION_SECONDS),
+    }
+
+
 def repair_goal_path(marker_dir: str | Path, session: str, blocker_id: str) -> Path:
     blocker_digest = hashlib.sha256(blocker_id.encode("utf-8")).hexdigest()[:20]
     return (
@@ -288,6 +333,12 @@ def capture_checkpoint(
     captured_at = utc_now()
     latest_failure = _compact_failure(state.get("latest_failure"))
     active_worker = _active_worker_observation(state, captured_at=captured_at)
+    runner_transition = _runner_transition_observation(
+        remote_spec=remote_spec,
+        plan_name=resolved_plan,
+        plan_path=plan_path,
+        captured_at=captured_at,
+    )
     target_stage = _target_stage(state, chain)
     checkpoint = {
         "captured_at": captured_at,
@@ -309,6 +360,7 @@ def capture_checkpoint(
         "latest_failure": latest_failure,
         "latest_failure_cleared": not bool(latest_failure),
         "active_worker": active_worker,
+        "runner_transition": runner_transition,
     }
     progress_facts = {
         "plan_name": checkpoint["plan_name"],
@@ -325,6 +377,8 @@ def capture_checkpoint(
         "active_worker_phase": active_worker.get("phase", ""),
         "active_worker_run_id": active_worker.get("run_id", ""),
         "active_worker_last_activity_at": active_worker.get("last_activity_at", ""),
+        "runner_transition_pid": runner_transition.get("runner_pid"),
+        "runner_transition_fresh": runner_transition.get("fresh", False),
     }
     checkpoint["progress_token"] = _digest(progress_facts)
     checkpoint["digest"] = _digest(checkpoint)
@@ -441,19 +495,28 @@ def evaluate_checkpoint(
             "control_action": "complete",
             "acceptance_event": dict(observed_acceptance),
         }
-    preserve_live = bool(worker.get("fresh")) and str(worker.get("phase") or "") == frozen_stage
+    transition = (
+        observation.get("runner_transition")
+        if isinstance(observation.get("runner_transition"), Mapping)
+        else {}
+    )
+    preserve_worker = bool(worker.get("fresh")) and str(worker.get("phase") or "") == frozen_stage
+    preserve_transition = bool(blocker_cleared and transition.get("fresh"))
+    preserve_live = preserve_worker or preserve_transition
     return {
         "status": GOAL_ACTIVE,
         "reason": (
             "correct target worker is alive with fresh progress; preserve it until the plan advances beyond the frozen stage"
-            if preserve_live
+            if preserve_worker
+            else "matching target runner is alive during a fresh step-transition window; preserve it until the handoff resolves"
+            if preserve_transition
             else "target has not satisfied blocker-clearance, fresh-progress, and beyond-stage recovery evidence"
         ),
         "authoritative_progress": False,
         "blocker_cleared": blocker_cleared,
-        "fresh_progress": fresh_progress,
+        "fresh_progress": fresh_progress or preserve_transition,
         "stage_advanced": stage_advanced,
-        "correct_worker_alive": correct_worker_alive,
+        "correct_worker_alive": True if preserve_transition else correct_worker_alive,
         "control_action": "preserve_live" if preserve_live else "investigate",
         "ignored_activity": "process, heartbeat, log, state-write, and subprocess completion activity is non-authoritative",
     }

@@ -10,6 +10,7 @@ from arnold_pipelines.megaplan.cloud.repair_goal import (
     GOAL_APPROVAL_REQUIRED,
     GOAL_PROGRESSED,
     ensure_repair_goal,
+    evaluate_checkpoint,
     evaluate_repair_goal,
 )
 
@@ -281,6 +282,33 @@ def test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity(
     assert retained_retry < legacy_failed < target_kill
 
 
+def test_blocker_cleared_live_runner_transition_is_preserved_not_accepted() -> None:
+    result = evaluate_checkpoint(
+        {
+            "target_stage": "execute",
+            "target_stage_rank": 6,
+            "chain_current_plan_name": "m5a",
+            "chain_current_milestone_index": 1,
+            "chain_completed_count": 1,
+        },
+        {
+            "target_stage": "execute",
+            "target_stage_rank": 6,
+            "chain_current_plan_name": "m5a",
+            "chain_current_milestone_index": 1,
+            "chain_completed_count": 1,
+            "latest_failure_cleared": True,
+            "active_worker": {},
+            "runner_transition": {"runner_pid": 123, "runner_pid_live": True, "fresh": True},
+        },
+    )
+
+    assert result["status"] == GOAL_ACTIVE
+    assert result["control_action"] == "preserve_live"
+    assert result["authoritative_progress"] is False
+    assert "step-transition" in result["reason"]
+
+
 def test_repair_loop_refuses_goal_custody_without_request_and_blocker_links() -> None:
     wrapper = (
         Path(__file__).parents[2]
@@ -313,6 +341,8 @@ def test_repair_loop_fences_mechanical_relaunch_and_uses_two_stage_owner() -> No
     assert 'control_action"' in mechanical
     assert 'echo "preserved:live_progress"' in mechanical
     assert mechanical.index("preserved:live_progress") < mechanical.index("kill_matching_runner_processes")
+    assert 'echo "preserved:runner_transition"' in mechanical
+    assert mechanical.index("preserved:runner_transition") < mechanical.index("kill_matching_runner_processes")
     assert "run_repair_investigator_turn()" in wrapper
     assert "automatic_research_subagent" in wrapper
     assert "--sandbox read-only" in wrapper
@@ -320,3 +350,8 @@ def test_repair_loop_fences_mechanical_relaunch_and_uses_two_stage_owner() -> No
     assert 'REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-1}"' in wrapper
     assert "sole high-reasoning goal owner" in wrapper
     assert "Success requires the blocker cleared" in wrapper
+
+    investigator = wrapper[wrapper.index("run_repair_investigator_turn() {") :]
+    investigator = investigator[: investigator.index("\n}\n")]
+    assert '--link "repair_goal_id=' not in investigator
+    assert '--link "repair_goal_path=' not in investigator
