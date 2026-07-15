@@ -1915,6 +1915,7 @@ LIVE_WITH_FRESH_ACTIVITY = "live_with_fresh_activity"
 TRUE_HUMAN_BLOCKER = "true_human_blocker"
 PARTIAL_LIVENESS = "partial_liveness"
 REPAIRING = "repairing"
+RETRY_PENDING = "recurring_retry_pending"
 RECOVERY_VERIFIED = "verified_recovered"
 RECOVERY_PROVISIONAL = "provisional"
 RECOVERY_UNKNOWN = "unknown"
@@ -1936,6 +1937,7 @@ NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
         LIVE_WITH_FRESH_ACTIVITY,
         PARTIAL_LIVENESS,
         REPAIRING,
+        RETRY_PENDING,
         REPAIR_TIMEOUT,
         REPAIR_EXHAUSTED,
         NEEDS_HUMAN,
@@ -1945,6 +1947,9 @@ NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
 )
 
 ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
+NON_TERMINAL_OUTCOMES: frozenset[str] = frozenset(
+    {REPAIRING, RETRY_PENDING, PARTIAL_LIVENESS, LIVE_WITH_FRESH_ACTIVITY}
+)
 
 
 def is_success_outcome(outcome: str) -> bool:
@@ -1960,9 +1965,10 @@ def is_success_outcome(outcome: str) -> bool:
 def is_terminal_outcome(outcome: str) -> bool:
     """Return True when *outcome* is terminal (success or non-success).
 
-    ``repairing`` is the only non-terminal outcome; everything else is terminal.
+    Repairing, retry-pending, and liveness-only outcomes retain durable custody.
+    None may close the semantic repair goal.
     """
-    return outcome != REPAIRING
+    return outcome not in NON_TERMINAL_OUTCOMES
 
 
 # -- one-hour budget helpers ------------------------------------------------
@@ -3824,6 +3830,19 @@ def build_ordinary_repair_verdict(
     outcome = _as_text(payload.get("outcome"))
     verdict_kind = _OUTCOME_TO_VERDICT_KIND.get(outcome, REPAIR_VERDICT_NO_VERDICT)
 
+    # A repair process/result is not the semantic completion authority when a
+    # durable repair goal is linked.  Fail closed unless that goal itself has
+    # authoritative progress or an explicit approval gate.
+    repair_goal = _as_mapping(payload.get("repair_goal"))
+    repair_goal_path = _as_text(repair_goal.get("goal_path"))
+    repair_goal_status = ""
+    if repair_goal_path:
+        goal_payload = load_json(repair_goal_path, default={})
+        if isinstance(goal_payload, Mapping):
+            repair_goal_status = _as_text(goal_payload.get("status"))
+        if repair_goal_status not in {"progressed", "approval_required"}:
+            verdict_kind = REPAIR_VERDICT_NO_VERDICT
+
     stale_detected = False
     stale_reason = ""
     if payload:
@@ -3833,6 +3852,11 @@ def build_ordinary_repair_verdict(
     no_verdict_reason = ""
     if verdict_kind == REPAIR_VERDICT_NO_VERDICT or not outcome:
         no_verdict_detected, no_verdict_reason = detect_no_verdict_artifact(payload)
+        if repair_goal_path and repair_goal_status not in {"progressed", "approval_required"}:
+            no_verdict_detected = True
+            no_verdict_reason = (
+                "durable repair goal remains active at the captured frozen checkpoint"
+            )
 
     evidence_ts = timestamp or _as_text(payload.get("evidence_timestamp") or payload.get("completed_at") or "")
     if not evidence_ts:
@@ -4572,12 +4596,14 @@ __all__ = [
     "ENVIRONMENT_GONE",
     "LIVE_WITH_FRESH_ACTIVITY",
     "NEEDS_HUMAN",
+    "NON_TERMINAL_OUTCOMES",
     "NON_SUCCESS_OUTCOMES",
     "PARTIAL_LIVENESS",
     "PROGRESSED",
     "REPAIR_EXHAUSTED",
     "REPAIR_TIMEOUT",
     "REPAIRING",
+    "RETRY_PENDING",
     "RECOVERY_PROVISIONAL",
     "RECOVERY_UNKNOWN",
     "RECOVERY_UNKNOWN_TYPES",
