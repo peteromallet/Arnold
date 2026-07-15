@@ -6386,13 +6386,15 @@ EOF
     return 1
   fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
-    "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY'
-import pathlib, sys
+    "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY' || return 1
+import json
+import pathlib
+import sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 data_path, context_path, receipt_path, digest, run_id = sys.argv[1:]
 payload = load_json(pathlib.Path(data_path), default={})
 from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
-receipt = load_json(pathlib.Path(receipt_path), default={})
+receipt = json.loads(pathlib.Path(receipt_path).read_text(encoding="utf-8"))
 validated = validate_investigator_receipt(receipt, expected_context_digest=digest)
 payload["investigation"] = {
     "context_path": context_path,
