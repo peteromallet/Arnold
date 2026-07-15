@@ -598,6 +598,15 @@ def test_cross_request_queue_uses_authoritative_same_subject_and_current_deliver
     )
     assert authorization["predecessor_run_id"] == PREDECESSOR_RUN_ID
     assert "42" not in json.dumps(authorization)
+    inspected = resident_cli._resident_inspect_subagent_queue(
+        tmp_path,
+        argparse.Namespace(
+            project_dir=str(tmp_path), run_id=queued.run_id, limit=8
+        ),
+    )
+    assert inspected["items"][0]["authorization_mode"] == (
+        "same_subject_same_conversation_explicit_predecessor"
+    )
     predecessor = json.loads(predecessor_path.read_text())
     assert predecessor["aggregation"]["role"] == "synthesis_delivery_owner"
     assert predecessor["completion_delivery"]["status"] == "pending"
@@ -859,6 +868,8 @@ def test_resident_cli_can_create_and_inspect_bounded_queue_dependency(
     )
 
     assert created["status"] == "queued"
+    assert created["authorization_mode"] == "same_request_custody"
     assert inspected["count"] == 1
     assert inspected["items"][0]["predecessor_run_id"] == PREDECESSOR_RUN_ID
+    assert inspected["items"][0]["authorization_mode"] == "same_request_custody"
     assert len(inspected["items"][0]["predecessor_references"]) == 3

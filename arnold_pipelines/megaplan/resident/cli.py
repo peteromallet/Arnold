@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections.abc import Mapping
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -184,6 +186,13 @@ def _resident_queue_subagent_successor(
         )
     except (SubagentQueueError, ValueError, OSError) as exc:
         raise CliError("queue_rejected", str(exc)) from exc
+    try:
+        manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        raise CliError(
+            "queue_rejected", "queued successor manifest is unavailable after commit"
+        ) from exc
+    queue = manifest.get("queue") if isinstance(manifest, Mapping) else None
     return {
         "success": True,
         "step": "resident",
@@ -191,9 +200,19 @@ def _resident_queue_subagent_successor(
         "run_id": result.run_id,
         "status": result.status,
         "predecessor_run_id": args.after_run_id,
+        "authorization_mode": _queue_authorization_mode(queue),
         "manifest_path": result.manifest_path,
         "description": result.description,
     }
+
+
+def _queue_authorization_mode(queue: object) -> str:
+    if not isinstance(queue, Mapping):
+        return "invalid_queue_contract"
+    authorization = queue.get("cross_request_authorization")
+    if not isinstance(authorization, Mapping):
+        return "same_request_custody"
+    return str(authorization.get("mode") or "invalid_cross_request_authorization")[:80]
 
 
 def _resident_inspect_subagent_queue(
@@ -247,6 +266,7 @@ def _resident_inspect_subagent_queue(
                 "dependency_state": str(queue.get("state") or "")[:48],
                 "predecessor_status": str(queue.get("predecessor_status") or "")[:48],
                 "attention": str(queue.get("attention") or "")[:120],
+                "authorization_mode": _queue_authorization_mode(queue),
                 "attempt_count": (
                     max(0, min(queue["attempt_count"], 10_000))
                     if isinstance(queue.get("attempt_count"), int)
