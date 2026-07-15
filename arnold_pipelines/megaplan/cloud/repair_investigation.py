@@ -302,6 +302,8 @@ def build_investigation_context(
     repair_data_path: str | Path,
     request_path: str | Path | None,
     goal_path: str | Path,
+    l2_handoff_path: str | Path | None = None,
+    l2_context_digest: str = "",
     max_prior_attempts: int = 6,
 ) -> dict[str, Any]:
     repair_data = _load(repair_data_path)
@@ -358,16 +360,23 @@ def build_investigation_context(
         if isinstance(repair_data.get("meta_investigation"), Mapping)
         else {}
     )
-    access_receipt_path = Path(str(meta_handoff.get("access_receipt_path") or ""))
+    explicit_handoff_path = str(l2_handoff_path or "").strip()
+    access_receipt_path = Path(
+        explicit_handoff_path or str(meta_handoff.get("access_receipt_path") or "")
+    )
     access_receipt = _load(access_receipt_path)
     external_observation: dict[str, Any] = {}
     external_observation_path = ""
-    if str(meta_handoff.get("access_receipt_path") or "").strip():
+    if explicit_handoff_path or str(meta_handoff.get("access_receipt_path") or "").strip():
+        expected_handoff_digest = (
+            str(l2_context_digest or "").strip()
+            or str(meta_handoff.get("context_digest") or "").strip()
+        )
         if (
             access_receipt.get("schema_version") != META_REPAIR_OBSERVATION_BUNDLE_SCHEMA
             or access_receipt.get("access_verified") is not True
-            or access_receipt.get("context_digest")
-            != meta_handoff.get("context_digest")
+            or not expected_handoff_digest
+            or access_receipt.get("context_digest") != expected_handoff_digest
         ):
             raise ValueError("L2-to-L1 evidence handoff receipt is invalid")
         for item in access_receipt.get("observations") or []:
@@ -1284,6 +1293,8 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--repair-data", required=True)
     build.add_argument("--request-path", default="")
     build.add_argument("--goal-path", required=True)
+    build.add_argument("--l2-handoff-path", default="")
+    build.add_argument("--l2-context-digest", default="")
     build.add_argument("--output", required=True)
     build_meta = sub.add_parser("build-meta")
     build_meta.add_argument("--session", required=True)
@@ -1314,6 +1325,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             repair_data_path=args.repair_data,
             request_path=args.request_path,
             goal_path=args.goal_path,
+            l2_handoff_path=args.l2_handoff_path,
+            l2_context_digest=args.l2_context_digest,
         )
         _atomic_write(Path(args.output), value)
     elif args.command == "build-meta":

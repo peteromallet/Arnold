@@ -6287,17 +6287,27 @@ PY
 run_repair_investigator_turn() {
   require_repair_lock_held
   local request_path context_digest run_id_file investigator_run_id rc investigator_timeout recommended_action
-  local -a parent_args
+  local -a parent_args context_build_cmd
   request_path="$REPAIR_QUEUE_DIR/requests/${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-missing}.json"
-  if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
-    arnold_pipelines.megaplan.cloud.repair_investigation build \
-    --workspace "$WORKSPACE" \
-    --session "$SESSION" \
-    --remote-spec "$REMOTE_SPEC" \
-    --repair-data "$DATA_FILE" \
-    --request-path "$request_path" \
-    --goal-path "$ARNOLD_REPAIR_GOAL_PATH" \
-    --output "$INVESTIGATION_CONTEXT_PATH" >"$INVESTIGATION_BUILD_ERROR_PATH" 2>&1; then
+  context_build_cmd=(
+    "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m
+    arnold_pipelines.megaplan.cloud.repair_investigation build
+    --workspace "$WORKSPACE"
+    --session "$SESSION"
+    --remote-spec "$REMOTE_SPEC"
+    --repair-data "$DATA_FILE"
+    --request-path "$request_path"
+    --goal-path "$ARNOLD_REPAIR_GOAL_PATH"
+    --output "$INVESTIGATION_CONTEXT_PATH"
+  )
+  if [[ -n "${ARNOLD_REPAIR_L2_HANDOFF_PATH:-}" ]]; then
+    context_build_cmd+=(
+      --l2-handoff-path "$ARNOLD_REPAIR_L2_HANDOFF_PATH"
+      --l2-context-digest "${ARNOLD_REPAIR_L2_CONTEXT_DIGEST:-}"
+    )
+  fi
+  if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+    "${context_build_cmd[@]}" >"$INVESTIGATION_BUILD_ERROR_PATH" 2>&1; then
     redact_file_in_place "$INVESTIGATION_BUILD_ERROR_PATH"
     cat "$INVESTIGATION_BUILD_ERROR_PATH" >>"$LOG"
     repair_data_set_outcome "fixer_infrastructure_failure"
