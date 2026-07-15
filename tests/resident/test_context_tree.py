@@ -144,10 +144,12 @@ def test_delegation_policy_pack_preserves_decomposition_and_safety_exceptions() 
     ]
     assert "never expands" in policy["exceptions"]["authorization"]
     assert "returned durable run ID" in policy["launch_evidence"]
-    assert policy["schema_version"] == "megaplan-resident-delegation-policy-v2"
+    assert policy["schema_version"] == "megaplan-resident-delegation-policy-v3"
     assert "implements, verifies, and delivers" in policy["execution_default"]
     assert "isolated worktree and feature branch" in policy["workspace_default"]
     assert "Never infer literal `main`" in policy["integration_default"]
+    assert "those facts alone are not target ambiguity" in policy["integration_default"]
+    assert "advanced on the same lineage" in policy["integration_default"]
     assert "Local integration does not authorize" in policy["integration_default"]
     assert "explicit approval" in policy["external_actions"]
     assert "label it unintegrated" in policy["tentative_work"]
