@@ -2,6 +2,26 @@
 set -uo pipefail
 set -m
 
+# Bash reads large scripts lazily.  Resident source activation can otherwise
+# replace this file while a long repair worker is running and make the resumed
+# parser consume two revisions.  Execute one syntax-checked immutable snapshot
+# for the lifetime of this invocation while retaining the authoritative origin
+# for sibling/runtime discovery.
+ARNOLD_REPAIR_LOOP_ORIGIN="${ARNOLD_REPAIR_LOOP_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
+if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  repair_loop_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-repair-loop.XXXXXXXX")"
+  if ! cp -- "$ARNOLD_REPAIR_LOOP_ORIGIN" "$repair_loop_snapshot" \
+    || ! bash -n "$repair_loop_snapshot"; then
+    rm -f -- "$repair_loop_snapshot"
+    echo "arnold-repair-loop: immutable wrapper snapshot failed validation" >&2
+    exit 78
+  fi
+  export ARNOLD_REPAIR_LOOP_ORIGIN
+  export ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE=1
+  exec bash "$repair_loop_snapshot" "$@"
+fi
+trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+
 if [[ $# -lt 3 ]]; then
   echo "usage: arnold-repair-loop <session> <workspace> <remote-spec>" >&2
   exit 64
@@ -18,7 +38,7 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
-WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/../../../.." && pwd)"
 
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
@@ -30,7 +50,7 @@ SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"
 FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
 FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
 ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
-SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
 fi

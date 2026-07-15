@@ -63,6 +63,91 @@ def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
     assert "${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-" in auditor
 
 
+@pytest.mark.parametrize(
+    ("wrapper_name", "prefix"),
+    [
+        ("arnold-watchdog", "ARNOLD_WATCHDOG"),
+        ("arnold-repair-loop", "ARNOLD_REPAIR_LOOP"),
+        ("arnold-meta-repair-loop", "ARNOLD_META_REPAIR_LOOP"),
+        ("arnold-progress-auditor", "ARNOLD_PROGRESS_AUDITOR"),
+    ],
+)
+def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
+    wrapper_name: str, prefix: str
+) -> None:
+    text = _wrapper(wrapper_name)
+
+    assert f'{prefix}_ORIGIN="${{{prefix}_ORIGIN:-' in text
+    assert f'${{{prefix}_SNAPSHOT_ACTIVE:-0}}' in text
+    assert "mktemp" in text
+    assert "bash -n" in text
+    assert f"export {prefix}_SNAPSHOT_ACTIVE=1" in text
+    assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' in text
+
+
+@pytest.mark.parametrize(
+    ("wrapper_name", "prefix", "args", "expected_returncode"),
+    [
+        ("arnold-repair-loop", "arnold-repair-loop", [], 64),
+        ("arnold-meta-repair-loop", "arnold-meta-repair-loop", [], 64),
+    ],
+)
+def test_wrapper_snapshot_is_removed_after_fail_closed_usage_exit(
+    tmp_path: Path,
+    wrapper_name: str,
+    prefix: str,
+    args: list[str],
+    expected_returncode: int,
+) -> None:
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / wrapper_name), *args],
+        env={**os.environ, "TMPDIR": str(snapshot_dir)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == expected_returncode
+    assert not list(snapshot_dir.glob(f"{prefix}.*"))
+
+
+def test_repair_wrapper_snapshot_survives_origin_replacement_while_waiting(
+    tmp_path: Path,
+) -> None:
+    wrapper = _repair_wrapper()
+    bootstrap = wrapper[: wrapper.index("\n\nif [[ $# -lt 3 ]]")]
+    origin = tmp_path / "repair-wrapper"
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    origin.write_text(
+        bootstrap
+        + "\nprintf 'snapshot-ready\\n'\n"
+        + "sleep 0.25\n"
+        + "printf 'snapshot-finished\\n'\n",
+        encoding="utf-8",
+    )
+    process = subprocess.Popen(
+        ["bash", str(origin)],
+        env={**os.environ, "TMPDIR": str(snapshot_dir)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdout is not None
+    assert process.stdout.readline().strip() == "snapshot-ready"
+
+    # This would produce the exact lazy-parser EOF class if Bash resumed from
+    # the mutable origin rather than its already validated snapshot.
+    origin.write_text('printf "unterminated\n', encoding="utf-8")
+    stdout, stderr = process.communicate(timeout=5)
+
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "snapshot-finished"
+    assert not list(snapshot_dir.glob("arnold-repair-loop.*"))
+
+
 def _extract_repair_function(name: str) -> str:
     text = _repair_wrapper()
     start = text.index(f"{name}() {{")

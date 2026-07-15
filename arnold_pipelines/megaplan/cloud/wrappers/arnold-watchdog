@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# The resident watchdog can outlive multiple source activations.  Bash parses
+# large scripts lazily, so run from one validated immutable snapshot and retain
+# the origin path separately for source/sibling reconciliation.
+ARNOLD_WATCHDOG_ORIGIN="${ARNOLD_WATCHDOG_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
+if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  watchdog_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-watchdog.XXXXXXXX")"
+  if ! cp -- "$ARNOLD_WATCHDOG_ORIGIN" "$watchdog_snapshot" \
+    || ! bash -n "$watchdog_snapshot"; then
+    rm -f -- "$watchdog_snapshot"
+    echo "arnold-watchdog: immutable wrapper snapshot failed validation" >&2
+    exit 78
+  fi
+  export ARNOLD_WATCHDOG_ORIGIN
+  export ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE=1
+  exec bash "$watchdog_snapshot" "$@"
+fi
+trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+
 # Caller-provided supervisor runtime controls are an explicit invocation
 # contract (and are used by readiness probes).  The shared hot-env supplies
 # defaults for resident service launches, but must not overwrite those explicit
@@ -28,8 +46,8 @@ fi
 unset WATCHDOG_CALLER_SUPERVISOR_PYTHON_SET WATCHDOG_CALLER_SUPERVISOR_PYTHON
 unset WATCHDOG_CALLER_RUNTIME_REQUIRED_SET WATCHDOG_CALLER_RUNTIME_REQUIRED
 
-WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
-SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_WATCHDOG_ORIGIN")/../../../.." && pwd)"
+SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_WATCHDOG_ORIGIN")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
 fi
