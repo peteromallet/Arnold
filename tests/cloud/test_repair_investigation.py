@@ -11,6 +11,7 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import (
     META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA,
     REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
     build_meta_investigation_context,
+    build_meta_observation_bundle,
     build_investigation_context,
     summarize_investigation_artifacts,
     validate_meta_investigation_context,
@@ -446,6 +447,21 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
     assert context["identity"]["repair_goal_id"] == "repair-goal-1"
     assert {item["kind"] for item in context["evidence_refs"]} >= {
         "repair_data", "session_marker", "repair_goal"
+    }
+    context_path = tmp_path / "meta-context.json"
+    _write(context_path, context)
+    observation = build_meta_observation_bundle(context_path)
+    required = observation["required_receipt_shape"]
+    assert required["recommended_action"] == "replan"
+    assert required["safe_repair_target"]["kind"] == "repair_custody"
+    assert required["handoff"] == {
+        "action": "replan",
+        "allowed_mutations": ["none"],
+        "forbidden_mutations": [
+            "direct_chain_state_edit",
+            "recover_state",
+            "hand_advance_chain",
+        ],
     }
 
 

@@ -213,10 +213,24 @@ def _common_required_output(target_kind: str) -> dict[str, Any]:
         ),
         "handoff": {
             "action": "preserve_live|repair_source|repair_target|recover_state|replan",
-            "allowed_mutations": [
-                "none for preserve/replan, otherwise an exact bounded source, target, supported CLI, or repair_custody operation"
-            ],
+            "allowed_mutations": ["<use one exact action-specific example below>"],
             "forbidden_mutations": ["<unsafe mutation>"],
+        },
+        "action_specific_handoff_examples": {
+            "preserve_live": {"action": "preserve_live", "allowed_mutations": ["none"]},
+            "replan": {"action": "replan", "allowed_mutations": ["none"]},
+            "repair_source": {
+                "action": "repair_source",
+                "allowed_mutations": ["arnold_source:<bounded component>"],
+            },
+            "repair_target": {
+                "action": "repair_target",
+                "allowed_mutations": ["target_workspace:<bounded component>"],
+            },
+            "recover_state": {
+                "action": "recover_state",
+                "allowed_mutations": ["supported_cli:<exact command>"],
+            },
         },
         "mutation_contract": (
             "recover_state may authorize only a named supported CLI or repair_custody "
@@ -956,12 +970,35 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
                 "observed": _bounded_observation(kind, encoded),
             }
         )
+    required_receipt = _common_required_output("l2_repair_system")
+    external_guard_status = "unknown"
+    for item in observations:
+        if item.get("kind") != "external_state":
+            continue
+        observed = item.get("observed")
+        if isinstance(observed, Mapping):
+            guard = observed.get("external_guard")
+            if isinstance(guard, Mapping):
+                external_guard_status = str(guard.get("status") or "unknown")
+        break
+    if external_guard_status != "clear":
+        required_receipt["recommended_action"] = "replan"
+        required_receipt["safe_repair_target"]["kind"] = "repair_custody"
+        required_receipt["handoff"] = {
+            "action": "replan",
+            "allowed_mutations": ["none"],
+            "forbidden_mutations": [
+                "direct_chain_state_edit",
+                "recover_state",
+                "hand_advance_chain",
+            ],
+        }
     bundle = redact_payload(
         {
             "schema_version": META_REPAIR_OBSERVATION_BUNDLE_SCHEMA,
             "context_digest": context["context_digest"],
             "access_verified": True,
-            "required_receipt_shape": _common_required_output("l2_repair_system"),
+            "required_receipt_shape": required_receipt,
             "external_guard_policy": (
                 "A failed or pending PR/CI check forbids recover_state and chain-state "
                 "synchronization. Return replan targeting repair_custody so ordinary L1 "
