@@ -3719,6 +3719,53 @@ fi
     assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
 
 
+def test_watchdog_claim_refuses_dispatch_without_request_and_blocker_identity(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=",
+            "claim_active_repair_launch demo-session /tmp/workspace /tmp/spec",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 1
+    assert result.stdout.strip() == "missing_identity"
+
+
+def test_watchdog_claim_accepts_inherited_goal_request_and_blocker_identity(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=",
+            (
+                "claim_active_repair_launch demo-session /tmp/workspace /tmp/spec "
+                "blocker:v1:goal-owner-missing request-current-plan"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "claimed"
+
+
 def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
