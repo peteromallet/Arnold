@@ -49,6 +49,7 @@ _STRONG_IDENTIFIER_FIELDS = (
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}")
 _STOPWORDS = frozenset(
     {
+        "and",
         "agent",
         "arnold",
         "audit",
@@ -57,10 +58,16 @@ _STOPWORDS = frozenset(
         "cloud",
         "existing",
         "failed",
+        "implement",
+        "implementation",
+        "detection",
+        "judgement",
         "progress",
         "repair",
         "running",
+        "safe",
         "session",
+        "six-hour",
         "subagent",
         "the",
         "this",
