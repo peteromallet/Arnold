@@ -43,6 +43,7 @@ from .restart_resident import (
     RESTART_RESIDENT_ACKNOWLEDGEMENT,
     RESTART_RESIDENT_COMMAND,
     RESTART_RESIDENT_DESCRIPTION,
+    RESET_DELIVERY_EPHEMERAL_INTERACTION,
     restart_discord_resident,
 )
 from .scheduler import ScheduledJobWorker
@@ -1522,9 +1523,15 @@ class ResidentDiscordService:
             RESTART_RESIDENT_ACKNOWLEDGEMENT,
             ephemeral=True,
         )
-        operation = getattr(self, "restart_operation", restart_discord_resident)
+        operation = getattr(self, "restart_operation", None)
         try:
-            result = await asyncio.to_thread(operation)
+            if operation is None:
+                result = await asyncio.to_thread(
+                    restart_discord_resident,
+                    delivery_ownership=RESET_DELIVERY_EPHEMERAL_INTERACTION,
+                )
+            else:
+                result = await asyncio.to_thread(operation)
         except Exception:
             LOGGER.exception("Guarded Discord resident restart invocation failed")
             await interaction.edit_original_response(

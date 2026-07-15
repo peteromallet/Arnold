@@ -6,9 +6,12 @@ import json
 from types import SimpleNamespace
 
 from agentbox.reset_notifications import (
+    RESET_DELIVERY_INTERRUPTED_TURN_COMPLETION,
     RESET_NOTIFICATION_ENV,
+    list_reset_notifications,
     mark_reset_succeeded,
     prepare_reset_notification,
+    sweep_reset_notifications,
 )
 from arnold_pipelines.megaplan.resident.agent_loop import AgentResponse, AgentTimeoutError
 from arnold_pipelines.megaplan.resident.auth import AuthorizationSubject, ResidentAuthorizer
@@ -471,7 +474,6 @@ def test_restart_interrupted_side_effectful_turn_is_consumed_without_model_repla
         second = await runtime.recover_restart_interrupted_turns(
             {"backend": "tmux", "pane_pid": 20}
         )
-
         assert first == 1
         assert second == 0
         assert runner.calls == 0
@@ -570,6 +572,10 @@ def test_restart_recovery_reuses_persisted_outbound_without_duplicate_execution(
         second = await runtime.recover_restart_interrupted_turns(
             {"backend": "tmux", "pane_pid": 20}
         )
+        reset_sweep = await sweep_reset_notifications(
+            outbound=sink,
+            notification_root=notification_root,
+        )
 
         assert first == 1
         assert second == 0
@@ -580,6 +586,17 @@ def test_restart_recovery_reuses_persisted_outbound_without_duplicate_execution(
         completed = next(row for row in store.list_recent_turns(n=20) if row.id == turn.id)
         assert completed.status == "completed"
         assert completed.final_output_message_id == outbound.id
+        assert reset_sweep.delivered == 0
+        assert [item["content"] for item in channel.sent] == [outbound.content]
+        receipt = list_reset_notifications(notification_root=notification_root)[
+            "records"
+        ][0]
+        assert receipt["restart"]["status"] == "succeeded"
+        assert receipt["delivery"]["status"] == "suppressed"
+        assert (
+            receipt["delivery"]["ownership"]
+            == RESET_DELIVERY_INTERRUPTED_TURN_COMPLETION
+        )
 
     asyncio.run(run_case())
 
