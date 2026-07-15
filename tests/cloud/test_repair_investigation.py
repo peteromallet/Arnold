@@ -13,6 +13,9 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 def _write(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value) + "\n", encoding="utf-8")
@@ -130,3 +133,14 @@ def test_investigator_receipt_is_bound_to_context_and_requires_evidence() -> Non
     assert validate_investigator_receipt(receipt, expected_context_digest="digest-1") == receipt
     with pytest.raises(ValueError, match="context digest disagrees"):
         validate_investigator_receipt(receipt, expected_context_digest="digest-2")
+
+
+def test_repair_loop_embeds_bounded_context_for_sandbox_independent_investigation() -> None:
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert '<authoritative_repair_context>' in wrapper
+    assert 'cat "$INVESTIGATION_CONTEXT_PATH" >> "$INVESTIGATOR_PROMPT_PATH"' in wrapper
+    assert "does not depend on filesystem sandbox availability" in wrapper
