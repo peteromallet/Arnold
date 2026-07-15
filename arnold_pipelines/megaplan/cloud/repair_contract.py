@@ -1412,7 +1412,11 @@ def _classify_from_recovery_view(
         # classified this as repairable; do not let a stale legacy custody bucket
         # override that classification.
         elif lock_evidence is not None or process_evidence is not None:
-            if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody={}):
+            if _has_active_repair(
+                lock_evidence=lock_evidence,
+                process_evidence=process_evidence,
+                custody=custody,
+            ):
                 decision = DISPATCH_DECISION_REPAIRING
                 dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
                 rationale.append("recovery view: repairable but active repair ownership exists")
@@ -3595,11 +3599,9 @@ def _has_active_repair(
     if lock_status in {"acquired", "busy", "claimed", "already_claimed"}:
         return True
 
-    process_payload = _as_mapping(process_evidence)
-    process_status = _as_text(process_payload.get("status"))
-    if process_payload.get("active") is True or process_payload.get("live") is True:
-        return True
-    return process_status in {"active", "busy", "claimed", "repairing", "running"}
+    # Process liveness is provisional transport evidence.  Without a durable
+    # blocker-scoped claim or lock it must not suppress a fresh repair owner.
+    return False
 
 
 def _is_known_repairable_shape(

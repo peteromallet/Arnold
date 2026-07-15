@@ -200,7 +200,7 @@ def _make_session_dir(tmp_path: Path, session: str) -> Path:
 class TestTriggerPriority:
     def test_all_triggers_have_priority(self) -> None:
         for trigger in MetaRepairTrigger:
-            assert trigger_priority(trigger) in range(1, 8)
+            assert trigger_priority(trigger) in range(1, len(MetaRepairTrigger) + 1)
 
     def test_non_trigger_has_no_priority(self) -> None:
         assert trigger_priority("none") == 99  # type: ignore[arg-type]

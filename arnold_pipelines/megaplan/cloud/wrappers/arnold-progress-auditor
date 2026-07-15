@@ -2115,8 +2115,6 @@ def _repair_data_summary(session):
         "managed_agent_run_id": payload.get("managed_agent_run_id") if isinstance(payload, dict) else "",
         "managed_agent_manifest_path": payload.get("managed_agent_manifest_path") if isinstance(payload, dict) else "",
         "managed_agent_runs": payload.get("managed_agent_runs") if isinstance(payload, dict) and isinstance(payload.get("managed_agent_runs"), list) else [],
-        "fixer_infrastructure_failures": fixer_infrastructure_failures,
-        "latest_fixer_infrastructure_failure": latest_fixer_infrastructure_failure,
         "investigation_summary": investigation_summary,
         "meta_investigation_summary": meta_investigation_summary,
         "iteration_count": len(iterations),
@@ -4554,8 +4552,6 @@ for entry in plans:
         _queue_coalesced_without_live_owner_reason(ev),
         _deterministic_failure_exhaustion_reason(ev),
         _liveness_without_acceptance_progress_reason(ev),
-        _auto_policy_external_evidence_gap_reason(ev),
-        _human_gate_evidence_disagreement_reason(ev),
         _repair_dispatch_during_preserve_live_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
     ):

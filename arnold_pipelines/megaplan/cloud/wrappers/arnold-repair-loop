@@ -751,6 +751,10 @@ record_repair_timeout_and_exit() {
   if [[ -f "$DATA_FILE" ]]; then
     repair_data_set_outcome "repair_timeout"
   fi
+  repair_goal_record_terminal_failure \
+    "repair-timeout-$phase" \
+    "repair_timeout" \
+    "bounded repair budget exhausted before the original checkpoint advanced" || true
   log "repair budget exhausted; timing out session=$SESSION phase=$phase budget_secs=$REPAIR_BUDGET_SECS data=$DATA_FILE"
   exit 1
 }
@@ -4859,6 +4863,24 @@ repair_goal_control_snapshot() {
     --owner-manifest-path "${ARNOLD_MANAGED_AGENT_MANIFEST:-}"
 }
 
+repair_goal_record_terminal_failure() {
+  local phase="$1"
+  local outcome="$2"
+  local reason="$3"
+  if [[ -z "${ARNOLD_REPAIR_GOAL_PATH:-}" ]]; then
+    log "cannot record terminal repair-owner failure without durable goal path session=$SESSION phase=$phase"
+    return 1
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+    arnold_pipelines.megaplan.cloud.repair_goal record-terminal-failure \
+    --goal-path "$ARNOLD_REPAIR_GOAL_PATH" \
+    --outcome "$outcome" \
+    --phase "$phase" \
+    --reason "$reason" \
+    --owner-run-id "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" \
+    --owner-manifest-path "${ARNOLD_MANAGED_AGENT_MANIFEST:-}" >>"$LOG" 2>&1
+}
+
 wait_for_repair_goal_progress_if_live() {
   local phase="$1" result status action reason sleep_secs
   while true; do
@@ -7339,8 +7361,12 @@ exit_if_repair_target_recovered "post-iterations"
 repair_goal_evaluate_or_exit "post-iterations-final-authority-check" || true
 
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
-  repair_data_set_outcome "recurring_retry_pending"
-  log "deterministic-failure breaker ended this owner cycle without semantic completion; durable goal remains active for a root-cause retry session=$SESSION goal_id=$ARNOLD_REPAIR_GOAL_ID data=$DATA_FILE"
+  repair_data_set_outcome "deterministic_failure"
+  repair_goal_record_terminal_failure \
+    "deterministic-owner-circuit-breaker" \
+    "deterministic_failure" \
+    "same repair owner repeated without a new target/progress token; escalate with the original checkpoint unresolved" || true
+  log "deterministic-failure breaker ended this owner cycle without semantic completion; terminal owner failure recorded against the unresolved checkpoint session=$SESSION goal_id=$ARNOLD_REPAIR_GOAL_ID data=$DATA_FILE"
   exit 1
 fi
 
