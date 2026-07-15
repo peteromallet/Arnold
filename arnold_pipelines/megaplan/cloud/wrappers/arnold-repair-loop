@@ -4856,6 +4856,93 @@ PY
   repair_save_verdict_evidence
 }
 
+ensure_repair_goal_custody() {
+  local blocker_id request_id result
+  blocker_id="${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-blocker:session:$SESSION}"
+  request_id="${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+  result="$(
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+      arnold_pipelines.megaplan.cloud.repair_goal ensure \
+      --marker-dir "$MARKER_DIR" \
+      --session "$SESSION" \
+      --workspace "$WORKSPACE" \
+      --remote-spec "$REMOTE_SPEC" \
+      --plan-name "$PLAN_NAME" \
+      --blocker-id "$blocker_id" \
+      --request-id "$request_id" \
+      --owner-run-id "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" \
+      --owner-manifest-path "${ARNOLD_MANAGED_AGENT_MANIFEST:-}"
+  )" || return 1
+  IFS=$'\t' read -r ARNOLD_REPAIR_GOAL_ID ARNOLD_REPAIR_GOAL_PATH ARNOLD_REPAIR_CHECKPOINT_DIGEST <<< "$(
+    python3 -c 'import json,sys; d=json.load(sys.stdin); print("\t".join(str(d.get(k) or "") for k in ("goal_id","goal_path","checkpoint_digest")))' <<< "$result"
+  )"
+  if [[ -z "$ARNOLD_REPAIR_GOAL_ID" || -z "$ARNOLD_REPAIR_GOAL_PATH" || -z "$ARNOLD_REPAIR_CHECKPOINT_DIGEST" ]]; then
+    log "durable repair goal custody could not be established session=$SESSION"
+    return 1
+  fi
+  export ARNOLD_REPAIR_GOAL_ID ARNOLD_REPAIR_GOAL_PATH ARNOLD_REPAIR_CHECKPOINT_DIGEST
+  log "durable repair goal attached session=$SESSION goal_id=$ARNOLD_REPAIR_GOAL_ID checkpoint=$ARNOLD_REPAIR_CHECKPOINT_DIGEST path=$ARNOLD_REPAIR_GOAL_PATH"
+}
+
+repair_data_bind_goal() {
+  require_repair_lock_held
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$DATA_FILE" "$ARNOLD_REPAIR_GOAL_ID" "$ARNOLD_REPAIR_GOAL_PATH" "$ARNOLD_REPAIR_CHECKPOINT_DIGEST" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
+
+path, goal_id, goal_path, checkpoint_digest = sys.argv[1:]
+payload = load_json(pathlib.Path(path), default={})
+payload["repair_goal"] = {
+    "goal_id": goal_id,
+    "goal_path": goal_path,
+    "checkpoint_digest": checkpoint_digest,
+    "semantic_completion_authority": "repair_goal",
+}
+save_repair_data(pathlib.Path(path), payload)
+PY
+}
+
+repair_goal_evaluate_or_exit() {
+  local phase="$1" result status reason
+  result="$(
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+      arnold_pipelines.megaplan.cloud.repair_goal evaluate \
+      --goal-path "$ARNOLD_REPAIR_GOAL_PATH" \
+      --action "$phase" \
+      --owner-run-id "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" \
+      --owner-manifest-path "${ARNOLD_MANAGED_AGENT_MANIFEST:-}"
+  )" || {
+    repair_data_set_outcome "repairing"
+    log "repair goal verification failed closed session=$SESSION phase=$phase"
+    return 1
+  }
+  IFS=$'\t' read -r status reason <<< "$(
+    python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print(str(d.get("status") or "")+"\t"+str(e.get("reason") or ""))' <<< "$result"
+  )"
+  case "$status" in
+    progressed)
+      repair_data_set_outcome "progressed"
+      clear_repair_markers
+      log "repair goal verified authoritative progress session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
+      exit 0
+      ;;
+    approval_required)
+      repair_data_set_outcome "true_human_blocker"
+      write_needs_human_marker "goal_gate_recorded" "approval_required: $reason"
+      log "repair goal reached explicit approval gate session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
+      exit 0
+      ;;
+    *)
+      repair_data_set_outcome "repairing"
+      log "repair goal remains active; liveness is not acceptance progress session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
+      return 1
+      ;;
+  esac
+}
+
 repair_save_verdict_evidence() {
   # best-effort: do not require the repair lock (the data file has already
   # been written by repair_data_set_outcome or save_repair_data). If the
@@ -5154,19 +5241,8 @@ exit_if_repair_target_complete() {
   if [[ "${complete_flag:-0}" != "1" ]]; then
     return 0
   fi
-  if [[ -f "$DATA_FILE" ]]; then
-    repair_data_set_outcome "complete"
-  fi
-  clear_repair_markers
-  if [[ "$scope" == "stale_marker" ]]; then
-    rm -f "$MARKER_PATH" 2>/dev/null || true
-    log "stale marker retired; no repair needed session=$SESSION phase=$phase reason=stale_marker detail=$reason marker_path=${MARKER_PATH:-n/a}"
-  elif [[ "$scope" == "chain" ]]; then
-    log "chain already complete; no repair needed session=$SESSION phase=$phase reason=$reason chain_state_path=${chain_path:-n/a} plan_state=${plan_state:-unknown} plan_state_path=${plan_path:-n/a}"
-  else
-    log "plan already complete; no repair needed session=$SESSION phase=$phase reason=$reason plan_state_path=${plan_path:-n/a}"
-  fi
-  exit 0
+  repair_goal_evaluate_or_exit "target-complete-$phase" || true
+  log "target reports complete without movement beyond the captured checkpoint; goal remains active session=$SESSION phase=$phase scope=$scope reason=$reason chain_state_path=${chain_path:-n/a} plan_state_path=${plan_path:-n/a}"
 }
 
 # Mirror of the pre-loop INITIAL_HEALTH=="alive" bail, but callable at
@@ -5175,18 +5251,9 @@ exit_if_repair_target_recovered() {
   local phase="$1"
   local health forced_reason
   health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
-  if [[ "$health" != "alive" ]]; then
-    return 0
-  fi
   forced_reason="$(marker_requires_repair_despite_alive || true)"
-  if [[ -n "$forced_reason" ]]; then
-    log "repair target alive at $phase but marker requires repair session=$SESSION reason=$forced_reason"
-    return 0
-  fi
-  repair_data_set_outcome "live_with_fresh_activity"
-  log "repair target has fresh activity at $phase; provisional liveness only session=$SESSION"
-  log "original blocker remains unverified; repair is non-successful session=$SESSION"
-  exit 75
+  log "repair target observation session=$SESSION phase=$phase health=$health marker_reason=${forced_reason:-none}; checking durable goal authority"
+  repair_goal_evaluate_or_exit "$phase" || true
 }
 
 recover_blocked_after_dev_fix_if_possible() {
@@ -5919,6 +5986,9 @@ Plan name: ${PLAN_NAME:-}
 Editable Arnold source: $ARNOLD_SRC
 Editable source branch: $SYNC_BRANCH
 Repair data file: $DATA_FILE
+Durable repair goal: $ARNOLD_REPAIR_GOAL_PATH
+Repair goal ID: $ARNOLD_REPAIR_GOAL_ID
+Frozen acceptance checkpoint digest: $ARNOLD_REPAIR_CHECKPOINT_DIGEST
 Persistent findings doc: $FINDINGS_DOC
 JSON report path (write this before exiting): $report_path
 Requested model label for this iteration: $requested_model
@@ -5948,6 +6018,7 @@ Task:
 7. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
 8. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
 9. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
+   Your process exit, report, commit, push, or a fresh target heartbeat is not semantic success. The durable goal remains open until the wrapper observes an authoritative state-transition or milestone-acceptance receipt beyond the frozen checkpoint, or an explicit approval/authorization gate.
 $mode_tasks
 
 Constraints:
@@ -5981,6 +6052,9 @@ Run input: $REMOTE_SPEC
 Plan name: ${PLAN_NAME:-}
 Editable Arnold source: $ARNOLD_SRC
 Repair data file: $DATA_FILE
+Durable repair goal: $ARNOLD_REPAIR_GOAL_PATH
+Repair goal ID: $ARNOLD_REPAIR_GOAL_ID
+Frozen acceptance checkpoint digest: $ARNOLD_REPAIR_CHECKPOINT_DIGEST
 JSON report path (write this before exiting): $report_path
 Relaunch command: $relaunch_command
 
@@ -5989,7 +6063,7 @@ Task:
    Classification guide: LIVE FAILURE means no success since latest_failure was recorded; STALE STATE means latest_failure predates success or the current block is a 0ms same-hash replay and state should be cleared/re-driven instead of source-fixed.
    For run_kind=plan, diagnose from the named plan's state/events/log/user actions; missing chain artifacts are expected.
 2. Try to start the run safely. Prefer the exact relaunch command above if the session is not already up.
-3. If the run comes up and appears live, stop and write a success report.
+3. If the run comes up and appears live, record that only as provisional liveness. It is not semantic success unless authoritative acceptance moved beyond the frozen checkpoint.
 4. If it does not come up, diagnose exactly why from the current logs/state and write that diagnosis.
 5. Use the raw failure signal and prior-attempt history to explain the current blocker concretely.
 6. Keep the turn short; launch plus concrete diagnosis only.
@@ -6073,6 +6147,9 @@ run_dev_fix_turn() {
     --link "plan=$PLAN_NAME"
     --link "phase=dev_fix"
     --link "attempt=$attempt_id"
+    --link "repair_goal_id=$ARNOLD_REPAIR_GOAL_ID"
+    --link "repair_goal_path=$ARNOLD_REPAIR_GOAL_PATH"
+    --link "repair_checkpoint_digest=$ARNOLD_REPAIR_CHECKPOINT_DIGEST"
   )
   if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
     managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
@@ -6148,6 +6225,9 @@ run_kimi_launch_turn() {
     --link "plan=$plan_name"
     --link "phase=kimi_recovery"
     --link "attempt=$CURRENT_ATTEMPT_ID"
+    --link "repair_goal_id=$ARNOLD_REPAIR_GOAL_ID"
+    --link "repair_goal_path=$ARNOLD_REPAIR_GOAL_PATH"
+    --link "repair_checkpoint_digest=$ARNOLD_REPAIR_CHECKPOINT_DIGEST"
   )
   if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
     managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
@@ -6563,19 +6643,25 @@ acquire_repair_lock || exit 75
 export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
 export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
 export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
-exit_if_repair_target_complete "start"
-
+IFS=$'\t' read -r ENTRY_COMPLETE _entry_scope _entry_reason _entry_chain _entry_plan _entry_state <<< "$(repair_target_completion_status "$WORKSPACE" "$RUN_KIND" "$PLAN_NAME")"
+if [[ "${ENTRY_COMPLETE:-0}" == "1" ]]; then
+  repair_data_set_outcome "complete"
+  clear_repair_markers
+  log "chain already complete; no repair needed; request was stale at entry session=$SESSION scope=${_entry_scope:-unknown} reason=${_entry_reason:-complete}"
+  exit 0
+fi
 INITIAL_HEALTH="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
+ensure_repair_goal_custody || exit 78
 repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
+repair_data_bind_goal
+exit_if_repair_target_complete "start"
 if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   forced_repair_reason="$(marker_requires_repair_despite_alive || true)"
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
-    repair_data_set_outcome "partial_liveness"
-    log "repair target already running; provisional liveness only session=$SESSION"
-    log "original blocker remains unverified; repair is non-successful session=$SESSION"
-    exit 75
+    log "repair target already running, but liveness does not satisfy the durable repair goal session=$SESSION"
+    repair_goal_evaluate_or_exit "initial-alive" || true
   fi
 fi
 
@@ -6889,9 +6975,7 @@ if repair_source_initiative_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "source initiative restored; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity after source initiative repair"
-    exit 75
+    repair_goal_evaluate_or_exit "post-source-initiative-launch" || true
   fi
 fi
 
@@ -6902,9 +6986,7 @@ if repair_source_workspace_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "0" "0" "running" "source workspace restored; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity after source workspace repair"
-    exit 75
+    repair_goal_evaluate_or_exit "post-source-workspace-launch" || true
   fi
 fi
 
@@ -6914,9 +6996,7 @@ if repair_dependency_manifests_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity after dependency manifest repair"
-    exit 75
+    repair_goal_evaluate_or_exit "post-dependency-manifest-launch" || true
   fi
 fi
 
@@ -6928,9 +7008,7 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity after stale-state clear"
-    exit 75
+    repair_goal_evaluate_or_exit "post-stale-state-launch" || true
   fi
 fi
 
@@ -6939,9 +7017,7 @@ mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE
 }
 if [[ "${mechanical_status:-}" == "running" ]]; then
   repair_data_record_mechanical "0" "0" "running" "baseline mechanical relaunch came up and held"
-  repair_data_set_outcome "partial_liveness"
-  log "repair loop reached live_with_fresh_activity via baseline mechanical relaunch"
-  exit 75
+  repair_goal_evaluate_or_exit "post-baseline-mechanical-launch" || true
 fi
 
 GLM_MODEL=""
@@ -7017,9 +7093,7 @@ for iteration in 1 2 3; do
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity mechanically iteration=$iteration"
-    exit 75
+    repair_goal_evaluate_or_exit "iteration-$iteration-post-mechanical-launch" || true
   fi
 
   if [[ -z "${KIMI_API_KEY:-}" ]]; then
@@ -7030,22 +7104,18 @@ for iteration in 1 2 3; do
   exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
   resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
   if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached live_with_fresh_activity via Kimi iteration=$iteration"
-    exit 75
+    repair_goal_evaluate_or_exit "iteration-$iteration-post-kimi-launch" || true
   fi
   exit_if_repair_target_complete "iteration-$iteration-post-kimi"
 done
 
 exit_if_repair_target_complete "post-iterations"
 exit_if_repair_target_recovered "post-iterations"
+repair_goal_evaluate_or_exit "post-iterations-final-authority-check" || true
 
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
-  discord_status="$(send_discord_escalation)"
-  if [[ "$discord_status" == "delivered" ]]; then
-    write_needs_human_marker "$discord_status" "deterministic_failure - breaker tripped before another iteration (same unresolved signature)"
-  fi
-  log "deterministic-failure breaker session=$SESSION discord=$discord_status data=$DATA_FILE"
+  repair_data_set_outcome "recurring_retry_pending"
+  log "deterministic-failure breaker ended this owner cycle without semantic completion; durable goal remains active for a root-cause retry session=$SESSION goal_id=$ARNOLD_REPAIR_GOAL_ID data=$DATA_FILE"
   exit 1
 fi
 
@@ -7064,10 +7134,6 @@ if [[ "$(repair_exhausted_should_retry_without_human)" == "1" ]]; then
   exit 1
 fi
 
-repair_data_set_outcome "discord_escalated"
-discord_status="$(send_discord_escalation)"
-if [[ "$discord_status" == "delivered" ]]; then
-  write_needs_human_marker "$discord_status"
-fi
-log "repair loop exhausted; needs human session=$SESSION discord=$discord_status data=$DATA_FILE"
+repair_data_set_outcome "recurring_retry_pending"
+log "repair owner cycle exhausted without authoritative progress; durable goal remains active and requires automatic retry session=$SESSION goal_id=$ARNOLD_REPAIR_GOAL_ID data=$DATA_FILE"
 exit 1

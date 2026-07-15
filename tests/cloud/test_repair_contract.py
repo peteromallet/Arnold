@@ -1258,7 +1258,9 @@ def test_true_human_blocker_is_terminal_but_non_success() -> None:
 
 def test_is_terminal_outcome() -> None:
     assert repair_contract.is_terminal_outcome("complete")
-    assert repair_contract.is_terminal_outcome("partial_liveness")
+    assert not repair_contract.is_terminal_outcome("partial_liveness")
+    assert not repair_contract.is_terminal_outcome("live_with_fresh_activity")
+    assert not repair_contract.is_terminal_outcome("recurring_retry_pending")
     assert repair_contract.is_terminal_outcome("repair_timeout")
     assert repair_contract.is_terminal_outcome("repair_exhausted")
     assert repair_contract.is_terminal_outcome("true_human_blocker")
@@ -1561,7 +1563,7 @@ def test_build_verification_record_success() -> None:
 def test_build_verification_record_non_success() -> None:
     rec = repair_contract.build_verification_record("partial_liveness")
     assert rec["is_success"] is False
-    assert rec["is_terminal"] is True
+    assert rec["is_terminal"] is False
 
 
 def test_build_verification_record_non_terminal() -> None:
