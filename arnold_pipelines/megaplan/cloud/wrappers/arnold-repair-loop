@@ -4720,6 +4720,7 @@ PY
 repair_data_set_outcome() {
   require_repair_lock_held
   local outcome="$1"
+  local repair_goal_status_override="${2:-}"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$outcome" <<'PY'
 import datetime as dt
 import pathlib
@@ -4745,7 +4746,7 @@ if is_success_outcome(outcome):
     payload["run_recurrence_detected"] = False
 save_repair_data(pathlib.Path(path), payload)
 PY
-  repair_save_verdict_evidence
+  repair_save_verdict_evidence "$repair_goal_status_override"
 }
 
 ensure_repair_goal_custody() {
@@ -4820,13 +4821,13 @@ repair_goal_evaluate_or_exit() {
   )"
   case "$status" in
     progressed)
-      repair_data_set_outcome "progressed"
+      repair_data_set_outcome "progressed" "$status"
       clear_repair_markers
       log "repair goal verified authoritative progress session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
       exit 0
       ;;
     approval_required)
-      repair_data_set_outcome "true_human_blocker"
+      repair_data_set_outcome "true_human_blocker" "$status"
       write_needs_human_marker "goal_gate_recorded" "approval_required: $reason"
       log "repair goal reached explicit approval gate session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
       exit 0
@@ -4844,11 +4845,12 @@ repair_save_verdict_evidence() {
   # been written by repair_data_set_outcome or save_repair_data). If the
   # data file is missing or unreadable, skip quietly.
   local verdict_path="${DATA_FILE%.repair-data.json}.repair-verdict.json"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$verdict_path" "$SESSION" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" <<'PY'
+  local repair_goal_status_override="${1:-}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$verdict_path" "$SESSION" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "$repair_goal_status_override" <<'PY'
 import pathlib
 import sys
 
-data_path_raw, verdict_path_raw, session, blocker_id, request_id = sys.argv[1:]
+data_path_raw, verdict_path_raw, session, blocker_id, request_id, repair_goal_status_override = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
 verdict_path = pathlib.Path(verdict_path_raw)
 
@@ -4874,6 +4876,7 @@ verdict = build_ordinary_repair_verdict(
     before_evidence_refs=tuple(payload.get("before_evidence_refs") or ()),
     after_evidence_refs=tuple(payload.get("after_evidence_refs") or ()),
     durable_refs=tuple(payload.get("durable_refs") or ()),
+    repair_goal_status_override=repair_goal_status_override,
 )
 save_repair_verdict(verdict_path, verdict)
 
