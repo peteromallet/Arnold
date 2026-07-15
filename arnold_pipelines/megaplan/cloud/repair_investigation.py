@@ -266,7 +266,8 @@ def _context_contradictions(
     request_mismatch: bool,
     request_path: object,
     goal_path: object,
-    frozen_checkpoint: Mapping[str, Any],
+    goal_target: Mapping[str, Any],
+    session: str,
     current: Mapping[str, Any],
 ) -> list[dict[str, str]]:
     contradictions: list[dict[str, str]] = []
@@ -278,19 +279,38 @@ def _context_contradictions(
                 "contradiction": "queued request plan/stage does not match the current target",
             }
         )
-    frozen_failure = frozen_checkpoint.get("latest_failure")
-    current_failure = current.get("latest_failure")
-    if isinstance(frozen_failure, Mapping) and isinstance(current_failure, Mapping):
-        frozen_fingerprint = _digest(dict(frozen_failure))
-        current_fingerprint = _digest(dict(current_failure))
-        if frozen_fingerprint != current_fingerprint:
-            contradictions.append(
-                {
-                    "left_source": _text(goal_path, 2000) or "repair_goal",
-                    "right_source": _text(current.get("plan_state_path"), 2000) or "plan_state",
-                    "contradiction": "frozen repair-goal failure differs from current plan failure",
-                }
-            )
+    goal_session = _text(goal_target.get("session"), 300)
+    if goal_session and goal_session != session:
+        contradictions.append(
+            {
+                "left_source": _text(goal_path, 2000) or "repair_goal",
+                "right_source": "current_session",
+                "contradiction": "repair-goal session identity differs from the current session",
+            }
+        )
+    goal_plan = _text(goal_target.get("plan_name"), 500)
+    current_plan = _text(current.get("plan_name"), 500)
+    if goal_plan and current_plan and goal_plan != current_plan:
+        contradictions.append(
+            {
+                "left_source": _text(goal_path, 2000) or "repair_goal",
+                "right_source": _text(current.get("plan_state_path"), 2000) or "plan_state",
+                "contradiction": "repair-goal plan identity differs from the current plan",
+            }
+        )
+    session_identity = (
+        current.get("session_identity")
+        if isinstance(current.get("session_identity"), Mapping)
+        else {}
+    )
+    if session_identity.get("identity_matches") is False:
+        contradictions.append(
+            {
+                "left_source": _text(goal_path, 2000) or "repair_goal",
+                "right_source": _text(session_identity.get("marker_path"), 2000) or "session_marker",
+                "contradiction": "repair-goal target identity differs from the authoritative session marker",
+            }
+        )
     return contradictions
 
 
@@ -320,6 +340,8 @@ def build_investigation_context(
         workspace=workspace,
         plan_name=plan_name,
         remote_spec=remote_spec,
+        marker_dir=str(goal_target.get("marker_dir") or ""),
+        session=session,
     )
     phase_result = _phase_result_summary(current.get("plan_state_path"))
     phase_exit_kind = _text(phase_result.get("exit_kind"), 300).lower()
@@ -339,15 +361,18 @@ def build_investigation_context(
     current_plan = _text(current.get("plan_name"), 500)
     current_stage = _text(current.get("target_stage"), 200).lower()
     request_mismatch = bool(
-        (request_plan and current_plan and request_plan != current_plan)
-        or (request_stage and current_stage and request_stage != current_stage)
+        request_plan and current_plan and request_plan != current_plan
+    )
+    request_stage_transition = bool(
+        request_stage and current_stage and request_stage != current_stage
     )
     attempts = [item for item in repair_data.get("attempts") or [] if isinstance(item, Mapping)]
     contradictions = _context_contradictions(
         request_mismatch=request_mismatch,
         request_path=request_path,
         goal_path=goal_path,
-        frozen_checkpoint=frozen_checkpoint,
+        goal_target=goal_target,
+        session=session,
         current=current,
     )
     recovery_contract = (
@@ -440,6 +465,21 @@ def build_investigation_context(
         if external_guard.get("status") == "failed"
         else {}
     )
+    frozen_failure = (
+        frozen_checkpoint.get("latest_failure")
+        if isinstance(frozen_checkpoint.get("latest_failure"), Mapping)
+        else {}
+    )
+    current_authoritative_failure = external_failure or (
+        current.get("latest_failure")
+        if isinstance(current.get("latest_failure"), Mapping)
+        else {}
+    )
+    blocker_transitioned = bool(
+        frozen_failure
+        and current_authoritative_failure
+        and _digest(dict(frozen_failure)) != _digest(dict(current_authoritative_failure))
+    )
     context: dict[str, Any] = {
         "schema_version": REPAIR_INVESTIGATION_CONTEXT_SCHEMA,
         "target_kind": "l1_repair_target",
@@ -467,9 +507,12 @@ def build_investigation_context(
             "problem_signature": dict(request_signature),
             "target": dict(request_target),
             "matches_current_target": not request_mismatch,
+            "stage_transition": request_stage_transition,
+            "stage_transition_remains_same_goal": bool(
+                request_stage_transition and not request_mismatch
+            ),
             "mismatch_reason": (
-                f"queued request plan/stage {request_plan!r}/{request_stage!r} disagrees with "
-                f"current {current_plan!r}/{current_stage!r}"
+                f"queued request plan {request_plan!r} disagrees with current {current_plan!r}"
                 if request_mismatch
                 else ""
             ),
@@ -480,6 +523,18 @@ def build_investigation_context(
         "evidence_sources": evidence_sources,
         "custody_status": "contradictory" if contradictions else "consistent",
         "custody_contradictions": contradictions,
+        "goal_continuity": {
+            "status": "successor_blocker" if blocker_transitioned else "same_blocker_or_unknown",
+            "checkpoint_role": "immutable_acceptance_baseline",
+            "same_goal_continuity_valid": not contradictions,
+            "current_blocker_may_differ": True,
+            "reason": (
+                "A durable repair goal owns the recovery outcome, not one immutable failure label. "
+                "A newly exposed authoritative blocker remains inside the same goal until accepted "
+                "progress advances beyond the frozen checkpoint. Blocker evolution alone is not a "
+                "custody contradiction."
+            ),
+        },
         "intended_recovery": {
             "predicate": _text(
                 recovery_contract.get("predicate")

@@ -193,6 +193,17 @@ def test_fresh_quality_phase_result_is_exact_error_when_latest_failure_cleared(t
 
 def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state.read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = None
+    _write(state, state_payload)
+    request_payload = json.loads(request.read_text(encoding="utf-8"))
+    request_payload["problem_signature"] = {
+        "milestone_or_plan": "current-m5a",
+        "phase_or_step": "review",
+    }
+    request_payload["target"] = {"plan_name": "current-m5a"}
+    _write(request, request_payload)
     access = tmp_path / "meta-observations.json"
     external = tmp_path / "external-state.json"
     external_value = {
@@ -244,6 +255,12 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
     )
 
     assert context["exact_error"]["failure_kind"] == "external_pr_ci_guard_failed"
+    assert context["custody_status"] == "consistent"
+    assert context["custody_contradictions"] == []
+    assert context["request"]["stage_transition"] is True
+    assert context["request"]["stage_transition_remains_same_goal"] is True
+    assert context["goal_continuity"]["status"] == "successor_blocker"
+    assert context["goal_continuity"]["same_goal_continuity_valid"] is True
     source = next(
         item for item in context["evidence_sources"] if item["kind"] == "external_state"
     )
@@ -261,6 +278,28 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
             l2_handoff_path=access,
             l2_context_digest=context_digest,
         )
+
+
+def test_goal_identity_mismatch_remains_a_custody_contradiction(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    goal_payload = json.loads(goal.read_text(encoding="utf-8"))
+    goal_payload["target"]["session"] = "different-session"
+    _write(goal, goal_payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    assert context["custody_status"] == "contradictory"
+    assert any(
+        item["contradiction"] == "repair-goal session identity differs from the current session"
+        for item in context["custody_contradictions"]
+    )
 
 
 def _receipt(digest: str = "digest-1", *, target_kind: str = "l1_repair_target") -> dict:
