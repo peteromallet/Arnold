@@ -572,9 +572,42 @@ def test_managed_agent_hot_context_separates_running_and_recent(tmp_path, monkey
     assert status["running"][0]["full_log_path"] == "/logs/running.log"
     assert status["recent"][0]["run_id"] == "completed"
     assert status["recent"][0]["completion_delivery"]["status"] == "delivered"
+    assert status["recent_total_count"] == 1
+    assert status["recent_omitted_count"] == 0
     assert status["delivery_status_counts"] == {"not_applicable": 1, "delivered": 1}
     assert status["terminal_delivery_status_counts"] == {"delivered": 1}
     assert status["delivery_attention_count"] == 0
+
+
+def test_managed_agent_inventory_accounts_for_bounded_recent_rows(tmp_path) -> None:
+    run_root = tmp_path / ".megaplan/plans/resident-subagents"
+    for index in range(3):
+        run_dir = run_root / f"completed-{index}"
+        run_dir.mkdir(parents=True)
+        (run_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "arnold-resident-agent-run-v1",
+                    "run_kind": "resident_delegated_agent",
+                    "custodian": "arnold.megaplan.resident",
+                    "run_id": f"completed-{index}",
+                    "status": "completed",
+                    "created_at": f"2026-07-10T0{index}:00:00Z",
+                }
+            )
+        )
+
+    status = list_managed_resident_agents(
+        project_root=tmp_path, workspace_root=None, recent_limit=2
+    )
+
+    assert [row["run_id"] for row in status["recent"]] == [
+        "completed-2",
+        "completed-1",
+    ]
+    assert status["recent_count"] == 2
+    assert status["recent_total_count"] == 3
+    assert status["recent_omitted_count"] == 1
 
 
 def test_hot_context_excludes_workflow_internal_manifest(tmp_path, monkeypatch) -> None:
