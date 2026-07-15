@@ -8222,7 +8222,11 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "verify_started_and_holding()" in text
     assert "mechanical_launch_step()" in text
     assert "kill_matching_runner_processes()" in text
-    assert 'kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"' in text
+    assert 'kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"' not in text
+    assert 'kill_tmux_session_if_present "$session"' not in text
+    assert 'failed:existing_tmux_session' in text
+    assert 'preserved:existing_runner' in text
+    assert 'mechanical-launch-${iteration}-' in text
     assert "marker_requires_repair_despite_alive()" in text
     assert 'python3 - "$MARKER_PATH" "$DATA_FILE"' in text
     assert 'repair_payload.get("current_failure_context")' in text
