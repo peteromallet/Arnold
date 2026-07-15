@@ -30,6 +30,9 @@ import subprocess
 from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
 from arnold_pipelines.megaplan.cloud import feature_flags
+from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
+    render_process_custody_policy,
+)
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
@@ -1609,6 +1612,8 @@ def build_meta_repair_prompt(
             parts.append("\n```\n\n")
 
         parts.append("### Instructions\n")
+        parts.append(render_process_custody_policy())
+        parts.append("\n\n")
         parts.append(
             "Diagnose the root cause of the repair-system failure described above. "
             "Focus on:\n"

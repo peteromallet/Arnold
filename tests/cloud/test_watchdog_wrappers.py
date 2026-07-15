@@ -18,6 +18,9 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud import repair_lock, repair_requests
+from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
+    PROCESS_CUSTODY_FAIL_CLOSED_POLICY,
+)
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
 
@@ -470,6 +473,7 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
         [
             _extract_repair_function("redact_inline_text"),
             _extract_repair_function("redact_file_in_place"),
+            _extract_repair_function("render_process_custody_policy"),
             _extract_repair_function("write_dev_prompt"),
             _extract_repair_function("write_kimi_prompt"),
             f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
@@ -505,6 +509,83 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
     assert "supersecret" not in kimi_text
     assert REDACTION in dev_text
     assert REDACTION in kimi_text
+
+
+def test_repair_loop_effective_fixer_prompts_require_canonical_process_custody_policy(
+    tmp_path: Path,
+) -> None:
+    dev_prompt = tmp_path / "dev-prompt.md"
+    kimi_prompt = tmp_path / "kimi-prompt.md"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("redact_inline_text"),
+            _extract_repair_function("redact_file_in_place"),
+            _extract_repair_function("render_process_custody_policy"),
+            _extract_repair_function("write_dev_prompt"),
+            _extract_repair_function("write_kimi_prompt"),
+            f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={shlex.quote(sys.executable)}",
+            "SESSION=demo-session",
+            "WORKSPACE=/tmp/workspace",
+            "RUN_KIND=chain",
+            "REMOTE_SPEC=/tmp/workspace/.megaplan/initiatives/demo/chain.yaml",
+            "PLAN_NAME=demo-plan",
+            "SYNC_BRANCH=editible-install",
+            "DATA_FILE=/tmp/repair-data.json",
+            "FINDINGS_DOC=/tmp/findings.md",
+            "ARNOLD_REPAIR_GOAL_PATH=/tmp/goal.json",
+            "ARNOLD_REPAIR_GOAL_ID=goal-1",
+            "ARNOLD_REPAIR_CHECKPOINT_DIGEST=checkpoint-1",
+            "INVESTIGATION_CONTEXT_PATH=/tmp/investigation.json",
+            "INVESTIGATOR_RECEIPT_PATH=/tmp/investigator-receipt.json",
+            "INVESTIGATION_CONTEXT_DIGEST=context-1",
+            "render_failure_summary() { printf '%s\\n' 'incident'; }",
+            "render_chain_health_block() { :; }",
+            "render_recurrence_block() { :; }",
+            "render_canonical_block() { :; }",
+            (
+                f"write_dev_prompt {shlex.quote(str(dev_prompt))} requested-model dispatch-model "
+                f"{shlex.quote(str(tmp_path / 'report.json'))} 0"
+            ),
+            (
+                f"write_kimi_prompt {shlex.quote(str(kimi_prompt))} relaunch-command "
+                f"{shlex.quote(str(tmp_path / 'kimi-report.json'))}"
+            ),
+        ]
+    )
+
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    for prompt_path in (dev_prompt, kimi_prompt):
+        prompt = prompt_path.read_text(encoding="utf-8")
+        assert PROCESS_CUSTODY_FAIL_CLOSED_POLICY in prompt
+        assert "apparent duplication, or inference is never" in prompt
+        assert "process holding your durable goal" in prompt
+
+
+def test_repair_loop_fixer_prompt_composition_fails_closed_when_policy_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    prompt_path = tmp_path / "must-not-exist.md"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("write_dev_prompt"),
+            "render_failure_summary() { :; }",
+            "render_chain_health_block() { :; }",
+            "render_recurrence_block() { :; }",
+            "render_canonical_block() { :; }",
+            "render_process_custody_policy() { return 1; }",
+            (
+                f"! write_dev_prompt {shlex.quote(str(prompt_path))} requested dispatch "
+                f"{shlex.quote(str(tmp_path / 'report.json'))} 0"
+            ),
+            f"test ! -e {shlex.quote(str(prompt_path))}",
+        ]
+    )
+
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 def test_repair_prompt_ignores_stale_projected_blocked_chain_health(tmp_path: Path) -> None:

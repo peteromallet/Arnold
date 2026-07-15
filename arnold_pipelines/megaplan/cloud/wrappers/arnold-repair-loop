@@ -5987,6 +5987,16 @@ elif canonical_state in ("BROKEN_STATE_MACHINE", "RETRYABLE_EXECUTION_BLOCK"):
 PY
 }
 
+render_process_custody_policy() {
+  local runtime_python="${MEGAPLAN_SUPERVISOR_PYTHON:-python3}"
+  PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" \
+    "$runtime_python" -P - <<'PY'
+from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import render_process_custody_policy
+
+print(render_process_custody_policy())
+PY
+}
+
 write_dev_prompt() {
   set +a
   local prompt_path="$1"
@@ -5994,12 +6004,14 @@ write_dev_prompt() {
   local dispatch_model="$3"
   local report_path="$4"
   local recurrence_mode="${5:-0}"
-  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks investigation_receipt
+  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks investigation_receipt process_custody_policy
   failure_summary="$(render_failure_summary "$DATA_FILE")"
   chain_health_block="$(render_chain_health_block)"
   recurrence_block="$(render_recurrence_block)"
   canonical_block="$(render_canonical_block)"
   investigation_receipt="$(cat "$INVESTIGATOR_RECEIPT_PATH" 2>/dev/null || true)"
+  process_custody_policy="$(render_process_custody_policy)" || return 1
+  [[ -n "$process_custody_policy" ]] || return 1
   if [[ "$recurrence_mode" == "1" ]]; then
     mode_tasks="$(cat <<EOF
 10. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
@@ -6025,6 +6037,8 @@ EOF
   fi
   cat > "$prompt_path" <<EOF
 You are the watchdog repair-loop dev-fix agent for a stopped Arnold cloud session.
+
+$process_custody_policy
 
 $failure_summary
 $chain_health_block
@@ -6103,10 +6117,14 @@ write_kimi_prompt() {
   local prompt_path="$1"
   local relaunch_command="$2"
   local report_path="$3"
-  local failure_summary
+  local failure_summary process_custody_policy
   failure_summary="$(render_failure_summary "$DATA_FILE")"
+  process_custody_policy="$(render_process_custody_policy)" || return 1
+  [[ -n "$process_custody_policy" ]] || return 1
   cat > "$prompt_path" <<EOF
 You are the focused Kimi launch/diagnosis turn in the watchdog repair loop.
+
+$process_custody_policy
 
 $failure_summary
 
