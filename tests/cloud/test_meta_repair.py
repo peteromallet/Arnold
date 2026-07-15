@@ -21,6 +21,9 @@ from pathlib import Path
 import pytest
 
 import arnold_pipelines.megaplan.cloud.meta_repair as meta_repair_module
+from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
+    PROCESS_CUSTODY_FAIL_CLOSED_POLICY,
+)
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     META_REPAIR_BUDGET_SECS,
     _MIN_UNCHANGED_FINGERPRINT_ATTEMPTS,
@@ -1256,6 +1259,30 @@ class TestLoadRedactedEvidence:
 
 
 class TestBuildMetaRepairPrompt:
+    def test_prompt_includes_canonical_fail_closed_process_custody_policy(self) -> None:
+        classification = classify_repair_system_failure(
+            session="process-custody",
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+        )
+
+        normal_prompt = build_meta_repair_prompt(classification)
+        emergency_prompt = build_meta_repair_prompt(classification, force_emergency=True)
+
+        for prompt in (normal_prompt, emergency_prompt):
+            normalized_prompt = " ".join(prompt.split())
+            assert PROCESS_CUSTODY_FAIL_CLOSED_POLICY in prompt
+            assert "this same acting agent/run launched that exact target" in normalized_prompt
+            assert "Mere discovery by `pgrep`, `ps`" in prompt
+            assert "shared workspace or session" in normalized_prompt
+            assert "your launcher, parent, or any ancestor" in normalized_prompt
+            assert "child/descendant custody stack" in normalized_prompt
+            assert "process holding your durable goal" in normalized_prompt
+            assert "process owned by another run" in normalized_prompt
+            assert "do nothing and report the ambiguity" in normalized_prompt
+            assert "manifest-targeted lifecycle operations" in normalized_prompt
+            assert "Broad `pgrep`-derived kill lists" in prompt
+
     def test_prompt_includes_trigger_and_session(self) -> None:
         classification = classify_repair_system_failure(
             session="prompt-session",
