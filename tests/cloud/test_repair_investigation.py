@@ -323,7 +323,7 @@ def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
         )
 
 
-def test_context_tells_investigator_the_fail_closed_action_target_contract(tmp_path: Path) -> None:
+def test_context_separates_safe_target_from_handoff_mutation_contract(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     context = build_investigation_context(
         workspace=workspace,
@@ -334,9 +334,13 @@ def test_context_tells_investigator_the_fail_closed_action_target_contract(tmp_p
         goal_path=goal,
     )
 
-    contract = context["required_investigator_output"]["action_target_contract"]
+    contract = context["required_investigator_output"]["safe_repair_target_by_action"]
     assert contract["replan"] == ["none", "repair_custody"]
     assert contract["recover_state"] == ["plan_state_via_cli", "repair_custody"]
+    assert context["required_investigator_output"][
+        "handoff_allowed_mutations_by_action"
+    ]["replan"] == ["none"]
+    assert "action_target_contract" not in context["required_investigator_output"]
     assert "L2/root-cause target" in context["required_investigator_output"][
         "replan_contract"
     ]

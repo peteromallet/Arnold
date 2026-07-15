@@ -204,16 +204,24 @@ def _common_required_output(target_kind: str) -> dict[str, Any]:
             "scope": "<bounded path/component or none>",
             "rationale": "<why this is the safe ownership boundary>",
         },
-        "action_target_contract": {
+        "safe_repair_target_by_action": {
             "preserve_live": ["none"],
             "replan": ["none", "repair_custody"],
             "repair_source": ["arnold_source", "target_workspace"],
             "repair_target": ["target_workspace"],
             "recover_state": ["plan_state_via_cli", "repair_custody"],
         },
+        "handoff_allowed_mutations_by_action": {
+            "preserve_live": ["none"],
+            "replan": ["none"],
+            "repair_source": ["arnold_source:<bounded component>"],
+            "repair_target": ["target_workspace:<bounded component>"],
+            "recover_state": ["supported_cli:<exact command>"],
+        },
         "replan_contract": (
-            "replan never authorizes an L1 mutation; repair_custody may be named "
-            "only as the bounded L2/root-cause target when custody is contradictory"
+            "replan handoff.allowed_mutations MUST equal [\"none\"] and never authorizes "
+            "an L1 mutation; repair_custody may be named only in safe_repair_target.kind "
+            "as the bounded L2/root-cause target when custody is contradictory"
         ),
         "handoff": {
             "action": "preserve_live|repair_source|repair_target|recover_state|replan",
