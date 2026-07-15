@@ -302,6 +302,7 @@ def run_escalation_controller(
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         active_global, active_by_session = _active_counts(state_root)
+        seen_escalations: set[str] = set()
         for finding in findings:
             gate = classify_true_stall(finding, policy=selected)
             finding["l3_escalation_gate"] = gate
@@ -324,7 +325,24 @@ def run_escalation_controller(
                 finding["l3_escalation"] = record
                 summary.append(record)
                 continue
-            path = _state_path(state_root, str(gate["escalation_id"]))
+            escalation_id = str(gate["escalation_id"])
+            if escalation_id in seen_escalations:
+                record = {
+                    "escalation_id": escalation_id,
+                    "session": gate.get("session"),
+                    "plan": gate.get("plan"),
+                    "gate": gate.get("decision"),
+                    "decision": "duplicate_target_observation",
+                    "reason": "another finding in this cycle already owns the authoritative target",
+                    "repair_dispatched": False,
+                    "managed_run_id": "",
+                    "managed_manifest_path": "",
+                }
+                finding["l3_escalation"] = record
+                summary.append(record)
+                continue
+            seen_escalations.add(escalation_id)
+            path = _state_path(state_root, escalation_id)
             state = _load_json(path)
             state, verification = _terminal_reverification(
                 state,
