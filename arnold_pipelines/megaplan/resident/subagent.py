@@ -3275,16 +3275,40 @@ def _finish_delivery(
     now: datetime,
     message_ids: list[str],
     result_kind: str,
+    delivery_evidence: Mapping[str, Any] | None = None,
 ) -> None:
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         delivery = dict(manifest.get("completion_delivery") or {})
+        origin = dict(manifest.get("discord_origin") or {})
+        expected_conversation_key = str(origin.get("conversation_key") or "")
+        evidence = _normalized_discord_delivery_evidence(
+            delivery_evidence,
+            expected_conversation_key=expected_conversation_key,
+            message_ids=message_ids,
+        )
         history = list(delivery.get("state_history") or [])
+        for rejection in evidence["provider_rejections"]:
+            history.append(
+                {
+                    "status": "rejected",
+                    "at": now.isoformat(),
+                    "evidence": "provider_rejected_reply_or_thread_target",
+                    "attempt_id": delivery.get("attempt_id"),
+                    **rejection,
+                }
+            )
         history.append(
             {
                 "status": "delivered",
                 "at": now.isoformat(),
-                "evidence": "provider_message_ids_persisted",
+                "evidence": (
+                    "provider_fallback_message_ids_persisted"
+                    if evidence["delivery_mode"] == "fallback_plain"
+                    else "provider_reply_message_ids_persisted"
+                    if evidence["delivery_mode"] == "reply"
+                    else "provider_plain_message_ids_persisted"
+                ),
                 "attempt_id": delivery.get("attempt_id"),
             }
         )
@@ -3294,6 +3318,12 @@ def _finish_delivery(
                 "delivered_at": now.isoformat(),
                 "discord_message_ids": message_ids,
                 "result_kind": result_kind,
+                "delivery_evidence": evidence,
+                "provider_outcome": "accepted",
+                # Discord's returned message ids acknowledge provider
+                # acceptance.  They are not evidence that a person saw a
+                # notification or rendered message.
+                "user_notification_visibility": "unknown",
                 "updated_at": now.isoformat(),
                 "state_history": history[-20:],
             }
@@ -3301,6 +3331,62 @@ def _finish_delivery(
         delivery.pop("claim_state", None)
         manifest["completion_delivery"] = delivery
         _atomic_json(manifest_path, manifest)
+
+
+def _normalized_discord_delivery_evidence(
+    value: Mapping[str, Any] | None,
+    *,
+    expected_conversation_key: str,
+    message_ids: list[str],
+) -> dict[str, Any]:
+    evidence = dict(value or {})
+    recorded_conversation_key = str(
+        evidence.get("authoritative_conversation_key") or expected_conversation_key
+    )
+    evidence_custody_valid = recorded_conversation_key == expected_conversation_key
+    mode = str(evidence.get("delivery_mode") or "reply")
+    if mode not in {"reply", "fallback_plain", "plain"}:
+        mode = "reply"
+    rejections: list[dict[str, object]] = []
+    raw_rejections = evidence.get("provider_rejections")
+    if isinstance(raw_rejections, (list, tuple)):
+        for item in raw_rejections:
+            if not isinstance(item, Mapping):
+                continue
+            rejections.append(
+                {
+                    "outcome": "rejected",
+                    "scope": str(item.get("scope") or "unknown"),
+                    "error_class": str(item.get("error_class") or "unknown"),
+                    "http_status": item.get("http_status"),
+                    "discord_error_code": item.get("discord_error_code"),
+                }
+            )
+    return {
+        "schema_version": "arnold-discord-delivery-evidence-v1",
+        "authoritative_conversation_key": expected_conversation_key,
+        "evidence_custody_valid": evidence_custody_valid,
+        "delivery_mode": mode,
+        "fallback_reason": (
+            str(evidence.get("fallback_reason"))
+            if evidence.get("fallback_reason")
+            else None
+        ),
+        "provider_outcome": "accepted",
+        "provider_message_ids": list(message_ids),
+        "provider_rejections": rejections,
+        "resolved_channel_id": (
+            str(evidence.get("resolved_channel_id"))
+            if evidence.get("resolved_channel_id") is not None
+            else None
+        ),
+        "resolved_thread_id": (
+            str(evidence.get("resolved_thread_id"))
+            if evidence.get("resolved_thread_id") is not None
+            else None
+        ),
+        "user_notification_visibility": "unknown",
+    }
 
 
 def _optional_http_status(exc: Exception) -> int | None:
@@ -3391,7 +3477,13 @@ def _delivery_error_evidence(exc: Exception) -> dict[str, object]:
     }
 
 
-def _retry_delivery(manifest_path: Path, *, now: datetime, exc: Exception) -> str:
+def _retry_delivery(
+    manifest_path: Path,
+    *,
+    now: datetime,
+    exc: Exception,
+    delivery_evidence: Mapping[str, Any] | None = None,
+) -> str:
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         delivery = dict(manifest.get("completion_delivery") or {})
@@ -3408,6 +3500,17 @@ def _retry_delivery(manifest_path: Path, *, now: datetime, exc: Exception) -> st
             }
         )
         category = str(evidence["last_error_category"])
+        ambiguous_outcome = category in {
+            "provider_acceptance_unknown",
+            "timeout",
+            "network_error",
+            "server_error",
+        }
+        provider_rejected = (
+            category == "invalid_reply_target"
+            or isinstance(evidence.get("last_http_status"), int)
+            and 400 <= int(evidence["last_http_status"]) < 500
+        )
         permanent = category in {
             "invalid_reply_target",
             "unauthorized",
@@ -3418,6 +3521,37 @@ def _retry_delivery(manifest_path: Path, *, now: datetime, exc: Exception) -> st
         exhausted = attempt >= _DELIVERY_MAX_ATTEMPTS
         status = "failed" if permanent or exhausted else "retry_pending"
         state_history = list(delivery.get("state_history") or [])
+        if isinstance(delivery_evidence, Mapping):
+            raw_rejections = delivery_evidence.get("provider_rejections")
+            if isinstance(raw_rejections, (list, tuple)):
+                for rejection in raw_rejections:
+                    if not isinstance(rejection, Mapping):
+                        continue
+                    state_history.append(
+                        {
+                            "status": "rejected",
+                            "at": now.isoformat(),
+                            "evidence": "provider_rejected_reply_or_thread_target",
+                            "attempt_id": delivery.get("attempt_id"),
+                            "scope": str(rejection.get("scope") or "unknown"),
+                            "error_class": str(
+                                rejection.get("error_class") or "unknown"
+                            ),
+                            "http_status": rejection.get("http_status"),
+                            "discord_error_code": rejection.get(
+                                "discord_error_code"
+                            ),
+                        }
+                    )
+        if ambiguous_outcome:
+            state_history.append(
+                {
+                    "status": "unknown",
+                    "at": now.isoformat(),
+                    "evidence": "provider_acceptance_outcome_unknown",
+                    "attempt_id": delivery.get("attempt_id"),
+                }
+            )
         state_history.append(
             {
                 "status": status,
@@ -3438,6 +3572,14 @@ def _retry_delivery(manifest_path: Path, *, now: datetime, exc: Exception) -> st
                 "updated_at": now.isoformat(),
                 "error_history": history[-10:],
                 "state_history": state_history[-20:],
+                "provider_outcome": (
+                    "unknown"
+                    if ambiguous_outcome
+                    else "rejected"
+                    if provider_rejected
+                    else "not_accepted"
+                ),
+                "user_notification_visibility": "unknown",
                 **evidence,
             }
         )
@@ -3635,6 +3777,13 @@ async def sweep_managed_agent_deliveries(
                 manifest_path,
                 now=_delivery_transition_now(fixed_now),
                 exc=exc,
+                delivery_evidence=(
+                    metadata.get("discord_delivery_evidence")
+                    if isinstance(
+                        metadata.get("discord_delivery_evidence"), Mapping
+                    )
+                    else None
+                ),
             )
             if disposition == "retry_pending":
                 retry_pending += 1
@@ -3663,6 +3812,13 @@ async def sweep_managed_agent_deliveries(
                 exc=_ProviderAcceptanceEvidenceMissing(
                     "Discord send returned without provider message ids"
                 ),
+                delivery_evidence=(
+                    metadata.get("discord_delivery_evidence")
+                    if isinstance(
+                        metadata.get("discord_delivery_evidence"), Mapping
+                    )
+                    else None
+                ),
             )
             retry_pending += int(disposition == "retry_pending")
             failed += int(disposition == "failed")
@@ -3672,6 +3828,11 @@ async def sweep_managed_agent_deliveries(
             now=_delivery_transition_now(fixed_now),
             message_ids=message_ids,
             result_kind=result_kind,
+            delivery_evidence=(
+                metadata.get("discord_delivery_evidence")
+                if isinstance(metadata.get("discord_delivery_evidence"), Mapping)
+                else None
+            ),
         )
         delivered += 1
     return ManagedAgentDeliverySweepResult(
