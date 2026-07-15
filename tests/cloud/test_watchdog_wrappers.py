@@ -52,6 +52,14 @@ def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
         assert "export ARNOLD_REPAIR_RUN_KIND=" in text
 
 
+def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
+    assert 'SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in _wrapper("arnold-watchdog")
+    assert 'ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in _repair_wrapper()
+    assert 'ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"' in _wrapper("arnold-meta-repair-loop")
+    auditor = _wrapper("arnold-progress-auditor")
+    assert "${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-" in auditor
+
+
 def _extract_repair_function(name: str) -> str:
     text = _repair_wrapper()
     start = text.index(f"{name}() {{")
