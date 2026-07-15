@@ -156,6 +156,7 @@ def test_launch_subagent_tool_wraps_dispatcher(tmp_path, monkeypatch) -> None:
             LaunchSubagentInput(
                 task="summarize readme",
                 description="Summarize the repository README",
+                work_intent="review",
                 toolsets="file,web",
                 project_dir="/repo",
             )
@@ -168,6 +169,7 @@ def test_launch_subagent_tool_wraps_dispatcher(tmp_path, monkeypatch) -> None:
     assert captured["project_dir"] == "/repo"
     assert captured["backend"] == "codex"
     assert captured["background"] is True
+    assert captured["work_intent"] == "review"
 
 
 def test_launch_subagent_tool_propagates_failure(tmp_path, monkeypatch) -> None:

@@ -97,7 +97,8 @@ def test_terminal_followup_creates_auditable_session_continuation(
     launches: list[list[str]] = []
 
     def fake_popen(argv, **kwargs):
-        launches.append(list(argv))
+        if "arnold_pipelines.megaplan.resident.subagent_worker" in argv:
+            launches.append(list(argv))
         return _Supervisor()
 
     monkeypatch.setattr(subagent.subprocess, "Popen", fake_popen)
@@ -130,6 +131,12 @@ def test_terminal_followup_creates_auditable_session_continuation(
     assert child["followup_id"] == result.followup_id
     assert Path(child["parent_manifest_path"]) == target_path
     assert child["launch_provenance"] == caller_provenance
+    assert child["work_intent"] == "review"
+    child_prompt = Path(child["prompt_path"]).read_text()
+    assert child_prompt.count(
+        subagent.DELEGATION_DELIVERY_INSTRUCTION_HEADER
+    ) == 1
+    assert "- resolved work intent: review" in child_prompt
     assert child["discord_origin"]["reply_to_message_id"] == "2002"
     assert child["discord_origin"]["reply_target_source_record_id"] == (
         "msg_newfollowupsrc"

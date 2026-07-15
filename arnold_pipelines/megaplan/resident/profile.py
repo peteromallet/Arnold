@@ -825,6 +825,14 @@ class LaunchSubagentInput(ToolInput):
     )
     follow_up_rationale: str | None = Field(default=None, max_length=300)
     task_kind: DelegatedTaskKind = "routine"
+    work_intent: Literal["auto", "execution", "review", "speculative"] = Field(
+        default="auto",
+        description=(
+            "Execution integrates authorized implementation into a clearly identified target; "
+            "review is non-mutating; speculative remains isolated and unintegrated. Auto resolves "
+            "conservatively from task_kind, and the launch boundary always appends one instruction."
+        ),
+    )
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     project_dir: str | None = None
@@ -939,7 +947,10 @@ class MegaplanResidentProfile:
             "whenever you need the full list (including retained failed items). For normal "
             "delegated work, keep its defaults (`backend=codex`, `background=true`) and report "
             "the returned durable paths. "
-            "Always classify delegated work with `task_kind` and D1-D10 `difficulty`. Use Luna/low "
+            "Always classify delegated work with `task_kind`, `work_intent`, and D1-D10 "
+            "`difficulty`. Use work_intent=execution for authorized delivery, review for non-mutating "
+            "analysis, and speculative for tentative/unintegrated work; auto resolves conservatively "
+            "from task_kind when a compatibility caller omits it. Use Luna/low "
             "only for bounded lookup, extraction, or mechanical D1-D3 work; routine coding, "
             "debugging, and research default to Terra/medium; ambiguous, cross-cutting, high-risk, "
             "or D7-D10 work uses Sol/high. Do not request xhigh/max by default. "
@@ -2841,6 +2852,7 @@ class MegaplanResidentProfile:
             model=payload.model,
             reasoning_effort=payload.reasoning_effort,
             task_kind=payload.task_kind,
+            work_intent=payload.work_intent,
             difficulty=payload.difficulty,
             request_id=payload.request_id,
             launch_origin=launch_origin,
