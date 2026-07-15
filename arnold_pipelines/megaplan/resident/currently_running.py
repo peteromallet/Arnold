@@ -417,7 +417,7 @@ def _render_session(row: Mapping[str, Any]) -> str:
         details.append("overall progress unavailable")
     plan_percent = _percent(progress.get("plan_percent"))
     if plan_percent is not None:
-        details.append(f"{plan_percent}% in-flight plan")
+        details.append(f"{plan_percent}% plan bookkeeping (not acceptance)")
     session_status = effective_session_status
     if session_status and session_status.casefold() == _ATTENTION_SESSION_STATUS:
         details.append("⚠️ attention")

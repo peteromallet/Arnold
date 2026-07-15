@@ -167,8 +167,38 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
     assert "`executing`" in rendered
     assert "42.5% overall" in rendered
     assert "+2.5 pp in the past hour" in rendered
-    assert "73% in-flight plan" in rendered
+    assert "73% plan bookkeeping (not acceptance)" in rendered
     assert "finalized" not in rendered
+
+
+def test_render_labels_full_task_bookkeeping_during_review_rework() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={
+                "sessions": [
+                    {
+                        "session": "custody-control",
+                        "status": "running",
+                        "progress": {
+                            "percent": 20,
+                            "plan_percent": 100,
+                            "plan_percent_basis": (
+                                "plan lifecycle and recorded task-weight bookkeeping; "
+                                "not implementation acceptance"
+                            ),
+                            "display_state": "reworking",
+                            "plan_state": "finalized",
+                        },
+                    }
+                ]
+            },
+            managed_agents={"running": []},
+        )
+    )
+
+    assert "`reworking` · 20% overall · 100% plan bookkeeping (not acceptance)" in rendered
+    assert "finalized" not in rendered
+    assert "`completed`" not in rendered
 
 
 def test_render_shows_truthful_hourly_percentage_point_deltas_only_with_telemetry() -> None:
@@ -514,7 +544,10 @@ def test_render_keeps_terminal_plan_without_chain_completion_in_attention() -> N
 
     assert "### ⚠️ Needs attention · 1" in rendered
     assert "`repository-strategy-roadmap`" in rendered
-    assert "`done` · 100% overall · 100% in-flight plan · ⚠️ attention" in rendered
+    assert (
+        "`done` · 100% overall · 100% plan bookkeeping (not acceptance) · ⚠️ attention"
+        in rendered
+    )
     assert "terminal plan requires chain reconciliation" in rendered
     assert "Recently completed · 1 shown" not in rendered
     assert "`completed`" not in rendered
