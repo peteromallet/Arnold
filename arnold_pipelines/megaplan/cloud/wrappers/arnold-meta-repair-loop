@@ -631,6 +631,42 @@ if validated.get("recommended_action") != "replan":
 if (validated.get("safe_repair_target") or {}).get("kind") != "repair_custody":
     raise SystemExit("L2 replan handoff did not target repair custody")
 PY
+  REPLAN_RECONCILIATION="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    "$REPAIR_DATA_PATH" "$MARKER_DIR/$SESSION.json" "$SESSION" "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
+import json
+import sys
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json
+from arnold_pipelines.megaplan.cloud.repair_goal import reconcile_l2_replan
+
+data_path, marker_path, session, context_digest, receipt_path = sys.argv[1:]
+data = load_json(data_path, default={})
+marker = load_json(marker_path, default={})
+goal = data.get("repair_goal") if isinstance(data.get("repair_goal"), dict) else {}
+receipt = load_json(receipt_path, default={})
+if not goal.get("goal_path"):
+    raise SystemExit("L2 replan handoff lacks durable repair goal")
+result = reconcile_l2_replan(
+    goal["goal_path"], session=session,
+    workspace=str(marker.get("workspace") or data.get("workspace") or ""),
+    remote_spec=str(marker.get("remote_spec") or marker.get("spec") or data.get("spec") or ""),
+    blocker_id=str(data.get("blocker_id") or ""), context_digest=context_digest,
+    receipt_digest=str(receipt.get("receipt_digest") or ""),
+)
+print(json.dumps(result, sort_keys=True))
+PY
+)" || {
+    log "L2 replan reconciliation failed closed; refusing ordinary retrigger"
+    exit 1
+  }
+  IFS=$'\t' read -r REPLAN_RECONCILIATION_STATUS REPLAN_EPOCH <<< "$(python3 -c 'import json,sys; value=json.load(sys.stdin); print("\t".join((str(value.get("status") or ""), str(value.get("replan_epoch") or ""))))' <<< "$REPLAN_RECONCILIATION")"
+  if [[ "$REPLAN_RECONCILIATION_STATUS" == "already_reconciled" ]]; then
+    log "L2 replan handoff already reconciled; refusing duplicate ordinary retrigger session=$SESSION epoch=$REPLAN_EPOCH"
+    exit 0
+  fi
+  if [[ "$REPLAN_RECONCILIATION_STATUS" != "newly_reconciled" || -z "$REPLAN_EPOCH" ]]; then
+    log "L2 replan reconciliation returned invalid transition; refusing ordinary retrigger"
+    exit 1
+  fi
   REPLAN_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-ordinary-retrigger-run-id"
   IFS=$'\t' read -r REPLAN_WORKSPACE REPLAN_REMOTE_SPEC < <(
     PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
@@ -647,20 +683,20 @@ PY
   replan_cmd=(
     "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold_pipelines.megaplan.managed_agent run
     --run-kind automatic_repair_retry
-    --identity-key "meta-replan:${SESSION}:${META_INVESTIGATION_CONTEXT_DIGEST}"
+    --identity-key "meta-replan:${SESSION}:${META_INVESTIGATION_CONTEXT_DIGEST}:epoch:${REPLAN_EPOCH}"
     --project-dir "$REPLAN_WORKSPACE" --task-kind autonomous --difficulty 8
     --model control-plane --reasoning-effort bounded
     --route-class meta_repair_retrigger --backend repair-loop
     --command-display "L2 replan to ordinary repair $SESSION"
     --origin-kind meta_repair_retrigger --origin-id "$SESSION"
     --origin-component arnold-meta-repair-loop
-    --trigger-id "replan:$META_INVESTIGATION_CONTEXT_DIGEST"
+    --trigger-id "replan:$META_INVESTIGATION_CONTEXT_DIGEST:epoch:$REPLAN_EPOCH"
     --run-id-file "$REPLAN_RUN_ID_PATH"
     --lineage-key "repair-retrigger:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
     --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
     --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
     --link "cloud_session=$SESSION" --link "chain=$REPLAN_REMOTE_SPEC"
-    --link "phase=meta_repair_replan_handoff"
+    --link "phase=meta_repair_replan_handoff" --link "replan_epoch=$REPLAN_EPOCH"
   )
   if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
     replan_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
@@ -669,19 +705,21 @@ PY
   log "accepted L2 replan handoff; retriggering ordinary repair session=$SESSION"
   export ARNOLD_REPAIR_L2_HANDOFF_PATH="$META_INVESTIGATION_OBSERVATION_PATH"
   export ARNOLD_REPAIR_L2_CONTEXT_DIGEST="$META_INVESTIGATION_CONTEXT_DIGEST"
+  export ARNOLD_REPAIR_L2_REPLAN_EPOCH="$REPLAN_EPOCH"
   "${replan_cmd[@]}" >>"$RUN_LOG" 2>&1
   REPLAN_RC=$?
-  unset ARNOLD_REPAIR_L2_HANDOFF_PATH ARNOLD_REPAIR_L2_CONTEXT_DIGEST
+  unset ARNOLD_REPAIR_L2_HANDOFF_PATH ARNOLD_REPAIR_L2_CONTEXT_DIGEST ARNOLD_REPAIR_L2_REPLAN_EPOCH
   REPLAN_RUN_ID="$(cat "$REPLAN_RUN_ID_PATH" 2>/dev/null || true)"
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
-    "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" "$REPLAN_RUN_ID" "$REPLAN_RC" <<'PY' >>"$RUN_LOG" 2>&1
+    "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" "$REPLAN_RUN_ID" "$REPLAN_RC" "$REPLAN_EPOCH" <<'PY' >>"$RUN_LOG" 2>&1
 import pathlib, sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
-path, digest, run_id, returncode = sys.argv[1:]
+path, digest, run_id, returncode, epoch = sys.argv[1:]
 payload = load_json(pathlib.Path(path), default={})
 payload["meta_replan_handoff"] = {
     "schema_version": "arnold-meta-replan-handoff-v1",
     "context_digest": digest,
+    "replan_epoch": int(epoch),
     "ordinary_retrigger_run_id": run_id,
     "returncode": int(returncode),
     "target": "ordinary_l1_repair",

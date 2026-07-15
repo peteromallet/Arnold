@@ -1042,6 +1042,72 @@ def attach_repair_goal_owner(
         return path, payload
 
 
+def reconcile_l2_replan(
+    goal_path: str | Path,
+    *,
+    session: str,
+    workspace: str | Path,
+    remote_spec: str,
+    blocker_id: str,
+    context_digest: str,
+    receipt_digest: str = "",
+) -> dict[str, Any]:
+    """Record a receipt-bound L2 replan epoch without replacing the checkpoint."""
+    path = Path(goal_path)
+    identity = {
+        "session": str(session or "").strip(),
+        "workspace": str(Path(workspace)),
+        "remote_spec": str(remote_spec or "").strip(),
+        "blocker_id": str(blocker_id or "").strip(),
+    }
+    digest = str(context_digest or "").strip()
+    if not digest or not all(identity.values()):
+        raise ValueError("L2 replan reconciliation identity is incomplete")
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        payload = _load_json(path)
+        if payload.get("schema_version") != REPAIR_GOAL_SCHEMA:
+            raise ValueError(f"repair goal is missing or invalid: {path}")
+        if payload.get("status") != GOAL_ACTIVE or payload.get("terminal") is True:
+            raise ValueError("L2 replan reconciliation requires an active repair goal")
+        target = payload.get("target") if isinstance(payload.get("target"), Mapping) else {}
+        actual = {
+            "session": str(target.get("session") or "").strip(),
+            "workspace": str(Path(str(target.get("workspace") or ""))),
+            "remote_spec": str(target.get("remote_spec") or "").strip(),
+            "blocker_id": str(target.get("blocker_id") or "").strip(),
+        }
+        if actual != identity:
+            raise ValueError("L2 replan reconciliation target identity disagrees")
+        replans = payload.setdefault("l2_replans", [])
+        if not isinstance(replans, list):
+            raise ValueError("repair goal L2 replan ledger is invalid")
+        for entry in replans:
+            if isinstance(entry, Mapping) and entry.get("context_digest") == digest:
+                return {
+                    "goal_id": payload["goal_id"], "goal_path": str(path),
+                    "checkpoint_digest": payload["checkpoint_digest"],
+                    "replan_epoch": int(entry.get("epoch") or 0),
+                    "status": "already_reconciled",
+                }
+        epoch = max((int(item.get("epoch") or 0) for item in replans if isinstance(item, Mapping)), default=0) + 1
+        replans.append({
+            "schema_version": "arnold-l2-replan-epoch-v1", "epoch": epoch,
+            "context_digest": digest, "receipt_digest": str(receipt_digest or "").strip(),
+            "reconciled_at": utc_now(), "frozen_checkpoint_digest": payload.get("checkpoint_digest"),
+        })
+        payload["active_replan_epoch"] = epoch
+        payload["updated_at"] = utc_now()
+        _atomic_write(path, payload)
+        return {
+            "goal_id": payload["goal_id"], "goal_path": str(path),
+            "checkpoint_digest": payload["checkpoint_digest"], "replan_epoch": epoch,
+            "status": "newly_reconciled",
+        }
+
+
 def evaluate_repair_goal(
     goal_path: str | Path,
     *,
@@ -1279,6 +1345,7 @@ def evaluate_repair_goal(
                     "failed_fixer_evidence": receipt["failed_fixer_evidence"],
                 }
             )
+        active_replan_epoch = int(payload.get("active_replan_epoch") or 0)
         owner_cycle = (
             action.startswith("owner-iteration-") or "post-dev-fix" in action
         ) and evaluation.get("control_action") not in {
@@ -1292,6 +1359,8 @@ def evaluate_repair_goal(
             for prior in reversed(payload.get("cycles") or []):
                 if not isinstance(prior, Mapping) or not prior.get("owner_cycle"):
                     continue
+                if int(prior.get("replan_epoch") or 0) != active_replan_epoch:
+                    break
                 prior_observation = prior.get("observation") if isinstance(prior.get("observation"), Mapping) else {}
                 prior_token = str(
                     prior_observation.get("iteration_token")
@@ -1319,6 +1388,7 @@ def evaluate_repair_goal(
             "reason": evaluation["reason"],
             "control_action": evaluation.get("control_action"),
             "owner_cycle": owner_cycle,
+            "replan_epoch": active_replan_epoch,
             "observation": observation,
         }
         cycles = payload.setdefault("cycles", [])
@@ -1433,6 +1503,14 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--action", required=True)
     evaluate.add_argument("--owner-run-id", default="")
     evaluate.add_argument("--owner-manifest-path", default="")
+    reconcile = sub.add_parser("reconcile-l2-replan")
+    reconcile.add_argument("--goal-path", required=True)
+    reconcile.add_argument("--session", required=True)
+    reconcile.add_argument("--workspace", required=True)
+    reconcile.add_argument("--remote-spec", required=True)
+    reconcile.add_argument("--blocker-id", required=True)
+    reconcile.add_argument("--context-digest", required=True)
+    reconcile.add_argument("--receipt-digest", default="")
     fail = sub.add_parser("record-terminal-failure")
     fail.add_argument("--goal-path", required=True)
     fail.add_argument("--outcome", required=True)
@@ -1472,6 +1550,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             owner_run_id=args.owner_run_id,
             owner_manifest_path=args.owner_manifest_path,
         )
+    elif args.command == "reconcile-l2-replan":
+        result = reconcile_l2_replan(
+            args.goal_path, session=args.session, workspace=args.workspace,
+            remote_spec=args.remote_spec, blocker_id=args.blocker_id,
+            context_digest=args.context_digest, receipt_digest=args.receipt_digest,
+        )
     else:
         result = record_terminal_failure(
             args.goal_path,
@@ -1496,6 +1580,7 @@ __all__ = [
     "REPAIR_GOAL_SCHEMA",
     "capture_checkpoint",
     "attach_repair_goal_owner",
+    "reconcile_l2_replan",
     "ensure_repair_goal",
     "evaluate_checkpoint",
     "evaluate_repair_goal",

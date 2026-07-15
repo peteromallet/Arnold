@@ -15,6 +15,7 @@ from arnold_pipelines.megaplan.cloud.repair_goal import (
     evaluate_repair_goal,
     next_repair_goal_retry_sequence,
     record_terminal_failure,
+    reconcile_l2_replan,
 )
 
 
@@ -164,6 +165,47 @@ def test_retry_inherits_same_goal_and_frozen_checkpoint(tmp_path: Path) -> None:
         "repair-owner-2",
     ]
     assert second["request_ids"] == ["request-1", "request-2"]
+
+
+def test_l2_replan_epoch_is_idempotent_and_preserves_checkpoint(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+    kwargs = {
+        "session": "demo-session", "workspace": target["workspace"],
+        "remote_spec": target["remote_spec"], "blocker_id": target["blocker_id"],
+    }
+    first = reconcile_l2_replan(path, context_digest="digest-1", receipt_digest="receipt-1", **kwargs)
+    repeated = reconcile_l2_replan(path, context_digest="digest-1", receipt_digest="receipt-1", **kwargs)
+    second = reconcile_l2_replan(path, context_digest="digest-2", **kwargs)
+
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert first["status"] == "newly_reconciled"
+    assert repeated == {**first, "status": "already_reconciled"}
+    assert second["replan_epoch"] == 2
+    assert persisted["checkpoint_digest"] == goal["checkpoint_digest"]
+    assert [item["context_digest"] for item in persisted["l2_replans"]] == ["digest-1", "digest-2"]
+
+
+def test_l2_replan_epoch_scopes_deterministic_owner_breaker(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+    first = evaluate_repair_goal(path, action="owner-iteration-1-post-dev-fix")
+    tripped = evaluate_repair_goal(path, action="owner-iteration-2-post-dev-fix")
+    assert first["evaluation"].get("control_action") != "replan"
+    assert tripped["evaluation"]["control_action"] == "replan"
+
+    reconcile_l2_replan(
+        path,
+        session="demo-session",
+        workspace=target["workspace"],
+        remote_spec=target["remote_spec"],
+        blocker_id=target["blocker_id"],
+        context_digest="fresh-l2-context",
+    )
+    fresh = evaluate_repair_goal(path, action="owner-iteration-1-post-dev-fix")
+
+    assert fresh["evaluation"].get("control_action") != "replan"
+    assert fresh["recovery_contract"] == goal["recovery_contract"]
 
 
 def test_later_authoritative_transition_beyond_checkpoint_completes_goal(
