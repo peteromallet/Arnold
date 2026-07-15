@@ -7057,6 +7057,24 @@ repair_unhealthy_session() {
     log "session unhealthy; another repair loop already running so waiting turn session=$session reason=$reason"
     return 0
   fi
+  # A retained durable goal is retry authority for its exact frozen target.
+  # Do not let a terminal legacy dispatch marker suppress its next owner, and
+  # never tear down a live target session merely to attach that goal owner.
+  if [[ -n "${ARNOLD_REPAIR_RETRY_GOAL_ID:-}" ]]; then
+    if kimi_dispatch_failed_previously "$session"; then
+      kimi_dispatch_marker_clear "$session"
+    fi
+    if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+      if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+        log "retained repair goal retry is already owned; waiting session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+      else
+        log "retained repair goal background-dispatched without touching target session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+      fi
+      return 0
+    fi
+    log "retained repair goal owner dispatch unavailable; preserving target session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+    return 1
+  fi
   if mechanical_relaunch_attempted_previously "$session"; then
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
       if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then

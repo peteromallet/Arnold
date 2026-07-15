@@ -268,6 +268,17 @@ def test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity(
     assert '--link "repair_goal_path=$inherited_goal_path"' in wrapper
     assert 'ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path"' in wrapper
     assert 'ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest"' in wrapper
+    assert 'if [[ -n "${ARNOLD_REPAIR_RETRY_GOAL_ID:-}" ]]; then' in wrapper
+    assert 'retained repair goal background-dispatched without touching target' in wrapper
+
+    retained_retry = wrapper.index('if [[ -n "${ARNOLD_REPAIR_RETRY_GOAL_ID:-}" ]]; then')
+    retained_end = wrapper.index('if mechanical_relaunch_attempted_previously "$session"; then', retained_retry)
+    legacy_failed = wrapper.index('if kimi_dispatch_failed_previously "$session"; then', retained_end)
+    target_kill = wrapper.index('tmux kill-session -t "$session"', legacy_failed)
+    retained_block = wrapper[retained_retry:retained_end]
+    assert 'dispatch_kimi_repair "$session" "$workspace" "$remote_spec"' in retained_block
+    assert 'tmux kill-session -t "$session"' not in retained_block
+    assert retained_retry < legacy_failed < target_kill
 
 
 def test_repair_loop_refuses_goal_custody_without_request_and_blocker_links() -> None:
