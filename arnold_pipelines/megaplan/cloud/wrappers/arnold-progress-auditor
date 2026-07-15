@@ -1103,6 +1103,26 @@ def _meta_repair_summary(
     repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
     if not isinstance(repair_payload, dict):
         repair_payload = {}
+    repair_goal_ref = repair_payload.get("repair_goal") if isinstance(repair_payload.get("repair_goal"), dict) else {}
+    repair_goal_path = pathlib.Path(str(repair_goal_ref.get("goal_path") or "")) if repair_goal_ref.get("goal_path") else None
+    repair_goal = _load_json(repair_goal_path) if repair_goal_path is not None else {}
+    repair_goal_active = isinstance(repair_goal, dict) and repair_goal.get("status") == "active"
+    repair_goal_owner_live = False
+    if repair_goal_active:
+        for owner in repair_goal.get("owners") or []:
+            if not isinstance(owner, dict) or not owner.get("manifest_path"):
+                continue
+            manifest = _load_json(pathlib.Path(str(owner["manifest_path"])))
+            if not isinstance(manifest, dict) or manifest.get("status") not in {"reserved", "launching", "running", "adopting"}:
+                continue
+            try:
+                owner_pid = int(manifest.get("pid") or 0)
+                if owner_pid > 0:
+                    os.kill(owner_pid, 0)
+                    repair_goal_owner_live = True
+                    break
+            except (OSError, TypeError, ValueError):
+                continue
     normalized_kind = str(run_kind or "").strip().lower()
     normalized_state = str(current_state or "").strip().lower()
     chain_current = (chain_state_summary or {}).get("current") if isinstance(chain_state_summary, dict) else {}
@@ -1133,7 +1153,7 @@ def _meta_repair_summary(
             terminal_success = normalized_state in {"done", "complete", "completed", "finalized"}
         else:
             terminal_success = chain_last_state in {"done", "complete", "completed"} and not chain_current_plan
-    if terminal_success and not meta_refs and not run_refs:
+    if terminal_success and not meta_refs and not run_refs and not repair_goal_active:
         return {
             "should_dispatch": False,
             "trigger": "",
@@ -1280,7 +1300,14 @@ def _meta_repair_summary(
         should_dispatch = False
         trigger = "classification_error"
         rationale = [_redact_scalar(exc)]
-    if should_dispatch and terminal_success:
+    if repair_goal_active and not repair_goal_owner_live:
+        should_dispatch = True
+        trigger = "repair_goal_owner_missing"
+        rationale = [
+            "durable repair goal remains at its frozen acceptance checkpoint but has no live owner; "
+            "fixer completion and target liveness are not semantic progress"
+        ]
+    if should_dispatch and terminal_success and not repair_goal_active:
         should_dispatch = False
         trigger = ""
         rationale = [
@@ -1302,7 +1329,7 @@ def _meta_repair_summary(
         live_event_activity or (normalized_kind == "chain" and live_chain_activity)
         )
     )
-    if should_dispatch and trigger in {"persistent_recurring_retry", "partial_liveness_recurrence"} and live_target_activity:
+    if should_dispatch and trigger in {"persistent_recurring_retry", "partial_liveness_recurrence"} and live_target_activity and not repair_goal_active:
         should_dispatch = False
         trigger = ""
         rationale = [
@@ -1311,7 +1338,7 @@ def _meta_repair_summary(
             f"active_step_phase={active_step_phase!r}, worker_pid_alive={active_step.get('worker_pid_alive')!r}"
         ]
     watchdog_alive_refs = _watchdog_alive_refs(prior_watchdog_report_refs)
-    if should_dispatch and trigger in {"persistent_recurring_retry", "partial_liveness_recurrence"} and watchdog_alive_refs:
+    if should_dispatch and trigger in {"persistent_recurring_retry", "partial_liveness_recurrence"} and watchdog_alive_refs and not repair_goal_active:
         should_dispatch = False
         trigger = ""
         rationale = [
@@ -1331,6 +1358,13 @@ def _meta_repair_summary(
         "repair_outcome": _redact_scalar(repair_outcome),
         "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
         "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+        "repair_goal": {
+            "goal_id": _redact_scalar(repair_goal.get("goal_id") if isinstance(repair_goal, dict) else ""),
+            "goal_path": _redact_scalar(repair_goal_path or ""),
+            "status": _redact_scalar(repair_goal.get("status") if isinstance(repair_goal, dict) else ""),
+            "owner_live": repair_goal_owner_live,
+            "checkpoint_digest": _redact_scalar(repair_goal.get("checkpoint_digest") if isinstance(repair_goal, dict) else ""),
+        },
         "meta_record_count": len(meta_refs or []),
         "meta_run_log_count": len(run_refs),
         "meta_run_refs": run_refs,

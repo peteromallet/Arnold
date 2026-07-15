@@ -301,6 +301,40 @@ def observed_status(payload: Mapping[str, Any], manifest_path: Path) -> tuple[st
     return (status if live else "interrupted"), live
 
 
+def _repair_goal_semantics(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    links = payload.get("links") if isinstance(payload.get("links"), Mapping) else {}
+    goal_path = str(links.get("repair_goal_path") or "").strip()
+    if not goal_path:
+        return None
+    try:
+        goal = json.loads(Path(goal_path).read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {
+            "goal_id": str(links.get("repair_goal_id") or ""),
+            "goal_path": goal_path,
+            "checkpoint_digest": str(links.get("repair_checkpoint_digest") or ""),
+            "status": "unknown",
+            "semantic_completion": False,
+            "reason": "durable repair goal evidence is unavailable",
+        }
+    status = str(goal.get("status") or "unknown")
+    terminal = status in {"progressed", "approval_required"}
+    return {
+        "goal_id": str(goal.get("goal_id") or links.get("repair_goal_id") or ""),
+        "goal_path": goal_path,
+        "checkpoint_digest": str(
+            goal.get("checkpoint_digest") or links.get("repair_checkpoint_digest") or ""
+        ),
+        "status": status,
+        "semantic_completion": terminal,
+        "reason": (
+            "authoritative target progress or approval gate verified"
+            if terminal
+            else "worker lifecycle completion does not complete the durable repair goal"
+        ),
+    }
+
+
 def managed_run_roots(
     *, project_root: str | Path, workspace_root: str | Path | None = "/workspace"
 ) -> set[Path]:
@@ -658,6 +692,8 @@ def _write_result(manifest: Mapping[str, Any]) -> None:
         "returncode": manifest.get("returncode"),
         "finished_at": manifest.get("finished_at"),
         "error_class": manifest.get("error_class"),
+        "repair_goal": manifest.get("repair_goal"),
+        "semantic_completion": manifest.get("semantic_completion"),
         "output_sha256": hashlib.sha256(log_bytes).hexdigest(),
         "output_size_bytes": len(log_bytes),
     }
@@ -851,16 +887,27 @@ def _run_managed_command_locked(
         control_terminal = str(manifest.get("status") or "")
         log_size = Path(str(manifest["log_path"])).stat().st_size
         no_output = spec.require_output and returncode == 0 and log_size == 0
+        goal_semantics = _repair_goal_semantics(manifest)
+        goal_incomplete = bool(
+            goal_semantics
+            and not goal_semantics["semantic_completion"]
+            and spec.run_kind != "automatic_repair_retry"
+            and returncode == 0
+        )
         terminal = (
             control_terminal
             if control_terminal in {"cancelled", "superseded"}
             else (
                 "interrupted"
                 if interrupted is not None
-                else ("completed" if returncode == 0 and not no_output else "failed")
+                else (
+                    "completed"
+                    if returncode == 0 and not no_output and not goal_incomplete
+                    else "failed"
+                )
             )
         )
-        effective_returncode = 74 if no_output else returncode
+        effective_returncode = 75 if goal_incomplete else 74 if no_output else returncode
         _append_status(
             manifest,
             terminal,
@@ -870,9 +917,26 @@ def _run_managed_command_locked(
         manifest["returncode"] = effective_returncode
         manifest["terminal_outcome"] = terminal
         manifest["finished_at"] = utc_now()
+        if goal_semantics is not None:
+            manifest["repair_goal"] = goal_semantics
+            manifest["semantic_completion"] = {
+                "status": (
+                    "completed"
+                    if goal_semantics["semantic_completion"]
+                    else "continuing"
+                ),
+                "complete": goal_semantics["semantic_completion"],
+                "authority": "repair_goal",
+                "goal_id": goal_semantics["goal_id"],
+                "checkpoint_digest": goal_semantics["checkpoint_digest"],
+                "reason": goal_semantics["reason"],
+            }
         if no_output:
             manifest["error"] = "managed agent produced no durable output"
             manifest["error_class"] = "ManagedAgentNoOutput"
+        if goal_incomplete:
+            manifest["error"] = "managed repair worker exited before its durable goal completed"
+            manifest["error_class"] = "RepairGoalIncomplete"
         if interrupted is not None:
             manifest["signal"] = interrupted
         atomic_write_manifest(manifest_path, manifest)

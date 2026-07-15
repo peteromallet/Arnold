@@ -1404,6 +1404,7 @@ manual_review_dispatch_status_env() {
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" "$MARKER_DIR" "$REPAIR_DATA_DIR" <<'PY'
 import hashlib
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -1572,6 +1573,8 @@ if not projection.get("active_request_ids"):
             "remote_spec": remote_spec_raw,
             "run_kind": run_kind,
             "plan_name": resolved_plan_name,
+            "repair_goal_id": os.environ.get("ARNOLD_REPAIR_RETRY_GOAL_ID", ""),
+            "repair_goal_path": os.environ.get("ARNOLD_REPAIR_RETRY_GOAL_PATH", ""),
         },
         workspace=str(workspace),
         run_kind=run_kind,
@@ -7501,6 +7504,53 @@ if data_path.exists():
 PY
 }
 
+repair_goal_watchdog_status() {
+  local session="$1"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$MARKER_DIR" "$session" <<'PY' 2>>"${LOG:-/dev/null}"
+import json
+import os
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_goal import evaluate_repair_goal
+
+marker_dir = pathlib.Path(sys.argv[1])
+session = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in sys.argv[2]) or "unknown"
+goal_dir = marker_dir / "repair-goals" / session
+goals = sorted(goal_dir.glob("goal-*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+for path in goals:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if payload.get("status") != "active":
+        continue
+    result = evaluate_repair_goal(path, action="watchdog_authority_check")
+    status = str(result.get("status") or "active")
+    reason = str((result.get("evaluation") or {}).get("reason") or "")
+    if status != "active":
+        print(f"{status}\t{result.get('goal_id') or ''}\t{reason}")
+        raise SystemExit(0)
+    refreshed = json.loads(path.read_text(encoding="utf-8"))
+    owner_live = False
+    for owner in reversed(refreshed.get("owners") or []):
+        if not isinstance(owner, dict) or not owner.get("manifest_path"):
+            continue
+        try:
+            manifest = json.loads(pathlib.Path(owner["manifest_path"]).read_text(encoding="utf-8"))
+            pid = int(manifest.get("pid") or 0)
+            if manifest.get("status") in {"reserved", "launching", "running", "adopting"} and pid > 0:
+                os.kill(pid, 0)
+                owner_live = True
+                break
+        except Exception:
+            continue
+    print(f"{'active_owner' if owner_live else 'active_unowned'}\t{result.get('goal_id') or ''}\t{reason}")
+    raise SystemExit(0)
+print("none\t\t")
+PY
+}
+
 launch_chain_tick() {
   local session="$1"
   local workspace="$2"
@@ -7567,6 +7617,43 @@ PY
   if [[ -n "$current_target_observation" ]]; then
     log "current-target observe session=$session evidence=$current_target_observation"
   fi
+
+  local repair_goal_status repair_goal_id repair_goal_reason
+  IFS=$'\t' read -r repair_goal_status repair_goal_id repair_goal_reason <<< "$(repair_goal_watchdog_status "$session" || printf 'none\t\t')"
+  case "$repair_goal_status" in
+    active_owner)
+      log "durable repair goal still owns frozen target session=$session goal_id=$repair_goal_id; waiting for authoritative acceptance progress"
+      report_item "$report_items" "$session" "repair" "repair_running" "durable goal active; target has not moved beyond frozen checkpoint" "$workspace" "$remote_spec"
+      return 0
+      ;;
+    active_unowned)
+      log "durable repair goal lost its process owner while target remained frozen; redispatching root repair session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+      export ARNOLD_REPAIR_RETRY_GOAL_ID="$repair_goal_id"
+      export ARNOLD_REPAIR_RETRY_GOAL_PATH="$(python3 - "$MARKER_DIR" "$session" "$repair_goal_id" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1]) / "repair-goals" / ("".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in sys.argv[2]) or "unknown")
+for path in root.glob("goal-*.json"):
+    try:
+        if json.loads(path.read_text(encoding="utf-8")).get("goal_id") == sys.argv[3]:
+            print(path)
+            break
+    except Exception:
+        continue
+PY
+)"
+      repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "repair_goal_owner_missing: $repair_goal_id; $repair_goal_reason" || true
+      unset ARNOLD_REPAIR_RETRY_GOAL_ID ARNOLD_REPAIR_RETRY_GOAL_PATH
+      return 0
+      ;;
+    approval_required)
+      log "durable repair goal reached explicit approval gate session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+      report_item "$report_items" "$session" "observe" "awaiting_human" "explicit approval/authorization gate: $repair_goal_reason" "$workspace" "$remote_spec"
+      return 0
+      ;;
+    progressed)
+      log "durable repair goal verified target progress session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+      ;;
+  esac
 
   local resolver_human_verdict
   resolver_human_verdict="$(resolver_needs_human_verdict "$session" "$current_target_observation")"

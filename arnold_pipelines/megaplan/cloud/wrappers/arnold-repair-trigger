@@ -74,6 +74,11 @@ try:
     from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
     from arnold_pipelines.megaplan.cloud.redact import redact_payload
     from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
+    from arnold_pipelines.megaplan.cloud.repair_goal import (
+        GOAL_ACTIVE,
+        attach_repair_goal_owner,
+        ensure_repair_goal,
+    )
     from arnold_pipelines.megaplan.cloud.repair_lock import (
         acquire_repair_lock,
         inspect_repair_lock,
@@ -609,6 +614,100 @@ def _dispatch(
         / managed_run_id
         / "manifest.json"
     )
+    inherited_goal_path = str(request_target.get("repair_goal_path") or "").strip()
+    try:
+        if inherited_goal_path:
+            goal_path, goal_payload = attach_repair_goal_owner(
+                inherited_goal_path,
+                request_id=request_id,
+                owner_run_id=managed_run_id,
+                owner_manifest_path=str(managed_manifest),
+            )
+            goal_target = (
+                goal_payload.get("target")
+                if isinstance(goal_payload.get("target"), Mapping)
+                else {}
+            )
+            if goal_target.get("session") != session:
+                raise ValueError("inherited repair goal targets a different cloud session")
+        else:
+            goal_marker_dir = Path(
+                os.environ.get(
+                    "CLOUD_WATCHDOG_MARKER_DIR",
+                    "/workspace/.megaplan/cloud-sessions",
+                )
+            )
+            goal_path, goal_payload = ensure_repair_goal(
+                marker_dir=goal_marker_dir,
+                session=session,
+                workspace=workspace,
+                remote_spec=remote_spec,
+                plan_name=str(
+                    refs.get("current_plan_name")
+                    or refs.get("plan_name")
+                    or marker.get("plan_name")
+                    or ""
+                ),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                owner_run_id=managed_run_id,
+                owner_manifest_path=str(managed_manifest),
+            )
+    except (OSError, TypeError, ValueError) as exc:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="durable repair goal custody could not be established",
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "goal_custody_failed",
+                "request_id": request_id,
+                "error_type": type(exc).__name__,
+                "custody_retry": retry,
+            }
+        )
+        return 0
+    if goal_payload.get("status") != GOAL_ACTIVE:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        decision = repair_requests.write_decision(
+            queue_dir,
+            request_id=request_id,
+            decision="stale",
+            reason=(
+                "durable repair goal already has authoritative progress evidence"
+                if goal_payload.get("status") == "progressed"
+                else "durable repair goal already surfaced an explicit approval gate"
+            ),
+            related_request_id=str(goal_payload.get("goal_id") or ""),
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "goal_terminal",
+                "request_id": request_id,
+                "goal_id": goal_payload.get("goal_id"),
+                "goal_path": str(goal_path),
+                "goal_status": goal_payload.get("status"),
+                "decision": decision,
+            }
+        )
+        return 0
+    env["ARNOLD_REPAIR_GOAL_ID"] = str(goal_payload["goal_id"])
+    env["ARNOLD_REPAIR_GOAL_PATH"] = str(goal_path)
+    env["ARNOLD_REPAIR_CHECKPOINT_DIGEST"] = str(goal_payload["checkpoint_digest"])
     try:
         child_argv = (
             [str(selected_bin), session, "l3_progress_auditor"]
@@ -686,6 +785,12 @@ def _dispatch(
             f"repair_context_digest={context_digest}",
             "--link",
             f"repair_outcome_path={outcome_path}",
+            "--link",
+            f"repair_goal_id={goal_payload['goal_id']}",
+            "--link",
+            f"repair_goal_path={goal_path}",
+            "--link",
+            f"repair_checkpoint_digest={goal_payload['checkpoint_digest']}",
             "--",
             *child_argv,
         ]
@@ -817,6 +922,9 @@ def _dispatch(
             "pid": proc.pid,
             "managed_run_id": managed_run_id,
             "managed_manifest_path": str(managed_manifest),
+            "repair_goal_id": goal_payload["goal_id"],
+            "repair_goal_path": str(goal_path),
+            "repair_checkpoint_digest": goal_payload["checkpoint_digest"],
             "session": session,
             "workspace": workspace,
             "remote_spec": remote_spec,
