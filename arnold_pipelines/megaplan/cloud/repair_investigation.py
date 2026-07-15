@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -480,6 +481,24 @@ def build_investigation_context(
         and current_authoritative_failure
         and _digest(dict(frozen_failure)) != _digest(dict(current_authoritative_failure))
     )
+    supported_recovery_cli = shlex.join(
+        [
+            "python",
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "chain",
+            "start",
+            "--spec",
+            str(remote_spec),
+            "--project-dir",
+            str(Path(workspace)),
+        ]
+    )
+    required_investigator_output = _common_required_output("l1_repair_target")
+    required_investigator_output["action_specific_handoff_examples"]["recover_state"][
+        "allowed_mutations"
+    ] = [f"supported_cli:{supported_recovery_cli}"]
     context: dict[str, Any] = {
         "schema_version": REPAIR_INVESTIGATION_CONTEXT_SCHEMA,
         "target_kind": "l1_repair_target",
@@ -548,8 +567,9 @@ def build_investigation_context(
         "safe_repair_boundaries": {
             "allowed": ["arnold_source", "target_workspace", "plan_state_via_cli", "repair_custody"],
             "forbidden": ["guard_weakening", "direct_state_edit", "duplicate_live_worker", "uncited_mutation"],
+            "supported_recovery_cli": supported_recovery_cli,
         },
-        "required_investigator_output": _common_required_output("l1_repair_target"),
+        "required_investigator_output": required_investigator_output,
     }
     digest_payload = dict(context)
     context["context_digest"] = _digest(digest_payload)
