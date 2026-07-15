@@ -2368,6 +2368,7 @@ def launch_codex_subagent_detached(
         request_id=request_id,
     )
     provenance = current_provenance
+    requested_work_intent = work_intent
     if depends_on_run_id:
         if not _RUN_ID_RE.fullmatch(depends_on_run_id):
             raise SubagentQueueError("predecessor run_id is malformed")
@@ -2416,7 +2417,19 @@ def launch_codex_subagent_detached(
         model = str(predecessor.get("model") or model)
         reasoning_effort = str(predecessor.get("reasoning_effort") or reasoning_effort)
         task_kind = str(predecessor.get("task_kind") or task_kind)
-        work_intent = str(predecessor.get("work_intent") or work_intent)
+        predecessor_work_intent = str(
+            predecessor.get("work_intent") or requested_work_intent
+        )
+        if (
+            requested_work_intent != "auto"
+            and requested_work_intent != predecessor_work_intent
+        ):
+            raise SubagentQueueError(
+                "queued successor must inherit predecessor work_intent; "
+                f"requested {requested_work_intent!r}, predecessor has "
+                f"{predecessor_work_intent!r}"
+            )
+        work_intent = predecessor_work_intent
         difficulty = int(predecessor.get("difficulty") or difficulty)
         route_class = (
             "queued_successor" if same_request else "queued_cross_request_successor"
