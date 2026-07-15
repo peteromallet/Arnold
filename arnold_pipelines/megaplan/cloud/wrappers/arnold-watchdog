@@ -4751,7 +4751,7 @@ PY
     return 0
   fi
   if declare -F claim_active_repair_launch >/dev/null 2>&1; then
-    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec")"
+    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec" "$blocker_id" "$request_id")"
   else
     # Extracted/unit harnesses may omit the claim helper.  The production
     # wrapper always declares it below and therefore takes the strict path.
@@ -4934,9 +4934,9 @@ claim_active_repair_launch() {
   local workspace="$2"
   local remote_spec="$3"
   local blocker_id request_id
-  blocker_id=""
-  request_id=""
-  if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+  blocker_id="${4:-}"
+  request_id="${5:-}"
+  if [[ -z "$blocker_id" && -z "$request_id" && "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
   fi
