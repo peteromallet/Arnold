@@ -395,6 +395,7 @@ while time.monotonic() < deadline:
     started = any(item.get("status") == "running" for item in manifest.get("status_history") or [])
     request_matches = not request_id or links.get("repair_request_id") == request_id
     blocker_matches = not blocker_id or links.get("blocker_id") == blocker_id
+    terminal_failed = manifest.get("status") == "failed"
     if (
         is_managed_manifest(manifest)
         and manifest.get("run_id") == run_id
@@ -404,10 +405,11 @@ while time.monotonic() < deadline:
         and request_matches
         and blocker_matches
         and manifest.get("incident_attempt_event_id")
+        and not terminal_failed
     ):
         print(f"{run_id}\t{manifest_path}")
         raise SystemExit(0)
-    if manifest.get("status") == "failed" and not started:
+    if terminal_failed:
         break
     time.sleep(0.02)
 raise SystemExit(1)
@@ -5439,7 +5441,9 @@ dispatch_meta_repair() {
   incident_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" incident_id 2>/dev/null || true)"
   incident_id="${incident_id:-inc-$session}"
   parent_run_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" managed_agent_run_id 2>/dev/null || true)"
-  managed_identity="meta-repair:${session}:${trigger_label}:${request_id:-$(date +%s%N)}"
+  # The per-dispatch generation keeps concurrent duplicates behind the busy
+  # guard while allowing a terminal-failed managed attempt to be retried.
+  managed_identity="meta-repair:${session}:${trigger_label}:${request_id:-none}:$(date +%s%N)"
   run_id_file="$MARKER_DIR/$(safe_name "$session").meta-managed-run-id"
   rm -f "$run_id_file"
   managed_cmd=(
