@@ -1,6 +1,6 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-15T13:36:30.404687+00:00",
+  "generated_at": "2026-07-15T13:36:30.410060+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-custody-control-plane-20260714"
@@ -8,14 +8,14 @@
   "next_review_ts": null,
   "occurrence_count": 1,
   "owner_actor": "immediate_repair",
-  "problem_id": "problem-6356292eb79a",
+  "problem_id": "problem-dd5016fd3ab4",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
     "digest": "sha256:7681839a61b53ad966141fc7c3e8d365152a9eab614f18a81fec998675267e80",
-    "last_seq": 566,
+    "last_seq": 557,
     "projection": "problems"
   },
   "status": "open",
-  "summary_text": "problem-6356292eb79a: repair-data outcome=progressed kind=chain workspace=/workspace/custody-control-plane-20260714/Arnold"
+  "summary_text": "problem-dd5016fd3ab4: repair-data outcome=fixer_infrastructure_failure kind=chain workspace=/workspace/custody-control-plane-20260714/Arnold"
 }
