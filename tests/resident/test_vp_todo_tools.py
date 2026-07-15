@@ -286,6 +286,7 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
         "arnold-managed-agent-run-v2"
     )
     policy = context["resident_runtime"]["subagent_launch"]["delegation_policy"]
+    assert policy["schema_version"] == "megaplan-resident-delegation-policy-v2"
     assert "independent actionable sub-problems" in policy["preference"]
     assert "one clear owner per sub-problem" in policy["ownership"]
     assert "action-oriented task prompt" in policy["task_prompt_contract"]
@@ -295,6 +296,12 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
     ]
     assert "never expands" in policy["exceptions"]["authorization"]
     assert "returned durable run ID" in policy["launch_evidence"]
+    assert "implements, verifies, and delivers" in policy["execution_default"]
+    assert "isolated worktree and feature branch" in policy["workspace_default"]
+    assert "Never infer literal `main`" in policy["integration_default"]
+    assert "explicit approval" in policy["external_actions"]
+    assert "label it unintegrated" in policy["tentative_work"]
+    assert "durable ancestry evidence" in policy["completion_evidence"]
 
 
 def test_hot_context_vp_todos_is_empty_when_no_pending_items(tmp_path) -> None:
