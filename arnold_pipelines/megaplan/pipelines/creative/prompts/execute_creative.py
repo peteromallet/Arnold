@@ -30,6 +30,7 @@ from arnold_pipelines.megaplan.prompts._shared import (
 from arnold_pipelines.megaplan.prompts.execute import (
     _checkpoint_requirements,
     _checkpoint_summary_requirement,
+    _completed_task_receipts_for_prompt,
     _execute_approval_note,
     _execute_nudges,
     _execute_rerun_guidance,
@@ -197,7 +198,6 @@ def _execute_creative_batch_prompt(
     )
     all_tasks = finalize_data.get("tasks", [])
     projected_tasks = projected_finalize.get("tasks", [])
-    tasks_by_id = {task["id"]: task for task in all_tasks if isinstance(task, dict) and isinstance(task.get("id"), str)}
     projected_tasks_by_id = {
         task["id"]: task
         for task in projected_tasks
@@ -208,11 +208,13 @@ def _execute_creative_batch_prompt(
         for task_id in batch_task_ids
         if task_id in projected_tasks_by_id
     ]
-    completed_tasks = [
-        projected_tasks_by_id[task_id]
-        for task_id in completed
-        if task_id not in set(batch_task_ids) and task_id in projected_tasks_by_id
-    ]
+    completed_task_receipts = _completed_task_receipts_for_prompt(
+        finalize_data,
+        plan_dir=plan_dir,
+        batch_task_ids=batch_task_ids,
+        completed_task_ids=completed,
+        projection_capabilities=projection_capabilities,
+    )
     projected_sense_checks = projected_finalize.get("sense_checks", [])
     batch_sense_checks = [sc for sc in projected_sense_checks if sc.get("task_id") in set(batch_task_ids)]
     batch_sense_check_ids = [sc["id"] for sc in batch_sense_checks if isinstance(sc.get("id"), str)]
@@ -262,13 +264,13 @@ def _execute_creative_batch_prompt(
         Batch framing:
         - Execute batch {batch_number} of {len(global_batches) or 1}.
         - Actionable task IDs for this batch: {batch_task_ids}
-        - Already completed task IDs available as dependency context: {sorted(completed)}
+        - Completed task records are represented only by bounded dependency receipts below.
 
         Actionable tasks for this batch:
         {json_dump(batch_tasks).strip()}
 
-        Completed task context:
-        {json_dump(completed_tasks).strip()}
+        Completed dependency receipts:
+        {json_dump(completed_task_receipts).strip()}
 
         Batch-scoped sense checks:
         {json_dump(batch_sense_checks).strip()}
@@ -281,6 +283,7 @@ def _execute_creative_batch_prompt(
         Requirements:
         - Execute only the actionable tasks in this batch.
         - Treat completed tasks as dependency context, not new work.
+        - If dependency receipts report omitted evidence, inspect their `source_artifact`; if it is unavailable, mark the affected task blocked instead of guessing.
         - Return structured JSON only.
         - Only produce `task_updates` for these tasks: [{", ".join(batch_task_ids)}]
         - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]
