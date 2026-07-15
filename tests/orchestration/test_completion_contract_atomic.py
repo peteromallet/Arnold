@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -431,13 +432,22 @@ def test_blocking_predicate_failure_one_line():
 # ---------------------------------------------------------------------------
 
 
-def _fixture_ctx(sub_dir: str, plan_name: str) -> CompletionContext:
-    """Build a CompletionContext pointing at a regression fixture."""
-    plan_dir = FIXTURE_ROOT / sub_dir
+def _fixture_ctx(sub_dir: str, plan_name: str, tmp_path: Path) -> CompletionContext:
+    """Build a CompletionContext from an isolated regression fixture copy.
+
+    Several completion providers intentionally persist verification evidence in
+    ``plan_dir``.  Never point those providers at the repository-owned fixture
+    tree: doing so makes an otherwise read-only regression test append runtime
+    logs to source fixtures and pollutes the milestone diff.
+    """
+    fixture_root = tmp_path / "m5a_six_review_regression"
+    if not fixture_root.exists():
+        shutil.copytree(FIXTURE_ROOT, fixture_root)
+    plan_dir = fixture_root / sub_dir
     return CompletionContext(
         plan_dir=plan_dir,
-        project_dir=FIXTURE_ROOT,
-        state={"config": {"project_dir": str(FIXTURE_ROOT), "plan_dir": str(plan_dir)}},
+        project_dir=fixture_root,
+        state={"config": {"project_dir": str(fixture_root), "plan_dir": str(plan_dir)}},
         subject=CompletionSubject(
             kind="plan", name=plan_name, to_state="done",
             plan_name=plan_name, milestone_label="m5a",
@@ -446,13 +456,13 @@ def _fixture_ctx(sub_dir: str, plan_name: str) -> CompletionContext:
     )
 
 
-def test_six_review_01_rejected_receipt():
+def test_six_review_01_rejected_receipt(tmp_path: Path):
     """Fixture 01: acceptance receipt with hash mismatch.
 
     The receipt has a snapshot_hash that doesn't match any stored snapshot.
     The AcceptanceReceiptProvider should detect this and return unsatisfied or unknown.
     """
-    ctx = _fixture_ctx("01_rejected_receipts", "m5a-regression-01")
+    ctx = _fixture_ctx("01_rejected_receipts", "m5a-regression-01", tmp_path)
     evidence = AcceptanceReceiptProvider().collect(ctx)
     # The receipt has a snapshot_hash that doesn't match any stored snapshot
     # so the provider should return unsatisfied or unknown
@@ -462,14 +472,14 @@ def test_six_review_01_rejected_receipt():
     assert evidence.kind == "acceptance_receipt"
 
 
-def test_six_review_02_divergence():
+def test_six_review_02_divergence(tmp_path: Path):
     """Fixture 02: declared hashes vs actual file content.
 
     The execution_batch claims files with specific hashes that may diverge
     from the actual on-disk content. The DivergenceProvider checks
     declared hashes in finalize.json and batch claimed files.
     """
-    ctx = _fixture_ctx("02_divergence", "m5a-regression-02")
+    ctx = _fixture_ctx("02_divergence", "m5a-regression-02", tmp_path)
     evidence = DivergenceProvider().collect(ctx)
     # The provider checks batch_vs_diff and declared artifact hashes.
     # With synthetic fixture data the provider might find no divergence.
@@ -484,13 +494,13 @@ def test_six_review_02_divergence():
     }
 
 
-def test_six_review_03_suite_collection_failure():
+def test_six_review_03_suite_collection_failure(tmp_path: Path):
     """Fixture 03: suite collection with selectors vs lifecycle files.
 
     The fixture has a finalize.json with baseline_test_command and test_selection.
     The GreenSuiteProvider runs the test command and reports results.
     """
-    ctx = _fixture_ctx("03_suite_collection_failure", "m5a-regression-03")
+    ctx = _fixture_ctx("03_suite_collection_failure", "m5a-regression-03", tmp_path)
     evidence = GreenSuiteProvider().collect(ctx)
     # The provider actually runs the test command (pytest --collect-only -q)
     # which may collect 0 tests in an empty fixture directory, producing not_applicable.
@@ -499,13 +509,13 @@ def test_six_review_03_suite_collection_failure():
     assert isinstance(evidence.summary, str)
 
 
-def test_six_review_04_stale_metadata():
+def test_six_review_04_stale_metadata(tmp_path: Path):
     """Fixture 04: manifest freshness and content-address validation.
 
     The ManifestFreshnessProvider checks batch ordering, finalize integrity,
     content-address correctness, and metadata freshness.
     """
-    ctx = _fixture_ctx("04_stale_metadata", "m5a-regression-04")
+    ctx = _fixture_ctx("04_stale_metadata", "m5a-regression-04", tmp_path)
     evidence = ManifestFreshnessProvider().collect(ctx)
     # With synthetic fixture data having non-sequential batch ordering (T3 before T1),
     # the provider may or may not detect this as an issue depending on how
@@ -514,13 +524,13 @@ def test_six_review_04_stale_metadata():
     assert isinstance(evidence.summary, str)
 
 
-def test_six_review_05_premature_retired():
+def test_six_review_05_premature_retired(tmp_path: Path):
     """Fixture 05: .retired marker present before predecessor evidence.
 
     The RetirementOrderProvider checks for .retired markers and validates
     their ordering relative to plan-done and acceptance evidence.
     """
-    ctx = _fixture_ctx("05_premature_retired", "m5a-regression-05")
+    ctx = _fixture_ctx("05_premature_retired", "m5a-regression-05", tmp_path)
     evidence = RetirementOrderProvider().collect(ctx)
     # The .retired file exists as JSON with a 2026-01-01 timestamp.
     # The provider validates retirement ordering.
@@ -528,13 +538,13 @@ def test_six_review_05_premature_retired():
     assert isinstance(evidence.summary, str)
 
 
-def test_six_review_06_force_proceeded_review():
+def test_six_review_06_force_proceeded_review(tmp_path: Path):
     """Fixture 06: force-proceeded review with unresolved issues.
 
     The review.json records force_proceed=true with 2 unresolved issues.
     The ReviewDispositionProvider should detect this.
     """
-    ctx = _fixture_ctx("06_force_proceeded_review", "m5a-regression-06")
+    ctx = _fixture_ctx("06_force_proceeded_review", "m5a-regression-06", tmp_path)
     evidence = ReviewDispositionProvider().collect(ctx)
     # The review.json has force_proceeded=true and unresolved_issues.
     # We verify the provider runs and returns evidence.
@@ -542,7 +552,7 @@ def test_six_review_06_force_proceeded_review():
     assert isinstance(evidence.summary, str)
 
 
-def test_six_review_first_invalid_blocks_atomic_verdict():
+def test_six_review_first_invalid_blocks_atomic_verdict(tmp_path: Path):
     """In atomic mode, the first invalid provider must produce a typed predicate failure
     and the verdict must be rejected.  All six fixtures should block."""
     for sub_dir, plan_name in [
@@ -553,7 +563,7 @@ def test_six_review_first_invalid_blocks_atomic_verdict():
         ("05_premature_retired", "m5a-regression-05"),
         ("06_force_proceeded_review", "m5a-regression-06"),
     ]:
-        ctx = _fixture_ctx(sub_dir, plan_name)
+        ctx = _fixture_ctx(sub_dir, plan_name, tmp_path)
         verdict = compute_verdict(
             plan_dir=ctx.plan_dir,
             project_dir=ctx.project_dir,
