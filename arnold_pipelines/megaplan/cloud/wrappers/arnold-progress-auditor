@@ -761,6 +761,7 @@ from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 MAX_CROSS_REF_ITEMS = 3
 MAX_COMMIT_REFS = 5
+MAX_META_RUN_INSPECT_ITEMS = 64
 WATCHDOG_REPORT_PATH = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_WATCHDOG_REPORT", "/workspace/watchdog-report.json"))
 WATCHDOG_REPORT_ARCHIVE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_WATCHDOG_REPORT_ARCHIVE_DIR", "/workspace/watchdog-reports"))
 AUDIT_REPORT_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPORT_DIR", "/workspace/audit-reports"))
@@ -1027,18 +1028,60 @@ def _collect_meta_run_refs(session):
         seen.add(key)
         ordered.append((_mtime(path), path))
     ordered.sort(reverse=True)
-    for mtime, path in ordered[:5]:
+    selected = list(ordered[:5])
+    failure_by_path = {}
+    window_seconds = float(window) * 3600
+    for mtime, path in ordered[:MAX_META_RUN_INSPECT_ITEMS]:
+        if mtime and now.timestamp() - mtime > window_seconds:
+            continue
+        failure_code = _meta_run_failure_code(path)
+        if not failure_code:
+            continue
+        failure_by_path[str(path)] = failure_code
+        if all(existing != path for _, existing in selected):
+            selected.append((mtime, path))
+        if len(selected) >= 7:
+            break
+    for mtime, path in selected:
         tail = _tail_with_line_numbers(path, lines=12)
-        launch_failure = _text_has_meta_launch_failure(tail)
+        failure_code = failure_by_path.get(str(path)) or _meta_run_failure_code(path)
+        launch_failure = bool(failure_code) or _text_has_meta_launch_failure(tail)
         refs.append(
             {
                 "path": _redact_scalar(path),
                 "mtime_age_min": int((now.timestamp() - mtime) // 60) if mtime else None,
                 "tail": _redact_scalar(tail),
                 "launch_failure": launch_failure,
+                **({"failure_code": failure_code} if failure_code else {}),
             }
         )
     return refs
+
+def _meta_run_failure_code(path):
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            prefix = handle.read(131072)
+            suffix = b""
+            if size > len(prefix):
+                handle.seek(max(0, size - 131072))
+                suffix = handle.read(131072)
+        text = (prefix + b"\n" + suffix).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    lowered = text.lower()
+    if (
+        "investigator_read_sandbox_unavailable" in lowered
+        or "bwrap: no permissions to create new namespace" in lowered
+    ):
+        return "investigator_read_sandbox_unavailable"
+    if "l2 investigator launch envelope failed 64 kib preflight" in lowered:
+        return "investigator_envelope_overflow"
+    if "l2 investigator failed or returned no valid receipt" in lowered:
+        return "investigator_invalid_or_missing_receipt"
+    if _text_has_meta_launch_failure(text):
+        return "meta_repair_launch_failure"
+    return ""
 
 def _text_has_meta_launch_failure(text):
     if not isinstance(text, str):
@@ -3697,9 +3740,15 @@ def _meta_repair_launch_failure_reason(ev):
     meta = ev.get("meta_repair_summary") if isinstance(ev, dict) else {}
     meta = meta if isinstance(meta, dict) else {}
     if meta.get("should_dispatch") and int(meta.get("failed_meta_run_count") or 0) > 0:
+        failure_codes = sorted({
+            str(item.get("failure_code") or "")
+            for item in (meta.get("meta_run_refs") or [])
+            if isinstance(item, dict) and item.get("failure_code")
+        })
+        codes = f" failure_codes={','.join(failure_codes)}" if failure_codes else ""
         return (
             "meta_repair_launch_failure: meta-repair is required but run logs show "
-            f"launch/no-output failure (bad_run_logs={meta.get('failed_meta_run_count')})"
+            f"launch/no-output failure (bad_run_logs={meta.get('failed_meta_run_count')}{codes})"
         )
     return ""
 
@@ -4725,8 +4774,10 @@ for entry in plans:
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
         ids = ",".join(str(item.get("id")) for item in unresolved_actions[:5])
         corroboration.append(f"unresolved user actions: {ids}")
-    if not reasons:
-        reasons = corroboration
+    # Deterministic custody findings and corroborating execution evidence are
+    # complementary.  Preserve both so a structural classification cannot
+    # erase the chain/log/repair facts needed by the corrective path.
+    reasons.extend(item for item in corroboration if item not in reasons)
     combined_corroboration = corroboration + soft_corroboration
     if combined_corroboration:
         ev["corroboration"] = combined_corroboration

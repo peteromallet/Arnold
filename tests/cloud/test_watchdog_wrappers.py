@@ -11817,7 +11817,7 @@ def _run_auditor_with_mocked_deepseek(tmp_path: Path) -> dict:
     )
 
     # Extract report-assembly python.
-    a_marker = "python3 - \"$GATHER_DIR/findings.json\" \"$JSON_OUT\" \"$MD_OUT\" \"$REPORT_LOG\" \"$TS\" <<'PY'"
+    a_marker = "python3 - \"$GATHER_DIR/findings.json\" \"$JSON_OUT\" \"$MD_OUT\" \"$REPORT_LOG\" \"$TS\""
     a_start = wrapper_text.index(a_marker)
     a_start = wrapper_text.index("\n", a_start) + 1
     a_end = wrapper_text.index("\nPY\n", a_start)
@@ -11825,11 +11825,16 @@ def _run_auditor_with_mocked_deepseek(tmp_path: Path) -> dict:
     json_out = tmp_path / "out.json"
     md_out = tmp_path / "out.md"
     log_path = tmp_path / "audit.log"
+    recovery_evidence = tmp_path / "recovery-evidence.json"
+    recovery_evidence.write_text(
+        json.dumps({"enabled": False, "decisions": []}), encoding="utf-8"
+    )
     asm = gather_dir / "asm.py"
     asm.write_text(asm_prog, encoding="utf-8")
     r2 = subprocess.run(
         [sys.executable, str(asm), str(gather_dir / "findings.json"),
-         str(json_out), str(md_out), str(log_path), "TESTTS"],
+         str(json_out), str(md_out), str(log_path), "TESTTS", "0", "0",
+         str(recovery_evidence), "gpt-test"],
         capture_output=True, text=True, env=env, check=False,
     )
     assert r2.returncode == 0, f"report asm failed: {r2.stderr}"
@@ -12701,6 +12706,103 @@ def test_auditor_gather_surfaces_missing_meta_repair_run_for_triggered_session(t
     assert meta_summary["meta_record_count"] == 0
     assert meta_summary["meta_run_log_count"] == 0
     assert "meta-repair trigger" in " ".join(finding["reasons"])
+
+
+def test_auditor_gather_retains_recent_l2_sandbox_failure_after_later_runs(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "m4-sandbox-retro"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "iteration": 4,
+            "current_state": "blocked",
+            "active_step": None,
+            "latest_failure": {
+                "kind": "stalled",
+                "message": "ordinary repair exhausted",
+                "recorded_at": _iso_hours_ago(1.0),
+            },
+        },
+        plan_v_bodies={"plan_v1.md": "v1"},
+        events_body="{}\n",
+    )
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "repair_exhausted",
+                "attempts": [
+                    {"attempt_id": index, "failure_classification": "timeout_or_hang"}
+                    for index in range(1, 4)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    meta_runs = tmp_path / "meta-runs"
+    meta_runs.mkdir()
+    failed = meta_runs / "20260715T010000Z-demo-session-investigator-receipt.json"
+    failed.write_text(
+        json.dumps(
+            {
+                "failure_code": "investigator_read_sandbox_unavailable",
+                "observed_error": "bwrap: No permissions to create new namespace",
+            }
+        ),
+        encoding="utf-8",
+    )
+    for index in range(6):
+        path = meta_runs / f"20260715T02{index:02d}00Z-demo-session-success-{index}.log"
+        path.write_text("accepted L2 verdict\n", encoding="utf-8")
+        advanced_mtime = failed.stat().st_mtime + index + 1
+        os.utime(path, (advanced_mtime, advanced_mtime))
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "chain",
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    env = dict(os.environ)
+    env["MEGAPLAN_AUDIT_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(meta_runs)
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    finding = json.loads(
+        (gather_dir / "findings.json").read_text(encoding="utf-8")
+    )["findings"][0]
+    meta_summary = finding["meta_repair_summary"]
+    failure_refs = [
+        item for item in meta_summary["meta_run_refs"] if item.get("failure_code")
+    ]
+    assert [item["failure_code"] for item in failure_refs] == [
+        "investigator_read_sandbox_unavailable"
+    ]
+    assert meta_summary["failed_meta_run_count"] == 1
+    reasons = " ".join(finding["reasons"])
+    assert "failure_codes=investigator_read_sandbox_unavailable" in reasons
 
 
 def test_auditor_gather_flags_running_repair_without_attempt_context(tmp_path: Path) -> None:
@@ -13858,7 +13960,7 @@ def test_meta_repair_classification_embedded_python_matches_contract(
     """The classification_and_prompt embedded Python must call evaluate_meta_repair_triggers."""
     marker = (
         'python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" '
-        '"$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'
+        '"$MARKER_DIR" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'
     )
     text = _meta_repair_wrapper()
 
@@ -14484,7 +14586,9 @@ def test_meta_repair_dispatch_defaults_structural() -> None:
     assert 'PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"' in watchdog_text
 
     # META_REPAIR_BIN default
-    assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"' in watchdog_text
+    assert 'META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"' in watchdog_text
+    assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"' in watchdog_text
+    assert 'META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"' in watchdog_text
 
     # dispatch_meta_repair function
     assert "dispatch_meta_repair() {" in watchdog_text
