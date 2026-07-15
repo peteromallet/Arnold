@@ -2149,6 +2149,46 @@ def _enqueue_lifecycle_failure_request(
         )
 
 
+def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
+    """Route a handler-recorded terminal failure to the managed repair queue.
+
+    Some handlers, notably review, record ``latest_failure`` while transitioning
+    the plan directly to ``blocked``.  The auto driver observes that terminal
+    state without calling :func:`_record_lifecycle_failure`, so mirror the
+    existing failure into repair custody without rewriting plan state.
+    """
+
+    try:
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        failure = state.get("latest_failure") if isinstance(state, dict) else None
+        if not isinstance(failure, dict):
+            return
+        queue_root, marker_dir, repair_session, repair_run_kind = (
+            _lifecycle_repair_request_route(plan_dir)
+        )
+        metadata = failure.get("metadata")
+        _enqueue_lifecycle_failure_request(
+            plan_dir=plan_dir,
+            queue_root=queue_root,
+            marker_dir=marker_dir,
+            session=repair_session,
+            run_kind=repair_run_kind,
+            kind=str(failure.get("kind") or "terminal_blocked"),
+            message=str(failure.get("message") or "plan entered a blocked terminal state"),
+            current_state=str(state.get("current_state") or STATE_BLOCKED),
+            phase=str(failure.get("phase") or "") or None,
+            suggested_action=str(failure.get("suggested_action") or "") or None,
+            metadata=metadata if isinstance(metadata, dict) else None,
+        )
+    except Exception:
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_REPAIR_REQUEST_ENQUEUE",
+            action="enqueue_terminal_failure_request",
+            plan_dir=plan_dir,
+            phase="terminal_block",
+        )
+
+
 def _lifecycle_repair_request_route(
     plan_dir: Path,
 ) -> tuple[Path, Path, str, str]:
@@ -4311,6 +4351,7 @@ def drive(
                     _clear_latest_failure_for_success(plan_dir)
                 elif terminal_status == "blocked":
                     _clear_obsolete_failure_for_terminal_block(plan_dir, status)
+                    _enqueue_terminal_failure_request(plan_dir)
                 try:
                     if terminal_status == "aborted":
                         emit_event(EventKind.PLAN_ABORTED, plan_dir=plan_dir, payload={"state": state})

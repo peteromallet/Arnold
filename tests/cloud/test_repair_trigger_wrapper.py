@@ -98,7 +98,7 @@ effects = Path({str(effects)!r})
 effects.mkdir()
 for effect in ("subprocess", "state", "source", "commit", "push"):
     effects.joinpath(effect).write_text("mutated", encoding="utf-8")
-Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], "request_id": os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", ""), "claim_owner_pid": os.environ.get("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID", ""), "queue_root": os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT", "")}}), encoding="utf-8")
+Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], "request_id": os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", ""), "claim_owner_pid": os.environ.get("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID", ""), "queue_root": os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT", ""), "marker_dir": os.environ.get("ARNOLD_REPAIR_MARKER_DIR", ""), "repair_session": os.environ.get("ARNOLD_REPAIR_SESSION", ""), "repair_run_kind": os.environ.get("ARNOLD_REPAIR_RUN_KIND", "")}}), encoding="utf-8")
 """,
         encoding="utf-8",
     )
@@ -315,6 +315,9 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert payload["request_id"] == queued["request"]["request_id"]
     assert payload["claim_owner_pid"].isdigit()
     assert payload["queue_root"] == str(_queue_root(workspace))
+    assert payload["marker_dir"] == str(marker_dir)
+    assert payload["repair_session"] == "demo"
+    assert payload["repair_run_kind"] == "chain"
     assert not (marker_dir.parent / "repair-queue").exists()
 
 

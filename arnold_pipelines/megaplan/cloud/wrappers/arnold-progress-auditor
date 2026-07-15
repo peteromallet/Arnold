@@ -719,6 +719,7 @@ except ImportError:
     project_repair_custody = None
 try:
     from arnold_pipelines.megaplan.cloud.repair_requests import (
+        iter_repair_attempts,
         iter_repair_decisions,
         iter_repair_requests,
         validate_queue_root,
@@ -726,6 +727,9 @@ try:
     repair_request_runtime_available = True
 except ImportError:
     repair_request_runtime_available = False
+
+    def iter_repair_attempts(_queue_root):
+        return []
 
     def validate_queue_root(value):
         path = pathlib.Path(value)
@@ -2163,6 +2167,53 @@ def _repair_custody_summary(session, plan_state, current_target):
             "malformed_request_count": len(malformed_requests),
             "malformed_decision_count": len(malformed_decisions),
         }
+    refs = target.get("current_refs") if isinstance(target.get("current_refs"), dict) else {}
+    marker = target.get("marker") if isinstance(target.get("marker"), dict) else {}
+    workspace = str(refs.get("workspace") or marker.get("workspace") or "").strip()
+    nested_projection = {}
+    nested_queue_root = pathlib.Path(workspace) / ".megaplan" / "repair-queue" if workspace else None
+    if (
+        nested_queue_root is not None
+        and nested_queue_root.resolve() != pathlib.Path(REPAIR_QUEUE_ROOT).resolve()
+        and (nested_queue_root / "requests").is_dir()
+    ):
+        try:
+            nested_projection = project_repair_custody(
+                plan_state=plan_state if isinstance(plan_state, dict) else {},
+                current_target=target,
+                queue_root=nested_queue_root,
+                repair_data_dir=repair_data_dir,
+            )
+        except Exception as exc:
+            nested_projection = {"projection_error": _redact_scalar(exc)}
+    central_request_ids = {
+        str(item) for item in (projection.get("active_request_ids") or []) if item
+    }
+    nested_decisions = (
+        iter_repair_decisions(nested_queue_root)
+        if nested_queue_root is not None and (nested_queue_root / "decisions").is_dir()
+        else []
+    )
+    latest_nested_decisions = {}
+    for decision in nested_decisions:
+        request_id = str(decision.get("request_id") or "")
+        if request_id:
+            latest_nested_decisions[request_id] = str(decision.get("decision") or "")
+    nested_attempt_request_ids = {
+        str(item.get("request_id") or "")
+        for item in (
+            iter_repair_attempts(nested_queue_root)
+            if nested_queue_root is not None and (nested_queue_root / "attempts").is_dir()
+            else []
+        )
+    }
+    nested_unclaimed_ids = sorted(
+        request_id
+        for request_id, decision in latest_nested_decisions.items()
+        if decision == "accepted"
+        and request_id not in central_request_ids
+        and request_id not in nested_attempt_request_ids
+    )
     return {
         "queue_root": str(REPAIR_QUEUE_ROOT),
         "blocker_id": projection.get("blocker_id") or "",
@@ -2180,6 +2231,11 @@ def _repair_custody_summary(session, plan_state, current_target):
         "malformed_decision_count": len(malformed_decisions),
         "malformed_request_paths": [item.get("path") for item in malformed_requests[:3]],
         "malformed_decision_paths": [item.get("path") for item in malformed_decisions[:3]],
+        "nested_queue_root": str(nested_queue_root) if nested_queue_root is not None else "",
+        "nested_queue_projection_error": nested_projection.get("projection_error") or "",
+        "nested_accepted_unclaimed_request_ids": nested_unclaimed_ids,
+        "nested_claim_count": nested_projection.get("claim_count") or 0,
+        "nested_attempt_count": nested_projection.get("attempt_count") or 0,
     }
 
 def _load_events(events_path):
@@ -3596,6 +3652,20 @@ def _stale_unclaimed_repair_custody_reason(ev):
         )
     return ""
 
+def _nested_repair_queue_custody_drift_reason(ev):
+    custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
+    custody = custody if isinstance(custody, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    unclaimed = custody.get("nested_accepted_unclaimed_request_ids") or []
+    if unclaimed and _chain_state_looks_nonterminal(chain_current):
+        return (
+            "nested_repair_queue_custody_drift: lifecycle repair requests were accepted "
+            "outside the dispatcher-owned queue with no attempt "
+            f"nested_queue={custody.get('nested_queue_root') or 'unknown'} "
+            f"request_ids={','.join(str(item) for item in unclaimed[:5])}"
+        )
+    return ""
+
 def _queue_coalesced_without_live_owner_reason(ev):
     custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
     custody = custody if isinstance(custody, dict) else {}
@@ -4549,6 +4619,7 @@ for entry in plans:
         _repair_complete_incomplete_chain_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
         _stale_unclaimed_repair_custody_reason(ev),
+        _nested_repair_queue_custody_drift_reason(ev),
         _queue_coalesced_without_live_owner_reason(ev),
         _deterministic_failure_exhaustion_reason(ev),
         _liveness_without_acceptance_progress_reason(ev),

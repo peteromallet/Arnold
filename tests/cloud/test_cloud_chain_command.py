@@ -140,6 +140,22 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
 
 
+def test_managed_chain_start_exports_canonical_repair_route() -> None:
+    command = _chain_start_command(
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        project_dir="/workspace/project",
+        engine_dir="/workspace/arnold",
+        repair_session="demo-chain",
+        repair_run_kind="chain",
+        repair_marker_dir="/workspace/.megaplan/cloud-sessions",
+    )
+
+    assert "ARNOLD_REPAIR_QUEUE_ROOT" in command
+    assert "ARNOLD_REPAIR_MARKER_DIR=/workspace/.megaplan/cloud-sessions" in command
+    assert "ARNOLD_REPAIR_SESSION=demo-chain" in command
+    assert "ARNOLD_REPAIR_RUN_KIND=chain" in command
+
+
 def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     command = _tmux_chain_launch_command(
         "/workspace/project",

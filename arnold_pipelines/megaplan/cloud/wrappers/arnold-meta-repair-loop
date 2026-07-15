@@ -227,13 +227,17 @@ log "meta-repair starting session=$SESSION"
 
 # ---- early gate: recursion guard --------------------------------------------
 recursion_check() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import sys
 
 from arnold_pipelines.megaplan.cloud.meta_repair_policy import check_meta_repair_recursion
 
-session, repair_data_dir = sys.argv[1:3]
-result = check_meta_repair_recursion(session, repair_data_dir=repair_data_dir)
+session, repair_data_dir, blocker_id = sys.argv[1:4]
+result = check_meta_repair_recursion(
+    session,
+    repair_data_dir=repair_data_dir,
+    blocker_id=blocker_id,
+)
 if result.recursing:
     print(f"RECURSION:{result.recommendation}")
     sys.exit(1)
@@ -246,7 +250,7 @@ if [[ "$RECURSION_OUTPUT" == RECURSION:* ]]; then
   log "recursion guard: $RECURSION_OUTPUT"
   log "escalating to NEEDS_HUMAN instead of recursing"
 
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$RECURSION_OUTPUT" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$RECURSION_OUTPUT" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import json, sys, uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -254,11 +258,12 @@ from pathlib import Path
 from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json, NEEDS_HUMAN
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 
-session, repair_data_dir, recursion_output = sys.argv[1:4]
+session, repair_data_dir, recursion_output, blocker_id = sys.argv[1:5]
 needs_human = {
     "session": session,
     "outcome": NEEDS_HUMAN,
     "reason": redact_text(recursion_output),
+    "blocker_id": blocker_id,
     "recorded_at": datetime.now(timezone.utc).isoformat(),
     "escalation_id": str(uuid.uuid4()),
 }
@@ -865,6 +870,7 @@ runpy.run_path(launcher, run_name="__main__")
 persist_unrecordable_launch_failure() {
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
     "$SESSION" "$TRIGGER_TYPE" "$REPAIR_DATA_DIR" "$RESP_PATH" "$ERR_PATH" <<'PY'
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -892,6 +898,7 @@ record = MetaRepairRecord(
     meta_repair_id=str(uuid.uuid4()),
     session=session,
     trigger=trigger,
+    blocker_id=str(os.environ.get("CLOUD_WATCHDOG_REPAIR_BLOCKER_ID") or ""),
     diagnosis=diagnosis,
     subagent_results={
         "orchestrator_response": redact_text(response[:2000]),
@@ -1188,6 +1195,7 @@ record = MetaRepairRecord(
     meta_repair_id=meta_repair_id,
     session=session,
     trigger=trigger,
+    blocker_id=blocker_id,
     diagnosis=redact_text(resp_text[:4000]),
     subagent_results={
         "codex_response": redact_text(resp_text[:4000]),

@@ -1882,6 +1882,7 @@ class TestMetaRepairRecordShape:
             "meta_repair_id",
             "session",
             "trigger",
+            "blocker_id",
             "diagnosis",
             "subagent_results",
             "changes",
@@ -1892,6 +1893,16 @@ class TestMetaRepairRecordShape:
             "created_at",
         }
         assert set(d.keys()) == required_keys
+
+    def test_record_roundtrips_blocker_identity(self) -> None:
+        record = MetaRepairRecord(
+            meta_repair_id="mr-blocker",
+            session="test-session",
+            trigger=MetaRepairTrigger.REPAIR_TIMEOUT,
+            blocker_id="blocker-current",
+        )
+
+        assert MetaRepairRecord.from_dict(record.to_dict()).blocker_id == "blocker-current"
 
     def test_extracts_reported_change_and_test_custody(self) -> None:
         response = """ESCALATE
@@ -2525,6 +2536,39 @@ class TestCheckMetaRepairRecursion:
         assert result.should_escalate is True
         assert NEEDS_HUMAN in result.recommendation
         assert "mr-001" in result.existing_meta_repair_ids
+
+    def test_blocker_scoping_preserves_cap_without_poisoning_new_episode(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        for blocker_id in ("old-blocker", "current-blocker"):
+            (meta_dir / f"{blocker_id}.json").write_text(
+                json.dumps({
+                    "meta_repair_id": blocker_id,
+                    "session": "long-lived-session",
+                    "blocker_id": blocker_id,
+                    "outcome": "needs_human",
+                }),
+                encoding="utf-8",
+            )
+
+        fresh = check_meta_repair_recursion(
+            session="long-lived-session",
+            repair_data_dir=repair_dir,
+            blocker_id="new-blocker",
+        )
+        repeated = check_meta_repair_recursion(
+            session="long-lived-session",
+            repair_data_dir=repair_dir,
+            blocker_id="current-blocker",
+        )
+
+        assert fresh.recursing is False
+        assert fresh.existing_meta_repair_ids == ()
+        assert repeated.recursing is True
+        assert repeated.existing_meta_repair_ids == ("current-blocker",)
 
     def test_codex_launch_failure_record_does_not_poison_recursion(
         self, tmp_path: Path

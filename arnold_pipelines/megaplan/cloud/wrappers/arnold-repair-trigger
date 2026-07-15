@@ -410,6 +410,7 @@ def _scan_under_lock(
 
     return _dispatch(
         queue_dir=queue_dir,
+        marker_dir=marker_dir,
         repair_bin=repair_bin,
         meta_repair_bin=meta_repair_bin,
         request=dispatch_candidate,
@@ -419,6 +420,7 @@ def _scan_under_lock(
 def _dispatch(
     *,
     queue_dir: Path,
+    marker_dir: Path,
     repair_bin: Path,
     meta_repair_bin: Path,
     request: Mapping[str, Any],
@@ -576,6 +578,11 @@ def _dispatch(
     env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = blocker_id
     env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
     env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(queue_dir)
+    env["ARNOLD_REPAIR_MARKER_DIR"] = str(marker_dir)
+    env["ARNOLD_REPAIR_SESSION"] = session
+    env["ARNOLD_REPAIR_RUN_KIND"] = str(
+        refs.get("run_kind") or marker.get("run_kind") or request.get("run_kind") or "chain"
+    )
     env["ARNOLD_REPAIR_TRIGGER_DISPATCHED"] = "1"
     request_target = request.get("target") if isinstance(request.get("target"), Mapping) else {}
     escalation_gate = (
