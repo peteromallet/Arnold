@@ -134,6 +134,29 @@ def _normalize_stale_current_plan_reference(state: "ChainState") -> "ChainState"
         state.pr_number = None
         state.pr_state = None
         if state.last_state in {"blocked", "authority_divergence"}:
+            # In fail-closed (atomic/enforce) mode a completed record does NOT
+            # carry authority to clear a blocked/authority_divergence marker
+            # unless the record also carries a validated acceptance receipt.
+            # Without the receipt the normalization must refuse the rewrite so
+            # the blocked marker stays live.
+            from arnold_pipelines.megaplan.orchestration.completion_contract import (
+                is_fail_closed_mode,
+            )
+            if is_fail_closed_mode(state.completion_contract_mode):
+                receipt = completed.get("acceptance_receipt")
+                if not isinstance(receipt, dict):
+                    # No validated acceptance evidence — keep the marker.
+                    return state
+                # Cross-check receipt identity against the record.
+                rec_label = completed.get("label")
+                rec_plan = completed.get("plan")
+                rec_mi = completed.get("milestone_index")
+                if (
+                    receipt.get("milestone_label") != rec_label
+                    or receipt.get("plan_name") != rec_plan
+                    or receipt.get("milestone_index") != rec_mi
+                ):
+                    return state
             state.last_state = "done"
         return state
     return state
@@ -165,6 +188,13 @@ def _normalize_advanced_completed_cursor(
     #      the milestone it is retrying, so we must not silently clear its
     #      "blocked" marker. This distinguishes a live retry (blocked stays)
     #      from an externally-advanced cursor with a leftover marker (cleared).
+    #
+    # ── fail-closed (atomic/enforce) gate ──────────────────────────────
+    # In fail-closed modes a completed record does NOT carry authority to
+    # clear a blocked/authority_divergence marker unless the record carries a
+    # validated acceptance receipt whose identity fields match the record.
+    # Without a receipt the normalization refuses the rewrite so the blocked
+    # marker is preserved for the acceptance boundary to adjudicate.
     if state.current_plan_name:
         return state
     if state.current_milestone_index <= 0:
@@ -185,7 +215,8 @@ def _normalize_advanced_completed_cursor(
     if state.current_milestone_index >= len(spec.milestones):
         # Cursor is past the final milestone; nothing current to retry-check.
         if state.last_state in {"blocked", "authority_divergence"}:
-            state.last_state = "done"
+            if _atomic_acceptance_gate_allows_rewrite(state, previous_milestone_label):
+                state.last_state = "done"
         return state
     current_milestone_label = spec.milestones[state.current_milestone_index].label
     if state.retry_counts.get(current_milestone_label, 0) > 0:
@@ -193,8 +224,50 @@ def _normalize_advanced_completed_cursor(
         # completion-guard retry); the blocked marker is live, not stale.
         return state
     if state.last_state in {"blocked", "authority_divergence"}:
-        state.last_state = "done"
+        if _atomic_acceptance_gate_allows_rewrite(state, previous_milestone_label):
+            state.last_state = "done"
     return state
+
+
+def _atomic_acceptance_gate_allows_rewrite(
+    state: "ChainState",
+    milestone_label: str,
+) -> bool:
+    """Return ``True`` when the completed record for *milestone_label* carries
+    a validated acceptance receipt, or the chain is NOT in fail-closed mode.
+
+    In shadow/warn/off modes this gate is always open (returns ``True``) —
+    legacy normalization behaviour is unchanged.  In atomic/enforce mode the
+    gate is closed unless the completed record for the given milestone carries
+    an ``acceptance_receipt`` dict whose identity fields match the record.
+    """
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+    )
+    if not is_fail_closed_mode(state.completion_contract_mode):
+        return True
+    # Locate the completed record for this milestone.
+    for record in state.completed:
+        if not isinstance(record, dict):
+            continue
+        if record.get("label") != milestone_label:
+            continue
+        receipt = record.get("acceptance_receipt")
+        if not isinstance(receipt, dict):
+            return False
+        # Cross-check receipt identity against the record.
+        rec_label = record.get("label")
+        rec_plan = record.get("plan")
+        rec_mi = record.get("milestone_index")
+        if (
+            receipt.get("milestone_label") != rec_label
+            or receipt.get("plan_name") != rec_plan
+            or receipt.get("milestone_index") != rec_mi
+        ):
+            return False
+        return True
+    # No completed record found — the prerequisite check already failed.
+    return True
 
 
 def _state_progress_key(state: "ChainState", *, path: Path) -> tuple[int, int, int, int, float]:
@@ -715,11 +788,64 @@ class MilestoneSpec:
         )
 
 
+@dataclass(frozen=True)
+class SuccessorSpec:
+    """Declares a successor chain that may be initialised after this chain completes.
+
+    The gate in :func:`advancement.check_successor_gate` reads these declarations
+    so the relationship is configuration rather than hardcoded policy.  The first
+    consumer is M5 → M5A → M6, but the gate itself is generic.
+    """
+
+    chain_spec_path: str
+    label: str
+    require_accepted_transaction: bool = True
+    note: str = ""
+
+    @classmethod
+    def from_yaml(cls, value: Any, index: int) -> "SuccessorSpec":
+        if not isinstance(value, dict):
+            raise CliError(
+                "invalid_spec",
+                f"successors[{index}] must be a mapping",
+            )
+        allowed = {"chain_spec_path", "label", "require_accepted_transaction", "note"}
+        unknown = sorted(set(value) - allowed)
+        if unknown:
+            raise CliError(
+                "invalid_spec",
+                f"successors[{index}] unknown key `{unknown[0]}`",
+            )
+        chain_spec_path = value.get("chain_spec_path")
+        if not isinstance(chain_spec_path, str) or not chain_spec_path.strip():
+            raise CliError(
+                "invalid_spec",
+                f"successors[{index}].chain_spec_path is required",
+            )
+        label = value.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise CliError(
+                "invalid_spec",
+                f"successors[{index}].label is required",
+            )
+        require_accepted_transaction = bool(
+            value.get("require_accepted_transaction", True)
+        )
+        note = str(value.get("note") or "")
+        return cls(
+            chain_spec_path=chain_spec_path.strip(),
+            label=label.strip(),
+            require_accepted_transaction=require_accepted_transaction,
+            note=note,
+        )
+
+
 @dataclass
 class ChainSpec:
     milestones: list[MilestoneSpec]
     anchors: AnchorSpec = field(default_factory=AnchorSpec)
     launch_preconditions: list[LaunchPreconditionSpec] = field(default_factory=list)
+    successors: list[SuccessorSpec] = field(default_factory=list)
     seed_plan: str | None = None
     base_branch: str = "main"
     on_failure: str = "stop_chain"
@@ -761,6 +887,7 @@ class ChainSpec:
             "prerequisite_policy",
             "review_policy",
             "seed",
+            "successors",
             "validation_policy",
         }
         unknown_keys = sorted(set(raw) - allowed_keys)
@@ -821,6 +948,14 @@ class ChainSpec:
                 raise CliError("invalid_spec", "`seed.plan` must be a string")
             if isinstance(seed_plan, str) and not seed_plan.strip():
                 seed_plan = None
+
+        successors_raw = raw.get("successors") or []
+        if not isinstance(successors_raw, list):
+            raise CliError("invalid_spec", "`successors` must be a list")
+        successors = [
+            SuccessorSpec.from_yaml(item, i)
+            for i, item in enumerate(successors_raw)
+        ]
 
         on_failure_policy = FailurePolicy.from_yaml(
             raw.get("on_failure"), "on_failure", "stop_chain"
@@ -941,6 +1076,7 @@ class ChainSpec:
             milestones=milestones,
             anchors=anchors,
             launch_preconditions=launch_preconditions,
+            successors=successors,
             seed_plan=seed_plan,
             base_branch=base_branch,
             on_failure=on_failure,

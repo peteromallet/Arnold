@@ -548,6 +548,11 @@ def _state_sha256_for_cas(path: Path) -> "str | None":
     Used to seed the CAS guard on the chain state file.  A missing state file
     yields ``None`` (no prior hash), which the journal treats as
     ``target_absent``-compatible rather than as a pinned value.
+
+    The returned hash carries the ``sha256:`` prefix to match the canonical
+    format used by :func:`arnold_pipelines.megaplan._core.io._path_sha256`
+    (which :func:`evaluate_cas_guards` uses to compute the actual value for the
+    CAS comparison).  A bare hex digest would never compare equal.
     """
     try:
         import hashlib
@@ -555,7 +560,7 @@ def _state_sha256_for_cas(path: Path) -> "str | None":
         raw = path.read_bytes()
     except OSError:
         return None
-    return hashlib.sha256(raw).hexdigest()
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
 def prepare_acceptance_commit(
@@ -681,6 +686,7 @@ def prepare_acceptance_commit(
 
     completed_record = {
         "label": milestone_label,
+        "plan": plan_name,
         "milestone_index": milestone_index,
         "transaction_id": getattr(snapshot, "transaction_id", "") or "",
         "snapshot_hash": snapshot.content_hash,
@@ -796,20 +802,14 @@ def commit_acceptance_commit(plan: AcceptanceCommitPlan) -> Any:
 def discard_acceptance_commit(plan: AcceptanceCommitPlan) -> None:
     """Discard a staged acceptance commit without touching durable state.
 
-    Removes the journal prepare entry for the transaction.  Safe to call after
-    a CAS failure (the journal already discards on violation) or when aborting
-    an uncommitted plan.
+    Removes the journal prepare entry *and* any staged temp/blob files for the
+    transaction via :func:`discard_uncommitted_journal_transaction`, which also
+    fsyncs the journal directory.  Safe to call after a CAS failure (the journal
+    already discards on violation) or when aborting an uncommitted plan.
     """
     from arnold_pipelines.megaplan._core import io as journal_io
 
-    try:
-        journal_io.cleanup_journal_transaction(plan.journal_root, plan.tx_id)
-    except (AttributeError, OSError):
-        # fall back to removing the prepare file directly if no cleanup helper
-        try:
-            plan.prepare_path.unlink()
-        except OSError:
-            pass
+    journal_io.discard_uncommitted_journal_transaction(plan.journal_root, plan.tx_id)
 
 
 def replay_acceptance_commit_journal(journal_root: Path) -> dict:

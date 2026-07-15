@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-15T07:36:20.505997+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-custody-control-plane-20260714"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 6,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-a923a5d15e23",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:13d41280f1b49a1fa30fff4c38d9b3f0ce3afb5ea9f83705f7a6a23de6ff190e",
+    "last_seq": 541,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-a923a5d15e23: chain state advertises last_state=done but only 1/10 milestones are complete; treating as incomplete/stuck instead of terminal; artifact=/workspace/.megaplan/cloud-sessions/repair-data/custody-control-plane-20260714.chain-health.json"
+}
