@@ -3766,6 +3766,28 @@ fi
     assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
 
 
+def test_watchdog_claim_refuses_dispatch_without_request_and_blocker_identity(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=",
+            "claim_active_repair_launch demo-session /tmp/workspace /tmp/spec",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 1
+    assert result.stdout.strip() == "missing_identity"
+
+
 def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
@@ -5637,11 +5659,11 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_auto_stall_manual_review_dispatches_repair_before_needs_human(
+def test_watchdog_auto_stall_manual_review_does_not_bypass_custody(
     tmp_path: Path,
 ) -> None:
-    marker_dir = tmp_path / "markers"
-    marker_dir.mkdir()
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
     workspace = tmp_path / "ws"
     plan_name = "demo-plan"
     _write_plan(
@@ -5693,20 +5715,20 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tauto_stall manual_review repair loop dispatched before needs_human\t" in report
-    assert "\tobserve\tneeds_human\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "\trepair\trepair_dispatched\t" not in report
+    assert "\tobserve\tneeds_human\t" in report
+    assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_legacy_stalled_manual_review_dispatches_repair_before_needs_human(
+def test_watchdog_legacy_stalled_manual_review_does_not_bypass_custody(
     tmp_path: Path,
 ) -> None:
-    marker_dir = tmp_path / "markers"
-    marker_dir.mkdir()
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
     workspace = tmp_path / "ws"
     plan_name = "demo-plan"
     _write_plan(
@@ -5759,9 +5781,9 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tauto_stall manual_review repair loop dispatched before needs_human\t" in report
-    assert "\tobserve\tneeds_human\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "\trepair\trepair_dispatched\t" not in report
+    assert "\tobserve\tneeds_human\t" in report
+    assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
@@ -9524,6 +9546,73 @@ def test_compute_meta_repair_trigger_skips_stale_timeout_when_alive_has_heartbea
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "NO_TRIGGER"
+
+
+def test_compute_meta_repair_trigger_detects_unclaimed_custody_before_live_heartbeat(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"session": "demo-session", "outcome": "running"}),
+        encoding="utf-8",
+    )
+    repair_requests.enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        workspace=tmp_path / "workspace",
+        run_kind="chain",
+        problem_signature={
+            "failure_kind": "quality_gate_blocked",
+            "current_state": "blocked",
+            "phase_or_step": "review",
+            "milestone_or_plan": "demo-plan",
+            "gate_recommendation": "repair deterministic review failure",
+            "blocked_task_id": "T2",
+            "event_signature": "quality:review:test",
+        },
+        root_cause_hint="deterministic test",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "target_session": "demo-session",
+            "active_step_heartbeat": {"active": True, "phase": "review"},
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "chain_current_plan_name": "demo-plan",
+                "plan_current_state": "blocked",
+                "chain_last_state": "blocked",
+            },
+            "plan_state": {
+                "name": "demo-plan",
+                "current_state": "blocked",
+                "latest_failure": {
+                    "kind": "quality_gate_blocked",
+                    "phase": "review",
+                    "metadata": {"blocked_task_id": "T2"},
+                },
+            },
+            "chain_state": {"present": True, "last_state": "blocked"},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"compute_meta_repair_trigger demo-session {shlex.quote(observation)} alive",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TRIGGER:repair_custody_unbound"
 
 
 def test_compute_meta_repair_trigger_skips_stale_recurring_retry_after_plan_recovered(

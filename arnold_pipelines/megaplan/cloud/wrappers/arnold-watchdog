@@ -1557,11 +1557,25 @@ projection = project_repair_custody(
     marker_dir=marker_dir,
     repair_data_dir=repair_data_dir,
 )
-if not projection.get("active_request_ids"):
+if not projection.get("active_request_ids") or not str(projection.get("blocker_id") or "").strip():
     latest_failure = plan_state.get("latest_failure")
     latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
     metadata = latest_failure.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
+    blocker_ids = latest_failure.get("blocker_ids")
+    if not isinstance(blocker_ids, list):
+        blocker_ids = []
+    event_signature = "|".join(
+        str(value).strip() for value in blocker_ids if str(value).strip()
+    )
+    if not event_signature:
+        evidence_cursor = latest_failure.get("evidence_cursor")
+        if isinstance(evidence_cursor, dict):
+            event_signature = str(
+                evidence_cursor.get("review_artifact_hash")
+                or evidence_cursor.get("artifact_hash")
+                or ""
+            ).strip()
     enqueue_repair_request(
         queue_root=repair_queue_dir(marker_dir),
         marker_dir=marker_dir,
@@ -1586,6 +1600,7 @@ if not projection.get("active_request_ids"):
                 or _blocked_task_id_from_failure(latest_failure, metadata)
                 or ""
             ),
+            "event_signature": event_signature,
         },
         root_cause_hint=str(latest_failure.get("message") or ""),
     )
@@ -4705,6 +4720,8 @@ dispatch_kimi_repair() {
   if declare -F claim_active_repair_launch >/dev/null 2>&1; then
     claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec")"
   else
+    # Extracted/unit harnesses may omit the claim helper.  The production
+    # wrapper always declares it below and therefore takes the strict path.
     claim_status=""
   fi
   case "$claim_status" in
@@ -4879,8 +4896,8 @@ claim_active_repair_launch() {
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
   fi
   if [[ -z "$blocker_id" || -z "$request_id" ]]; then
-    printf '\n'
-    return 0
+    printf 'missing_identity\n'
+    return 1
   fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
     "$MARKER_DIR" \
@@ -4988,6 +5005,10 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     evaluate_meta_repair_triggers,
     is_model_tool_launch_failure_status,
 )
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    durable_repair_active,
+    project_repair_custody,
+)
 
 session, repair_data_dir_raw, marker_dir_raw, current_target_observation_raw, current_health = sys.argv[1:]
 repair_data_dir = pathlib.Path(repair_data_dir_raw)
@@ -5027,6 +5048,46 @@ terminal_repair_failures = {
     "repair_exhausted",
 }
 active_step_heartbeat = resolver_record.get("active_step_heartbeat")
+queue_root = marker_dir.parent / "repair-queue"
+plan_state = resolver_record.get("plan_state")
+if not isinstance(plan_state, dict):
+    plan_state = {}
+custody = {}
+if queue_root.is_dir():
+    try:
+        custody = project_repair_custody(
+            plan_state=plan_state,
+            current_target=resolver_record,
+            queue_root=queue_root,
+            repair_data_dir=repair_data_dir,
+        )
+    except Exception:
+        print("TRIGGER:repair_custody_projection_error")
+        raise SystemExit(0)
+active_requests = {
+    str(value).strip()
+    for value in custody.get("active_request_ids", [])
+    if str(value).strip()
+}
+missing_request_identity = any(
+    isinstance(item, dict)
+    and bool(item.get("active"))
+    and not str(item.get("blocker_id") or "").strip()
+    for item in custody.get("requests", [])
+)
+accepted_unclaimed = {
+    str(value).strip()
+    for value in custody.get("accepted_unclaimed_request_ids", [])
+    if str(value).strip()
+}
+custody_integrity_failure = bool(active_requests) and not durable_repair_active(custody) and (
+    missing_request_identity
+    or bool(accepted_unclaimed)
+    or not str(custody.get("blocker_id") or "").strip()
+)
+if custody_integrity_failure:
+    print("TRIGGER:repair_custody_unbound")
+    raise SystemExit(0)
 if (
     current_health == "alive"
     and isinstance(active_step_heartbeat, dict)
@@ -7989,7 +8050,7 @@ PY
     if [[ -n "$manual_review_dispatch_env" ]]; then
       eval "$manual_review_dispatch_env"
     fi
-    if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" || "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
+    if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         local stale_marker_plans
         stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" 2>/dev/null)" || {
