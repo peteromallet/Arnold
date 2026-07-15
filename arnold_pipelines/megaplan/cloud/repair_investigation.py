@@ -14,6 +14,7 @@ from arnold_pipelines.megaplan.cloud.repair_goal import capture_checkpoint, utc_
 
 
 REPAIR_INVESTIGATION_CONTEXT_SCHEMA = "arnold-repair-investigation-context-v1"
+META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA = "arnold-meta-repair-investigation-envelope-v2"
 REPAIR_INVESTIGATOR_RECEIPT_SCHEMA = "arnold-repair-investigator-receipt-v2"
 MAX_CONTEXT_BYTES = 64 * 1024
 INVESTIGATION_TARGET_KINDS = frozenset({"l1_repair_target", "l2_repair_system"})
@@ -55,6 +56,30 @@ def _digest(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(dict(value), sort_keys=True, separators=(",", ":"), default=str).encode()
     ).hexdigest()
+
+
+def _file_reference(kind: str, path: str | Path, *, json_pointer: str = "") -> dict[str, Any]:
+    """Return an immutable, typed pointer without embedding artifact contents."""
+
+    artifact = Path(path)
+    try:
+        digest = hashlib.sha256()
+        with artifact.open("rb") as handle:
+            before = os.fstat(handle.fileno())
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+            after = os.fstat(handle.fileno())
+    except OSError as exc:
+        raise ValueError(f"required {kind} artifact is unreadable: {artifact}") from exc
+    if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+        raise ValueError(f"required {kind} artifact changed while it was referenced: {artifact}")
+    return {
+        "kind": kind,
+        "path": str(artifact),
+        "json_pointer": json_pointer,
+        "sha256": digest.hexdigest(),
+        "size_bytes": after.st_size,
+    }
 
 
 def _text(value: object, limit: int = 4000) -> str:
@@ -418,13 +443,10 @@ def build_meta_investigation_context(
     repair_data_dir: str | Path,
     marker_dir: str | Path,
     arnold_src: str | Path,
+    request_id: str = "",
+    blocker_id: str = "",
 ) -> dict[str, Any]:
-    """Build the bounded, read-only L2 investigation input.
-
-    This deliberately shares evidence-source, contradiction, recovery, and
-    handoff semantics with L1 without coupling the six-hour auditor to a
-    mutating dispatcher.
-    """
+    """Build a minimal, reference-only, read-only L2 launch envelope."""
 
     repair_root = Path(repair_data_dir)
     marker_root = Path(marker_dir)
@@ -432,10 +454,30 @@ def build_meta_investigation_context(
     repair_path = repair_root / f"{session}.repair-data.json"
     marker_path = marker_root / f"{session}.json"
     repair_data = _load(repair_path)
-    marker = _load(marker_path)
+    if not repair_data:
+        raise ValueError(f"required repair data is missing or invalid: {repair_path}")
+    if not _load(marker_path):
+        raise ValueError(f"required session marker is missing or invalid: {marker_path}")
+    repair_goal_ref = (
+        repair_data.get("repair_goal")
+        if isinstance(repair_data.get("repair_goal"), Mapping)
+        else {}
+    )
+    goal_path = Path(str(repair_goal_ref.get("goal_path") or ""))
+    goal = _load(goal_path)
+    if not goal:
+        raise ValueError("repair data does not point to a readable authoritative repair goal")
+    goal_id = _text(goal.get("goal_id"), 300)
+    checkpoint_digest = _text(goal.get("checkpoint_digest"), 100)
+    if not goal_id or not checkpoint_digest:
+        raise ValueError("authoritative repair goal identity is incomplete")
+    if repair_goal_ref.get("goal_id") not in (None, "", goal_id):
+        raise ValueError("repair data and authoritative repair goal identity disagree")
+    if repair_goal_ref.get("checkpoint_digest") not in (None, "", checkpoint_digest):
+        raise ValueError("repair data and authoritative repair goal checkpoint disagree")
+    goal_target = goal.get("target") if isinstance(goal.get("target"), Mapping) else {}
     meta_dir = repair_root / "meta"
     meta_paths = sorted(meta_dir.glob(f"*{session}*.json"), key=lambda item: item.stat().st_mtime)[-5:]
-    meta_records = [_load(path) for path in meta_paths]
     current_target: dict[str, Any] = {}
     try:
         from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
@@ -447,76 +489,180 @@ def build_meta_investigation_context(
         )
     except Exception as exc:  # evidence failure must remain visible and fail closed
         current_target = {"observation_error": type(exc).__name__}
-    source_tree = _git_observation(source_root)
-    contradictions: list[dict[str, str]] = []
-    outcome = _text(repair_data.get("outcome"), 200).lower()
-    if outcome in {"running", "repairing"} and not repair_data.get("current_attempt_id"):
-        contradictions.append(
-            {
-                "left_source": str(repair_path),
-                "right_source": str(marker_path),
-                "contradiction": "repair-data claims active repair without a current attempt owner",
-            }
-        )
-    if current_target.get("observation_error"):
-        contradictions.append(
-            {
-                "left_source": str(marker_path),
-                "right_source": "current_target_resolver",
-                "contradiction": "current target could not be resolved from marker/repair custody",
-            }
-        )
-    evidence_sources = [
-        _evidence_source("repair_data", repair_path, repair_data, authority=7),
-        _evidence_source("session_marker", marker_path, marker, authority=2),
-        _evidence_source("source_tree", source_root, source_tree, authority=9),
+    source_custody = _git_observation(source_root)
+    if not source_custody.get("head") or source_custody.get("dirty") is None:
+        raise ValueError("Arnold source custody could not be established")
+
+    evidence_refs = [
+        _file_reference("repair_data", repair_path),
+        _file_reference("session_marker", marker_path),
+        _file_reference("repair_goal", goal_path),
     ]
-    for path, record in zip(meta_paths, meta_records):
-        evidence_sources.append(_evidence_source("meta_repair", path, record, authority=10))
+    current_paths = (
+        ("chain_state", (current_target.get("chain_state") or {}).get("path")),
+        ("plan_state", (current_target.get("plan_state") or {}).get("path")),
+        ("event_log", (current_target.get("event_cursors") or {}).get("events_path")),
+        ("chain_log", (current_target.get("chain_log") or {}).get("path")),
+    )
+    seen_paths = {item["path"] for item in evidence_refs}
+    for kind, path in current_paths:
+        if path and str(path) not in seen_paths and Path(str(path)).is_file():
+            evidence_refs.append(_file_reference(kind, str(path)))
+            seen_paths.add(str(path))
+    for path in meta_paths:
+        if str(path) not in seen_paths:
+            evidence_refs.append(_file_reference("meta_repair", path))
+            seen_paths.add(str(path))
+
+    delegation = (
+        repair_data.get("resident_delegation")
+        if isinstance(repair_data.get("resident_delegation"), Mapping)
+        else {}
+    )
+    if delegation:
+        provenance_ref = _file_reference(
+            "resident_delegation", repair_path, json_pointer="/resident_delegation"
+        )
+        provenance_ref.update(
+            {
+                "custody_id": _text(delegation.get("custody_id"), 300),
+                "source_record_id": _text(delegation.get("source_record_id"), 300),
+                "root_run_id": _text(delegation.get("root_run_id"), 300),
+            }
+        )
+    else:
+        provenance_ref = {
+            "kind": "automatic_system",
+            "path": str(repair_path),
+            "json_pointer": "",
+            "sha256": evidence_refs[0]["sha256"],
+            "size_bytes": evidence_refs[0]["size_bytes"],
+            "custody_id": "",
+            "source_record_id": "",
+            "root_run_id": _text(repair_data.get("managed_agent_run_id"), 300),
+        }
+
+    contract_path = source_root / "arnold_pipelines/megaplan/cloud/repair_investigation.py"
     context: dict[str, Any] = {
-        "schema_version": REPAIR_INVESTIGATION_CONTEXT_SCHEMA,
+        "schema_version": META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA,
         "target_kind": "l2_repair_system",
         "generated_at": utc_now(),
-        "session": session,
-        "trigger": _text(trigger, 300),
-        "repair_data_path": str(repair_path),
-        "marker_path": str(marker_path),
-        "arnold_src": str(source_root),
-        "actual_failure_seed": {
-            "repair_outcome": repair_data.get("outcome"),
-            "latest_failure": repair_data.get("latest_failure"),
-            "trigger": trigger,
-        },
-        "current_target": current_target,
-        "source_tree": source_tree,
-        "evidence_sources": evidence_sources,
-        "custody_status": "contradictory" if contradictions else "consistent",
-        "custody_contradictions": contradictions,
-        "intended_recovery": {
-            "predicate": (
-                "fix the first broken repair layer and its backstop, retrigger ordinary L1, "
-                "then verify the original blocker cleared with fresh accepted progress beyond "
-                "the frozen stage"
+        "objective": (
+            "Determine why ordinary repair failed, identify the first broken repair layer and "
+            "its missed backstop, and return one read-only safe-mutation handoff."
+        ),
+        "identity": {
+            "session": _text(session, 300),
+            "trigger": _text(trigger, 300),
+            "repair_goal_id": goal_id,
+            "repair_checkpoint_digest": checkpoint_digest,
+            "repair_request_id": _text(request_id or repair_data.get("request_id"), 300),
+            "blocker_id": _text(
+                blocker_id
+                or repair_data.get("blocker_id")
+                or goal_target.get("blocker_id"),
+                300,
             ),
-            "blocker_cleared_required": True,
-            "fresh_progress_required": True,
-            "beyond_stage_required": True,
         },
-        "safe_repair_boundaries": {
-            "allowed": ["arnold_source", "repair_custody"],
-            "forbidden": ["audited_workspace", "direct_chain_state_edit", "guard_weakening", "uncited_mutation"],
+        "provenance_ref": provenance_ref,
+        "source_custody": source_custody,
+        "evidence_refs": evidence_refs,
+        "authorization": {
+            "mode": "read_only",
+            "mutation_authorized": False,
+            "allowed_handoff_targets": ["arnold_source", "repair_custody"],
+            "forbidden": ["audited_workspace", "direct_chain_state_edit", "guard_weakening"],
         },
-        "required_investigator_output": _common_required_output("l2_repair_system"),
+        "receipt_contract_ref": {
+            **_file_reference("source_contract", contract_path),
+            "schema_version": REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
+            "validator": "validate_investigator_receipt",
+        },
     }
+    validate_meta_investigation_context(context, require_digest=False)
     context["context_digest"] = _digest(context)
     encoded = json.dumps(context, sort_keys=True, separators=(",", ":"), default=str).encode()
     if len(encoded) > MAX_CONTEXT_BYTES:
-        context["evidence_sources"] = context["evidence_sources"][-4:]
-        context["context_digest"] = _digest({k: v for k, v in context.items() if k != "context_digest"})
-        encoded = json.dumps(context, sort_keys=True, separators=(",", ":"), default=str).encode()
-    if len(encoded) > MAX_CONTEXT_BYTES:
-        raise ValueError("bounded meta-repair investigation context exceeds 64 KiB")
+        raise ValueError("minimal meta-repair investigation envelope exceeds 64 KiB")
+    validate_meta_investigation_context(context, require_digest=True)
     return context
+
+
+def validate_meta_investigation_context(
+    value: Mapping[str, Any], *, require_digest: bool = True
+) -> dict[str, Any]:
+    """Fail closed unless an L2 envelope is reference-only and custody-bound."""
+
+    if value.get("schema_version") != META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA:
+        raise ValueError("meta-repair investigation envelope schema is invalid")
+    if value.get("target_kind") != "l2_repair_system":
+        raise ValueError("meta-repair investigation target kind is invalid")
+    if any(
+        field in value
+        for field in (
+            "repair_data",
+            "session_marker",
+            "current_target",
+            "evidence_sources",
+            "required_investigator_output",
+        )
+    ):
+        raise ValueError("meta-repair investigation envelope contains inlined evidence")
+    objective = str(value.get("objective") or "")
+    if not objective or len(objective.encode("utf-8")) > 1000:
+        raise ValueError("meta-repair investigation objective is invalid")
+    identity = value.get("identity")
+    if not isinstance(identity, Mapping) or not all(
+        str(identity.get(field) or "").strip()
+        for field in ("session", "trigger", "repair_goal_id", "repair_checkpoint_digest")
+    ):
+        raise ValueError("meta-repair investigation identity is incomplete")
+    authorization = value.get("authorization")
+    if not isinstance(authorization, Mapping) or authorization.get("mode") != "read_only":
+        raise ValueError("meta-repair investigation authorization mode is invalid")
+    if authorization.get("mutation_authorized") is not False:
+        raise ValueError("meta-repair investigation must not authorize mutation")
+    if set(authorization.get("allowed_handoff_targets") or []) != {
+        "arnold_source",
+        "repair_custody",
+    }:
+        raise ValueError("meta-repair investigation handoff scope is invalid")
+    refs = value.get("evidence_refs")
+    if not isinstance(refs, list) or not refs:
+        raise ValueError("meta-repair investigation evidence references are missing")
+    required_kinds = {"repair_data", "session_marker", "repair_goal"}
+    observed_kinds: set[str] = set()
+    for ref in [*refs, value.get("provenance_ref"), value.get("receipt_contract_ref")]:
+        if not isinstance(ref, Mapping):
+            raise ValueError("meta-repair investigation reference is invalid")
+        kind = str(ref.get("kind") or "")
+        path = str(ref.get("path") or "")
+        digest = str(ref.get("sha256") or "")
+        if not kind or not Path(path).is_absolute() or len(digest) != 64:
+            raise ValueError("meta-repair investigation reference is incomplete")
+        if not isinstance(ref.get("size_bytes"), int) or int(ref["size_bytes"]) < 0:
+            raise ValueError("meta-repair investigation reference size is invalid")
+        observed_kinds.add(kind)
+    if not required_kinds.issubset(observed_kinds):
+        raise ValueError("meta-repair investigation lacks authoritative evidence routes")
+    contract = value.get("receipt_contract_ref")
+    if (
+        not isinstance(contract, Mapping)
+        or contract.get("schema_version") != REPAIR_INVESTIGATOR_RECEIPT_SCHEMA
+        or contract.get("validator") != "validate_investigator_receipt"
+    ):
+        raise ValueError("meta-repair investigation receipt contract is invalid")
+    source = value.get("source_custody")
+    if not isinstance(source, Mapping) or not all(
+        str(source.get(field) or "").strip() for field in ("path", "head")
+    ) or not isinstance(source.get("dirty"), bool):
+        raise ValueError("meta-repair investigation source custody is incomplete")
+    if require_digest:
+        observed = str(value.get("context_digest") or "")
+        recomputed = _digest({key: item for key, item in value.items() if key != "context_digest"})
+        if len(observed) != 64 or observed != recomputed:
+            raise ValueError("meta-repair investigation envelope digest disagrees")
+    return dict(value)
 
 
 def validate_investigator_receipt(
@@ -735,6 +881,8 @@ def _parser() -> argparse.ArgumentParser:
     build_meta.add_argument("--repair-data-dir", required=True)
     build_meta.add_argument("--marker-dir", required=True)
     build_meta.add_argument("--arnold-src", required=True)
+    build_meta.add_argument("--request-id", default="")
+    build_meta.add_argument("--blocker-id", default="")
     build_meta.add_argument("--output", required=True)
     validate = sub.add_parser("validate")
     validate.add_argument("--receipt", required=True)
@@ -761,6 +909,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             repair_data_dir=args.repair_data_dir,
             marker_dir=args.marker_dir,
             arnold_src=args.arnold_src,
+            request_id=args.request_id,
+            blocker_id=args.blocker_id,
         )
         _atomic_write(Path(args.output), value)
     else:
@@ -777,6 +927,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "MAX_CONTEXT_BYTES",
+    "META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA",
     "REPAIR_INVESTIGATION_CONTEXT_SCHEMA",
     "REPAIR_INVESTIGATOR_RECEIPT_SCHEMA",
     "EVIDENCE_SOURCE_KINDS",
@@ -784,5 +935,6 @@ __all__ = [
     "build_meta_investigation_context",
     "build_investigation_context",
     "summarize_investigation_artifacts",
+    "validate_meta_investigation_context",
     "validate_investigator_receipt",
 ]
