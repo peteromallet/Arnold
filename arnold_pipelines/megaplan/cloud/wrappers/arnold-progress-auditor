@@ -1188,6 +1188,28 @@ def _meta_repair_summary(
     repair_goal_path = pathlib.Path(str(repair_goal_ref.get("goal_path") or "")) if repair_goal_ref.get("goal_path") else None
     repair_goal = _load_json(repair_goal_path) if repair_goal_path is not None else {}
     repair_goal_active = isinstance(repair_goal, dict) and repair_goal.get("status") == "active"
+    request_id = str(repair_payload.get("request_id") or "").strip()
+    if not request_id and isinstance(repair_goal, dict):
+        request_ids = repair_goal.get("request_ids")
+        if isinstance(request_ids, list) and request_ids:
+            request_id = str(request_ids[-1] or "").strip()
+    queue_root = pathlib.Path(
+        os.environ.get(
+            "ARNOLD_REPAIR_QUEUE_ROOT",
+            str(repair_root.parent.parent / "repair-queue"),
+        )
+    )
+    request_payload = _load_json(queue_root / "requests" / f"{request_id}.json") if request_id else {}
+    request_signature = (
+        request_payload.get("problem_signature")
+        if isinstance(request_payload, dict) and isinstance(request_payload.get("problem_signature"), dict)
+        else {}
+    )
+    request_target = (
+        request_payload.get("target")
+        if isinstance(request_payload, dict) and isinstance(request_payload.get("target"), dict)
+        else {}
+    )
     repair_goal_owner_live = False
     if repair_goal_active:
         for owner in repair_goal.get("owners") or []:
@@ -1257,6 +1279,7 @@ def _meta_repair_summary(
         and not current_signature
         and not recent_iterations
         and not recent_attempts
+        and not repair_goal_active
     ):
         run_refs = _collect_meta_run_refs(session)
         return {
@@ -1282,6 +1305,7 @@ def _meta_repair_summary(
         and not current_signature
         and not recent_iterations
         and not recent_attempts
+        and not repair_goal_active
     ):
         run_refs = _collect_meta_run_refs(session)
         return {
@@ -1307,6 +1331,7 @@ def _meta_repair_summary(
         and not current_signature
         and not recent_iterations
         and recent_attempts
+        and not repair_goal_active
     ):
         return {
             "should_dispatch": False,
@@ -1330,6 +1355,7 @@ def _meta_repair_summary(
         and recent_attempts
         and not any(_attempt_has_runtime_context(item) for item in recent_attempts)
         and repair_outcome not in {"repair_timeout", "repair_exhausted"}
+        and not repair_goal_active
     ):
         return {
             "should_dispatch": False,
@@ -1381,6 +1407,47 @@ def _meta_repair_summary(
         should_dispatch = False
         trigger = "classification_error"
         rationale = [_redact_scalar(exc)]
+    observed_plan = chain_current_plan if normalized_kind != "plan" else str(current_plan_name or "").strip()
+    observed_stage = str(active_step_phase or normalized_state or chain_last_state).strip().lower()
+    request_plan = str(
+        request_signature.get("milestone_or_plan")
+        or request_signature.get("plan_name")
+        or request_target.get("plan_name")
+        or ""
+    ).strip()
+    request_stage = str(
+        request_signature.get("phase_or_step")
+        or request_signature.get("phase")
+        or request_signature.get("step")
+        or ""
+    ).strip().lower()
+    request_target_mismatch = bool(
+        request_payload
+        and (
+            (request_plan and observed_plan and request_plan != observed_plan)
+            or (request_stage and observed_stage and request_stage != observed_stage)
+        )
+    )
+    goal_evaluation = (
+        repair_goal.get("last_evaluation")
+        if isinstance(repair_goal, dict) and isinstance(repair_goal.get("last_evaluation"), dict)
+        else {}
+    )
+    goal_control_action = str(goal_evaluation.get("control_action") or "").strip()
+    if repair_goal_active and request_target_mismatch:
+        should_dispatch = True
+        trigger = "repair_context_target_mismatch"
+        rationale = [
+            "active repair custody is using a queued request whose exact plan/stage identity disagrees "
+            f"with authoritative target state: request={request_plan!r}/{request_stage!r}, "
+            f"current={observed_plan!r}/{observed_stage!r}; a live owner cannot suppress replan"
+        ]
+    elif repair_goal_active and goal_control_action == "replan":
+        should_dispatch = True
+        trigger = "repair_goal_circuit_breaker"
+        rationale = [
+            "durable repair goal recorded deterministic repeated owner failure and explicitly requires replan"
+        ]
     if repair_goal_active and not repair_goal_owner_live:
         should_dispatch = True
         trigger = "repair_goal_owner_missing"
@@ -1445,6 +1512,9 @@ def _meta_repair_summary(
             "status": _redact_scalar(repair_goal.get("status") if isinstance(repair_goal, dict) else ""),
             "owner_live": repair_goal_owner_live,
             "checkpoint_digest": _redact_scalar(repair_goal.get("checkpoint_digest") if isinstance(repair_goal, dict) else ""),
+            "control_action": _redact_scalar(goal_control_action),
+            "request_id": _redact_scalar(request_id),
+            "request_target_mismatch": request_target_mismatch,
         },
         "meta_record_count": len(meta_refs or []),
         "meta_run_log_count": len(run_refs),
