@@ -61,6 +61,22 @@ def _text(value: object, limit: int = 4000) -> str:
     return str(value or "")[:limit]
 
 
+def _summary_items(value: object) -> list[object]:
+    """Normalize legacy report fields without guessing away their evidence.
+
+    Repair reports have historically emitted ``what_tried`` and ``validation``
+    as lists, mappings, or scalar strings.  Context construction is a custody
+    boundary: a new producer shape must stay visible to the investigator, but
+    it must never crash the constructor and strand the repair goal.
+    """
+
+    if value in (None, "", [], {}):
+        return []
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return list(value)
+    return [value]
+
+
 def _attempt_summary(value: Mapping[str, Any]) -> dict[str, Any]:
     report = value.get("dev_report") if isinstance(value.get("dev_report"), Mapping) else {}
     return {
@@ -76,9 +92,11 @@ def _attempt_summary(value: Mapping[str, Any]) -> dict[str, Any]:
         "classification": _text(report.get("classification"), 300),
         "what_tried": [
             _text(item, 1000)
-            for item in (value.get("dev_summary") or report.get("what_tried") or [])[-8:]
+            for item in _summary_items(value.get("dev_summary") or report.get("what_tried"))[-8:]
         ],
-        "validation": [_text(item, 1000) for item in (report.get("validation") or [])[-8:]],
+        "validation": [
+            _text(item, 1000) for item in _summary_items(report.get("validation"))[-8:]
+        ],
         "pushed_commit": _text(value.get("dev_fix_sha") or report.get("pushed_commit"), 100),
         "outcome": _text(value.get("outcome") or value.get("status"), 300),
     }

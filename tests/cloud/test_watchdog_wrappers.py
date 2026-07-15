@@ -9223,6 +9223,27 @@ def test_launch_chain_tick_dispatches_meta_repair_on_model_launch_trigger(tmp_pa
     assert "trigger=model_tool_launch_failure" in paths["log_path"].read_text(encoding="utf-8")
 
 
+def test_launch_chain_tick_dispatches_meta_repair_on_l1_context_custody_failure(
+    tmp_path: Path,
+) -> None:
+    paths = _prepare_meta_repair_launch_chain_tick_fixture(
+        tmp_path,
+        payload_overrides={
+            "outcome": "fixer_infrastructure_failure",
+            "investigation": {
+                "status": "failed",
+                "failure_phase": "context_construction",
+                "reason": "bounded repair investigation context construction failed",
+            },
+        },
+    )
+    result = _run_launch_chain_tick_meta_repair_script(paths)
+    assert result.returncode == 0, result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "trigger=l1_custody_failure" in paths["log_path"].read_text(encoding="utf-8")
+
+
 def test_launch_chain_tick_does_not_treat_stopped_health_as_model_launch_failure(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,
@@ -13305,6 +13326,8 @@ def test_watchdog_unowned_genuinely_stuck_goal_still_dispatches_one_l1_owner(
 log() { printf '%s\n' "$*" >> "$LOG"; }
 report_item() { :; }
 repair_goal_watchdog_status() { printf 'active_unowned\tgoal-stuck\tworker is absent and checkpoint is frozen\tinvestigate\n'; }
+session_health_status() { printf 'stopped\n'; }
+compute_meta_repair_trigger() { printf 'NO_TRIGGER\n'; }
 repair_unintended_stop() {
   printf '%s\t%s\t%s\n' "$ARNOLD_REPAIR_RETRY_GOAL_ID" "$ARNOLD_REPAIR_RETRY_GOAL_PATH" "$ARNOLD_REPAIR_LAUNCH_DESCRIPTION" >> "$DISPATCH_PATH"
 }
@@ -13319,6 +13342,45 @@ repair_unintended_stop() {
     dispatches = dispatch_path.read_text(encoding="utf-8").splitlines()
     assert len(dispatches) == 1
     assert dispatches[0].startswith(f"goal-stuck\t{goal_path}\tInvestigate then repair unowned goal goal-stuck")
+
+
+def test_watchdog_routes_unowned_goal_with_l1_custody_failure_to_l2(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch.log"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={sys.executable!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+report_item() { :; }
+repair_goal_watchdog_status() { printf 'active_unowned\tgoal-stuck\tcontext constructor failed\tinvestigate\n'; }
+session_health_status() { printf 'stopped\n'; }
+compute_meta_repair_trigger() { printf 'TRIGGER:l1_custody_failure\n'; }
+dispatch_meta_repair() { REPAIR_DISPATCH_RESULT=dispatched; printf 'l2\n' >> "$DISPATCH_PATH"; return 0; }
+repair_unintended_stop() { printf 'l1\n' >> "$DISPATCH_PATH"; }
+""".strip(),
+            f"launch_chain_tick custody-control-plane {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert dispatch_path.read_text(encoding="utf-8").splitlines() == ["l2"]
+    assert "L2 now has custody" in log_path.read_text(encoding="utf-8")
 
 
 def test_two_stage_repair_fails_closed_before_mutating_fixer_and_is_described() -> None:

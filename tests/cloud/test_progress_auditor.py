@@ -3400,6 +3400,80 @@ class TestLiveSignalFiltering:
         assert "repair_without_valid_investigation:" in reason_text
         assert findings["findings"][0]["repair_data_summary"]["investigation_summary"]["status"] == "missing"
 
+    def test_gather_routes_l1_context_constructor_failure_with_exact_reason(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "latest_failure": {
+                        "kind": "quality_gate_blocked",
+                        "message": "T24 remains blocked",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}, {"label": "m2"}],
+                    "completed": [{"label": "m1", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "fixer_infrastructure_failure",
+                    "attempts": [{"attempt_id": 15, "outcome": "fixer_infrastructure_failure"}],
+                    "investigation": {
+                        "status": "failed",
+                        "failure_phase": "context_construction",
+                        "reason": "bounded repair investigation context construction failed",
+                        "error_excerpt": "TypeError: unhashable type: 'slice'",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        reason_text = " ".join(finding["reasons"])
+        assert "repair_without_valid_investigation:" in reason_text
+        assert "bounded repair investigation context construction failed" in reason_text
+        assert finding["repair_data_summary"]["investigation_summary"]["status"] == "invalid"
+
     def test_gather_flags_complete_repair_with_incomplete_chain(self, tmp_path: Path) -> None:
         """The exact false-success artifact must be visible to the L3 prompt."""
         workspace = tmp_path / "workspace"

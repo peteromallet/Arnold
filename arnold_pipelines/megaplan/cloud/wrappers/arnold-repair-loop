@@ -78,6 +78,7 @@ REPAIR_LOCK_DIR="${CLOUD_WATCHDOG_REPAIR_LOCK_DIR:-$MARKER_DIR/${SAFE_SESSION}.r
 INVESTIGATION_CONTEXT_PATH="$RUN_DIR/repair-investigation-context.json"
 INVESTIGATOR_PROMPT_PATH="$RUN_DIR/repair-investigator-prompt.md"
 INVESTIGATOR_RECEIPT_PATH="$RUN_DIR/repair-investigator-receipt.json"
+INVESTIGATION_BUILD_ERROR_PATH="$RUN_DIR/repair-investigation-context-error.log"
 
 load_resident_delegation_context() {
   local encoded rc
@@ -6168,12 +6169,62 @@ print(json.dumps({
 PY
 }
 
+persist_repair_investigation_failure() {
+  require_repair_lock_held
+  local failure_phase="$1"
+  local reason="$2"
+  local error_path="${3:-}"
+  local context_digest="${4:-}"
+  local investigator_run_id="${5:-}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" \
+    "$failure_phase" "$reason" "$error_path" "$context_digest" "$investigator_run_id" <<'PY' >>"$LOG" 2>&1
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
+
+(
+    data_path,
+    context_path,
+    receipt_path,
+    failure_phase,
+    reason,
+    error_path,
+    digest,
+    run_id,
+) = sys.argv[1:]
+error_excerpt = ""
+if error_path:
+    try:
+        error_excerpt = pathlib.Path(error_path).read_text(
+            encoding="utf-8", errors="replace"
+        )[-4000:]
+    except OSError:
+        pass
+payload = load_json(pathlib.Path(data_path), default={})
+payload["investigation"] = {
+    "status": "failed",
+    "failure_phase": failure_phase,
+    "reason": reason,
+    "error_path": error_path,
+    "error_excerpt": error_excerpt,
+    "context_path": context_path,
+    "context_digest": digest,
+    "receipt_path": receipt_path,
+    "investigator_run_id": run_id,
+    "bounded": True,
+}
+save_repair_data(pathlib.Path(data_path), payload)
+PY
+}
+
 run_repair_investigator_turn() {
   require_repair_lock_held
   local request_path context_digest run_id_file investigator_run_id rc investigator_timeout recommended_action
   local -a parent_args
   request_path="$REPAIR_QUEUE_DIR/requests/${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-missing}.json"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+  if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
     arnold_pipelines.megaplan.cloud.repair_investigation build \
     --workspace "$WORKSPACE" \
     --session "$SESSION" \
@@ -6181,11 +6232,17 @@ run_repair_investigator_turn() {
     --repair-data "$DATA_FILE" \
     --request-path "$request_path" \
     --goal-path "$ARNOLD_REPAIR_GOAL_PATH" \
-    --output "$INVESTIGATION_CONTEXT_PATH" >>"$LOG" 2>&1 || {
-      repair_data_set_outcome "fixer_infrastructure_failure"
-      log "bounded repair investigation context build failed session=$SESSION"
-      return 1
-    }
+    --output "$INVESTIGATION_CONTEXT_PATH" >"$INVESTIGATION_BUILD_ERROR_PATH" 2>&1; then
+    redact_file_in_place "$INVESTIGATION_BUILD_ERROR_PATH"
+    cat "$INVESTIGATION_BUILD_ERROR_PATH" >>"$LOG"
+    repair_data_set_outcome "fixer_infrastructure_failure"
+    persist_repair_investigation_failure \
+      "context_construction" \
+      "bounded repair investigation context construction failed" \
+      "$INVESTIGATION_BUILD_ERROR_PATH"
+    log "bounded repair investigation context build failed session=$SESSION error=$INVESTIGATION_BUILD_ERROR_PATH"
+    return 1
+  fi
   context_digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$INVESTIGATION_CONTEXT_PATH")"
   cat > "$INVESTIGATOR_PROMPT_PATH" <<EOF
 You are the read-only investigator for automatic repair session $SESSION.
@@ -6246,24 +6303,10 @@ EOF
       --receipt "$INVESTIGATOR_RECEIPT_PATH" \
       --context-digest "$context_digest" >>"$LOG" 2>&1; then
     repair_data_set_outcome "fixer_infrastructure_failure"
-    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
-      "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY' >>"$LOG" 2>&1
-import pathlib
-import sys
-from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
-data_path, context_path, receipt_path, digest, run_id = sys.argv[1:]
-payload = load_json(pathlib.Path(data_path), default={})
-payload["investigation"] = {
-    "status": "failed",
-    "reason": "investigator failed or returned no valid receipt",
-    "context_path": context_path,
-    "context_digest": digest,
-    "receipt_path": receipt_path,
-    "investigator_run_id": run_id,
-    "bounded": True,
-}
-save_repair_data(pathlib.Path(data_path), payload)
-PY
+    persist_repair_investigation_failure \
+      "investigator_dispatch_or_validation" \
+      "investigator failed or returned no valid receipt" \
+      "" "$context_digest" "$investigator_run_id"
     log "repair investigator failed or returned an invalid receipt session=$SESSION run_id=${investigator_run_id:-unknown}"
     return 1
   fi

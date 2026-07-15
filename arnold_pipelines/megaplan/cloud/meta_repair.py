@@ -739,6 +739,7 @@ def classify_repair_system_failure(
     semantic_fingerprints: Sequence[str] = (),
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
+    has_l1_custody_failure: bool = False,
     partial_liveness_ticks: int = 0,
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
@@ -857,6 +858,21 @@ def classify_repair_system_failure(
         return MetaRepairClassification(
             session=session,
             trigger=MetaRepairTrigger.REPAIR_TIMEOUT,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
+
+    # A failed L1 investigation/context/receipt boundary is itself a repair
+    # system custody failure.  Route it immediately instead of spending three
+    # deterministic retries on the same unreachable repair path.
+    if has_l1_custody_failure:
+        rationale.append(
+            "ordinary repair could not establish a valid investigation/context custody handoff"
+        )
+        return MetaRepairClassification(
+            session=session,
+            trigger=MetaRepairTrigger.L1_CUSTODY_FAILURE,
             rationale=tuple(rationale),
             evidence=deepcopy(dict(evidence)) if evidence else {},
             attempted_at=now.isoformat(),
@@ -2406,6 +2422,7 @@ def evaluate_meta_repair_triggers(
     semantic_fingerprints: Sequence[str] = (),
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
+    has_l1_custody_failure: bool = False,
     partial_liveness_ticks: int = 0,
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
@@ -2450,6 +2467,7 @@ def evaluate_meta_repair_triggers(
         semantic_fingerprints=semantic_fingerprints,
         has_state_inspection_error=has_state_inspection_error,
         has_model_tool_launch_error=has_model_tool_launch_error,
+        has_l1_custody_failure=has_l1_custody_failure,
         partial_liveness_ticks=partial_liveness_ticks,
         discord_delivery_failed=discord_delivery_failed,
         discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,

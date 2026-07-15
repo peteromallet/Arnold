@@ -670,6 +670,30 @@ class TestClassifyStateInspectionFailure:
         assert result.trigger is None
 
 
+class TestClassifyL1CustodyFailure:
+    def test_context_or_investigation_failure_routes_immediately_to_l2(self) -> None:
+        result = classify_repair_system_failure(
+            session="custody-control-plane-20260714",
+            repair_outcome="fixer_infrastructure_failure",
+            has_l1_custody_failure=True,
+        )
+        assert result.trigger == MetaRepairTrigger.L1_CUSTODY_FAILURE
+        assert result.should_dispatch is True
+        assert "investigation/context custody handoff" in result.rationale[0]
+
+    def test_evaluate_passes_l1_custody_failure_to_classifier(self, tmp_path: Path) -> None:
+        repair_root = _make_session_dir(tmp_path, "l1-custody")
+        classification, prompt = evaluate_meta_repair_triggers(
+            session="l1-custody",
+            repair_data_dir=repair_root,
+            repair_outcome="fixer_infrastructure_failure",
+            has_l1_custody_failure=True,
+        )
+        assert classification.trigger == MetaRepairTrigger.L1_CUSTODY_FAILURE
+        assert prompt is not None
+        assert "l1_custody_failure" in prompt
+
+
 class TestClassifyModelToolLaunchFailure:
     def test_launch_error_triggers(self) -> None:
         result = classify_repair_system_failure(
