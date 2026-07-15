@@ -564,13 +564,25 @@ def test_queue_inherits_discord_provenance_and_cannot_broaden_authorization(
     monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
     provenance = _discord_provenance()
     _write_predecessor(tmp_path, provenance=provenance)
+    with pytest.raises(
+        subagent.SubagentQueueError, match="must inherit predecessor work_intent"
+    ):
+        subagent.launch_codex_subagent_detached(
+            task="Check the output of this agent and use it to finish the request.",
+            description="Finish the same Discord request",
+            project_dir=str(tmp_path),
+            launch_origin=provenance,
+            task_kind="coding",
+            work_intent="execution",
+            depends_on_run_id=PREDECESSOR_RUN_ID,
+        )
     queued = subagent.launch_codex_subagent_detached(
         task="Check the output of this agent and use it to finish the request.",
         description="Finish the same Discord request",
         project_dir=str(tmp_path),
         launch_origin=provenance,
         task_kind="coding",
-        work_intent="execution",
+        work_intent="auto",
         depends_on_run_id=PREDECESSOR_RUN_ID,
     )
     manifest = json.loads(Path(queued.manifest_path).read_text())
