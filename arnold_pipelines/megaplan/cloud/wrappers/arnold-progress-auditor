@@ -3551,6 +3551,13 @@ def _repair_data_ghost_running_reason(ev):
 
 def _investigation_handoff_reason(ev):
     """Surface automatic repair that mutated or claimed success without investigation."""
+    chain_current = (
+        (ev.get("chain_state_summary") or {}).get("current")
+        if isinstance(ev.get("chain_state_summary"), dict)
+        else {}
+    )
+    if _chain_state_looks_terminal(chain_current):
+        return ""
     repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
     repair = repair if isinstance(repair, dict) else {}
     investigation = repair.get("investigation_summary") if isinstance(repair.get("investigation_summary"), dict) else {}
