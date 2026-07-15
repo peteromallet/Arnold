@@ -282,11 +282,13 @@ def _external_evidence(finding: Mapping[str, Any], chain: Mapping[str, Any]) -> 
             and (expected_pr is None or observed_pr == expected_pr)
         )
     )
-    intentional_wait = bool(
-        pr_state in {"open", "draft", "pending", "queued"}
-        or _text(chain.get("last_state")).lower()
-        in {"awaiting_pr_merge", "awaiting_ci", "ci_pending"}
-    )
+    # An open PR is evidence, not an instruction to wait.  Only the durable
+    # chain state may declare that the chain is intentionally awaiting PR/CI.
+    intentional_wait = _text(chain.get("last_state")).lower() in {
+        "awaiting_pr_merge",
+        "awaiting_ci",
+        "ci_pending",
+    }
     return {
         "applicable": applicable,
         "present": coherent,
@@ -309,25 +311,42 @@ def _fresh_progress(finding: Mapping[str, Any], policy: EscalationPolicy) -> dic
         or active.get("heartbeat_age_min")
         or _mapping(finding.get("current_target")).get("token_heartbeat_age_min")
     )
-    fresh_sources = []
+    acceptance = _mapping(finding.get("acceptance_progress"))
+    accepted_age = _integer(acceptance.get("accepted_event_age_min"))
+    semantic_advanced = acceptance.get("advanced") is True
+    # Log writes and heartbeats prove liveness only.  They must not erase a
+    # semantic stall (the incident emitted hourly drift lines indefinitely).
+    liveness_sources = []
     if event_age is not None and event_age < threshold_min:
-        fresh_sources.append("events")
+        liveness_sources.append("events")
     if log_age is not None and log_age < threshold_min:
-        fresh_sources.append("chain_log")
+        liveness_sources.append("chain_log")
     if token_age is not None and token_age < threshold_min:
-        fresh_sources.append("token_heartbeat")
+        liveness_sources.append("token_heartbeat")
+    fresh_sources = ["acceptance_progress"] if semantic_advanced else []
+    age_candidates = [
+        value
+        for value in (
+            accepted_age,
+            _integer(_mapping(finding.get("repair_data_summary")).get("mtime_age_min")),
+        )
+        if value is not None
+    ]
+    semantic_age = max(age_candidates) if age_candidates else None
     return {
         "fresh": bool(fresh_sources),
         "fresh_sources": fresh_sources,
+        "liveness_sources": liveness_sources,
+        "semantic_advanced": semantic_advanced,
+        "semantic_age_min": semantic_age,
         "threshold_min": threshold_min,
         "events_mtime_age_min": event_age,
         "chain_log_mtime_age_min": log_age,
         "token_heartbeat_age_min": token_age,
         "old_enough": bool(
-            event_age is not None
-            and event_age >= threshold_min
-            and log_age is not None
-            and log_age >= threshold_min
+            not semantic_advanced
+            and semantic_age is not None
+            and semantic_age >= threshold_min
         ),
     }
 
@@ -368,6 +387,11 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         provisional_liveness and (accepted or missing_custody_links)
     )
     recovery_gate_failed = repair_goal.get("recovery_gate_failed") is True
+    active_unowned_goal = bool(
+        repair_goal.get("status") == "active"
+        and repair_goal.get("owner_live") is not True
+        and _text(repair_goal.get("control_action")).lower() != "preserve_live"
+    )
     false_success = recovery_gate_failed or bool(
         outcome in {"complete", "completed", "progressed", "success", "fixed"}
         and _chain_evidence(finding).get("nonterminal")
@@ -388,7 +412,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or retry_used >= 2
         or repeated >= 3
     )
-    failed = bool(false_success or missing_manifest or liveness_without_custody or (accepted and exhausted) or outcome in {
+    failed = bool(active_unowned_goal or false_success or missing_manifest or liveness_without_custody or (accepted and exhausted) or outcome in {
         "repair_timeout",
         "repair_exhausted",
         "failed",
@@ -417,6 +441,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "missing_custody_links": missing_custody_links,
         "provisional_liveness": provisional_liveness,
         "liveness_without_custody": liveness_without_custody,
+        "active_unowned_goal": active_unowned_goal,
     }
 
 
@@ -490,7 +515,16 @@ def classify_true_stall(
         or unresolved_actions
         or chain_state in {"awaiting_human", "awaiting_human_verify"}
     )
-    intent_allowed = resolver_state in _MACHINE_ACTION_STATES
+    goal_actionable = bool(l1.get("active_unowned_goal"))
+    intent_allowed = resolver_state in _MACHINE_ACTION_STATES or goal_actionable
+    repair_goal = _mapping(
+        _mapping(finding.get("meta_repair_summary")).get("repair_goal")
+    )
+    preserve_live = bool(
+        repair_goal.get("status") == "active"
+        and _text(repair_goal.get("control_action")).lower() == "preserve_live"
+    )
+    healthy_live_process = process.get("live") is True
     intentional_wait = bool(explicit_pause or human_gate or external.get("intentional_wait"))
 
     evidence_sources = {
@@ -516,6 +550,10 @@ def classify_true_stall(
         blocks.append("incomplete_or_incoherent_evidence")
     if resolver_state in _INTENTIONAL_WAIT_STATES or intentional_wait:
         blocks.append("intentional_pause_or_human_gate")
+    if preserve_live:
+        blocks.append("preserve_live_repair_goal")
+    if healthy_live_process and not goal_actionable:
+        blocks.append("healthy_live_process")
     if not intent_allowed:
         blocks.append("resolver_did_not_authorize_machine_action")
     if chain.get("terminal") or plan.get("terminal"):

@@ -84,6 +84,25 @@ def test_launch_failure_is_truthful_without_a_manifest(tmp_path: Path) -> None:
 def test_valid_canonical_d9_manifest_is_correlated_and_deduped(tmp_path: Path) -> None:
     queue = tmp_path / ".megaplan" / "repair-queue"
     finding = _true_stall()
+    finding["resolver_state"] = {"canonical_state": "UNKNOWN", "confidence": "low"}
+    finding["chain_state_summary"]["current"].update(
+        {"last_state": "blocked", "pr_number": 255, "pr_state": "open"}
+    )
+    finding["current_target"]["ci_health"] = {
+        "status": "failure", "available": True, "pr_number": 255
+    }
+    finding["repair_custody_summary"]["retry_budget"] = {
+        "claim_retries_used": 0, "claim_retries_remaining": 3
+    }
+    finding["meta_repair_summary"]["repair_goal"] = {
+        "goal_id": "repair-goal-active-unowned",
+        "status": "active",
+        "owner_live": False,
+        "control_action": "investigate",
+    }
+    finding["acceptance_progress"] = {
+        "advanced": False, "accepted_event_age_min": 150
+    }
     manifest_path = tmp_path / "workspace" / "manifest.json"
     calls = 0
 

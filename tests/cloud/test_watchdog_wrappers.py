@@ -3368,6 +3368,8 @@ def test_watchdog_managed_repair_dispatches_pin_the_selected_runtime() -> None:
     assert text.count(
         'route_l1_launch_failure_to_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"'
     ) == 2
+    repair_unintended = text[text.index("repair_unintended_stop() {"):text.index("compare_needs_human_to_resolver() {")]
+    assert "route_l1_launch_failure_to_meta_repair" in repair_unintended
     assert text.index("route_l1_launch_failure_to_meta_repair()") < text.index(
         'log "session requires human review session=$session'
     )
@@ -3452,6 +3454,32 @@ echo "status:$REPAIR_DISPATCH_RESULT"
     ]
     assert "META:l1_launch_failed" in result.stderr
     assert "L2 now has custody" in result.stderr
+
+
+def test_retained_goal_launch_failure_transfers_custody_to_l2() -> None:
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("route_l1_launch_failure_to_meta_repair"),
+            _extract_wrapper_function("repair_unintended_stop"),
+            """
+REPAIR_DISPATCH_RESULT=unavailable
+repair_loop_busy_state() { echo none; }
+repair_unhealthy_session() { REPAIR_DISPATCH_RESULT=launch_failed; return 1; }
+dispatch_meta_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+log() { :; }
+report_item() { echo "$3:$4:$5"; }
+repair_unintended_stop /tmp/report demo-session /tmp/ws /tmp/spec retained_goal_owner_missing
+echo "status:$REPAIR_DISPATCH_RESULT"
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == [
+        "meta_repair:dispatched:L2 took custody after confirmed L1 launch failure",
+        "status:dispatched",
+    ]
 
 
 def test_watchdog_repair_dispatch_is_scoped_per_session() -> None:
@@ -11529,6 +11557,15 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert "between_milestone_cycling" in text
     assert "STALE" in text
     assert "INEFFICIENT" in text
+
+
+def test_progress_auditor_rejects_degenerate_dispatch_windows() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert "math.isfinite(hours) and hours > 0" in text
+    assert "a non-positive or non-finite window is a probe" in text
+    assert "cannot establish health or suppress active repair custody" in text
+    assert "exit 64" in text
 
 
 def test_watchdog_exposes_serialized_audit_recovery_and_paused_guard() -> None:

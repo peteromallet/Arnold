@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan.cloud.repair_goal import (
     ensure_repair_goal,
     evaluate_checkpoint,
     evaluate_repair_goal,
+    next_repair_goal_retry_sequence,
     record_terminal_failure,
 )
 
@@ -20,6 +21,25 @@ from arnold_pipelines.megaplan.cloud.repair_goal import (
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def test_retry_sequence_includes_failed_managed_identity_reservations(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    run_root = workspace / ".megaplan" / "plans" / "resident-subagents"
+    goal = {
+        "goal_id": "repair-goal-stuck",
+        "target": {"workspace": str(workspace)},
+        "owners": [{"run_id": f"owner-{index}"} for index in range(7)],
+    }
+    _write_json(
+        run_root / "managed-automatic-repair-failed" / "manifest.json",
+        {
+            "status": "failed",
+            "launch_idempotency_key": "request:goal:repair-goal-stuck:retry:8",
+        },
+    )
+
+    assert next_repair_goal_retry_sequence(goal) == 9
 
 
 def _target(tmp_path: Path) -> tuple[Path, Path, str, str]:

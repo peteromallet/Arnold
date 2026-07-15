@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -78,6 +79,29 @@ _FRESH_RUNNER_TRANSITION_SECONDS = 180
 _DETERMINISTIC_OWNER_REPEAT_LIMIT = 2
 _DEFAULT_RECOVERY_FOLLOWUP_SECONDS = 30
 _MAX_RECOVERY_FOLLOWUP_SECONDS = 900
+
+
+def next_repair_goal_retry_sequence(goal: Mapping[str, Any]) -> int:
+    """Return an unused retry sequence across owners and durable reservations."""
+
+    owners = goal.get("owners") if isinstance(goal.get("owners"), list) else []
+    sequence = len(owners) + 1
+    goal_id = str(goal.get("goal_id") or "")
+    target = goal.get("target") if isinstance(goal.get("target"), Mapping) else {}
+    workspace = Path(str(target.get("workspace") or ""))
+    run_root = workspace / ".megaplan" / "plans" / "resident-subagents"
+    pattern = re.compile(rf":goal:{re.escape(goal_id)}:retry:(\d+)$")
+    if not goal_id or not run_root.is_dir():
+        return sequence
+    for manifest_path in run_root.glob("managed-automatic-repair-*/manifest.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        match = pattern.search(str(manifest.get("launch_idempotency_key") or ""))
+        if match:
+            sequence = max(sequence, int(match.group(1)) + 1)
+    return sequence
 
 
 def utc_now() -> str:
@@ -1475,6 +1499,7 @@ __all__ = [
     "ensure_repair_goal",
     "evaluate_checkpoint",
     "evaluate_repair_goal",
+    "next_repair_goal_retry_sequence",
     "record_terminal_failure",
     "repair_goal_path",
 ]

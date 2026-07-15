@@ -104,6 +104,20 @@ arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
+if ! "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" - "$AUDIT_WINDOW_HOURS" <<'PY'
+import math
+import sys
+
+try:
+    hours = float(sys.argv[1])
+except (TypeError, ValueError):
+    raise SystemExit(1)
+raise SystemExit(0 if math.isfinite(hours) and hours > 0 else 1)
+PY
+then
+  log "invalid audit evidence window hours=$AUDIT_WINDOW_HOURS; a non-positive or non-finite window is a probe that cannot establish health or suppress active repair custody"
+  exit 64
+fi
 SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
 SUBAGENT_MAX_TOKENS="${MEGAPLAN_AUDIT_SUBAGENT_MAX_TOKENS:-8192}"
 SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
@@ -4319,8 +4333,12 @@ def _plan_evidence(entry):
         ]
     )
 
+    active_repair_goal = (
+        isinstance(meta_repair_summary.get("repair_goal"), dict)
+        and meta_repair_summary["repair_goal"].get("status") == "active"
+    )
     if not recent_v and not _recent_iso(state.get("created_at")):
-        if (state_mtime is None or state_mtime < cutoff) and not events_recent and not chain_recent:
+        if (state_mtime is None or state_mtime < cutoff) and not events_recent and not chain_recent and not active_repair_goal:
             return None
 
     sizes = {}
@@ -6316,12 +6334,22 @@ for finding in findings:
     if next_event and not aggregate_next_event:
         aggregate_next_event = next_event
 
-    # Collect repair dispatch refs from repair-queue paths.
-    workspace = finding.get("workspace") or ""
-    session = finding.get("session") or ""
-    if workspace:
-        repair_queue = str(Path(workspace) / ".megaplan" / "repair-queue")
-        repair_dispatch_refs.append(repair_queue)
+    # A finding is not a dispatch.  Only manifest-proven controller results may
+    # appear in completion evidence as repair custody.
+    escalation = (
+        finding.get("l3_escalation")
+        if isinstance(finding.get("l3_escalation"), dict)
+        else {}
+    )
+    if escalation.get("repair_dispatched") is True:
+        dispatch_ref = (
+            escalation.get("managed_manifest_path")
+            or escalation.get("request_path")
+            or escalation.get("request_id")
+            or ""
+        )
+        if dispatch_ref:
+            repair_dispatch_refs.append(str(dispatch_ref))
 
 # Deduplicate repair dispatch refs.
 repair_dispatch_refs = sorted(set(repair_dispatch_refs))
