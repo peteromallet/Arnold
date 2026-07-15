@@ -13323,6 +13323,77 @@ def test_repair_loop_managed_workers_have_machine_provenance() -> None:
     assert text.count("--query_file=@managed-stdin@") == 2
 
 
+def test_repair_loop_provisional_liveness_is_transport_non_success() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    for outcome in (
+        'repair_data_set_outcome "partial_liveness"',
+        'repair_data_set_outcome "live_with_fresh_activity"',
+    ):
+        for occurrence in text.split(outcome)[1:]:
+            assert "exit 75" in occurrence[:400]
+    assert "verified recovery session=$SESSION" not in text
+
+
+def test_repair_loop_escalation_plainly_names_stopped_motion_and_gate() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    assert "Megaplan forward motion stopped; repair unresolved" in text
+    assert "This is not a successful recovery" in text
+    assert '"label": "Forward motion"' in text
+    assert '"label": "Approval/authorization gate"' in text
+    assert "No genuine human approval or authorization gate is proven" in text
+    assert "do not report success" in text
+
+
+def test_repair_loop_escalation_renders_exact_authorization_gate(tmp_path: Path) -> None:
+    program = _extract_repair_program(
+        "send_discord_escalation",
+        'python3 - "$DATA_FILE" "$context_path" > "$RUN_DIR/discord-payload.json" <<\'PY\'',
+    )
+    data_path = tmp_path / "repair-data.json"
+    context_path = tmp_path / "context.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": "/workspace/demo",
+                "spec": "/workspace/demo/chain.yaml",
+                "outcome": "repair_exhausted",
+                "current_failure_context": {
+                    "user_action_context": {
+                        "unresolved_user_actions": [
+                            {
+                                "id": "approve-release",
+                                "prompt": "Human approval required to merge PR #250",
+                            }
+                        ]
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    context_path.write_text(json.dumps({"escalation_id": "esc-1"}), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-", str(data_path), str(context_path)],
+        input=program,
+        text=True,
+        capture_output=True,
+        check=True,
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+    )
+    payload = json.loads(result.stdout)
+    fields = {item["label"]: item["value"] for item in payload["fields"]}
+
+    assert fields["Forward motion"].startswith("STOPPED")
+    assert fields["Repair outcome"] == "repair_exhausted"
+    assert fields["Approval/authorization gate"] == "Human approval required to merge PR #250"
+    assert "Provide the exact approval or authorization" in payload["next_action"]
+
+
 def test_repair_loop_routes_launch_contract_failure_above_chain_breaker() -> None:
     text = _wrapper("arnold-repair-loop")
 

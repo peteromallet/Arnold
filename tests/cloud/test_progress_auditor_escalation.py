@@ -220,6 +220,25 @@ def test_live_heartbeat_is_not_progress_and_does_not_hide_true_stall() -> None:
     ]
 
 
+def test_partial_liveness_with_unclaimed_request_is_l1_context_failure() -> None:
+    finding = _true_stall()
+    finding["repair_data_summary"]["outcome"] = "partial_liveness"
+    finding["repair_custody_summary"]["retry_budget"] = {
+        "claim_retries_used": 0,
+        "claim_retries_remaining": 3,
+    }
+    finding["deterministic_retry_evidence"]["count"] = 2
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is True
+    l1 = gate["custody_walk"]["L1"]["failure"]
+    assert l1["provisional_liveness"] is True
+    assert l1["liveness_without_custody"] is True
+    assert gate["custody_walk"]["first_broken_axis"] == "CONTEXT"
+    assert gate["custody_walk"]["missed_by_layer"] == "L2"
+
+
 def test_l1_false_success_is_caught_and_l2_miss_remains_required() -> None:
     finding = _true_stall()
     finding["repair_data_summary"]["outcome"] = "complete"

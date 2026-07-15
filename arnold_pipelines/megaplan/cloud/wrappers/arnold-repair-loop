@@ -5184,8 +5184,9 @@ exit_if_repair_target_recovered() {
     return 0
   fi
   repair_data_set_outcome "live_with_fresh_activity"
-  log "repair target has fresh activity at $phase; verified recovery session=$SESSION"
-  exit 0
+  log "repair target has fresh activity at $phase; provisional liveness only session=$SESSION"
+  log "original blocker remains unverified; repair is non-successful session=$SESSION"
+  exit 75
 }
 
 recover_blocked_after_dev_fix_if_possible() {
@@ -6336,10 +6337,39 @@ from arnold_pipelines.megaplan.cloud.redact import redact_payload
 
 data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 iterations = data.get("iterations") or []
+context = data.get("current_failure_context") or {}
+resolver = context.get("resolver_output") or data.get("target") or {}
+user_actions = (context.get("user_action_context") or {}).get("unresolved_user_actions") or []
+authority_failure = context.get("resume_authority_failure") or resolver.get("resume_authority_failure") or {}
+needs_human = resolver.get("needs_human") or {}
+gate_parts = []
+for action in user_actions:
+    if isinstance(action, dict):
+        value = action.get("prompt") or action.get("summary") or action.get("title") or action.get("id")
+        if value:
+            gate_parts.append(str(value).strip())
+if isinstance(authority_failure, dict) and authority_failure:
+    value = authority_failure.get("reason") or authority_failure.get("code")
+    if value:
+        gate_parts.append(str(value).strip())
+if isinstance(needs_human, dict) and needs_human.get("present"):
+    value = needs_human.get("summary") or needs_human.get("human_gate")
+    if value:
+        gate_parts.append(str(value).strip())
+gate_parts = list(dict.fromkeys(value for value in gate_parts if value))
+gate = "; ".join(gate_parts[:3])
+outcome = str(data.get("outcome") or "repair_exhausted")
 fields = [
     {"label": "Session", "value": data.get("session"), "style": "code"},
     {"label": "Workspace", "value": data.get("workspace"), "style": "code"},
     {"label": "Spec", "value": data.get("spec"), "style": "code"},
+    {"label": "Forward motion", "value": "STOPPED — the original run has not resumed accepted progress", "style": "code"},
+    {"label": "Repair outcome", "value": outcome, "style": "code"},
+    {
+        "label": "Approval/authorization gate",
+        "value": gate or "No genuine human approval or authorization gate is proven; this remains an unresolved fixer failure.",
+        "style": "code",
+    },
 ]
 for item in iterations:
     fields.append(
@@ -6357,11 +6387,15 @@ for item in iterations:
         }
     )
 payload = {
-    "title": "Watchdog repair loop exhausted; needs human",
-    "summary": "The bounded 3-iteration repair loop could not get the run running.",
+    "title": "Megaplan forward motion stopped; repair unresolved",
+    "summary": "The bounded diagnostic ended without resolving the original blocker. This is not a successful recovery.",
     "fields": fields,
     "escalation_id": json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")).get("escalation_id"),
-    "next_action": f"Read {sys.argv[1]} and intervene manually.",
+    "next_action": (
+        f"Provide the exact approval or authorization named above, then re-trigger ordinary repair. Evidence: {sys.argv[1]}"
+        if gate
+        else f"Continue automated fixer escalation; do not report success. Evidence: {sys.argv[1]}"
+    ),
 }
 print(json.dumps(redact_payload(payload)))
 PY
@@ -6539,9 +6573,9 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
     repair_data_set_outcome "partial_liveness"
-    log "repair target already running; no dev-fix needed session=$SESSION"
-    log "repair target already running; verified recovery session=$SESSION"
-    exit 0
+    log "repair target already running; provisional liveness only session=$SESSION"
+    log "original blocker remains unverified; repair is non-successful session=$SESSION"
+    exit 75
   fi
 fi
 
@@ -6857,7 +6891,7 @@ if repair_source_initiative_if_possible; then
     repair_data_record_mechanical "1" "0" "running" "source initiative restored; mechanical launch came up and held"
     repair_data_set_outcome "partial_liveness"
     log "repair loop reached live_with_fresh_activity after source initiative repair"
-    exit 0
+    exit 75
   fi
 fi
 
@@ -6870,7 +6904,7 @@ if repair_source_workspace_if_possible; then
     repair_data_record_mechanical "0" "0" "running" "source workspace restored; mechanical launch came up and held"
     repair_data_set_outcome "partial_liveness"
     log "repair loop reached live_with_fresh_activity after source workspace repair"
-    exit 0
+    exit 75
   fi
 fi
 
@@ -6882,7 +6916,7 @@ if repair_dependency_manifests_if_possible; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
     repair_data_set_outcome "partial_liveness"
     log "repair loop reached live_with_fresh_activity after dependency manifest repair"
-    exit 0
+    exit 75
   fi
 fi
 
@@ -6896,7 +6930,7 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
     repair_data_set_outcome "partial_liveness"
     log "repair loop reached live_with_fresh_activity after stale-state clear"
-    exit 0
+    exit 75
   fi
 fi
 
@@ -6907,7 +6941,7 @@ if [[ "${mechanical_status:-}" == "running" ]]; then
   repair_data_record_mechanical "0" "0" "running" "baseline mechanical relaunch came up and held"
   repair_data_set_outcome "partial_liveness"
   log "repair loop reached live_with_fresh_activity via baseline mechanical relaunch"
-  exit 0
+  exit 75
 fi
 
 GLM_MODEL=""
@@ -6985,7 +7019,7 @@ for iteration in 1 2 3; do
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
     repair_data_set_outcome "partial_liveness"
     log "repair loop reached live_with_fresh_activity mechanically iteration=$iteration"
-    exit 0
+    exit 75
   fi
 
   if [[ -z "${KIMI_API_KEY:-}" ]]; then
@@ -6998,7 +7032,7 @@ for iteration in 1 2 3; do
   if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
     repair_data_set_outcome "partial_liveness"
     log "repair loop reached live_with_fresh_activity via Kimi iteration=$iteration"
-    exit 0
+    exit 75
   fi
   exit_if_repair_target_complete "iteration-$iteration-post-kimi"
 done

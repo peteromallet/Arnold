@@ -93,11 +93,10 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.L1_CUSTODY_FAILURE: 7,
 }
 
-# Outcomes that suppress another meta-repair dispatch.  Fresh activity remains
-# provisional recovery evidence, but it is not itself a repair-system failure.
-_META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES | frozenset(
-    {LIVE_WITH_FRESH_ACTIVITY}
-)
+# Outcomes that suppress another meta-repair dispatch.  Fresh activity is
+# provisional recovery evidence only: it must not hide an unclaimed or still
+# blocked ordinary repair.
+_META_REPAIR_ACCEPTED_SUCCESS_OUTCOMES = SUCCESS_OUTCOMES
 
 
 def extract_reported_repair_custody(

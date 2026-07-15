@@ -1442,12 +1442,14 @@ def _classify_from_recovery_view(
             rationale.append(
                 "recovery view: active request/blocker identity is incomplete; refusing L1"
             )
-        # Check active repair using lock/process evidence only (NOT legacy custody,
-        # which may disagree with the recovery view).  The recovery view already
-        # classified this as repairable; do not let a stale legacy custody bucket
-        # override that classification.
+        # Cross-check runtime liveness against durable custody.  A live process
+        # alone cannot own the current request/blocker pair.
         elif lock_evidence is not None or process_evidence is not None:
-            if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody={}):
+            if _has_active_repair(
+                lock_evidence=lock_evidence,
+                process_evidence=process_evidence,
+                custody=custody,
+            ):
                 decision = DISPATCH_DECISION_REPAIRING
                 dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
                 rationale.append("recovery view: repairable but active repair ownership exists")
@@ -1962,13 +1964,12 @@ NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
 ENVIRONMENT_GONE = "environment_gone"  # wiped workspace/spec — ops concern, not repairable
 
-SUCCESS_OUTCOMES: frozenset[str] = frozenset(
-    {COMPLETE, PROGRESSED, TRUE_HUMAN_BLOCKER}
-)
+SUCCESS_OUTCOMES: frozenset[str] = frozenset({COMPLETE, PROGRESSED})
 
 NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {
         LIVE_WITH_FRESH_ACTIVITY,
+        TRUE_HUMAN_BLOCKER,
         PARTIAL_LIVENESS,
         REPAIRING,
         REPAIR_TIMEOUT,
@@ -1985,9 +1986,11 @@ ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
 def is_success_outcome(outcome: str) -> bool:
     """Return True when *outcome* is a terminal repair success.
 
-    Only ``complete``, ``progressed``, and ``true_human_blocker`` are
-    considered success. Liveness/activity-only outcomes are explicitly
-    excluded because they do not prove the original blocker cleared.
+    Only ``complete`` and ``progressed`` are considered success.  A genuine
+    human blocker is terminal, but remains non-successful because forward
+    motion stopped and an external approval or authorization is still needed.
+    Liveness/activity-only outcomes are likewise excluded because they do not
+    prove the original blocker cleared.
     """
     return outcome in SUCCESS_OUTCOMES
 
@@ -3672,6 +3675,16 @@ def _has_active_repair(
     process_evidence: Mapping[str, Any] | None,
     custody: Mapping[str, Any],
 ) -> bool:
+    """Return whether repair custody is durably owned.
+
+    A live process or heartbeat is advisory liveness evidence, not custody.
+    Treating it as ownership allows an identity-free legacy process to suppress
+    the request that should claim the current blocker.  Durable projected
+    request/claim or attempt evidence is authoritative; an acquired lock is a
+    bounded compatibility signal.  Process evidence never establishes custody
+    on its own.
+    """
+
     if durable_repair_active(custody):
         return True
 
@@ -3681,11 +3694,7 @@ def _has_active_repair(
     if lock_status in {"acquired", "busy", "claimed", "already_claimed"}:
         return True
 
-    process_payload = _as_mapping(process_evidence)
-    process_status = _as_text(process_payload.get("status"))
-    if process_payload.get("active") is True or process_payload.get("live") is True:
-        return True
-    return process_status in {"active", "busy", "claimed", "repairing", "running"}
+    return False
 
 
 def _is_known_repairable_shape(

@@ -1196,13 +1196,12 @@ def test_outcome_constants_are_well_defined() -> None:
 
 
 def test_success_outcomes_match_planned_lattice() -> None:
-    assert repair_contract.SUCCESS_OUTCOMES == frozenset(
-        {"complete", "progressed", "true_human_blocker"}
-    )
+    assert repair_contract.SUCCESS_OUTCOMES == frozenset({"complete", "progressed"})
 
 
 def test_non_success_outcomes_include_liveness_and_exhaustion() -> None:
     assert "live_with_fresh_activity" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert "true_human_blocker" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "partial_liveness" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repair_timeout" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repair_exhausted" in repair_contract.NON_SUCCESS_OUTCOMES
@@ -1230,7 +1229,7 @@ def test_all_outcomes_union_covers_both_sets() -> None:
     assert repair_contract.SUCCESS_OUTCOMES.isdisjoint(repair_contract.NON_SUCCESS_OUTCOMES)
 
 
-def test_is_success_outcome_only_accepts_three_values() -> None:
+def test_is_success_outcome_only_accepts_resolution_values() -> None:
     for outcome in repair_contract.ALL_OUTCOMES:
         expected = outcome in repair_contract.SUCCESS_OUTCOMES
         assert repair_contract.is_success_outcome(outcome) == expected, (
@@ -1249,6 +1248,12 @@ def test_live_with_fresh_activity_constant_loadable_but_non_success() -> None:
     assert repair_contract.LIVE_WITH_FRESH_ACTIVITY not in repair_contract.SUCCESS_OUTCOMES
     assert repair_contract.LIVE_WITH_FRESH_ACTIVITY in repair_contract.NON_SUCCESS_OUTCOMES
     assert not repair_contract.is_success_outcome(repair_contract.LIVE_WITH_FRESH_ACTIVITY)
+
+
+def test_true_human_blocker_is_terminal_but_non_success() -> None:
+    assert repair_contract.TRUE_HUMAN_BLOCKER in repair_contract.NON_SUCCESS_OUTCOMES
+    assert repair_contract.is_terminal_outcome(repair_contract.TRUE_HUMAN_BLOCKER)
+    assert not repair_contract.is_success_outcome(repair_contract.TRUE_HUMAN_BLOCKER)
 
 
 def test_is_terminal_outcome() -> None:
@@ -1643,6 +1648,53 @@ def test_recovery_view_dispatches_repairable_with_request() -> None:
     assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_L1
     assert decision.custody_bucket == "repairable"
     assert any("recovery view" in r for r in decision.rationale)
+
+
+def test_recovery_view_does_not_treat_bare_liveness_as_repair_custody() -> None:
+    recovery = _make_recovery_view_dict(custody_bucket="repairable")
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "active_claim_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        process_evidence={"live": True, "status": "running"},
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+        },
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_L1
+
+
+def test_recovery_view_accepts_liveness_only_with_durable_claim() -> None:
+    recovery = _make_recovery_view_dict(custody_bucket="repairable")
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "active_claim_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        process_evidence={"live": True, "status": "running"},
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+        },
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_REPAIRING
 
 
 def test_recovery_view_refuses_l1_when_legacy_request_has_no_blocker_identity() -> None:

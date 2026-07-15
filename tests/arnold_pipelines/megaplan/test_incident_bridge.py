@@ -256,7 +256,7 @@ def test_noop_save_preserves_index_but_not_events(tmp_path: Path) -> None:
         (COMPLETE, "verified_recovered", "repair_system", "recovered"),
         (PROGRESSED, "verified_recovered", "repair_system", "recovered"),
         (LIVE_WITH_FRESH_ACTIVITY, "repair_attempt", "immediate_repair", LIVE_WITH_FRESH_ACTIVITY),
-        (TRUE_HUMAN_BLOCKER, "verified_recovered", "repair_system", "recovered"),
+        (TRUE_HUMAN_BLOCKER, "repair_attempt", "immediate_repair", TRUE_HUMAN_BLOCKER),
         # Non-terminal repairing → immediate_repair attempt with outcome="attempted"
         (REPAIRING, "repair_attempt", "immediate_repair", "attempted"),
         # Terminal non-success → immediate_repair attempt with original outcome

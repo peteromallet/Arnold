@@ -839,16 +839,15 @@ class TestNonTriggerCases:
         assert result.should_dispatch is False
         assert "terminal success outcome" in result.rationale[0]
 
-    def test_success_outcome_suppresses_stale_launch_failure(self) -> None:
+    def test_provisional_liveness_does_not_suppress_launch_failure(self) -> None:
         result = classify_repair_system_failure(
             session="s19-success-launch",
             repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
             has_model_tool_launch_error=True,
             partial_liveness_ticks=4,
         )
-        assert result.trigger is None
-        assert result.should_dispatch is False
-        assert "terminal success outcome" in result.rationale[0]
+        assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
+        assert result.should_dispatch is True
 
     def test_still_repairing_no_trigger(self) -> None:
         result = classify_repair_system_failure(
@@ -935,13 +934,13 @@ class TestClassificationPriority:
         )
         assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
 
-    def test_success_outcome_beats_launch_failure(self) -> None:
+    def test_provisional_liveness_does_not_beat_launch_failure(self) -> None:
         result = classify_repair_system_failure(
             session="s27-success",
             repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
             has_model_tool_launch_error=True,
         )
-        assert result.trigger is None
+        assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
 
 
 # ---------------------------------------------------------------------------
@@ -1416,7 +1415,7 @@ class TestEvaluateMetaRepairTriggers:
         assert classification.should_dispatch is False
         assert prompt is None
 
-    def test_live_with_fresh_activity_suppresses_stale_launch_trigger(
+    def test_live_with_fresh_activity_does_not_suppress_launch_trigger(
         self, tmp_path: Path
     ) -> None:
         repair_root = _make_session_dir(tmp_path, "eval-s2-live-launch")
@@ -1456,9 +1455,10 @@ class TestEvaluateMetaRepairTriggers:
             },
             load_evidence=True,
         )
-        assert classification.should_dispatch is False
-        assert classification.trigger is None
-        assert prompt is None
+        assert classification.should_dispatch is True
+        assert classification.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
+        assert prompt is not None
+        assert "model_tool_launch_failure" in prompt
 
     def test_loads_evidence_when_requested(self, tmp_path: Path) -> None:
         repair_root = _make_session_dir(tmp_path, "eval-s3")

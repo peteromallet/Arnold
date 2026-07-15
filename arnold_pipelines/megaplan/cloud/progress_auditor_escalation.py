@@ -403,6 +403,11 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     if retry_remaining is None:
         retry_remaining = _integer(retry.get("claim_retries_remaining"))
     outcome = _text(repair.get("outcome")).lower()
+    provisional_liveness = outcome in {
+        "partial_liveness",
+        "live_with_fresh_activity",
+    }
+    liveness_without_custody = bool(provisional_liveness and accepted)
     false_success = bool(
         outcome in {"complete", "completed", "progressed", "success", "fixed"}
         and _chain_evidence(finding).get("nonterminal")
@@ -423,12 +428,19 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or retry_used >= 2
         or repeated >= 3
     )
-    failed = bool(false_success or missing_manifest or (accepted and exhausted) or outcome in {
-        "repair_timeout",
-        "repair_exhausted",
-        "failed",
-        "failure",
-    })
+    failed = bool(
+        false_success
+        or missing_manifest
+        or liveness_without_custody
+        or (accepted and exhausted)
+        or outcome
+        in {
+            "repair_timeout",
+            "repair_exhausted",
+            "failed",
+            "failure",
+        }
+    )
     axis = (
         "FIXED"
         if false_success
@@ -448,6 +460,8 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "repeated_deterministic_failures": repeated,
         "false_success": false_success,
         "missing_canonical_manifest": missing_manifest,
+        "provisional_liveness": provisional_liveness,
+        "liveness_without_custody": liveness_without_custody,
     }
 
 
