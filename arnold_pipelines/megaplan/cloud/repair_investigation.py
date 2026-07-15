@@ -60,6 +60,26 @@ def _attempt_summary(value: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _phase_result_summary(plan_state_path: object) -> dict[str, Any]:
+    if not plan_state_path:
+        return {}
+    path = Path(str(plan_state_path)).parent / "phase_result.json"
+    value = _load(path)
+    if not value:
+        return {}
+    deviations = value.get("deviations") if isinstance(value.get("deviations"), list) else []
+    blocked_tasks = value.get("blocked_tasks") if isinstance(value.get("blocked_tasks"), list) else []
+    return {
+        "path": str(path),
+        "phase": _text(value.get("phase"), 200),
+        "exit_kind": _text(value.get("exit_kind"), 300),
+        "invocation_id": _text(value.get("invocation_id"), 300),
+        "blocked_tasks": [item if isinstance(item, Mapping) else _text(item, 1000) for item in blocked_tasks[-20:]],
+        "deviations": [item if isinstance(item, Mapping) else {"message": _text(item, 4000)} for item in deviations[-20:]],
+        "external_error": value.get("external_error"),
+    }
+
+
 def build_investigation_context(
     *,
     workspace: str | Path,
@@ -84,6 +104,11 @@ def build_investigation_context(
         workspace=workspace,
         plan_name=plan_name,
         remote_spec=remote_spec,
+    )
+    phase_result = _phase_result_summary(current.get("plan_state_path"))
+    phase_exit_kind = _text(phase_result.get("exit_kind"), 300).lower()
+    phase_result_blocked = bool(
+        phase_result and phase_exit_kind not in {"", "success", "succeeded", "completed", "done"}
     )
     request_signature = (
         request.get("problem_signature")
@@ -118,7 +143,9 @@ def build_investigation_context(
         if isinstance(goal.get("recovery_contract"), Mapping)
         else {},
         "current": current,
+        "current_phase_result": phase_result,
         "exact_error": current.get("latest_failure")
+        or (phase_result if phase_result_blocked else {})
         or frozen_checkpoint.get("latest_failure")
         or {},
         "request": {

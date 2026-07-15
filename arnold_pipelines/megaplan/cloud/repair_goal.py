@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,6 +95,20 @@ def _load_json(path: Path | None) -> dict[str, Any]:
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _git_head(workspace: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
@@ -340,6 +355,7 @@ def capture_checkpoint(
         captured_at=captured_at,
     )
     target_stage = _target_stage(state, chain)
+    workspace_head = _git_head(root)
     checkpoint = {
         "captured_at": captured_at,
         "plan_name": resolved_plan,
@@ -361,6 +377,7 @@ def capture_checkpoint(
         "latest_failure_cleared": not bool(latest_failure),
         "active_worker": active_worker,
         "runner_transition": runner_transition,
+        "workspace_head": workspace_head,
     }
     progress_facts = {
         "plan_name": checkpoint["plan_name"],
@@ -381,6 +398,11 @@ def capture_checkpoint(
         "runner_transition_fresh": runner_transition.get("fresh", False),
     }
     checkpoint["progress_token"] = _digest(progress_facts)
+    # Productive source changes reset only the deterministic-owner breaker;
+    # they never satisfy the authoritative recovery contract above.
+    checkpoint["iteration_token"] = _digest(
+        {"progress_token": checkpoint["progress_token"], "workspace_head": workspace_head}
+    )
     checkpoint["digest"] = _digest(checkpoint)
     return checkpoint
 
@@ -694,12 +716,17 @@ def evaluate_repair_goal(
         ) and evaluation.get("control_action") != "preserve_live"
         repeated_owner_cycles = 0
         if owner_cycle and evaluation["status"] == GOAL_ACTIVE:
-            token = str(observation.get("progress_token") or "")
+            token = str(observation.get("iteration_token") or observation.get("progress_token") or "")
             for prior in reversed(payload.get("cycles") or []):
                 if not isinstance(prior, Mapping) or not prior.get("owner_cycle"):
                     continue
                 prior_observation = prior.get("observation") if isinstance(prior.get("observation"), Mapping) else {}
-                if str(prior_observation.get("progress_token") or "") != token:
+                prior_token = str(
+                    prior_observation.get("iteration_token")
+                    or prior_observation.get("progress_token")
+                    or ""
+                )
+                if prior_token != token:
                     break
                 repeated_owner_cycles += 1
             repeated_owner_cycles += 1
@@ -708,7 +735,7 @@ def evaluate_repair_goal(
                 evaluation["circuit_breaker_required"] = True
                 evaluation["deterministic_repeat_count"] = repeated_owner_cycles
                 evaluation["reason"] = (
-                    "deterministic owner failure repeated without a new authoritative progress token; "
+                    "deterministic owner failure repeated without a new target or productive-change token; "
                     "stop re-driving and escalate/replan"
                 )
         cycle = {

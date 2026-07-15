@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud import repair_contract
@@ -233,6 +234,33 @@ def test_same_owner_failure_twice_opens_replan_circuit(tmp_path: Path) -> None:
     assert second["evaluation"]["control_action"] == "replan"
     assert second["evaluation"]["circuit_breaker_required"] is True
     assert second["evaluation"]["deterministic_repeat_count"] == 2
+
+
+def test_productive_target_commit_resets_breaker_without_completing_goal(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    workspace = Path(goal["target"]["workspace"])
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "initial"],
+        check=True,
+    )
+
+    first = evaluate_repair_goal(path, action="owner-iteration-1-post-dev-fix")
+    (workspace / "productive-fix.txt").write_text("fixed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(workspace), "add", "productive-fix.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "productive fix"],
+        check=True,
+    )
+    changed = evaluate_repair_goal(path, action="owner-iteration-2-post-dev-fix")
+    repeated = evaluate_repair_goal(path, action="owner-iteration-3-post-dev-fix")
+
+    assert first["status"] == GOAL_ACTIVE
+    assert changed["status"] == GOAL_ACTIVE
+    assert changed["evaluation"]["control_action"] == "investigate"
+    assert changed["semantic_completion"] is False
+    assert repeated["evaluation"]["control_action"] == "replan"
 
 
 def test_explicit_authorization_gate_terminates_with_exact_gate_evidence(tmp_path: Path) -> None:
