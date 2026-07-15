@@ -13335,6 +13335,15 @@ def test_repair_loop_provisional_liveness_is_transport_non_success() -> None:
     assert "verified recovery session=$SESSION" not in text
 
 
+def test_repair_loop_carries_terminal_goal_evaluation_into_verdict_write() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    assert 'repair_data_set_outcome "progressed" "$status"' in text
+    assert 'repair_data_set_outcome "true_human_blocker" "$status"' in text
+    assert 'repair_save_verdict_evidence "$repair_goal_status_override"' in text
+    assert "repair_goal_status_override=repair_goal_status_override" in text
+
+
 def test_repair_loop_escalation_plainly_names_stopped_motion_and_gate() -> None:
     text = _wrapper("arnold-repair-loop")
 

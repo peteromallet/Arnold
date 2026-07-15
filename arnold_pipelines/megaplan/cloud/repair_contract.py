@@ -4085,6 +4085,7 @@ def build_ordinary_repair_verdict(
     before_evidence_refs: tuple[str, ...] | None = None,
     after_evidence_refs: tuple[str, ...] | None = None,
     durable_refs: tuple[str, ...] | None = None,
+    repair_goal_status_override: str = "",
     timestamp: str | None = None,
 ) -> RepairVerdict:
     """Build a structured ordinary repair completion verdict from available evidence.
@@ -4110,6 +4111,17 @@ def build_ordinary_repair_verdict(
         goal_payload = load_json(repair_goal_path, default={})
         if isinstance(goal_payload, Mapping):
             repair_goal_status = _as_text(goal_payload.get("status"))
+        override = _as_text(repair_goal_status_override)
+        expected_override = {
+            "progressed": "progressed",
+            "true_human_blocker": "approval_required",
+        }.get(outcome, "")
+        if override and override == expected_override:
+            # The goal evaluator's returned terminal status is authoritative
+            # for this outcome.  Carry it across the verdict write so a
+            # concurrent stale goal-file writer cannot turn a verified
+            # terminal result back into no-verdict.
+            repair_goal_status = override
         if repair_goal_status not in {"progressed", "approval_required"}:
             verdict_kind = REPAIR_VERDICT_NO_VERDICT
 

@@ -2254,6 +2254,31 @@ def test_repair_success_not_trusted_without_explicit_escalation_no_fix_evidence(
     assert verdict_nf.no_verdict_detected is False
 
 
+def test_repair_verdict_uses_matching_terminal_goal_evaluation_across_file_race(
+    tmp_path: Path,
+) -> None:
+    goal_path = tmp_path / "goal.json"
+    goal_path.write_text(json.dumps({"status": "active"}), encoding="utf-8")
+    payload = {
+        "outcome": "progressed",
+        "repair_goal": {"goal_path": str(goal_path)},
+    }
+
+    raced = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload=payload,
+        repair_goal_status_override="progressed",
+    )
+    mismatched = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload=payload,
+        repair_goal_status_override="approval_required",
+    )
+
+    assert raced.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert raced.no_verdict_detected is False
+    assert mismatched.verdict_kind == repair_contract.REPAIR_VERDICT_NO_VERDICT
+    assert mismatched.no_verdict_detected is True
+
+
 def test_validate_repair_verdict_payload_rejects_bad_inputs() -> None:
     """validate_repair_verdict_payload raises ValueError on invalid payloads."""
     # Not a dict
