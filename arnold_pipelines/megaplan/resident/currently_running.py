@@ -58,6 +58,16 @@ class CurrentlyRunningReport:
     managed_agents_error: str | None = None
 
 
+@dataclass
+class _ManagedAgentTree:
+    """One node in a bounded, presentation-only managed-run forest."""
+
+    row: Mapping[str, Any]
+    index: int
+    children: list["_ManagedAgentTree"]
+    provenance_note: str | None = None
+
+
 async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
     """Read only the bounded status root and the managed-agent inventory.
 
@@ -234,6 +244,150 @@ def discover_recently_completed_managed_agents(
     ]
 
 
+def _project_managed_agent_forest(
+    rows: list[Mapping[str, Any]],
+    *,
+    parents_in_other_section: Mapping[str, str] | None = None,
+) -> list[_ManagedAgentTree]:
+    """Project bounded rows through durable ``run_id``/``parent_run_id`` edges.
+
+    Query aggregation and ``delivery_owner_run_id`` deliberately do not create
+    edges here: they govern synthesis/delivery cardinality, not process
+    ancestry.
+
+    Input order remains the sibling order.  Root groups are ordered by the
+    earliest input position of any member, so nesting a newer child never
+    silently moves the whole family behind an unrelated older run.  Missing or
+    ambiguous evidence never suppresses a row: that row remains a root with an
+    honest provenance note.
+    """
+
+    nodes = [
+        _ManagedAgentTree(row=row, index=index, children=[])
+        for index, row in enumerate(rows)
+    ]
+    indices_by_id: dict[str, list[int]] = {}
+    for node in nodes:
+        run_id = _managed_run_id(node.row.get("run_id"))
+        if run_id is not None:
+            indices_by_id.setdefault(run_id, []).append(node.index)
+
+    parent_indices: list[int | None] = [None] * len(nodes)
+    other_sections = parents_in_other_section or {}
+    for node in nodes:
+        run_id = _managed_run_id(node.row.get("run_id"))
+        if run_id is None:
+            node.provenance_note = "invalid or missing run ID; hierarchy unavailable"
+            continue
+        if len(indices_by_id[run_id]) != 1:
+            node.provenance_note = "duplicate run ID; hierarchy unavailable"
+            continue
+
+        raw_parent = node.row.get("parent_run_id")
+        if raw_parent is None or (
+            isinstance(raw_parent, str) and not raw_parent.strip()
+        ):
+            continue
+        parent_run_id = _managed_run_id(raw_parent)
+        if parent_run_id is None:
+            node.provenance_note = "invalid parent provenance"
+            continue
+        if parent_run_id == run_id:
+            node.provenance_note = "invalid self-parent provenance"
+            continue
+        parent_matches = indices_by_id.get(parent_run_id, [])
+        if len(parent_matches) == 1:
+            parent_indices[node.index] = parent_matches[0]
+        elif len(parent_matches) > 1:
+            node.provenance_note = f"parent `{parent_run_id}` is ambiguous"
+        elif parent_run_id in other_sections:
+            node.provenance_note = (
+                f"parent `{parent_run_id}` is in {other_sections[parent_run_id]}"
+            )
+        else:
+            node.provenance_note = f"parent `{parent_run_id}` is outside this status window"
+
+    # A parent relation is a functional graph.  Break every node participating
+    # in a cycle, while allowing non-cyclic descendants to remain beneath the
+    # now-rooted cycle members.
+    cycle_nodes: set[int] = set()
+    settled: set[int] = set()
+    for start in range(len(nodes)):
+        if start in settled:
+            continue
+        path: list[int] = []
+        position: dict[int, int] = {}
+        cursor: int | None = start
+        while cursor is not None and cursor not in settled:
+            if cursor in position:
+                cycle_nodes.update(path[position[cursor] :])
+                break
+            position[cursor] = len(path)
+            path.append(cursor)
+            cursor = parent_indices[cursor]
+        settled.update(path)
+    for index in cycle_nodes:
+        parent_indices[index] = None
+        nodes[index].provenance_note = "invalid parent cycle; shown as a root"
+
+    roots: list[_ManagedAgentTree] = []
+    for node, parent_index in zip(nodes, parent_indices, strict=True):
+        if parent_index is None:
+            roots.append(node)
+        else:
+            nodes[parent_index].children.append(node)
+
+    root_first_index: dict[int, int] = {node.index: node.index for node in roots}
+    for node in nodes:
+        cursor = node.index
+        while (parent_index := parent_indices[cursor]) is not None:
+            cursor = parent_index
+        root_first_index[cursor] = min(root_first_index[cursor], node.index)
+    roots.sort(key=lambda node: root_first_index[node.index])
+    return roots
+
+
+def _managed_run_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _managed_agent_section_ids(
+    rows: list[Mapping[str, Any]], section: str
+) -> dict[str, str]:
+    """Return only unambiguous durable IDs for cross-section orphan labels."""
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        run_id = _managed_run_id(row.get("run_id"))
+        if run_id is not None:
+            counts[run_id] = counts.get(run_id, 0) + 1
+    return {run_id: section for run_id, count in counts.items() if count == 1}
+
+
+def _render_agent_forest(
+    roots: list[_ManagedAgentTree], *, now: datetime | None
+) -> list[str]:
+    rendered: list[str] = []
+    pending: list[tuple[_ManagedAgentTree, int]] = [
+        (node, 0) for node in reversed(roots)
+    ]
+    while pending:
+        node, depth = pending.pop()
+        rendered.append(
+            _render_agent(
+                node.row,
+                now=now,
+                depth=depth,
+                provenance_note=node.provenance_note,
+            )
+        )
+        pending.extend((child, depth + 1) for child in reversed(node.children))
+    return rendered
+
+
 def discover_recently_completed_sessions(
     status_node: Mapping[str, Any] | None,
 ) -> list[Mapping[str, Any]]:
@@ -333,6 +487,16 @@ def render_currently_running(
         completed_agents = discover_recently_completed_managed_agents(
             report.managed_agents, snapshot_at=snapshot_at
         )
+        running_ids = _managed_agent_section_ids(agents, "Running")
+        completed_ids = _managed_agent_section_ids(
+            completed_agents, "Recently completed"
+        )
+        running_forest = _project_managed_agent_forest(
+            agents, parents_in_other_section=completed_ids
+        )
+        completed_forest = _project_managed_agent_forest(
+            completed_agents, parents_in_other_section=running_ids
+        )
         lines.append(
             _agents_heading(
                 f"{len(agents)} live · {len(completed_agents)} recently completed"
@@ -342,7 +506,7 @@ def render_currently_running(
         if agents:
             # Every live agent remains visible. Discord delivery chunks the
             # finished view safely instead of silently hiding active work.
-            lines.extend(_render_agent(row, now=now) for row in agents)
+            lines.extend(_render_agent_forest(running_forest, now=now))
         else:
             lines.append("_No live resident-managed agents._")
         lines.append(
@@ -351,9 +515,18 @@ def render_currently_running(
             )
         )
         if completed_agents:
-            lines.extend(_render_agent(row, now=now) for row in completed_agents)
+            lines.extend(_render_agent_forest(completed_forest, now=now))
         else:
             lines.append("_No recently completed resident-managed agents._")
+        omitted = _nonnegative_int(
+            report.managed_agents.get("recent_omitted_count")
+            if isinstance(report.managed_agents, Mapping)
+            else None
+        )
+        if omitted:
+            lines.append(
+                f"_…{omitted} additional terminal managed runs omitted by the bounded inventory._"
+            )
     return "\n".join(lines)
 
 
@@ -472,7 +645,13 @@ def _render_completed_session(row: Mapping[str, Any]) -> str:
     return f"• **{_safe_label(name)}**\n  `{details[0]}`{suffix}"
 
 
-def _render_agent(row: Mapping[str, Any], *, now: datetime | None = None) -> str:
+def _render_agent(
+    row: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    depth: int = 0,
+    provenance_note: str | None = None,
+) -> str:
     description = _agent_description(row) or "Resident-managed task"
     status = _first_label(row.get("status"), "running")
     identity = _agent_identity(row.get("run_id"))
@@ -484,11 +663,40 @@ def _render_agent(row: Mapping[str, Any], *, now: datetime | None = None) -> str
     token_usage = _agent_token_usage(row)
     if token_usage:
         details.append(token_usage)
+    delivery = _agent_delivery_status(row)
+    if delivery:
+        details.append(delivery)
+    marker = "• " if depth == 0 else f"{'  ' * depth}↳ "
+    detail_indent = "  " * (depth + 1)
+    if provenance_note:
+        details.append(f"⚠ {_safe_label(provenance_note)}")
     return (
-        f"• **{_safe_label(description)}**\n"
-        f"  `{details[0]}`"
+        f"{marker}**{_safe_label(description)}**\n"
+        f"{detail_indent}`{details[0]}`"
         f"{' · ' + ' · '.join(details[1:]) if len(details) > 1 else ''}"
         f"{identity_detail}"
+    )
+
+
+def _agent_delivery_status(row: Mapping[str, Any]) -> str | None:
+    """Render terminal Discord delivery state without changing delivery policy."""
+
+    if str(row.get("status") or "").casefold() not in _TERMINAL_AGENT_STATUSES:
+        return None
+    delivery = row.get("completion_delivery")
+    if not isinstance(delivery, Mapping):
+        return None
+    status = _optional_label(delivery.get("status"))
+    if not status or status.casefold() == "not_applicable":
+        return None
+    return f"delivery {status.replace('_', ' ')}"
+
+
+def _nonnegative_int(value: Any) -> int:
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else 0
     )
 
 

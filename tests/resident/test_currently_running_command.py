@@ -137,6 +137,249 @@ def test_managed_agent_subsections_have_truthful_empty_states() -> None:
     ) in rendered
 
 
+def test_managed_agents_nest_one_level_and_keep_unrelated_delegated_roots() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"sessions": []},
+            managed_agents={
+                "running": [
+                    {
+                        "run_id": "investigator",
+                        "parent_run_id": "repair",
+                        "description": "Investigate repair",
+                        "status": "running",
+                        "live": True,
+                    },
+                    {
+                        "run_id": "delegated-root",
+                        "description": "User delegated root",
+                        "status": "running",
+                        "live": True,
+                        "aggregation": {
+                            "role": "internal_contributor",
+                            "delivery_owner_run_id": "repair",
+                        },
+                    },
+                    {
+                        "run_id": "repair",
+                        "description": "Automatic repair",
+                        "status": "running",
+                        "live": True,
+                    },
+                ]
+            },
+        )
+    )
+
+    parent = "• **Automatic repair**\n  `running` · agent `repair`"
+    child = "  ↳ **Investigate repair**\n    `running` · agent `investigator`"
+    unrelated = "• **User delegated root**\n  `running` · agent `delegated-root`"
+    assert parent in rendered
+    assert child in rendered
+    assert unrelated in rendered
+    assert rendered.index(parent) < rendered.index(child) < rendered.index(unrelated)
+
+
+def test_managed_agents_render_multiple_ancestry_levels() -> None:
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"sessions": []},
+            managed_agents={
+                "running": [
+                    {
+                        "run_id": "retry",
+                        "parent_run_id": "investigator",
+                        "description": "Repair retry",
+                        "status": "running",
+                        "live": True,
+                    },
+                    {
+                        "run_id": "investigator",
+                        "parent_run_id": "repair",
+                        "description": "Investigator",
+                        "status": "running",
+                        "live": True,
+                    },
+                    {
+                        "run_id": "repair",
+                        "description": "Repair root",
+                        "status": "running",
+                        "live": True,
+                    },
+                ]
+            },
+        )
+    )
+
+    assert "• **Repair root**" in rendered
+    assert "  ↳ **Investigator**\n    `running`" in rendered
+    assert "    ↳ **Repair retry**\n      `running`" in rendered
+
+
+def test_recently_completed_agents_nest_beneath_completed_parent() -> None:
+    snapshot = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"generated_at": snapshot.isoformat(), "sessions": []},
+            managed_agents={
+                "running": [],
+                "recent": [
+                    {
+                        "run_id": "completed-child",
+                        "parent_run_id": "completed-parent",
+                        "description": "Completed investigator",
+                        "status": "completed",
+                        "finished_at": "2026-07-15T11:59:00Z",
+                    },
+                    {
+                        "run_id": "completed-parent",
+                        "description": "Completed repair",
+                        "status": "completed",
+                        "finished_at": "2026-07-15T11:58:00Z",
+                    },
+                ],
+            },
+        ),
+        now=snapshot,
+    )
+
+    parent = "• **Completed repair**\n  `completed` · agent `completed-parent`"
+    child = (
+        "  ↳ **Completed investigator**\n"
+        "    `completed` · agent `completed-child`"
+    )
+    assert rendered.index(parent) < rendered.index(child)
+
+
+def test_mixed_live_completed_ancestry_preserves_section_semantics() -> None:
+    snapshot = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"generated_at": snapshot.isoformat(), "sessions": []},
+            managed_agents={
+                "running": [
+                    {
+                        "run_id": "live-parent",
+                        "description": "Live parent",
+                        "status": "running",
+                        "live": True,
+                    }
+                ],
+                "recent": [
+                    {
+                        "run_id": "completed-child",
+                        "parent_run_id": "live-parent",
+                        "description": "Completed child",
+                        "status": "completed",
+                        "terminal_outcome": "completed",
+                        "started_at": "2026-07-15T11:50:00Z",
+                        "finished_at": "2026-07-15T11:55:00Z",
+                        "completion_delivery": {"status": "delivered"},
+                    }
+                ],
+            },
+        ),
+        now=snapshot,
+    )
+
+    running_heading = rendered.index("### 🟢 Running · 1")
+    completed_heading = rendered.index("### ✅ Recently completed · 1")
+    child = rendered.index("• **Completed child**")
+    assert running_heading < rendered.index("• **Live parent**") < completed_heading
+    assert completed_heading < child
+    assert "`completed` · 5m elapsed · delivery delivered" in rendered
+    assert "parent 'live-parent' is in Running" in rendered
+
+
+def test_missing_parent_and_bad_provenance_remain_visible_as_roots() -> None:
+    rows = [
+        {
+            "run_id": "orphan",
+            "parent_run_id": "expired-parent",
+            "description": "Bounded orphan",
+            "status": "running",
+            "live": True,
+        },
+        {
+            "run_id": "malformed",
+            "parent_run_id": 42,
+            "description": "Malformed ancestry",
+            "status": "running",
+            "live": True,
+        },
+    ]
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"sessions": []}, managed_agents={"running": rows}
+        )
+    )
+
+    assert "• **Bounded orphan**" in rendered
+    assert "parent 'expired-parent' is outside this status window" in rendered
+    assert "• **Malformed ancestry**" in rendered
+    assert "invalid parent provenance" in rendered
+
+
+def test_cycles_and_duplicate_parent_ids_are_safe_and_deterministic() -> None:
+    rows = [
+        {"run_id": "a", "parent_run_id": "b", "status": "running", "live": True},
+        {"run_id": "b", "parent_run_id": "a", "status": "running", "live": True},
+        {"run_id": "dup", "status": "running", "live": True},
+        {"run_id": "dup", "status": "running", "live": True},
+        {
+            "run_id": "ambiguous-child",
+            "parent_run_id": "dup",
+            "status": "running",
+            "live": True,
+        },
+    ]
+
+    first = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"sessions": []}, managed_agents={"running": rows}
+        )
+    )
+    second = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"sessions": []}, managed_agents={"running": rows}
+        )
+    )
+
+    assert first == second
+    assert first.count("invalid parent cycle; shown as a root") == 2
+    assert first.count("duplicate run ID; hierarchy unavailable") == 2
+    assert "parent 'dup' is ambiguous" in first
+    assert first.count("• **Resident-managed task**") == len(rows)
+
+
+def test_managed_agent_bounded_inventory_omissions_are_accounted_for() -> None:
+    snapshot = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    rendered = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"generated_at": snapshot.isoformat(), "sessions": []},
+            managed_agents={
+                "running": [],
+                "recent": [
+                    {
+                        "run_id": "recent",
+                        "description": "Visible completion",
+                        "status": "completed",
+                        "finished_at": "2026-07-15T11:59:00Z",
+                    }
+                ],
+                "recent_omitted_count": 3,
+            },
+        ),
+        now=snapshot,
+    )
+
+    assert "• **Visible completion**" in rendered
+    assert (
+        "…3 additional terminal managed runs omitted by the bounded inventory"
+        in rendered
+    )
+
+
 def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> None:
     report = CurrentlyRunningReport(
         status_node={

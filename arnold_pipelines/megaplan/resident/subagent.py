@@ -3792,7 +3792,9 @@ def list_managed_resident_agents(
             )
     rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
     running = [row for row in rows if row["live"]]
-    recent = [row for row in rows if not row["live"]][:max(0, recent_limit)]
+    terminal = [row for row in rows if not row["live"]]
+    bounded_recent_limit = max(0, recent_limit)
+    recent = terminal[:bounded_recent_limit]
     delivery_status_counts: dict[str, int] = {}
     terminal_delivery_status_counts: dict[str, int] = {}
     for row in rows:
@@ -3815,6 +3817,8 @@ def list_managed_resident_agents(
         "recent": recent,
         "running_count": len(running),
         "recent_count": len(recent),
+        "recent_total_count": len(terminal),
+        "recent_omitted_count": max(0, len(terminal) - len(recent)),
         "delivery_status_counts": delivery_status_counts,
         "terminal_delivery_status_counts": terminal_delivery_status_counts,
         "delivery_attention_count": sum(
