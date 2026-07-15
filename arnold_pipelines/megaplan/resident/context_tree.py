@@ -20,7 +20,7 @@ MAX_CONTEXT_TEXT_CHARS = 500
 
 
 DELEGATION_POLICY: dict[str, Any] = {
-    "schema_version": "megaplan-resident-delegation-policy-v1",
+    "schema_version": "megaplan-resident-delegation-policy-v3",
     "preference": (
         "Default to `launch_subagent` for any user-requested execution work when delegation "
         "adds useful execution. Decompose the query into independent actionable "
@@ -43,6 +43,54 @@ DELEGATION_POLICY: dict[str, Any] = {
     "launch_evidence": (
         "Durably launch requested execution and make that tool call before replying. Never claim "
         "a launch without its returned durable run ID."
+    ),
+    "execution_default": (
+        "When the user asks to do, fix, implement, land, or activate something, the delegated owner "
+        "normally implements, verifies, and delivers the authorized result; it does not stop at advice "
+        "or a patch description. Planning, explanation, diagnosis, status, and review requests remain "
+        "non-mutating unless the user also requests execution."
+    ),
+    "workspace_default": (
+        "For git-backed mutation, use an isolated worktree and feature branch by default, based on the "
+        "verified target revision. Preserve concurrent dirty work and inspect both the project checkout "
+        "and any pinned resident runtime before resident-code changes. Work in the current checkout only "
+        "when the user explicitly requires it or the repository has no usable worktree workflow and the "
+        "mutation is demonstrably isolated from unrelated work."
+    ),
+    "integration_default": (
+        "The target is the branch explicitly named or clearly implied by the request; otherwise use the "
+        "launch-time current non-main branch. For resident-source work, a separately pinned clean attached "
+        "runtime branch in the same repository is the target over an unrelated dirty project checkout. "
+        "Never infer literal `main` from an unspecified target. A dirty, detached, or divergent launch "
+        "checkout requires isolation and recorded target discovery; those facts alone are not target "
+        "ambiguity. For authorized implementation, revalidate the recorded target ref after verification. "
+        "If it advanced on the same lineage, rebase or replay as needed and integrate locally, preferring "
+        "fast-forward-only or the repository's documented non-destructive merge method. Keep the verified "
+        "commit isolated with an exact enumerated gate only when multiple plausible writable refs remain, "
+        "target history was rewritten or conflicts, or authorization differs materially. Local integration "
+        "does not authorize a remote push, pull-request merge, deployment, or service restart."
+    ),
+    "external_actions": (
+        "Automatically commit and locally integrate verified implementation when the request clearly "
+        "authorizes execution and the target is unambiguous. Push, merge a remote pull request, deploy, "
+        "or restart only when the request explicitly implies that effect or an established policy grants "
+        "it, and only after exact target and revision reconciliation. Unspecified literal `main`, remote "
+        "default-branch mutation, production deployment, destructive cleanup, force operations, credential "
+        "changes, and other externally consequential actions require explicit approval."
+    ),
+    "tentative_work": (
+        "For tentative, speculative, review-only, planning-only, or materially ambiguous requests, do not "
+        "integrate or perform external effects. Use read-only analysis or an isolated disposable branch "
+        "when a prototype is useful, label it unintegrated, and ask for the missing target or authority when "
+        "different answers would materially change the delivered result."
+    ),
+    "completion_evidence": (
+        "Before claiming completion, record proportional tests or checks, the reviewed diff, commit SHA, "
+        "base and target revisions, and a clean isolated worktree. A local integration claim also requires "
+        "durable ancestry evidence that the target branch contains the commit. A push requires the observed "
+        "remote ref; deployment or restart requires installed-runtime revision reconciliation, the supported "
+        "operation receipt, service health, and an outcome probe. A started command, PID, acknowledgement, "
+        "agent prose, or artifact path alone never proves completion."
     ),
     "exceptions": {
         "non_execution": (
