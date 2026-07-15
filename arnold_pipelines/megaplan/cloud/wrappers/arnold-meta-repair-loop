@@ -102,6 +102,7 @@ META_INVESTIGATION_RECEIPT_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-investigator-rec
 META_INVESTIGATION_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-investigator-run-id"
 META_INVESTIGATION_CONTEXT_DIGEST=""
 META_INVESTIGATION_RUN_ID=""
+META_INVESTIGATION_MAX_BYTES=65536
 
 load_resident_delegation_context() {
   local marker_path encoded rc
@@ -368,23 +369,32 @@ run_meta_repair_investigation() {
     arnold_pipelines.megaplan.cloud.repair_investigation build-meta \
     --session "$SESSION" --trigger "$TRIGGER_TYPE" \
     --repair-data-dir "$REPAIR_DATA_DIR" --marker-dir "$MARKER_DIR" \
-    --arnold-src "$ARNOLD_SRC" --output "$META_INVESTIGATION_CONTEXT_PATH" >>"$RUN_LOG" 2>&1 || return 1
+    --arnold-src "$ARNOLD_SRC" \
+    --request-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
+    --blocker-id "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" \
+    --output "$META_INVESTIGATION_CONTEXT_PATH" >>"$RUN_LOG" 2>&1 || return 1
   META_INVESTIGATION_CONTEXT_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$META_INVESTIGATION_CONTEXT_PATH")"
   {
     cat <<EOF
 You are the read-only L2 investigator for broken automatic repair session $SESSION.
-The bounded authoritative context below uses the same evidence-source, custody-contradiction, intended-recovery, safe-target, handoff, and TRACKED/FIXED/INTENT/CONTEXT semantics as L1 and the six-hour auditor. Its digest is $META_INVESTIGATION_CONTEXT_DIGEST.
+Read the minimal envelope and its typed authoritative artifact references. Its digest is $META_INVESTIGATION_CONTEXT_DIGEST.
 
-<authoritative_meta_repair_context>
+<meta_repair_investigation_envelope>
 EOF
     cat "$META_INVESTIGATION_CONTEXT_PATH"
     cat <<EOF
-</authoritative_meta_repair_context>
+</meta_repair_investigation_envelope>
 
-Establish the actual L1/L2 failure before any mutation. Reconcile evidence and custody, identify the intended original-target recovery condition, and authorize at most one safe Arnold repair-system target. Unknown/conflicting evidence, no safe target, or guard-weakening risk must recommend replan. Do not edit files, change chain/plan/repair state, launch a mutating owner, commit, push, or restart anything. Return ONLY one JSON object matching the embedded required_investigator_output schema_version="arnold-repair-investigator-receipt-v2".
+Follow the objective and authorization in the envelope. Read the referenced artifacts instead of asking for them to be inlined. Return only one JSON object matching the referenced arnold-repair-investigator-receipt-v2 contract.
 EOF
   } > "$META_INVESTIGATION_PROMPT_PATH"
   redact_file_in_place "$META_INVESTIGATION_PROMPT_PATH"
+  local envelope_bytes
+  envelope_bytes="$(wc -c < "$META_INVESTIGATION_PROMPT_PATH" | tr -d ' ')"
+  if [[ ! "$envelope_bytes" =~ ^[0-9]+$ ]] || (( envelope_bytes > META_INVESTIGATION_MAX_BYTES )); then
+    log "L2 investigator launch envelope failed 64 KiB preflight bytes=${envelope_bytes:-unknown}"
+    return 1
+  fi
   local -a managed_cmd
   managed_cmd=(
     python3 -m arnold_pipelines.megaplan.managed_agent run
@@ -459,7 +469,7 @@ recomputed = hashlib.sha256(json.dumps(
 ).encode("utf-8")).hexdigest()
 if context.get("context_digest") != digest or recomputed != digest or validated.get("target_kind") != "l2_repair_system":
     raise SystemExit("L2 investigation/context custody mismatch")
-source = context.get("source_tree") or {}
+source = context.get("source_custody") or {}
 root = str(source.get("path") or context.get("arnold_src") or "")
 head = subprocess.run(
     ["git", "-C", root, "rev-parse", "HEAD"], check=False, capture_output=True, text=True

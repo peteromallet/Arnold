@@ -8,10 +8,12 @@ import pytest
 
 from arnold_pipelines.megaplan.cloud.repair_investigation import (
     MAX_CONTEXT_BYTES,
+    META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA,
     REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
     build_meta_investigation_context,
     build_investigation_context,
     summarize_investigation_artifacts,
+    validate_meta_investigation_context,
     validate_investigator_receipt,
 )
 
@@ -342,23 +344,103 @@ def test_shared_summary_distinguishes_missing_invalid_and_accepted(tmp_path: Pat
 def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path) -> None:
     repair_dir = tmp_path / "repair-data"
     marker_dir = tmp_path / "markers"
-    source = tmp_path / "arnold"
-    source.mkdir()
-    _write(repair_dir / "demo.repair-data.json", {"outcome": "running"})
+    goal = marker_dir / "repair-goals" / "demo" / "goal-1.json"
+    _write(
+        goal,
+        {
+            "goal_id": "repair-goal-1",
+            "checkpoint_digest": "a" * 64,
+            "target": {"blocker_id": "blocker-1"},
+        },
+    )
+    _write(
+        repair_dir / "demo.repair-data.json",
+        {
+            "outcome": "running",
+            "repair_goal": {
+                "goal_id": "repair-goal-1",
+                "goal_path": str(goal),
+                "checkpoint_digest": "a" * 64,
+            },
+        },
+    )
     _write(marker_dir / "demo.json", {"workspace": "/workspace/demo"})
     context = build_meta_investigation_context(
         session="demo",
         trigger="model_tool_launch_failure",
         repair_data_dir=repair_dir,
         marker_dir=marker_dir,
-        arnold_src=source,
+        arnold_src=REPO_ROOT,
     )
     assert context["target_kind"] == "l2_repair_system"
-    assert context["custody_status"] == "contradictory"
-    assert context["intended_recovery"]["beyond_stage_required"] is True
-    assert {item["kind"] for item in context["evidence_sources"]} >= {
-        "repair_data", "session_marker", "source_tree"
+    assert context["schema_version"] == META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA
+    assert context["authorization"]["mutation_authorized"] is False
+    assert context["identity"]["repair_goal_id"] == "repair-goal-1"
+    assert {item["kind"] for item in context["evidence_refs"]} >= {
+        "repair_data", "session_marker", "repair_goal"
     }
+
+
+def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path) -> None:
+    repair_dir = tmp_path / "repair-data"
+    marker_dir = tmp_path / "markers"
+    goal = marker_dir / "repair-goals" / "demo" / "goal-pathological.json"
+    _write(
+        goal,
+        {
+            "goal_id": "repair-goal-pathological",
+            "checkpoint_digest": "b" * 64,
+            "target": {"blocker_id": "blocker-pathological"},
+            "frozen_checkpoint": {"history": ["goal-history" * 100_000]},
+        },
+    )
+    huge = "broad-status-history-log" * 50_000
+    _write(
+        repair_dir / "demo.repair-data.json",
+        {
+            "outcome": "deterministic_failure",
+            "attempts": [
+                {
+                    "attempt_id": index,
+                    "failure_context": huge,
+                    "post_launch_failure_context": huge,
+                    "logs": huge,
+                }
+                for index in range(3)
+            ],
+            "repair_goal": {
+                "goal_id": "repair-goal-pathological",
+                "goal_path": str(goal),
+                "checkpoint_digest": "b" * 64,
+            },
+            "resident_delegation": {
+                "custody_id": "custody-1",
+                "source_record_id": "message-1",
+                "root_run_id": "run-1",
+            },
+        },
+    )
+    _write(marker_dir / "demo.json", {"workspace": "/workspace/demo", "history": huge})
+
+    context = build_meta_investigation_context(
+        session="demo",
+        trigger="l1_custody_failure",
+        repair_data_dir=repair_dir,
+        marker_dir=marker_dir,
+        arnold_src=REPO_ROOT,
+    )
+
+    encoded = json.dumps(context, sort_keys=True, separators=(",", ":")).encode()
+    assert len(encoded) < 16 * 1024
+    assert len(encoded) <= MAX_CONTEXT_BYTES
+    assert huge[:100] not in encoded.decode()
+    assert "attempts" not in context
+    assert "required_investigator_output" not in context
+    assert validate_meta_investigation_context(context)["context_digest"] == context["context_digest"]
+
+    context["authorization"]["mutation_authorized"] = True
+    with pytest.raises(ValueError, match="must not authorize mutation"):
+        validate_meta_investigation_context(context)
 
 
 def test_repair_loop_embeds_bounded_context_for_sandbox_independent_investigation() -> None:
