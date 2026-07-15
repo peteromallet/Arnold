@@ -264,15 +264,40 @@ def test_context_tells_investigator_the_fail_closed_action_target_contract(tmp_p
     )
 
     contract = context["required_investigator_output"]["action_target_contract"]
-    assert contract["replan"] == ["none"]
+    assert contract["replan"] == ["none", "repair_custody"]
     assert contract["recover_state"] == ["plan_state_via_cli", "repair_custody"]
+    assert "L2/root-cause target" in context["required_investigator_output"][
+        "replan_contract"
+    ]
 
     receipt = _receipt()
     receipt["recommended_action"] = "replan"
     receipt["handoff"]["action"] = "replan"
     receipt["safe_repair_target"]["kind"] = "repair_custody"
-    with pytest.raises(ValueError, match="action and safe repair target disagree"):
-        validate_investigator_receipt(receipt, expected_context_digest="digest-1")
+    validated = validate_investigator_receipt(
+        receipt, expected_context_digest="digest-1"
+    )
+    assert validated["recommended_action"] == "replan"
+    assert validated["safe_repair_target"]["kind"] == "repair_custody"
+
+    receipt["custody_status"] = "consistent"
+    receipt["custody_contradictions"] = []
+    with pytest.raises(ValueError, match="only for contradictory custody"):
+        validate_investigator_receipt(
+            receipt, expected_context_digest="digest-1"
+        )
+
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+    assert "replan with safe_repair_target.kind=repair_custody" in wrapper
+    assert 'repair_data_set_outcome "deterministic_failure"' in wrapper
+    assert "investigator requires L2 replan before any target mutation" in wrapper
 
 
 def test_unknown_or_guard_weakening_receipt_fails_closed() -> None:

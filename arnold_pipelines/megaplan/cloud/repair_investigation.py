@@ -170,11 +170,15 @@ def _common_required_output(target_kind: str) -> dict[str, Any]:
         },
         "action_target_contract": {
             "preserve_live": ["none"],
-            "replan": ["none"],
+            "replan": ["none", "repair_custody"],
             "repair_source": ["arnold_source", "target_workspace"],
             "repair_target": ["target_workspace"],
             "recover_state": ["plan_state_via_cli", "repair_custody"],
         },
+        "replan_contract": (
+            "replan never authorizes an L1 mutation; repair_custody may be named "
+            "only as the bounded L2/root-cause target when custody is contradictory"
+        ),
         "handoff": {
             "action": "preserve_live|repair_source|repair_target|recover_state|replan",
             "allowed_mutations": ["<bounded mutation or none>"],
@@ -600,13 +604,21 @@ def validate_investigator_receipt(
     target_kind = str(target.get("kind") or "")
     allowed_targets = {
         "preserve_live": {"none"},
-        "replan": {"none"},
+        "replan": {"none", "repair_custody"},
         "repair_source": {"arnold_source", "target_workspace"},
         "repair_target": {"target_workspace"},
         "recover_state": {"plan_state_via_cli", "repair_custody"},
     }
     if target_kind not in allowed_targets[action]:
         raise ValueError("investigator action and safe repair target disagree")
+    if (
+        action == "replan"
+        and target_kind == "repair_custody"
+        and value.get("custody_status") != "contradictory"
+    ):
+        raise ValueError(
+            "replan may name repair_custody only for contradictory custody"
+        )
     validated = dict(value)
     validated["receipt_digest"] = _digest(
         {key: item for key, item in validated.items() if key != "receipt_digest"}
