@@ -264,6 +264,7 @@ def test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity(
 
     assert 'inherited_goal_path="${ARNOLD_REPAIR_RETRY_GOAL_PATH:-}"' in wrapper
     assert 'managed_identity="${managed_identity}:goal:${inherited_goal_id}:retry:' in wrapper
+    assert 'claim_active_repair_launch "$session" "$workspace" "$remote_spec" "$blocker_id" "$request_id"' in wrapper
     assert '--link "repair_goal_path=$inherited_goal_path"' in wrapper
     assert 'ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path"' in wrapper
     assert 'ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest"' in wrapper
