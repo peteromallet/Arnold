@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/bakeoff_skill.md
+../../data/bakeoff_skill.md
