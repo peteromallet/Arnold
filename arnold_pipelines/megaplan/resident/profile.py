@@ -896,6 +896,8 @@ def _resident_core_prompt() -> str:
         "For broad status, use context_root.attention and the status node, cite generated_at, and preserve "
         "canonical progress/display fields. Use `progress.display_state` as its canonical status label, "
         "falling back to `progress.plan_state` only when `display_state` is absent; show an active execute step as `executing`. "
+        "A review-driven execute step may instead be `reworking`, and an active review is `reviewing`. "
+        "`progress.plan_percent` is plan lifecycle/task-weight bookkeeping, not implementation acceptance. "
         "If stale_banner exists, emit it verbatim first and do not quote "
         "withheld frozen numbers.\n"
         "For a Discord restart, use only the canonical command in hot context; never use pkill, killall, "
@@ -1033,11 +1035,13 @@ class MegaplanResidentProfile:
             "epic's overall percent — e.g. 'Epic X: <progress.percent>% (A/B sprints done), currently "
             "on <current_plan>'. `progress.percent` already folds the in-flight plan's stage fraction "
             "in, so it advances as the current plan progresses rather than freezing between milestones. "
-            "When `progress.plan_percent` is present, also append the in-flight plan's stage estimate. "
+            "When `progress.plan_percent` is present, label it as plan lifecycle/task-weight "
+            "bookkeeping, never as implementation acceptance or completion. "
             "Use `progress.display_state` as its canonical status label when available, falling back "
             "to `progress.plan_state` only when `display_state` is absent — e.g. '...; in-flight "
             "<plan_percent>% (<display_state>)'. This preserves paused, blocked, failed, completed, "
-            "and idle-finalized truth while showing an active execute step as `executing`. If the "
+            "and idle-finalized truth while showing an active execute step as `executing`, a "
+            "review-driven execute step as `reworking`, and an active review as `reviewing`. If the "
             "chosen status label is present without a `plan_percent` (e.g. 'blocked'), show that state "
             "instead. When `epic_delta_1h` / "
             "`epic_delta_5h` are present, append the recent rate — e.g. '(+<d1>% in the past hour, "
@@ -1049,7 +1053,7 @@ class MegaplanResidentProfile:
             "started <relative time>, plan started <relative time>'. Use the pre-calculated fields as "
             "given; do not recompute them or invent other sub-plan percentages — `plan_percent` "
             "reserves 30% for pre-execute stages and weights execute progress by the finalized "
-            "task inventory's authoritative complexity scores. "
+            "task inventory's authoritative complexity scores; it does not measure review acceptance. "
             "Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
             "without labeling it degraded. For deeper status questions, navigate only the relevant "
             "child node with `read_cloud_status_node`. In the Codex CLI runner, use "
@@ -3529,10 +3533,13 @@ def _summarize_plan_state(work_dir: Path, plan_name: str) -> dict[str, Any] | No
         if not path.exists():
             continue
         data = _read_json_object(path)
+        review = _read_json_object(path.with_name("review.json"))
+        review_verdict = review.get("review_verdict")
         active_step = _summarize_active_step(data.get("active_step"))
         presentation = plan_status_presentation(
             data.get("current_state") or data.get("state"),
             active_step=active_step,
+            review_verdict=review_verdict,
         )
         return {
             "path": str(path),
@@ -3540,6 +3547,7 @@ def _summarize_plan_state(work_dir: Path, plan_name: str) -> dict[str, Any] | No
             "current_state": data.get("current_state") or data.get("state"),
             "iteration": data.get("iteration"),
             "active_step": active_step,
+            "review_verdict": review_verdict,
             **presentation,
             "last_gate": _summarize_last_gate(data.get("last_gate")),
             "read_error": data.get("_read_error"),

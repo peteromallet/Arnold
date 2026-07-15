@@ -252,8 +252,17 @@ def build_context_root(
                 {
                     key: _safe(row.get(key), depth=1)
                     for key in (
-                        "node_id", "session", "display_name", "status", "display_state",
-                        "current_plan", "latest_activity", "operator_next", "progress", "repairing",
+                        "node_id",
+                        "session",
+                        "display_name",
+                        "status",
+                        "display_state",
+                        "review_verdict",
+                        "current_plan",
+                        "latest_activity",
+                        "operator_next",
+                        "progress",
+                        "repairing",
                     )
                     if row.get(key) is not None
                 }

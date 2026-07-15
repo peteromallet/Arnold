@@ -1,9 +1,10 @@
 """Derived, user-facing Megaplan lifecycle presentation.
 
-The persisted plan lifecycle and the currently running phase answer different
-questions.  In particular, ``finalized`` is the correct durable state while an
-``execute`` step consumes the finalized task document.  Consumers should retain
-that raw state and use this projection for labels shown to people.
+The persisted plan lifecycle, independent review verdict, and currently running
+phase answer different questions.  In particular, ``finalized`` is the correct
+durable state while an ``execute`` step consumes the finalized task document.
+Consumers should retain those raw facts and use this projection for labels
+shown to people.
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ def plan_status_presentation(
     *,
     active_step: Mapping[str, Any] | None = None,
     active_phase: Any = None,
+    review_verdict: Any = None,
     completed: bool = False,
 ) -> dict[str, str | None]:
-    """Project lifecycle truth plus live phase into a stable display contract."""
+    """Project lifecycle, review truth, and live phase into a display contract."""
 
     raw_state = str(plan_state or "").strip().lower()
     phase_value = active_phase
@@ -33,6 +35,7 @@ def plan_status_presentation(
     phase = str(phase_value or "").strip().lower() or None
     if phase == "loop_execute":
         phase = "execute"
+    verdict = str(review_verdict or "").strip().lower()
 
     if completed or raw_state in _COMPLETED_STATES:
         execution_state = "completed"
@@ -46,9 +49,15 @@ def plan_status_presentation(
     elif raw_state in _BLOCKED_STATES:
         execution_state = "blocked"
         display_state = raw_state
+    elif phase == "review":
+        execution_state = "reviewing"
+        display_state = "reviewing"
     elif phase == "execute":
-        execution_state = "executing"
-        display_state = "executing"
+        execution_state = "reworking" if verdict == "needs_rework" else "executing"
+        display_state = execution_state
+    elif verdict == "needs_rework":
+        execution_state = "rework_required"
+        display_state = "needs_rework"
     elif raw_state == "finalized":
         execution_state = "ready"
         display_state = raw_state

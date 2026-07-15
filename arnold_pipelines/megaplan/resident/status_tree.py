@@ -222,9 +222,20 @@ def _compact_session(session: Mapping[str, Any]) -> dict[str, Any]:
     progress = {
         key: _safe_value(raw_progress.get(key), depth=2)
         for key in (
-            "percent", "plan_percent", "display_state", "plan_state", "current_plan",
-            "completed_count", "milestone_count", "completed_sprints", "total_sprints",
-            "epic_delta_1h", "epic_delta_5h", "stage_changes_1h", "epic_started_at",
+            "percent",
+            "plan_percent",
+            "plan_percent_basis",
+            "display_state",
+            "plan_state",
+            "current_plan",
+            "completed_count",
+            "milestone_count",
+            "completed_sprints",
+            "total_sprints",
+            "epic_delta_1h",
+            "epic_delta_5h",
+            "stage_changes_1h",
+            "epic_started_at",
             "plan_started_at",
         )
         if raw_progress.get(key) is not None
@@ -250,6 +261,7 @@ def _compact_session(session: Mapping[str, Any]) -> dict[str, Any]:
         "run_kind": session.get("run_kind"),
         "status": session.get("status"),
         "display_state": session.get("display_state"),
+        "review_verdict": session.get("review_verdict"),
         "should_run": session.get("should_run"),
         "process": session.get("process"),
         "tmux": session.get("tmux"),
