@@ -653,6 +653,15 @@ from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 try:
+    from arnold_pipelines.megaplan.cloud.repair_investigation import summarize_investigation_artifacts
+except ImportError:
+    def summarize_investigation_artifacts(_repair_data, *, field="investigation"):
+        return {
+            "required": True,
+            "status": "invalid",
+            "reason": f"installed runtime lacks shared {field} evidence semantics",
+        }
+try:
     from arnold_pipelines.megaplan.cloud.progress_auditor_ownership import (
         inspect_existing_ownership,
     )
@@ -2169,6 +2178,8 @@ def _repair_data_summary(session):
         for signature, count in sorted(failure_signatures.items(), key=lambda pair: pair[1], reverse=True)
         if count >= 2
     ]
+    investigation_summary = summarize_investigation_artifacts(payload, field="investigation")
+    meta_investigation_summary = summarize_investigation_artifacts(payload, field="meta_investigation")
     return {
         "path": str(path),
         "exists": True,
@@ -2190,6 +2201,8 @@ def _repair_data_summary(session):
         "managed_agent_runs": payload.get("managed_agent_runs") if isinstance(payload, dict) and isinstance(payload.get("managed_agent_runs"), list) else [],
         "fixer_infrastructure_failures": fixer_infrastructure_failures,
         "latest_fixer_infrastructure_failure": latest_fixer_infrastructure_failure,
+        "investigation_summary": investigation_summary,
+        "meta_investigation_summary": meta_investigation_summary,
         "iteration_count": len(iterations),
         "iterations": summarized_iterations,
         "repeated_failure_signatures": repeated[:6],
@@ -3458,6 +3471,39 @@ def _repair_data_ghost_running_reason(ev):
         )
     return ""
 
+def _investigation_handoff_reason(ev):
+    """Surface automatic repair that mutated or claimed success without investigation."""
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    repair = repair if isinstance(repair, dict) else {}
+    investigation = repair.get("investigation_summary") if isinstance(repair.get("investigation_summary"), dict) else {}
+    meta_investigation = repair.get("meta_investigation_summary") if isinstance(repair.get("meta_investigation_summary"), dict) else {}
+    outcome = str(repair.get("outcome") or "").strip().lower()
+    l1_activity = bool(
+        int(repair.get("attempt_count") or 0)
+        or int(repair.get("iteration_count") or 0)
+        or outcome in {"complete", "completed", "progressed", "repair_timeout", "repair_exhausted", "recurring_retry_pending"}
+    )
+    if l1_activity and investigation.get("status") != "accepted":
+        return (
+            "repair_without_valid_investigation: L1 repair activity/outcome exists but the "
+            f"durable investigation handoff is {investigation.get('status') or 'missing'}: "
+            f"{investigation.get('reason') or 'no shared evidence receipt'}"
+        )
+    meta = ev.get("meta_repair_summary") if isinstance(ev, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    meta_activity = bool(
+        int(meta.get("meta_record_count") or 0)
+        or int(meta.get("meta_run_log_count") or 0)
+        or meta.get("failed_meta_run_evidence")
+    )
+    if meta_activity and meta_investigation.get("status") != "accepted":
+        return (
+            "meta_repair_without_valid_investigation: L2 repair activity exists but the "
+            f"durable investigation handoff is {meta_investigation.get('status') or 'missing'}: "
+            f"{meta_investigation.get('reason') or 'no shared evidence receipt'}"
+        )
+    return ""
+
 def _canonical_launch_disagreement_reason(ev):
     repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
     custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
@@ -4599,6 +4645,7 @@ for entry in plans:
     for deterministic_reason in (
         _watchdog_chain_health_disagreement_reason(ev),
         _repair_data_ghost_running_reason(ev),
+        _investigation_handoff_reason(ev),
         _canonical_launch_disagreement_reason(ev),
         _repair_complete_incomplete_chain_reason(ev),
         _active_step_ghost_worker_reason(ev),
