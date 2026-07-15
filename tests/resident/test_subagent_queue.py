@@ -383,11 +383,15 @@ def test_queue_happy_path_is_durable_and_duplicate_terminal_observation_launches
     _complete_predecessor(predecessor_path)
     launches = []
 
-    def launch(argv, **kwargs):
-        launches.append(Path(argv[-1]))
-        return _Supervisor()
+    def launch(path, manifest):
+        launches.append(path)
+        running = json.loads(path.read_text(encoding="utf-8"))
+        running.update({"status": "running", "pid": _Supervisor.pid})
+        running["queue"].update({"state": "running", "attention": "none"})
+        path.write_text(json.dumps(running), encoding="utf-8")
+        return _Supervisor(), running
 
-    monkeypatch.setattr(subagent.subprocess, "Popen", launch)
+    monkeypatch.setattr(subagent, "_spawn_managed_supervisor", launch)
     monkeypatch.setattr(
         subagent, "_pid_matches_manifest", lambda pid, path: pid == _Supervisor.pid
     )
