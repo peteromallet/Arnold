@@ -18,7 +18,13 @@ from arnold.execution.step_invocation import StepInvocation
 
 from agentbox.redaction import redact_text
 
-from .agent_loop import AgentRequest, AgentResponse, AgentRunner, durable_launch_run_ids
+from .agent_loop import (
+    AgentRequest,
+    AgentResponse,
+    AgentRunner,
+    AgentTimeoutError,
+    durable_launch_run_ids,
+)
 from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorizer
 from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
@@ -1002,6 +1008,7 @@ class ResidentRuntime:
             status="completed",
             final_output_message_id=final_message_id,
             message_sent=bool(final_message_id),
+            warnings_issued=_response_diagnostic_warnings(response),
             idempotency_key=deterministic_idempotency_key("resident-turn-completed", turn.id),
         )
 
@@ -1393,6 +1400,13 @@ def _bounded_failure_warning(exc: Exception) -> str:
 
 
 def _resident_turn_failure_reply(exc: Exception) -> str:
+    if isinstance(exc, AgentTimeoutError):
+        return (
+            "I couldn't complete this resident turn because the model exceeded its execution "
+            "limit and did not finish during the single bounded same-process recovery window. "
+            "The process group was stopped, no second invocation was started, and specific "
+            "diagnostic evidence was recorded."
+        )
     detail = str(exc).lower()
     if "prompt exceeds" in detail or "input_too_large" in detail or "maximum length" in detail:
         return (
@@ -1403,6 +1417,23 @@ def _resident_turn_failure_reply(exc: Exception) -> str:
         "I couldn't complete this resident turn because the model invocation failed. "
         "The failure was recorded and no requested action was taken."
     )
+
+
+def _response_diagnostic_warnings(response: AgentResponse) -> list[str] | None:
+    recovery = response.metadata.get("timeout_recovery")
+    if not isinstance(recovery, Mapping):
+        return None
+    return [
+        "AgentTimeoutRecovery: same invocation completed during bounded grace; "
+        f"continuations={recovery.get('continuations', 1)}, "
+        f"invocation_replays={recovery.get('invocation_replays', 0)}, "
+        f"initial_timeout_s={recovery.get('initial_timeout_s')}, "
+        f"recovery_grace_s={recovery.get('recovery_grace_s')}, "
+        f"elapsed_s={recovery.get('elapsed_s')}, "
+        f"process_pid={recovery.get('process_pid')}, "
+        f"stdout_bytes={recovery.get('stdout_bytes')}, "
+        f"stderr_bytes={recovery.get('stderr_bytes')}",
+    ]
 
 
 def _timezone_instruction_from_hot_context(hot_context: Mapping[str, Any]) -> str:
