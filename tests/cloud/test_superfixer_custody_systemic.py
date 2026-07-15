@@ -125,6 +125,11 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert 'META_INVESTIGATION_ACTION" == "replan"' in wrapper
     assert "meta_repair_replan_handoff" in wrapper
     assert "ordinary_l1_repair" in wrapper
+    assert "reconcile_l2_replan" in wrapper
+    assert "already reconciled; refusing duplicate ordinary retrigger" in wrapper
+    assert '"replan_epoch": active_replan_epoch' in Path(
+        "arnold_pipelines/megaplan/cloud/repair_goal.py"
+    ).read_text(encoding="utf-8")
     assert 'export ARNOLD_REPAIR_L2_HANDOFF_PATH="$META_INVESTIGATION_OBSERVATION_PATH"' in wrapper
     assert 'export ARNOLD_REPAIR_L2_CONTEXT_DIGEST="$META_INVESTIGATION_CONTEXT_DIGEST"' in wrapper
     repair_wrapper = Path(
