@@ -69,6 +69,17 @@ def clean_venv(tmp_path: Path) -> Path:
 
 
 class TestWheelSmoke:
+    def test_skill_links_are_repository_relative_and_resolve(self) -> None:
+        repo_root = Path(__file__).parents[3]
+        skill_root = repo_root / "arnold_pipelines" / "megaplan" / "skills"
+        skill_links = sorted(skill_root.glob("*/SKILL.md"))
+
+        assert skill_links, "no packaged Megaplan skill links found"
+        for skill_link in skill_links:
+            if skill_link.is_symlink():
+                assert not skill_link.readlink().is_absolute(), skill_link
+            assert skill_link.resolve(strict=True).is_file(), skill_link
+
     def test_wheel_installs_and_imports_product_package(
         self, built_wheel: Path, clean_venv: Path, tmp_path: Path
     ) -> None:
