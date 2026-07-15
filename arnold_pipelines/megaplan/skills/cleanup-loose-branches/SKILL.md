@@ -18,11 +18,37 @@ description: >
 
 # cleanup-loose-branches
 
-> **TL;DR** — Survey every loose-work location read-only → fan out DeepSeek subagents to classify each as land / cherry-pick / delete / keep → write a consolidation plan → execute it (useful work onto a branch, everything else staged *ready-to-delete*). Nothing is deleted without your explicit per-item OK.
+> **TL;DR** — First durably pause any Megaplan chain actively preparing in the target repo → survey every loose-work location read-only → fan out DeepSeek subagents to classify each as land / cherry-pick / delete / keep → write a consolidation plan → execute it (useful work onto a branch, everything else staged *ready-to-delete*). Nothing is deleted without your explicit per-item OK.
 
-## The four phases — do this, in order
+## Phase 0 — stop active plan preparation first
 
-Run these four phases in order. **Lean on DeepSeek subagents in every phase** — they are
+On first invocation, before surveying or launching cleanup investigators, identify every
+Megaplan chain in the target repo whose persisted active phase is `prep`. Durably pause
+each one through the supported chain control surface:
+
+```bash
+python -P -m arnold_pipelines.megaplan chain pause \
+  --spec <initiative-chain.yaml> \
+  --project-dir <target-repo> \
+  --reason "Loose-work cleanup requires a stable repository snapshot" \
+  --actor cleanup-loose-branches
+```
+
+Then query chain status and require returned/persisted evidence that the chain and current
+plan are paused before continuing. Report the chain spec, plan name, prior phase, pause
+result, and verification result. If the chain finishes or leaves `prep` during the pause,
+re-read status and report the actual state; do not claim it was paused. If durable pause
+cannot be verified, stop the cleanup and report the blocker.
+
+Scope this containment narrowly: pause only chains actively preparing against the target
+repo. Do not pause unrelated repositories, already executing/reviewing chains, resident
+agents, or cloud sessions. Never use `kill`, `pkill`, `killall`, tmux cleanup, or process
+termination as a substitute. Do not resume a chain automatically when cleanup finishes;
+resumption requires an explicit user instruction.
+
+## The four cleanup phases — do this, in order
+
+Run Phase 0, then these four phases in order. **Lean on DeepSeek subagents in every phase** — they are
 the cheap default for reading wide, understanding nuances, and untangling supersession,
 not a heavyweight escalation. Flip "should a subagent do this?" into "is there any reason
 it can't?" Start the survey immediately — don't ask "want me to look around?" or "should I
