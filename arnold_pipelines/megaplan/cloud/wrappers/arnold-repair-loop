@@ -5576,7 +5576,7 @@ mechanical_launch_step() {
   local run_kind="$5"
   local plan_name="$6"
   local relaunch_command="$7"
-  local quoted_command launch_script safe detail health control_result control_status control_action control_blocker_cleared
+  local quoted_command launch_script launch_evidence safe detail health control_result control_status control_action control_blocker_cleared
 
   control_result="$(repair_goal_control_snapshot "pre-mechanical-relaunch-$iteration")" || {
     echo "failed:repair_goal_control_unavailable"
@@ -5610,9 +5610,23 @@ mechanical_launch_step() {
     echo "failed:missing_relaunch_command"
     return 1
   }
-  kill_tmux_session_if_present "$session"
-  kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"
+  # Recovery never tears down discovered processes or tmux sessions.  We do
+  # not have launch provenance for them, and replacing an unobserved owner can
+  # create a duplicate chain runner.  Leave the durable owner intact and make
+  # the conflict explicit for the next bounded diagnosis.
+  if tmux has-session -t "$session" 2>/dev/null; then
+    log "mechanical relaunch fenced: existing tmux session is not this owner's custody session=$session iteration=$iteration" >&2
+    echo "failed:existing_tmux_session"
+    return 1
+  fi
+  if { [[ "$run_kind" == "chain" ]] && chain_process_is_alive "$remote_spec"; } || \
+     { [[ -n "$plan_name" ]] && plan_process_is_alive "$plan_name"; }; then
+    log "mechanical relaunch fenced: existing canonical runner must be preserved session=$session iteration=$iteration" >&2
+    echo "preserved:existing_runner"
+    return 0
+  fi
   safe="$(safe_name "$session")"
+  launch_evidence="$RUN_DIR/mechanical-launch-${iteration}-$(date -u +%Y%m%dT%H%M%SZ).log"
   launch_script="$(mktemp)"
   cat > "$launch_script" <<EOF
 #!/usr/bin/env bash
@@ -5626,7 +5640,7 @@ export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "${ARNOLD_REPAIR_QUEUE_ROOT:-$REPA
 export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
 export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
 export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
-exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
+exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command" >> $(printf '%q' "$launch_evidence") 2>&1
 EOF
   chmod +x "$launch_script"
   if ! tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'"; then
@@ -5636,7 +5650,10 @@ EOF
   fi
   health="$(verify_started_and_holding "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MECHANICAL_VERIFY_INITIAL_SECS" "$MECHANICAL_VERIFY_HOLD_SECS")" || {
     detail="$health"
-    kill_tmux_session_if_present "$session"
+    # Preserve the launched session for manifest-targeted observation.  Its
+    # stdout/stderr is retained in launch_evidence even when it exits before
+    # the chain log is opened, which is the evidence needed for a safe retry.
+    log "mechanical relaunch did not hold session=$session iteration=$iteration detail=$detail evidence=$launch_evidence" >&2
     echo "failed:$detail"
     return 1
   }
