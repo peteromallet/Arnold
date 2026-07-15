@@ -5487,12 +5487,14 @@ mechanical_launch_step() {
     python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print(str(d.get("status") or "")+"\t"+str(e.get("control_action") or ""))' <<< "$control_result"
   )"
   if [[ "$control_status" == "active" && "$control_action" == "preserve_live" ]]; then
-    log "mechanical relaunch fenced: correct target worker is alive and fresh session=$session iteration=$iteration"
+    # mechanical_launch_step is consumed through command substitution. Keep
+    # diagnostics off stdout so the caller receives one exact status token.
+    log "mechanical relaunch fenced: correct target worker is alive and fresh session=$session iteration=$iteration" >&2
     echo "preserved:live_progress"
     return 0
   fi
   if [[ "$control_status" == "active" && "$control_action" == "replan" ]]; then
-    log "mechanical relaunch fenced: deterministic owner circuit requires replan session=$session iteration=$iteration"
+    log "mechanical relaunch fenced: deterministic owner circuit requires replan session=$session iteration=$iteration" >&2
     echo "failed:replan_required"
     return 1
   fi
