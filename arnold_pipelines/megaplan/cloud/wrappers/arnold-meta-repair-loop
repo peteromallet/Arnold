@@ -1118,7 +1118,7 @@ fi
 
 # ---- persist meta-repair record ---------------------------------------------
 persist_record() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" "$META_WORKER_MANIFEST" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" "$META_WORKER_MANIFEST" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import json, os, sys, uuid
 from pathlib import Path
 
@@ -1131,7 +1131,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
 )
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 
-session, trigger_raw, verdict, resp_path, brief_path, repair_data_dir, worker_run_id, worker_manifest = sys.argv[1:9]
+session, trigger_raw, verdict, resp_path, brief_path, repair_data_dir, worker_run_id, worker_manifest, blocker_id = sys.argv[1:10]
 
 trigger = None
 try:

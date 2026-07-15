@@ -2146,22 +2146,56 @@ def classify_recovery_verification(
         return unknown("partial", "blocker clearance was not directly observed")
     if observation.get("independent") is not True:
         return unknown("partial", "blocker clearance observation is not independent")
+    if observation.get("canonical_runner_live") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("canonical_runner_live") is False
+            else "partial",
+            "the exact canonical runner is not independently proven live",
+        )
+    if observation.get("fresh_progress_beyond_checkpoint") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("fresh_progress_beyond_checkpoint") is False
+            else "partial",
+            "fresh authoritative progress beyond the pre-repair checkpoint is not proven",
+        )
+    if observation.get("continued_progress") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("continued_progress") is False
+            else "partial",
+            "bounded follow-up observation did not prove continued progress",
+        )
 
     completed_at = _verification_timestamp(repair_completed_at)
+    first_progress_at = _verification_timestamp(
+        observation.get("first_progress_observed_at")
+    )
     observed_at = _verification_timestamp(observation.get("observed_at"))
-    if completed_at is None or observed_at is None:
+    if completed_at is None or first_progress_at is None or observed_at is None:
         return unknown("partial", "verification timestamps are incomplete")
-    if observed_at <= completed_at:
-        return unknown("stale", "verification observation is not later than repair completion")
+    if first_progress_at <= completed_at:
+        return unknown(
+            "stale", "initial recovery observation is not later than repair completion"
+        )
+    if observed_at <= first_progress_at:
+        return unknown(
+            "stale", "follow-up observation is not later than initial recovery progress"
+        )
 
     return {
         "status": RECOVERY_VERIFIED,
         "unknown_type": "",
         "recovery_verified": True,
         "authorizes_verified_recovered": True,
-        "reason": "later independent observation directly proves the original blocker cleared",
+        "reason": (
+            "two later independent observations prove blocker clearance, a live canonical "
+            "runner, beyond-checkpoint progress, and continued progress"
+        ),
         "blocker_identity": original_identity,
         "repair_completed_at": completed_at.isoformat(),
+        "first_progress_observed_at": first_progress_at.isoformat(),
         "observed_at": observed_at.isoformat(),
     }
 

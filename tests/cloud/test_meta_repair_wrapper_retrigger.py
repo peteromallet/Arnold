@@ -184,7 +184,7 @@ def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> 
     marker = (
         'python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" '
         '"$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" '
-        '"$META_WORKER_MANIFEST" <<'
+        '"$META_WORKER_MANIFEST" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'
     )
     program = _extract_meta_repair_embedded_python(marker)
     prog_path = tmp_path / "_persist.py"
@@ -222,6 +222,7 @@ def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> 
             str(repair_data_dir / "demo-session.repair-data.json"),
             "",
             "",
+            "blocker:demo",
         ],
         capture_output=True,
         text=True,
@@ -306,7 +307,11 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
                             "blocker_cleared": True,
                             "directly_observed": True,
                             "independent": True,
-                            "observed_at": "2026-07-04T01:01:00Z",
+                            "canonical_runner_live": True,
+                            "fresh_progress_beyond_checkpoint": True,
+                            "continued_progress": True,
+                            "first_progress_observed_at": "2026-07-04T01:01:00Z",
+                            "observed_at": "2026-07-04T01:02:00Z",
                         },
                         "repair_completed_at": "2026-07-04T01:00:00Z",
                     },

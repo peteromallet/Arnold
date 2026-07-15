@@ -76,6 +76,8 @@ _STAGE_ORDER = {
 _FRESH_WORKER_SECONDS = 600
 _FRESH_RUNNER_TRANSITION_SECONDS = 180
 _DETERMINISTIC_OWNER_REPEAT_LIMIT = 2
+_DEFAULT_RECOVERY_FOLLOWUP_SECONDS = 30
+_MAX_RECOVERY_FOLLOWUP_SECONDS = 900
 
 
 def utc_now() -> str:
@@ -131,6 +133,75 @@ def _digest(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(dict(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _recovery_followup_seconds() -> int:
+    raw = os.environ.get(
+        "MEGAPLAN_REPAIR_RECOVERY_FOLLOWUP_SECONDS",
+        str(_DEFAULT_RECOVERY_FOLLOWUP_SECONDS),
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = _DEFAULT_RECOVERY_FOLLOWUP_SECONDS
+    return max(0, min(value, _MAX_RECOVERY_FOLLOWUP_SECONDS))
+
+
+def _artifact_reference(path: Path, *, kind: str, run_id: str) -> dict[str, Any]:
+    reference: dict[str, Any] = {
+        "kind": kind,
+        "path": str(path),
+        "run_id": run_id,
+        "exists": path.is_file(),
+    }
+    if not reference["exists"]:
+        return reference
+    try:
+        stat = path.stat()
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        reference.update(
+            {
+                "size_bytes": stat.st_size,
+                "mtime": datetime.fromtimestamp(
+                    stat.st_mtime, timezone.utc
+                ).isoformat(),
+                "sha256": digest.hexdigest(),
+            }
+        )
+    except OSError as exc:
+        reference["read_error"] = f"{type(exc).__name__}: {exc}"
+    return reference
+
+
+def _failed_fixer_evidence(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return bounded manifest/transcript/artifact refs for failed repair owners."""
+
+    references: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    owners = payload.get("owners") if isinstance(payload.get("owners"), list) else []
+    for owner in owners[-5:]:
+        if not isinstance(owner, Mapping):
+            continue
+        run_id = str(owner.get("run_id") or "").strip()
+        manifest_text = str(owner.get("manifest_path") or "").strip()
+        if not manifest_text:
+            continue
+        manifest_path = Path(manifest_text)
+        candidates = (
+            ("manifest", manifest_path),
+            ("transcript", manifest_path.parent / "run.log"),
+            ("result", manifest_path.parent / "result.md"),
+        )
+        for kind, path in candidates:
+            identity = (kind, str(path))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            references.append(_artifact_reference(path, kind=kind, run_id=run_id))
+    return references
 
 
 def _pid_live(pid: object) -> bool:
@@ -624,6 +695,206 @@ def evaluate_checkpoint(
     }
 
 
+def _canonical_runner_live(observation: Mapping[str, Any]) -> bool:
+    identity = (
+        observation.get("session_identity")
+        if isinstance(observation.get("session_identity"), Mapping)
+        else {}
+    )
+    runner = (
+        observation.get("runner_transition")
+        if isinstance(observation.get("runner_transition"), Mapping)
+        else {}
+    )
+    return bool(
+        identity.get("identity_matches") is not False
+        and runner.get("runner_pid_live") is True
+        and runner.get("fresh") is True
+    )
+
+
+def _continued_progress(
+    candidate: Mapping[str, Any], observation: Mapping[str, Any]
+) -> bool:
+    if str(candidate.get("progress_token") or "") != str(
+        observation.get("progress_token") or ""
+    ):
+        return True
+    candidate_acceptance = (
+        candidate.get("acceptance")
+        if isinstance(candidate.get("acceptance"), Mapping)
+        else {}
+    )
+    observed_acceptance = (
+        observation.get("acceptance")
+        if isinstance(observation.get("acceptance"), Mapping)
+        else {}
+    )
+    numeric_fields = (
+        "plan_history_length",
+        "chain_current_milestone_index",
+        "chain_completed_count",
+    )
+    if any(
+        int(observation.get(field) or 0) > int(candidate.get(field) or 0)
+        for field in numeric_fields
+    ):
+        return True
+    if int(observed_acceptance.get("seq") or 0) > int(
+        candidate_acceptance.get("seq") or 0
+    ):
+        return True
+    candidate_plan = str(candidate.get("chain_current_plan_name") or "")
+    observed_plan = str(observation.get("chain_current_plan_name") or "")
+    return bool(candidate_plan and observed_plan and candidate_plan != observed_plan)
+
+
+def _recovery_receipt(
+    *,
+    payload: Mapping[str, Any],
+    frozen: Mapping[str, Any],
+    candidate: Mapping[str, Any] | None,
+    observation: Mapping[str, Any],
+    accepted: bool,
+    reasons: Sequence[str],
+    followup_seconds: int,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "arnold-post-fixer-recovery-acceptance-v1",
+        "accepted": accepted,
+        "recorded_at": utc_now(),
+        "goal_id": str(payload.get("goal_id") or ""),
+        "checkpoint_digest": str(payload.get("checkpoint_digest") or ""),
+        "requirements": {
+            "authoritative_blocker_clearance": True,
+            "live_canonical_runner": True,
+            "fresh_progress_beyond_checkpoint": True,
+            "bounded_continued_progress": True,
+            "minimum_followup_seconds": followup_seconds,
+        },
+        "reasons": list(reasons),
+        "pre_recovery_checkpoint": deepcopy(dict(frozen)),
+        "post_recovery_checkpoint": (
+            deepcopy(dict(candidate)) if isinstance(candidate, Mapping) else None
+        ),
+        "followup_checkpoint": deepcopy(dict(observation)),
+        "failed_fixer_evidence": _failed_fixer_evidence(payload),
+        "escalation": {
+            "required": not accepted,
+            "target": "meta_repair_root_cause" if not accepted else "",
+            "reason": "post_fixer_recovery_gate_failed" if not accepted else "",
+        },
+    }
+
+
+def _record_recovery_gate_failure(
+    payload: dict[str, Any], receipt: Mapping[str, Any]
+) -> None:
+    failures = payload.setdefault("recovery_gate_failures", [])
+    fingerprint = _digest(
+        {
+            "checkpoint_digest": receipt.get("checkpoint_digest"),
+            "reasons": receipt.get("reasons"),
+            "followup_progress_token": _load_json_value(
+                receipt, "followup_checkpoint", "progress_token"
+            ),
+        }
+    )
+    if not any(
+        isinstance(item, Mapping) and item.get("fingerprint") == fingerprint
+        for item in failures
+    ):
+        item = deepcopy(dict(receipt))
+        item["fingerprint"] = fingerprint
+        failures.append(item)
+        if len(failures) > 20:
+            del failures[:-20]
+    payload["recovery_acceptance"] = deepcopy(dict(receipt))
+
+
+def _load_json_value(value: Mapping[str, Any], *keys: str) -> Any:
+    current: Any = value
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    return current
+
+
+def recovery_acceptance_verification(
+    goal_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project an accepted goal receipt into the shared recovery contract."""
+
+    receipt = (
+        goal_payload.get("recovery_acceptance")
+        if isinstance(goal_payload.get("recovery_acceptance"), Mapping)
+        else {}
+    )
+    if (
+        receipt.get("schema_version")
+        != "arnold-post-fixer-recovery-acceptance-v1"
+        or receipt.get("accepted") is not True
+    ):
+        return {}
+    target = (
+        goal_payload.get("target")
+        if isinstance(goal_payload.get("target"), Mapping)
+        else {}
+    )
+    pre = (
+        receipt.get("pre_recovery_checkpoint")
+        if isinstance(receipt.get("pre_recovery_checkpoint"), Mapping)
+        else {}
+    )
+    post = (
+        receipt.get("post_recovery_checkpoint")
+        if isinstance(receipt.get("post_recovery_checkpoint"), Mapping)
+        else {}
+    )
+    followup = (
+        receipt.get("followup_checkpoint")
+        if isinstance(receipt.get("followup_checkpoint"), Mapping)
+        else {}
+    )
+    runner = (
+        followup.get("runner_transition")
+        if isinstance(followup.get("runner_transition"), Mapping)
+        else {}
+    )
+    blocker_id = str(target.get("blocker_id") or "")
+    return {
+        "outcome": "progressed",
+        "repair_completed_at": str(
+            goal_payload.get("created_at") or pre.get("captured_at") or ""
+        ),
+        "original_blocker": {"blocker_id": blocker_id},
+        "observation": {
+            "kind": "post_fixer_recovery_gate",
+            "blocker_id": blocker_id,
+            "blocker_cleared": bool(followup.get("latest_failure_cleared")),
+            "directly_observed": True,
+            "independent": True,
+            "canonical_runner_live": bool(
+                runner.get("runner_pid_live") is True
+                and runner.get("fresh") is True
+            ),
+            "fresh_progress_beyond_checkpoint": True,
+            "continued_progress": _continued_progress(post, followup),
+            "first_progress_observed_at": str(post.get("captured_at") or ""),
+            "observed_at": str(followup.get("captured_at") or ""),
+            "checkpoint_digest": receipt.get("checkpoint_digest"),
+            "receipt_recorded_at": receipt.get("recorded_at"),
+        },
+        "pre_snapshot": deepcopy(dict(pre)),
+        "post_snapshot": deepcopy(dict(followup)),
+        "recovery_acceptance": deepcopy(dict(receipt)),
+        "failed_fixer_evidence": deepcopy(
+            receipt.get("failed_fixer_evidence") or []
+        ),
+    }
+
+
 def ensure_repair_goal(
     *,
     marker_dir: str | Path,
@@ -677,7 +948,9 @@ def ensure_repair_goal(
                     "required_beyond_stage_rank": frozen.get("target_stage_rank", -1),
                     "requires_blocker_cleared": True,
                     "requires_fresh_progress": True,
-                    "requires_correct_worker_when_applicable": True,
+                    "requires_live_canonical_runner": True,
+                    "requires_bounded_continued_progress": True,
+                    "minimum_followup_seconds": _recovery_followup_seconds(),
                     "success_authority": "authoritative_target_evidence",
                 },
                 "request_ids": [request_id] if request_id else [],
@@ -784,11 +1057,19 @@ def evaluate_repair_goal(
                 "required_beyond_stage_rank": _STAGE_ORDER.get(required_stage, -1),
                 "requires_blocker_cleared": True,
                 "requires_fresh_progress": True,
-                "requires_correct_worker_when_applicable": True,
+                "requires_live_canonical_runner": True,
+                "requires_bounded_continued_progress": True,
+                "minimum_followup_seconds": _recovery_followup_seconds(),
                 "success_authority": "authoritative_target_evidence",
                 "migrated_from_legacy_goal_at": utc_now(),
             }
             payload["recovery_contract"] = contract
+        else:
+            contract.setdefault("requires_live_canonical_runner", True)
+            contract.setdefault("requires_bounded_continued_progress", True)
+            contract.setdefault(
+                "minimum_followup_seconds", _recovery_followup_seconds()
+            )
         effective_frozen = deepcopy(frozen)
         effective_frozen["target_stage"] = str(contract.get("required_beyond_stage") or "")
         contract_rank = contract.get("required_beyond_stage_rank")
@@ -796,9 +1077,191 @@ def evaluate_repair_goal(
             -1 if contract_rank is None else contract_rank
         )
         evaluation = evaluate_checkpoint(effective_frozen, observation)
+        followup_seconds = int(
+            contract.get("minimum_followup_seconds")
+            if contract.get("minimum_followup_seconds") is not None
+            else _recovery_followup_seconds()
+        )
+        candidate_record = (
+            payload.get("recovery_candidate")
+            if isinstance(payload.get("recovery_candidate"), Mapping)
+            else None
+        )
+        candidate_observation = (
+            candidate_record.get("observation")
+            if isinstance(candidate_record, Mapping)
+            and isinstance(candidate_record.get("observation"), Mapping)
+            else None
+        )
+        if evaluation["status"] == GOAL_PROGRESSED:
+            if not _canonical_runner_live(observation):
+                reasons = ["canonical_runner_not_live"]
+                receipt = _recovery_receipt(
+                    payload=payload,
+                    frozen=frozen,
+                    candidate=candidate_observation,
+                    observation=observation,
+                    accepted=False,
+                    reasons=reasons,
+                    followup_seconds=followup_seconds,
+                )
+                _record_recovery_gate_failure(payload, receipt)
+                evaluation.update(
+                    {
+                        "status": GOAL_ACTIVE,
+                        "authoritative_progress": False,
+                        "control_action": "meta_repair",
+                        "recovery_gate_accepted": False,
+                        "recovery_gate_reasons": reasons,
+                        "reason": (
+                            "post-fixer recovery gate rejected candidate progress: "
+                            "the exact canonical runner is not live and fresh"
+                        ),
+                        "failed_fixer_evidence": receipt["failed_fixer_evidence"],
+                    }
+                )
+            elif candidate_observation is None:
+                candidate_record = {
+                    "schema_version": "arnold-post-fixer-recovery-candidate-v1",
+                    "recorded_at": utc_now(),
+                    "checkpoint_digest": payload.get("checkpoint_digest"),
+                    "observation": deepcopy(observation),
+                    "evaluation": deepcopy(evaluation),
+                    "failed_fixer_evidence": _failed_fixer_evidence(payload),
+                }
+                payload["recovery_candidate"] = candidate_record
+                evaluation.update(
+                    {
+                        "status": GOAL_ACTIVE,
+                        "authoritative_progress": False,
+                        "control_action": "observe_recovery",
+                        "recovery_gate_accepted": False,
+                        "recovery_gate_reasons": [
+                            "bounded_followup_observation_pending"
+                        ],
+                        "reason": (
+                            "candidate recovery cleared the blocker, has a live canonical "
+                            "runner, and advanced beyond the frozen checkpoint; bounded "
+                            "continued-progress observation is still required"
+                        ),
+                    }
+                )
+            else:
+                candidate_at = _parse_time(candidate_record.get("recorded_at"))
+                observed_at = _parse_time(observation.get("captured_at"))
+                elapsed_seconds = (
+                    max(0.0, (observed_at - candidate_at).total_seconds())
+                    if candidate_at is not None and observed_at is not None
+                    else 0.0
+                )
+                if elapsed_seconds < followup_seconds:
+                    evaluation.update(
+                        {
+                            "status": GOAL_ACTIVE,
+                            "authoritative_progress": False,
+                            "control_action": "observe_recovery",
+                            "recovery_gate_accepted": False,
+                            "recovery_gate_reasons": [
+                                "bounded_followup_observation_pending"
+                            ],
+                            "followup_elapsed_seconds": elapsed_seconds,
+                            "followup_required_seconds": followup_seconds,
+                            "reason": (
+                                "candidate recovery remains live; bounded follow-up "
+                                "window has not elapsed"
+                            ),
+                        }
+                    )
+                elif not _continued_progress(candidate_observation, observation):
+                    reasons = ["continued_progress_not_observed"]
+                    receipt = _recovery_receipt(
+                        payload=payload,
+                        frozen=frozen,
+                        candidate=candidate_observation,
+                        observation=observation,
+                        accepted=False,
+                        reasons=reasons,
+                        followup_seconds=followup_seconds,
+                    )
+                    _record_recovery_gate_failure(payload, receipt)
+                    evaluation.update(
+                        {
+                            "status": GOAL_ACTIVE,
+                            "authoritative_progress": False,
+                            "control_action": "meta_repair",
+                            "recovery_gate_accepted": False,
+                            "recovery_gate_reasons": reasons,
+                            "reason": (
+                                "post-fixer recovery gate rejected candidate progress: "
+                                "the bounded follow-up showed no continued progress"
+                            ),
+                            "failed_fixer_evidence": receipt[
+                                "failed_fixer_evidence"
+                            ],
+                        }
+                    )
+                else:
+                    receipt = _recovery_receipt(
+                        payload=payload,
+                        frozen=frozen,
+                        candidate=candidate_observation,
+                        observation=observation,
+                        accepted=True,
+                        reasons=[],
+                        followup_seconds=followup_seconds,
+                    )
+                    payload["recovery_acceptance"] = receipt
+                    payload.pop("recovery_candidate", None)
+                    evaluation.update(
+                        {
+                            "recovery_gate_accepted": True,
+                            "recovery_gate_reasons": [],
+                            "bounded_followup_seconds": elapsed_seconds,
+                            "failed_fixer_evidence": receipt[
+                                "failed_fixer_evidence"
+                            ],
+                            "reason": (
+                                "post-fixer recovery gate verified blocker clearance, "
+                                "the live canonical runner, beyond-checkpoint progress, "
+                                "and continued progress across the bounded observation"
+                            ),
+                        }
+                    )
+        elif candidate_observation is not None and evaluation["status"] == GOAL_ACTIVE:
+            reasons = ["candidate_recovery_regressed"]
+            if evaluation.get("blocker_cleared") is not True:
+                reasons.append("authoritative_blocker_not_cleared")
+            if not _canonical_runner_live(observation):
+                reasons.append("canonical_runner_not_live")
+            receipt = _recovery_receipt(
+                payload=payload,
+                frozen=frozen,
+                candidate=candidate_observation,
+                observation=observation,
+                accepted=False,
+                reasons=reasons,
+                followup_seconds=followup_seconds,
+            )
+            _record_recovery_gate_failure(payload, receipt)
+            evaluation.update(
+                {
+                    "control_action": "meta_repair",
+                    "recovery_gate_accepted": False,
+                    "recovery_gate_reasons": reasons,
+                    "reason": (
+                        "post-fixer recovery candidate regressed before durable "
+                        "acceptance; escalate with failed-fixer evidence"
+                    ),
+                    "failed_fixer_evidence": receipt["failed_fixer_evidence"],
+                }
+            )
         owner_cycle = (
             action.startswith("owner-iteration-") or "post-dev-fix" in action
-        ) and evaluation.get("control_action") != "preserve_live"
+        ) and evaluation.get("control_action") not in {
+            "preserve_live",
+            "observe_recovery",
+            "meta_repair",
+        }
         repeated_owner_cycles = 0
         if owner_cycle and evaluation["status"] == GOAL_ACTIVE:
             token = str(observation.get("iteration_token") or observation.get("progress_token") or "")
@@ -863,6 +1326,11 @@ def evaluate_repair_goal(
             "frozen_checkpoint": frozen,
             "recovery_contract": contract,
             "observation": observation,
+            "recovery_candidate": deepcopy(payload.get("recovery_candidate")),
+            "recovery_acceptance": deepcopy(payload.get("recovery_acceptance")),
+            "recovery_gate_failures": deepcopy(
+                (payload.get("recovery_gate_failures") or [])[-5:]
+            ),
         }
 
 

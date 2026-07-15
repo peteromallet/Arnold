@@ -61,7 +61,11 @@ def _verified_recovery_evidence(*, blocker_id: str = "blocker-42") -> dict[str, 
             "blocker_cleared": True,
             "directly_observed": True,
             "independent": True,
-            "observed_at": "2026-07-09T07:54:00+00:00",
+            "canonical_runner_live": True,
+            "fresh_progress_beyond_checkpoint": True,
+            "continued_progress": True,
+            "first_progress_observed_at": "2026-07-09T07:54:00+00:00",
+            "observed_at": "2026-07-09T07:55:00+00:00",
         },
     }
 
