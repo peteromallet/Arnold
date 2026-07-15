@@ -41,7 +41,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     else:
         task_field_guidance = textwrap.dedent(
             """
-            - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+            - The harness owns integration and full-suite verification — do NOT author a model task whose objective is to run either one. Implementation and test-authoring tasks may run narrow selectors for immediate feedback, but keep those selectors to the changed behavior, run them once, and allow at most one diagnostic rerun after a failure. The harness will run the authoritative post-execute suite.
             - For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.
             """
         ).strip()
@@ -68,7 +68,9 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         )
     else:
         final_task_guidance = (
-            "- The FINAL task MUST run tests; harness validation will reject finalize output without it."
+            "- Do NOT add a final integration/full-suite test task. The final implementation or "
+            "test-authoring task should run only its narrow selectors; the harness owns the "
+            "authoritative post-execute validation."
         )
     output_path = _write_finalize_template(plan_dir, state)
 
@@ -106,10 +108,11 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=8 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=8 model. Two consequences you control via DAG shape:
           - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=8 sibling and it runs on the pricier model.
           - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - `depends_on` is correctness authority, not a routing hint. Add an edge only when the downstream task cannot be implemented correctly from the original baseline plus its other declared prerequisites. Never add an edge merely to isolate a model tier, reduce a ready frontier, preserve authoring order, or keep a heavyweight in its own batch.
         - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
-          1. Isolate heavyweights. A c=7 or c=8+ task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          1. Isolate heavyweights without inventing dependencies. Keep semantically independent c=7/c=8+ tasks as siblings; the runtime batch cap can place ready siblings in separate batches.
           2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
-          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+          3. A ready frontier wider than 5 is valid when the work is genuinely independent. Preserve that independence; the runtime batcher caps each dispatched batch at 5.
         - Do not include `validation` or `coverage_complete` fields - the harness computes those.
         {final_task_guidance}
         - `tasks` must be an ordered array of task objects. Every task object must include:
@@ -170,8 +173,8 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
         - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
         - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
-        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
-        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should normally be one task that applies the fix and runs its narrow selectors; post-execute integration/full-suite validation is not another model task. Do NOT create separate "inspect", "read", or validation-only tasks for simple changes. Only create more tasks when the work has genuinely independent implementation stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, run bounded narrow verification, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. Narrow verification should consume at most 2 minutes of the turn under normal conditions; a slower integration or full-suite command belongs to the harness. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) and "migrate consumer B + parity tests" (T3, depends_on T1) when the consumers are independent. A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
         - {task_field_guidance}
         """
     ).strip()
