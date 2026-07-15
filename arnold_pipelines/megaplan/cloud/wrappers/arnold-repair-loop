@@ -6094,8 +6094,14 @@ run_repair_investigator_turn() {
   cat > "$INVESTIGATOR_PROMPT_PATH" <<EOF
 You are the read-only investigator for automatic repair session $SESSION.
 
-Read the bounded authoritative context at $INVESTIGATION_CONTEXT_PATH. Its digest is $context_digest.
-It contains the exact current error, frozen goal checkpoint, current process/stage evidence, queued request identity, and recent prior repair history. Inspect only cited authoritative paths needed to resolve contradictions.
+The bounded authoritative context is embedded below so investigation does not depend on filesystem sandbox availability. Its digest is $context_digest. The identical durable copy is at $INVESTIGATION_CONTEXT_PATH.
+It contains the exact current error, frozen goal checkpoint, current process/stage evidence, queued request identity, and recent prior repair history. Treat the embedded object as authoritative; inspect only cited paths needed to resolve contradictions if filesystem reads are available.
+
+<authoritative_repair_context>
+EOF
+  cat "$INVESTIGATION_CONTEXT_PATH" >> "$INVESTIGATOR_PROMPT_PATH"
+  cat >> "$INVESTIGATOR_PROMPT_PATH" <<EOF
+</authoritative_repair_context>
 
 Determine the real blocker mechanism and whether the correct target worker must be preserved. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object with schema_version="arnold-repair-investigator-receipt-v1", context_digest="$context_digest", non-empty real_blocker, evidence_paths, prior_repairs_considered, boolean preserve_live, recommended_action (preserve_live|repair_source|repair_target|recover_state|replan), and guard_weakening_risk.
 EOF
