@@ -4798,6 +4798,7 @@ PY
     --route-class watchdog_authorized_l1
     --backend repair-loop
     --command-display "arnold-repair-loop $session"
+    --description "${ARNOLD_REPAIR_LAUNCH_DESCRIPTION:-Investigate then repair watchdog blocker for $session at ${PLAN_STATUS_PLAN_NAME:-current target}/${PLAN_STATUS_FAILURE_PHASE:-current stage}}"
     --origin-kind watchdog_repair
     --origin-id "$managed_identity"
     --origin-component arnold-watchdog
@@ -7648,9 +7649,11 @@ for path in goals:
         continue
     result = evaluate_repair_goal(path, action="watchdog_authority_check")
     status = str(result.get("status") or "active")
-    reason = str((result.get("evaluation") or {}).get("reason") or "")
+    evaluation = result.get("evaluation") or {}
+    reason = str(evaluation.get("reason") or "")
+    control_action = str(evaluation.get("control_action") or "")
     if status != "active":
-        print(f"{status}\t{result.get('goal_id') or ''}\t{reason}")
+        print(f"{status}\t{result.get('goal_id') or ''}\t{reason}\t{control_action}")
         raise SystemExit(0)
     refreshed = json.loads(path.read_text(encoding="utf-8"))
     owner_live = False
@@ -7666,9 +7669,12 @@ for path in goals:
                 break
         except Exception:
             continue
-    print(f"{'active_owner' if owner_live else 'active_unowned'}\t{result.get('goal_id') or ''}\t{reason}")
+    print(
+        f"{'active_owner' if owner_live else 'active_unowned'}\t"
+        f"{result.get('goal_id') or ''}\t{reason}\t{control_action}"
+    )
     raise SystemExit(0)
-print("none\t\t")
+print("none\t\t\t")
 PY
 }
 
@@ -7739,8 +7745,8 @@ PY
     log "current-target observe session=$session evidence=$current_target_observation"
   fi
 
-  local repair_goal_status repair_goal_id repair_goal_reason
-  IFS=$'\t' read -r repair_goal_status repair_goal_id repair_goal_reason <<< "$(repair_goal_watchdog_status "$session" || printf 'none\t\t')"
+  local repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action
+  IFS=$'\t' read -r repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action <<< "$(repair_goal_watchdog_status "$session" || printf 'none\t\t\t')"
   case "$repair_goal_status" in
     active_owner)
       log "durable repair goal still owns frozen target session=$session goal_id=$repair_goal_id; waiting for authoritative acceptance progress"
@@ -7748,7 +7754,13 @@ PY
       return 0
       ;;
     active_unowned)
+      if [[ "$repair_goal_control_action" == "preserve_live" ]]; then
+        log "durable repair goal is unowned while its fresh matching worker progresses; observing without repair launch session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+        report_item "$report_items" "$session" "observe" "recovery_observation" "preserve fresh matching worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"
+        return 0
+      fi
       log "durable repair goal lost its process owner while target remained frozen; redispatching root repair session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+      export ARNOLD_REPAIR_LAUNCH_DESCRIPTION="Investigate then repair unowned goal $repair_goal_id for $session; control_action=${repair_goal_control_action:-unknown}; $repair_goal_reason"
       export ARNOLD_REPAIR_RETRY_GOAL_ID="$repair_goal_id"
       export ARNOLD_REPAIR_RETRY_GOAL_PATH="$(python3 - "$MARKER_DIR" "$session" "$repair_goal_id" <<'PY'
 import json, pathlib, sys
@@ -7763,7 +7775,7 @@ for path in root.glob("goal-*.json"):
 PY
 )"
       repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "repair_goal_owner_missing: $repair_goal_id; $repair_goal_reason" || true
-      unset ARNOLD_REPAIR_RETRY_GOAL_ID ARNOLD_REPAIR_RETRY_GOAL_PATH
+      unset ARNOLD_REPAIR_RETRY_GOAL_ID ARNOLD_REPAIR_RETRY_GOAL_PATH ARNOLD_REPAIR_LAUNCH_DESCRIPTION
       return 0
       ;;
     approval_required)

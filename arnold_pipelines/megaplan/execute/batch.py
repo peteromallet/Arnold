@@ -387,6 +387,20 @@ class _TierResolution:
         return self.chain.selected() if self.chain is not None else None
 
 
+def _active_step_fallback_fields(
+    chain: FallbackSpecChain,
+) -> dict[str, Any]:
+    """Translate receipt-shaped fallback fields for ``set_active_step``."""
+    fields = fallback_observability_fields(chain)
+    return {
+        "configured_specs": fields["configured_specs"],
+        "attempt_index": fields["selected_spec_index"],
+        "attempted_specs": fields["attempted_specs"],
+        "failed_attempt_reasons": fields["failed_attempt_reasons"],
+        "fallback_trigger": fields["fallback_trigger"],
+    }
+
+
 def _legacy_next_step_for_execute_policy(
     decision: NextStepDecision | NextExecuteTransition,
 ) -> str | None:
@@ -2253,7 +2267,7 @@ def handle_execute_one_batch(
                 agent=agent,
                 mode=mode,
                 model=model,
-                **fallback_observability_fields(resolution.chain),
+                **_active_step_fallback_fields(resolution.chain),
             )
             save_state_merge_meta(plan_dir, state)
     selected_resolved_model = model if model is not None else resolved_model
@@ -4116,7 +4130,7 @@ def handle_execute_auto_loop(
                     agent=batch_agent,
                     mode=batch_mode,
                     model=batch_model,
-                    **fallback_observability_fields(resolution.chain),
+                    **_active_step_fallback_fields(resolution.chain),
                 )
                 save_state_merge_meta(plan_dir, state)
 

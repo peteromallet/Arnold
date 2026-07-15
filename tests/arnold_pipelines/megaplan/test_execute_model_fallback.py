@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from arnold_pipelines.megaplan.execute.batch import normalize_tier_map
+from arnold_pipelines.megaplan.execute.batch import (
+    _active_step_fallback_fields,
+    normalize_tier_map,
+)
 from arnold_pipelines.megaplan.execute_attempt_safety import WorkspaceSnapshot
 from arnold_pipelines.megaplan.fallback_chains import ExecuteFallbackMutationUnsafe
 from arnold_pipelines.megaplan.handlers.execute import _extract_execute_tier_map
@@ -87,6 +90,23 @@ def test_tier_route_boundary_migrates_scalars_and_fails_closed_on_ambiguity() ->
         normalize_tier_map({1: "codex:gpt-5.4", "1": "codex:gpt-5.5"})
     with pytest.raises(ValueError, match="boolean"):
         _extract_execute_tier_map({"execute": {True: "codex:gpt-5.4"}})
+
+
+def test_tier_route_translates_receipt_fields_for_active_step() -> None:
+    normalized = normalize_tier_map({7: CHAIN})
+    assert normalized is not None
+
+    fields = _active_step_fallback_fields(normalized[7])
+
+    assert fields == {
+        "configured_specs": list(CHAIN),
+        "attempt_index": 0,
+        "attempted_specs": [CHAIN[0]],
+        "failed_attempt_reasons": [],
+        "fallback_trigger": None,
+    }
+    assert "selected_spec_index" not in fields
+    assert "selected_spec_total" not in fields
 
 
 def test_execute_advances_zhipu_to_fireworks_to_codex_with_reasoned_receipt_metadata(

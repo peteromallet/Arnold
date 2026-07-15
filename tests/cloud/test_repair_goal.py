@@ -310,6 +310,30 @@ def test_watchdog_retry_explicitly_inherits_goal_checkpoint_and_unique_identity(
     assert retained_retry < legacy_failed < target_kill
 
 
+def test_watchdog_preserves_goal_control_action_through_dispatch_decision() -> None:
+    wrapper = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-watchdog"
+    ).read_text(encoding="utf-8")
+
+    status = wrapper[wrapper.index("repair_goal_watchdog_status() {") :]
+    status = status[: status.index("\n}\n")]
+    assert 'control_action = str(evaluation.get("control_action") or "")' in status
+    assert "{reason}\\t{control_action}" in status
+
+    launch = wrapper[wrapper.index("launch_chain_tick() {") :]
+    launch = launch[: launch.index("\n}\n")]
+    assert "repair_goal_control_action" in launch
+    assert 'if [[ "$repair_goal_control_action" == "preserve_live" ]]' in launch
+    preserve = launch.index('if [[ "$repair_goal_control_action" == "preserve_live" ]]')
+    dispatch = launch.index("repair_unintended_stop", preserve)
+    assert launch.index("return 0", preserve) < dispatch
+
+
 def test_blocker_cleared_live_runner_transition_is_preserved_not_accepted() -> None:
     result = evaluate_checkpoint(
         {

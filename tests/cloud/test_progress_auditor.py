@@ -2548,6 +2548,109 @@ class TestAuditorWrapperBoundary:
 
 
 class TestLiveSignalFiltering:
+    def test_preserve_live_owner_missing_dispatch_is_deterministic_finding(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "current-plan"
+        plan_dir.mkdir(parents=True)
+        now = datetime.now(timezone.utc).isoformat()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "current-plan",
+                    "current_state": "finalized",
+                    "latest_failure": {},
+                    "active_step": {
+                        "active": True,
+                        "phase": "execute",
+                        "worker_pid": os.getpid(),
+                        "last_activity_at": now,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        goal_path = tmp_path / "goal.json"
+        goal_path.write_text(
+            json.dumps(
+                {
+                    "status": "active",
+                    "goal_id": "repair-goal-cfc07d8070fe6618517bd2cd",
+                    "checkpoint_digest": "checkpoint-1",
+                    "owners": [],
+                    "last_evaluation": {
+                        "control_action": "preserve_live",
+                        "correct_worker_alive": True,
+                        "fresh_progress": True,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        request_id = "741233a457493a63d27d40d65eb202662c617ff3629f6654c6e41fcced452eed"
+        request_path = tmp_path / ".megaplan" / "repair-queue" / "requests" / f"{request_id}.json"
+        request_path.parent.mkdir(parents=True)
+        request_path.write_text(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "source": "watchdog_goal_recovery",
+                    "problem_signature": {
+                        "failure_kind": "repair_goal_owner_missing",
+                        "current_state": "finalized",
+                        "phase_or_step": "execute",
+                        "milestone_or_plan": "current-plan",
+                        "gate_recommendation": "preserve_live_until_beyond_execute",
+                    },
+                    "target": {"plan_name": "current-plan"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "request_id": request_id,
+                    "repair_goal": {"goal_path": str(goal_path)},
+                    "outcome": "running",
+                    "current_attempt_id": "attempt-1",
+                    "current_signature": {"plan_name": "current-plan", "phase": "execute"},
+                    "attempts": [{"attempt_id": "attempt-1", "dispatched_at": now}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "current-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert report["green_checks"] == []
+        finding = report["findings"][0]
+        assert any(
+            reason.startswith("repair_dispatch_during_preserve_live:")
+            for reason in finding["reasons"]
+        )
+        goal = finding["meta_repair_summary"]["repair_goal"]
+        assert goal["repair_dispatch_during_preserve_live"] is True
+        assert finding["meta_repair_summary"]["should_dispatch"] is False
+        assert finding["meta_repair_summary"]["trigger"] == ""
+
     def test_meta_repair_summary_detects_stale_request_under_live_goal_owner(
         self, tmp_path: Path
     ) -> None:

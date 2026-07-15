@@ -368,6 +368,7 @@ class ManagedCommandSpec:
     command_display: str
     launch_provenance: Mapping[str, Any]
     links: Mapping[str, Any]
+    description: str | None = None
     parent_run_id: str | None = None
     retry_of_run_id: str | None = None
     lineage_key: str | None = None
@@ -484,6 +485,7 @@ def _new_manifest(
         "full_log_path": str(log_path.resolve()),
         "result_path": str(result_path.resolve()),
         "launch_idempotency_key": spec.identity_key,
+        "description": spec.description or spec.command_display,
         "command_display": spec.command_display,
         "execution_kind": "agentic" if spec.require_output else "managed_controller",
         "output_required": spec.require_output,
@@ -1078,6 +1080,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--route-class", required=True)
     run.add_argument("--backend", required=True)
     run.add_argument("--command-display", required=True)
+    run.add_argument("--description")
     run.add_argument("--origin-kind", choices=sorted(MACHINE_ORIGIN_KINDS), required=True)
     run.add_argument("--origin-id", required=True)
     run.add_argument("--origin-component", required=True)
@@ -1127,6 +1130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         route_class=args.route_class,
         backend=args.backend,
         command_display=args.command_display,
+        description=args.description,
         launch_provenance=machine_origin_provenance(
             origin_kind=args.origin_kind,
             origin_id=args.origin_id,
