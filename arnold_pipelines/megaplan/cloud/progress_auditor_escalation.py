@@ -407,7 +407,18 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "partial_liveness",
         "live_with_fresh_activity",
     }
-    liveness_without_custody = bool(provisional_liveness and accepted)
+    blocker_id = _text(custody.get("blocker_id"))
+    active_requests = [
+        _text(item)
+        for item in _list(custody.get("active_request_ids"))
+        if _text(item)
+    ]
+    missing_custody_links = bool(
+        provisional_liveness and (not blocker_id or not active_requests)
+    )
+    liveness_without_custody = bool(
+        provisional_liveness and (accepted or missing_custody_links)
+    )
     false_success = bool(
         outcome in {"complete", "completed", "progressed", "success", "fixed"}
         and _chain_evidence(finding).get("nonterminal")
@@ -447,7 +458,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         else "TRACKED"
         if missing_manifest
         else "CONTEXT"
-        if accepted
+        if accepted or missing_custody_links
         else "FIXED"
     )
     return {
@@ -460,6 +471,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "repeated_deterministic_failures": repeated,
         "false_success": false_success,
         "missing_canonical_manifest": missing_manifest,
+        "missing_custody_links": missing_custody_links,
         "provisional_liveness": provisional_liveness,
         "liveness_without_custody": liveness_without_custody,
     }

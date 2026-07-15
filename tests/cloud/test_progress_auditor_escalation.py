@@ -239,6 +239,26 @@ def test_partial_liveness_with_unclaimed_request_is_l1_context_failure() -> None
     assert gate["custody_walk"]["missed_by_layer"] == "L2"
 
 
+def test_partial_liveness_with_empty_custody_links_is_l1_context_failure() -> None:
+    finding = _true_stall()
+    finding["repair_data_summary"]["outcome"] = "partial_liveness"
+    finding["repair_custody_summary"]["blocker_id"] = ""
+    finding["repair_custody_summary"]["active_request_ids"] = []
+    finding["repair_custody_summary"]["accepted_unclaimed_request_ids"] = []
+    finding["repair_custody_summary"]["retry_budget"] = {
+        "claim_retries_used": 0,
+        "claim_retries_remaining": 3,
+    }
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is True
+    l1 = gate["custody_walk"]["L1"]["failure"]
+    assert l1["missing_custody_links"] is True
+    assert l1["liveness_without_custody"] is True
+    assert gate["custody_walk"]["first_broken_axis"] == "CONTEXT"
+
+
 def test_l1_false_success_is_caught_and_l2_miss_remains_required() -> None:
     finding = _true_stall()
     finding["repair_data_summary"]["outcome"] = "complete"
