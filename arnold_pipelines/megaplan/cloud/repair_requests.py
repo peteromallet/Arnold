@@ -237,6 +237,15 @@ def enqueue_repair_request(
     if acceptance_predicate_failure is not None:
         extra_fields = ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS
         acc = dict(acceptance_predicate_failure) if isinstance(acceptance_predicate_failure, dict) else {}
+        details = acc.get("details")
+        details = dict(details) if isinstance(details, dict) else {}
+        raw_evidence_refs = details.get("evidence_refs")
+        if isinstance(raw_evidence_refs, list):
+            evidence_refs = ",".join(
+                str(item).strip() for item in raw_evidence_refs if str(item).strip()
+            )
+        else:
+            evidence_refs = str(raw_evidence_refs or "").strip()
         extended_signature.update(
             {
                 "acceptance_predicate_kind": str(acc.get("kind") or "").strip(),
@@ -250,6 +259,11 @@ def enqueue_repair_request(
                 "acceptance_snapshot_hash": str(
                     acceptance_snapshot_hash or ""
                 ).strip(),
+                "acceptance_evidence_refs": evidence_refs,
+                "safe_recovery_action": str(
+                    details.get("safe_recovery_action") or ""
+                ).strip(),
+                "recovery_action": str(details.get("recovery_action") or "").strip(),
             }
         )
 

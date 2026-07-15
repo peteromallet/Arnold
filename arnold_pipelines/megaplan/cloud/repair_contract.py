@@ -282,6 +282,9 @@ class BlockerFingerprintV2(TypedDict, total=False):
     predicate_kind: str
     predicate_evidence_kind: str
     predicate_summary: str
+    evidence_refs: str
+    safe_recovery_action: str
+    recovery_action: str
 
     # ── V2 hash fields (optional) ────────────────────────────────────────────
     expected_hash: str
@@ -322,6 +325,9 @@ _BLOCKER_FINGERPRINT_V2_OPTIONAL_FIELDS: tuple[str, ...] = (
     "predicate_kind",
     "predicate_evidence_kind",
     "predicate_summary",
+    "evidence_refs",
+    "safe_recovery_action",
+    "recovery_action",
     "expected_hash",
     "observed_hash",
     "runtime_identity",
@@ -388,6 +394,9 @@ def blocker_fingerprint_from_acceptance(
     predicate_kind: str = "",
     predicate_evidence_kind: str = "",
     predicate_summary: str = "",
+    evidence_refs: str = "",
+    safe_recovery_action: str = "",
+    recovery_action: str = "",
     expected_hash: str = "",
     observed_hash: str = "",
     runtime_identity: str = "",
@@ -422,6 +431,9 @@ def blocker_fingerprint_from_acceptance(
         "predicate_kind": predicate_kind,
         "predicate_evidence_kind": predicate_evidence_kind,
         "predicate_summary": predicate_summary,
+        "evidence_refs": evidence_refs,
+        "safe_recovery_action": safe_recovery_action,
+        "recovery_action": recovery_action,
         "expected_hash": expected_hash,
         "observed_hash": observed_hash,
         "runtime_identity": runtime_identity,

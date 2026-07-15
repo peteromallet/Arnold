@@ -38,6 +38,9 @@ ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS = (
     "acceptance_predicate_summary",
     "acceptance_transaction_id",
     "acceptance_snapshot_hash",
+    "acceptance_evidence_refs",
+    "safe_recovery_action",
+    "recovery_action",
 )
 
 EXTENDED_PROBLEM_SIGNATURE_FIELDS = PROBLEM_SIGNATURE_FIELDS + ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS
@@ -469,6 +472,12 @@ def build_acceptance_predicate_signature(
     """
     context = _as_dict(failure_context)
     predicate_failure = _as_dict(context.get("acceptance_predicate_failure"))
+    predicate_details = _as_dict(predicate_failure.get("details"))
+    evidence_refs = predicate_details.get("evidence_refs")
+    if isinstance(evidence_refs, list):
+        evidence_refs_text = ",".join(_as_text(item) for item in evidence_refs if _as_text(item))
+    else:
+        evidence_refs_text = _as_text(evidence_refs)
     return {
         "acceptance_predicate_kind": _as_text(predicate_failure.get("kind")),
         "acceptance_predicate_evidence_kind": _as_text(
@@ -480,6 +489,15 @@ def build_acceptance_predicate_signature(
         ),
         "acceptance_snapshot_hash": _as_text(
             context.get("acceptance_snapshot_hash")
+        ),
+        "acceptance_evidence_refs": evidence_refs_text,
+        "safe_recovery_action": _as_text(
+            predicate_details.get("safe_recovery_action")
+            or context.get("safe_recovery_action")
+        ),
+        "recovery_action": _as_text(
+            predicate_details.get("recovery_action")
+            or context.get("recovery_action")
         ),
     }
 
