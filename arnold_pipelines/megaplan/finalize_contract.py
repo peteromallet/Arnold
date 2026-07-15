@@ -19,6 +19,7 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
         "meta_commentary",
     ],
     "properties": {
+        "task_contract_version": {"type": "integer"},
         "tasks": {
             "type": "array",
             "items": {
@@ -32,13 +33,45 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                 ],
                 "properties": {
                     "id": {"type": "string"},
+                    "objective": {"type": "string"},
                     "description": {"type": "string"},
                     "status": {"type": "string"},
+                    "kind": {"type": "string"},
                     "complexity": {"type": "integer"},
                     "complexity_justification": {"type": "string"},
+                    "estimated_minutes": {"type": "integer"},
+                    "depends_on": {"type": "array", "items": {"type": "string"}},
+                    "dependency_reasons": {"type": "object"},
+                    "routing_group": {"type": "string"},
+                    "write_set": {
+                        "type": "object",
+                        "required": ["paths", "complete"],
+                        "properties": {
+                            "paths": {"type": "array", "items": {"type": "string"}},
+                            "complete": {"type": "boolean"},
+                        },
+                    },
+                    "narrow_tests": {
+                        "type": "object",
+                        "required": ["selectors", "max_seconds", "max_runs"],
+                        "properties": {
+                            "selectors": {"type": "array", "items": {"type": "string"}},
+                            "max_seconds": {"type": "integer"},
+                            "max_runs": {"type": "integer"},
+                        },
+                    },
+                    "checkpoint": {
+                        "type": "object",
+                        "properties": {
+                            "required": {"type": "boolean"},
+                            "max_interval_seconds": {"type": "integer"},
+                            "records": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
                 },
             },
         },
+        "validation_jobs": {"type": "array"},
         "sense_checks": {"type": "array"},
         "watch_items": {"type": "array"},
         "meta_commentary": {"type": "string"},

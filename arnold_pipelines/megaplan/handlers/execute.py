@@ -63,6 +63,9 @@ from .shared import (
     worker_module,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+    assert_admitted_task_feasibility,
+)
 
 log = logging.getLogger(__name__)
 
@@ -433,6 +436,18 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # CliErrors / state mutations (see execute.policy).
         _enforce_entry_route(state)
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
+        # V2 finalize admission is content-addressed. Re-run the same pure
+        # compiler before any approval receipt or mutating preflight so a stale
+        # or hand-edited graph cannot bypass the final-stage sense-check.
+        finalize_data = read_json(plan_dir / "finalize.json")
+        try:
+            assert_admitted_task_feasibility(finalize_data, state.get("config", {}))
+        except ValueError as exc:
+            raise CliError(
+                "finalized_task_graph_changed",
+                str(exc),
+                valid_next=["finalize", "revise"],
+            ) from exc
         # Loud operator warning if the resolved sandbox root is narrower than
         # the plan's stored project_dir. Silent divergence here cost entire
         # execute runs in the past (codex sandboxed to a subdirectory, writes

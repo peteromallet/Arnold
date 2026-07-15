@@ -155,26 +155,39 @@ def _flags_only_unverifiable_payload(
     flags = raw_payload.get("flags")
     if not isinstance(flags, list) or not flags:
         return None
-    flag = next((item for item in flags if isinstance(item, dict)), None)
-    if flag is None:
+    dict_flags = [item for item in flags if isinstance(item, dict)]
+    if not dict_flags:
         return None
+    flag = dict_flags[0]
     category = str(flag.get("category", "")).strip().lower()
     concern = str(flag.get("concern", "")).strip()
     evidence = str(flag.get("evidence", "")).strip()
-    if category and category != "verifiability" and not (
-        evidence or concern
-    ):
-        return None
     reason = evidence or concern or "the worker could not verify this check"
     cause, retryable, error_kind = _infer_unverifiable_cause(reason)
-    return _unverifiable_check_payload(
-        check_id,
-        question,
-        reason,
-        cause=cause,
-        retryable=retryable,
-        error_kind=error_kind,
-    )
+    if category == "verifiability" and cause is not None:
+        return _unverifiable_check_payload(
+            check_id,
+            question,
+            reason,
+            cause=cause,
+            retryable=retryable,
+            error_kind=error_kind,
+        )
+    # A valid flags-only critique is substantive evidence, not a parse
+    # failure. Preserve every flag as a blocking finding instead of converting
+    # it to a synthetic flagged:false unverifiable record.
+    return {
+        "id": check_id,
+        "question": question,
+        "status": "complete",
+        "findings": [
+            {
+                "detail": str(item.get("evidence") or item.get("concern") or item.get("id") or "critique flag"),
+                "flagged": True,
+            }
+            for item in dict_flags
+        ],
+    }
 
 
 def _run_check(
@@ -495,7 +508,13 @@ def run_parallel_critique(
                 question=str(unit.extra.get("question", "")),
             )
             if _flags_only is not None:
-                return (_flags_only, [], [])
+                _verified = raw_payload.get("verified_flag_ids", [])
+                _disputed = raw_payload.get("disputed_flag_ids", [])
+                return (
+                    _flags_only,
+                    _verified if isinstance(_verified, list) else [],
+                    _disputed if isinstance(_disputed, list) else [],
+                )
         if isinstance(_checks_list, list) and len(_checks_list) != 1:
             _matching = [
                 item for item in _checks_list

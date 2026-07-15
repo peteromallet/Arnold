@@ -103,6 +103,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
 
         Requirements:
         - Produce structured JSON only.
+        - Set `task_contract_version` to `2` and `validation_jobs` to `[]`. The harness derives and runs integration/full-suite validation jobs; model tasks must not duplicate them.
         - For each `## Step N:` in the plan, emit 1-N tasks.
         - For each task, emit one sense_check.
         - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
@@ -119,8 +120,15 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         {final_task_guidance}
         - `tasks` must be an ordered array of task objects. Every task object must include:
           - `id`: short stable task ID like `T1`
+          - `objective`: exactly one independently reviewable objective, one line, at most 240 characters, with no semicolon-separated secondary objectives
           - `description`: concrete work item
+          - `estimated_minutes`: integer 1-15 for implementation plus narrow verification. Split anything that cannot credibly finish within 15 minutes.
           - `depends_on`: array of earlier task IDs or `[]`
+          - `dependency_reasons`: object keyed exactly by `depends_on`. Each value has `kind` (`consumes_output`, `write_conflict`, or `human_prerequisite`), a concrete `reason`, and the exact `required_output`. Routing, model isolation, authoring order, and batch sizing are forbidden reasons.
+          - `routing_group`: `""` unless independent tasks intentionally share context or overlapping writes; routing groups influence batching but grant no dependency authority
+          - `write_set`: `{{ "paths": [...], "complete": true }}`, declaring every planned output path. Mutating tasks must name 1-5 unique paths; split larger write sets.
+          - `narrow_tests`: `{{ "selectors": [...], "max_seconds": 120, "max_runs": 2 }}`. Use at most 3 changed-behavior selectors; use zero budgets for tasks that require no tests. Integration/full-suite checks belong to the harness.
+          - `checkpoint`: for complexity 7-10, require `{{ "required": true, "max_interval_seconds": 300, "records": ["completed_subobjectives", "remaining_subobjectives", "output_hashes", "test_state"] }}`; for lower complexity use `{{ "required": false, "max_interval_seconds": 300, "records": [] }}`
           - `status`: always `"pending"` at finalize time
           - `executor_notes`: always `""` at finalize time
           - `reviewer_verdict`: always `""` at finalize time
