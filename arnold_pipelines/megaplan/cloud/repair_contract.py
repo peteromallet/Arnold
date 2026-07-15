@@ -3849,7 +3849,10 @@ def build_ordinary_repair_verdict(
     repair_goal_path = _as_text(repair_goal.get("goal_path"))
     repair_goal_status = ""
     if repair_goal_path:
-        goal_payload = load_json(repair_goal_path, default={})
+        try:
+            goal_payload = json.loads(Path(repair_goal_path).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            goal_payload = {}
         if isinstance(goal_payload, Mapping):
             repair_goal_status = _as_text(goal_payload.get("status"))
         override = _as_text(repair_goal_status_override)
