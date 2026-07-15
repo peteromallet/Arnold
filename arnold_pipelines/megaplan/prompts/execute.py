@@ -253,6 +253,69 @@ def _execute_rework_targeting_block(
     ).strip()
 
 
+def _batch_tasks_with_rework_annotations(
+    batch_tasks: list[dict[str, Any]],
+    rework_context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Overlay concrete review directives onto actionable tasks.
+
+    Review rework reuses finalize task IDs, but the original finalize task prose
+    can be stale relative to the latest reviewer finding. Annotate the batch
+    task payload with the concrete issue/evidence tuple so the executor sees the
+    rework target inline with the task it must update.
+    """
+    if not isinstance(rework_context, dict):
+        return batch_tasks
+    raw_items = rework_context.get("rework_items", [])
+    if not isinstance(raw_items, list) or not raw_items:
+        return batch_tasks
+
+    by_task_id: dict[str, list[dict[str, Any]]] = {}
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        task_id = item.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        by_task_id.setdefault(task_id, []).append(item)
+
+    if not by_task_id:
+        return batch_tasks
+
+    annotated: list[dict[str, Any]] = []
+    for task in batch_tasks:
+        if not isinstance(task, dict):
+            annotated.append(task)
+            continue
+        task_id = task.get("id") or task.get("task_id")
+        if not isinstance(task_id, str) or task_id not in by_task_id:
+            annotated.append(task)
+            continue
+        updated = dict(task)
+        directives: list[dict[str, Any]] = []
+        evidence_files: list[str] = []
+        for item in by_task_id[task_id]:
+            directive: dict[str, Any] = {}
+            for key in ("issue", "expected", "actual", "evidence_file", "source"):
+                value = item.get(key)
+                if isinstance(value, str) and value:
+                    directive[key] = value
+            deterministic_check = item.get("deterministic_check")
+            if isinstance(deterministic_check, dict) and deterministic_check:
+                directive["deterministic_check"] = deterministic_check
+            if directive:
+                directives.append(directive)
+            evidence_file = item.get("evidence_file")
+            if isinstance(evidence_file, str) and evidence_file:
+                evidence_files.append(evidence_file)
+        if directives:
+            updated["review_rework_directives"] = directives
+        if evidence_files:
+            updated["review_rework_evidence_files"] = evidence_files
+        annotated.append(updated)
+    return annotated
+
+
 def _execute_approval_note(state: PlanState) -> str:
     if state["config"].get("auto_approve"):
         return (
@@ -592,6 +655,7 @@ def _execute_batch_prompt(
         for task_id in batch_task_ids
         if task_id in projected_tasks_by_id
     ]
+    batch_tasks = _batch_tasks_with_rework_annotations(batch_tasks, rework_context)
     completed_tasks = [
         projected_tasks_by_id[task_id]
         for task_id in completed
@@ -742,6 +806,7 @@ def _execute_batch_prompt(
         - Keep `executor_notes` verification-focused.
         - {_checkpoint_summary_requirement(checkpoint_path, projection_capabilities)}
         {_verification_cwd_requirement(Path(state["config"]["project_dir"]))}
+        - If an actionable task includes `review_rework_directives`, treat those directives and their `evidence_file` paths as higher-authority instructions than stale original task prose.
         - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
         - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
         - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.

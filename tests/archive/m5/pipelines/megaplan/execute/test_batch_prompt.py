@@ -238,3 +238,38 @@ def test_batch_prompt_size_reasonable(tmp_path: Path) -> None:
 
     assert len(prompt) < 30_000
     assert "T20" not in prompt
+
+
+def test_batch_prompt_annotates_rework_tasks_with_concrete_review_directives(
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    _write_finalize(
+        plan_dir,
+        tasks=[_task("T1", "Old finalize prose that no longer matches the rework target.")],
+    )
+
+    prompt = _execute_batch_prompt(
+        state,
+        plan_dir,
+        ["T1"],
+        set(),
+        rework_context={
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "Rewrite the metadata file instead of replaying the old artifact-copy step.",
+                    "expected": "plan_v3.meta.json carries only the 21 approved selectors.",
+                    "actual": "The stale 312-selector expansion is still present.",
+                    "evidence_file": ".megaplan/plans/example/plan_v3.meta.json",
+                    "source": "review_metadata_check",
+                }
+            ]
+        },
+    )
+
+    assert '"review_rework_directives"' in prompt
+    assert "Rewrite the metadata file instead of replaying the old artifact-copy step." in prompt
+    assert '"review_rework_evidence_files"' in prompt
+    assert ".megaplan/plans/example/plan_v3.meta.json" in prompt
+    assert "higher-authority instructions than stale original task prose" in prompt
