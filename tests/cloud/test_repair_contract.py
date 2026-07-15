@@ -1699,6 +1699,29 @@ def test_recovery_view_accepts_liveness_only_with_durable_claim() -> None:
     assert decision.decision == repair_contract.DISPATCH_DECISION_REPAIRING
 
 
+def test_recovery_view_lock_without_request_identity_is_not_custody() -> None:
+    recovery = _make_recovery_view_dict(custody_bucket="repairable")
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": [],
+            "active_claim_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        lock_evidence={"status": "busy"},
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+        },
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision != repair_contract.DISPATCH_DECISION_REPAIRING
+
+
 def test_recovery_view_refuses_l1_when_legacy_request_has_no_blocker_identity() -> None:
     recovery = _make_recovery_view_dict(
         custody_bucket="repairable",

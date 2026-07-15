@@ -319,6 +319,7 @@ def ensure_repair_goal(
                 "request_ids": [request_id] if request_id else [],
                 "owners": [],
                 "cycles": [],
+                "terminal": False,
                 "semantic_completion": False,
             }
         elif payload.get("schema_version") != REPAIR_GOAL_SCHEMA:
@@ -420,7 +421,10 @@ def evaluate_repair_goal(
             payload["status"] = evaluation["status"]
             if evaluation["status"] in TERMINAL_GOAL_STATUSES:
                 payload["terminal_at"] = cycle["observed_at"]
-                payload["semantic_completion"] = True
+                payload["terminal"] = True
+                payload["semantic_completion"] = (
+                    evaluation["status"] == GOAL_PROGRESSED
+                )
                 payload["terminal_evidence"] = deepcopy(evaluation)
                 payload["terminal_evidence"]["observation"] = observation
         payload["last_evaluation"] = evaluation
@@ -432,6 +436,7 @@ def evaluate_repair_goal(
             "goal_path": str(path),
             "checkpoint_digest": payload["checkpoint_digest"],
             "status": payload["status"],
+            "terminal": bool(payload.get("terminal")),
             "semantic_completion": payload["semantic_completion"],
             "evaluation": evaluation,
             "frozen_checkpoint": frozen,

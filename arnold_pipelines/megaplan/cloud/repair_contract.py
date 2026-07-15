@@ -3694,6 +3694,17 @@ def _has_active_repair(
     if durable_repair_active(custody):
         return True
 
+    # A compatibility lock can corroborate custody, but it cannot manufacture
+    # the request/blocker identity that custody requires.
+    blocker_id = _as_text(custody.get("blocker_id"))
+    active_request_ids = {
+        _as_text(value)
+        for value in _as_list(custody.get("active_request_ids"))
+        if _as_text(value)
+    }
+    if not blocker_id or not active_request_ids:
+        return False
+
     lock_status = _as_text(getattr(lock_evidence, "status", ""))
     if not lock_status and isinstance(lock_evidence, Mapping):
         lock_status = _as_text(lock_evidence.get("status"))
