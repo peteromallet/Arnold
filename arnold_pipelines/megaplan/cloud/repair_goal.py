@@ -49,6 +49,31 @@ _APPROVAL_STATES = frozenset(
     }
 )
 _TERMINAL_TARGET_STATES = frozenset({"done", "complete", "completed", "finalized"})
+_STAGE_ORDER = {
+    "init": 0,
+    "initialized": 0,
+    "prep": 1,
+    "prepared": 1,
+    "plan": 2,
+    "planned": 2,
+    "critique": 3,
+    "critiqued": 3,
+    "gate": 4,
+    "gated": 4,
+    "finalize": 5,
+    "finalized": 5,
+    "execute": 6,
+    "executed": 6,
+    "review": 7,
+    "reviewed": 8,
+    "awaiting_pr_merge": 9,
+    "merged": 10,
+    "done": 11,
+    "complete": 11,
+    "completed": 11,
+}
+_FRESH_WORKER_SECONDS = 600
+_DETERMINISTIC_OWNER_REPEAT_LIMIT = 2
 
 
 def utc_now() -> str:
@@ -90,6 +115,95 @@ def _digest(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(dict(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _pid_live(pid: object) -> bool:
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(") ", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return True
+    return state != "Z"
+
+
+def _parse_time(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _compact_failure(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    compact = {
+        key: value.get(key)
+        for key in (
+            "failure_kind",
+            "kind",
+            "phase",
+            "step",
+            "task_id",
+            "blocked_task_id",
+            "message",
+            "error",
+            "timestamp",
+        )
+        if value.get(key) not in (None, "", [], {})
+    }
+    compact["fingerprint"] = _digest(compact) if compact else ""
+    return compact
+
+
+def _target_stage(state: Mapping[str, Any], chain: Mapping[str, Any]) -> str:
+    active = state.get("active_step") if isinstance(state.get("active_step"), Mapping) else {}
+    failure = state.get("latest_failure") if isinstance(state.get("latest_failure"), Mapping) else {}
+    history = state.get("history") if isinstance(state.get("history"), list) else []
+    latest_history = history[-1] if history and isinstance(history[-1], Mapping) else {}
+    for value in (active.get("phase"), failure.get("phase"), failure.get("step")):
+        normalized = str(value or "").strip().lower()
+        if normalized in _STAGE_ORDER:
+            return normalized
+    candidates = [
+        str(value or "").strip().lower()
+        for value in (latest_history.get("step"), chain.get("last_state"), state.get("current_state"))
+    ]
+    ranked = [value for value in candidates if value in _STAGE_ORDER]
+    if ranked:
+        return max(ranked, key=lambda value: _STAGE_ORDER[value])
+    return next((value for value in candidates if value), "")
+
+
+def _active_worker_observation(state: Mapping[str, Any], *, captured_at: str) -> dict[str, Any]:
+    active = state.get("active_step") if isinstance(state.get("active_step"), Mapping) else {}
+    pid = active.get("worker_pid")
+    last_activity_at = str(active.get("last_activity_at") or "")
+    activity_time = _parse_time(last_activity_at)
+    captured_time = _parse_time(captured_at) or datetime.now(timezone.utc)
+    age = max(0.0, (captured_time - activity_time).total_seconds()) if activity_time else None
+    live = _pid_live(pid)
+    return {
+        "phase": str(active.get("phase") or "").strip().lower(),
+        "run_id": str(active.get("run_id") or ""),
+        "worker_pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
+        "worker_pid_live": live,
+        "last_activity_at": last_activity_at,
+        "last_activity_kind": str(active.get("last_activity_kind") or ""),
+        "last_activity_detail": str(active.get("last_activity_detail") or "")[:500],
+        "activity_age_seconds": age,
+        "fresh": bool(live and age is not None and age <= _FRESH_WORKER_SECONDS),
+    }
 
 
 def repair_goal_path(marker_dir: str | Path, session: str, blocker_id: str) -> Path:
@@ -171,8 +285,12 @@ def capture_checkpoint(
     events_path = plan_path.parent / "events.ndjson" if plan_path is not None else None
     acceptance = _latest_acceptance_event(events_path) if events_path is not None else {}
     completed = chain.get("completed") if isinstance(chain.get("completed"), list) else []
+    captured_at = utc_now()
+    latest_failure = _compact_failure(state.get("latest_failure"))
+    active_worker = _active_worker_observation(state, captured_at=captured_at)
+    target_stage = _target_stage(state, chain)
     checkpoint = {
-        "captured_at": utc_now(),
+        "captured_at": captured_at,
         "plan_name": resolved_plan,
         "plan_state": str(state.get("current_state") or state.get("state") or "").lower(),
         "plan_iteration": int(state.get("iteration") or 0),
@@ -186,7 +304,29 @@ def capture_checkpoint(
         "chain_current_milestone_index": int(chain.get("current_milestone_index") or 0),
         "chain_completed_count": len(completed),
         "chain_pr_state": str(chain.get("pr_state") or "").lower(),
+        "target_stage": target_stage,
+        "target_stage_rank": _STAGE_ORDER.get(target_stage, -1),
+        "latest_failure": latest_failure,
+        "latest_failure_cleared": not bool(latest_failure),
+        "active_worker": active_worker,
     }
+    progress_facts = {
+        "plan_name": checkpoint["plan_name"],
+        "plan_state": checkpoint["plan_state"],
+        "plan_iteration": checkpoint["plan_iteration"],
+        "plan_history_length": checkpoint["plan_history_length"],
+        "acceptance_seq": int(acceptance.get("seq") or 0),
+        "chain_last_state": checkpoint["chain_last_state"],
+        "chain_current_plan_name": checkpoint["chain_current_plan_name"],
+        "chain_current_milestone_index": checkpoint["chain_current_milestone_index"],
+        "chain_completed_count": checkpoint["chain_completed_count"],
+        "target_stage": target_stage,
+        "latest_failure_fingerprint": latest_failure.get("fingerprint", ""),
+        "active_worker_phase": active_worker.get("phase", ""),
+        "active_worker_run_id": active_worker.get("run_id", ""),
+        "active_worker_last_activity_at": active_worker.get("last_activity_at", ""),
+    }
+    checkpoint["progress_token"] = _digest(progress_facts)
     checkpoint["digest"] = _digest(checkpoint)
     return checkpoint
 
@@ -217,6 +357,11 @@ def evaluate_checkpoint(
             "reason": gate["reason"],
             "approval_gate": gate,
             "authoritative_progress": False,
+            "blocker_cleared": False,
+            "fresh_progress": False,
+            "stage_advanced": False,
+            "correct_worker_alive": None,
+            "control_action": "await_approval",
         }
 
     frozen_completed = int(frozen.get("chain_completed_count") or 0)
@@ -225,17 +370,28 @@ def evaluate_checkpoint(
     observed_index = int(observation.get("chain_current_milestone_index") or 0)
     frozen_chain_plan = str(frozen.get("chain_current_plan_name") or "")
     observed_chain_plan = str(observation.get("chain_current_plan_name") or "")
-    if observed_completed > frozen_completed or observed_index > frozen_index:
+    milestone_advanced = observed_completed > frozen_completed or observed_index > frozen_index
+    if milestone_advanced:
         return {
             "status": GOAL_PROGRESSED,
             "reason": "authoritative chain milestone acceptance advanced beyond the frozen checkpoint",
             "authoritative_progress": True,
+            "blocker_cleared": True,
+            "fresh_progress": True,
+            "stage_advanced": True,
+            "correct_worker_alive": None,
+            "control_action": "complete",
         }
     if frozen_chain_plan and observed_chain_plan and observed_chain_plan != frozen_chain_plan:
         return {
             "status": GOAL_PROGRESSED,
             "reason": "authoritative chain current plan advanced beyond the frozen plan",
             "authoritative_progress": True,
+            "blocker_cleared": True,
+            "fresh_progress": True,
+            "stage_advanced": True,
+            "correct_worker_alive": None,
+            "control_action": "complete",
         }
 
     frozen_acceptance = frozen.get("acceptance") if isinstance(frozen.get("acceptance"), Mapping) else {}
@@ -244,29 +400,61 @@ def evaluate_checkpoint(
     observed_seq = int(observed_acceptance.get("seq") or 0)
     frozen_state = str(frozen.get("plan_state") or "").lower()
     observed_state = str(observation.get("plan_state") or "").lower()
-    state_is_beyond_frozen = observed_state and observed_state != frozen_state and observed_state not in _BLOCKED_STATES
-    if observed_seq > frozen_seq and state_is_beyond_frozen:
+    frozen_stage = str(frozen.get("target_stage") or frozen_state).lower()
+    observed_stage = str(observation.get("target_stage") or observed_state).lower()
+    frozen_rank_value = frozen.get("target_stage_rank")
+    observed_rank_value = observation.get("target_stage_rank")
+    frozen_rank = int(
+        _STAGE_ORDER.get(frozen_stage, -1)
+        if frozen_rank_value is None
+        else frozen_rank_value
+    )
+    observed_rank = int(
+        _STAGE_ORDER.get(observed_stage, -1)
+        if observed_rank_value is None
+        else observed_rank_value
+    )
+    stage_advanced = observed_rank > frozen_rank >= 0
+    blocker_cleared = bool(observation.get("latest_failure_cleared"))
+    later_acceptance = observed_seq > frozen_seq
+    worker = observation.get("active_worker") if isinstance(observation.get("active_worker"), Mapping) else {}
+    worker_applicable = bool(worker.get("phase")) and observed_stage not in {
+        "review",
+        "reviewed",
+        "awaiting_pr_merge",
+        "merged",
+        "done",
+        "complete",
+        "completed",
+    }
+    correct_worker_alive = bool(worker.get("fresh")) if worker_applicable else None
+    fresh_progress = later_acceptance or bool(worker.get("fresh"))
+    if stage_advanced and blocker_cleared and fresh_progress and correct_worker_alive is not False:
         return {
             "status": GOAL_PROGRESSED,
-            "reason": "a later authoritative state-transition receipt moved the plan beyond the frozen state",
+            "reason": "blocker cleared and authoritative plan stage advanced beyond the frozen repair stage",
             "authoritative_progress": True,
+            "blocker_cleared": True,
+            "fresh_progress": True,
+            "stage_advanced": True,
+            "correct_worker_alive": correct_worker_alive,
+            "control_action": "complete",
             "acceptance_event": dict(observed_acceptance),
         }
-    if (
-        observed_state in _TERMINAL_TARGET_STATES
-        and frozen_state not in _TERMINAL_TARGET_STATES
-        and observed_seq > frozen_seq
-    ):
-        return {
-            "status": GOAL_PROGRESSED,
-            "reason": "the target reached terminal accepted state after the frozen checkpoint",
-            "authoritative_progress": True,
-            "acceptance_event": dict(observed_acceptance),
-        }
+    preserve_live = bool(worker.get("fresh")) and str(worker.get("phase") or "") == frozen_stage
     return {
         "status": GOAL_ACTIVE,
-        "reason": "target has not produced authoritative acceptance progress beyond the frozen checkpoint",
+        "reason": (
+            "correct target worker is alive with fresh progress; preserve it until the plan advances beyond the frozen stage"
+            if preserve_live
+            else "target has not satisfied blocker-clearance, fresh-progress, and beyond-stage recovery evidence"
+        ),
         "authoritative_progress": False,
+        "blocker_cleared": blocker_cleared,
+        "fresh_progress": fresh_progress,
+        "stage_advanced": stage_advanced,
+        "correct_worker_alive": correct_worker_alive,
+        "control_action": "preserve_live" if preserve_live else "investigate",
         "ignored_activity": "process, heartbeat, log, state-write, and subprocess completion activity is non-authoritative",
     }
 
@@ -316,6 +504,14 @@ def ensure_repair_goal(
                 },
                 "frozen_checkpoint": frozen,
                 "checkpoint_digest": frozen["digest"],
+                "recovery_contract": {
+                    "required_beyond_stage": frozen.get("target_stage") or "",
+                    "required_beyond_stage_rank": frozen.get("target_stage_rank", -1),
+                    "requires_blocker_cleared": True,
+                    "requires_fresh_progress": True,
+                    "requires_correct_worker_when_applicable": True,
+                    "success_authority": "authoritative_target_evidence",
+                },
                 "request_ids": [request_id] if request_id else [],
                 "owners": [],
                 "cycles": [],
@@ -403,7 +599,55 @@ def evaluate_repair_goal(
             remote_spec=str(target.get("remote_spec") or ""),
         )
         frozen = payload.get("frozen_checkpoint") if isinstance(payload.get("frozen_checkpoint"), dict) else {}
-        evaluation = evaluate_checkpoint(frozen, observation)
+        contract = payload.get("recovery_contract") if isinstance(payload.get("recovery_contract"), dict) else {}
+        if not contract:
+            worker = observation.get("active_worker") if isinstance(observation.get("active_worker"), Mapping) else {}
+            required_stage = str(
+                frozen.get("target_stage")
+                or worker.get("phase")
+                or observation.get("target_stage")
+                or frozen.get("plan_state")
+                or ""
+            ).lower()
+            contract = {
+                "required_beyond_stage": required_stage,
+                "required_beyond_stage_rank": _STAGE_ORDER.get(required_stage, -1),
+                "requires_blocker_cleared": True,
+                "requires_fresh_progress": True,
+                "requires_correct_worker_when_applicable": True,
+                "success_authority": "authoritative_target_evidence",
+                "migrated_from_legacy_goal_at": utc_now(),
+            }
+            payload["recovery_contract"] = contract
+        effective_frozen = deepcopy(frozen)
+        effective_frozen["target_stage"] = str(contract.get("required_beyond_stage") or "")
+        contract_rank = contract.get("required_beyond_stage_rank")
+        effective_frozen["target_stage_rank"] = int(
+            -1 if contract_rank is None else contract_rank
+        )
+        evaluation = evaluate_checkpoint(effective_frozen, observation)
+        owner_cycle = (
+            action.startswith("owner-iteration-") or "post-dev-fix" in action
+        ) and evaluation.get("control_action") != "preserve_live"
+        repeated_owner_cycles = 0
+        if owner_cycle and evaluation["status"] == GOAL_ACTIVE:
+            token = str(observation.get("progress_token") or "")
+            for prior in reversed(payload.get("cycles") or []):
+                if not isinstance(prior, Mapping) or not prior.get("owner_cycle"):
+                    continue
+                prior_observation = prior.get("observation") if isinstance(prior.get("observation"), Mapping) else {}
+                if str(prior_observation.get("progress_token") or "") != token:
+                    break
+                repeated_owner_cycles += 1
+            repeated_owner_cycles += 1
+            if repeated_owner_cycles >= _DETERMINISTIC_OWNER_REPEAT_LIMIT:
+                evaluation["control_action"] = "replan"
+                evaluation["circuit_breaker_required"] = True
+                evaluation["deterministic_repeat_count"] = repeated_owner_cycles
+                evaluation["reason"] = (
+                    "deterministic owner failure repeated without a new authoritative progress token; "
+                    "stop re-driving and escalate/replan"
+                )
         cycle = {
             "observed_at": utc_now(),
             "action": action,
@@ -411,6 +655,8 @@ def evaluate_repair_goal(
             "owner_manifest_path": owner_manifest_path,
             "status": evaluation["status"],
             "reason": evaluation["reason"],
+            "control_action": evaluation.get("control_action"),
+            "owner_cycle": owner_cycle,
             "observation": observation,
         }
         cycles = payload.setdefault("cycles", [])
@@ -440,6 +686,7 @@ def evaluate_repair_goal(
             "semantic_completion": payload["semantic_completion"],
             "evaluation": evaluation,
             "frozen_checkpoint": frozen,
+            "recovery_contract": contract,
             "observation": observation,
         }
 

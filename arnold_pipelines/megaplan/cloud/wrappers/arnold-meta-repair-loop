@@ -391,6 +391,9 @@ if len(encoded.encode("utf-8")) > 65536:
 print("\n## Six-hour L3 escalation contract\n")
 print(f"Read and follow `{skill_path}` fully before changing anything.")
 print("Walk L1/L2/L3 with TRACKED/FIXED/INTENT/CONTEXT. Fix the first broken fixer/backstop first, then hunt sibling instances of the failure class, then re-trigger the ordinary canonical recovery path. Never alter chain/plan state directly, weaken completion or safety guards, or treat a pause/human gate as a fault.")
+print("You are the retained root-cause owner and the only execution owner. You may fan out at most three bounded read-only investigators through the canonical nested launcher; contributors must not edit. Synthesize their receipts yourself before making any change. Never launch or retain a second mutating owner.")
+print("Treat the repair goal as the durable /goal-style success authority, not the lifetime or exit status of any fixer process. Inspect its frozen checkpoint, recovery_contract, last observation, exact request identity, and bounded investigator receipt. If control_action=preserve_live, do not kill, relaunch, or duplicate the correct worker; if control_action=replan, stop the repeated mechanism and change the plan.")
+print("Recovery is verified only when the blocker is cleared, the applicable correct worker is alive with fresh progress, and the original plan advances beyond its frozen stage. A fixer report, clean exit, heartbeat, or same-stage liveness is not success.")
 print("The concrete auditor artifact below is authoritative bounded launch context; inspect its cited raw artifacts for full stderr, exit codes, exceptions, commands, token drift, stale projections, false success, missing launch evidence, and spinning fixers.")
 print("```json")
 print(encoded)
@@ -451,8 +454,13 @@ ordinary repair can succeed.
 ### Retrigger
 - After applying any fix, retrigger the ordinary repair loop for
   session `$SESSION` using the command stored in REPAIR_LOOP_BIN.
-- Verify that the retriggered ordinary repair reaches a terminal
-  SUCCESS outcome.
+- Preserve a correct live target when the durable repair goal says
+  `control_action=preserve_live`; do not mechanically relaunch it.
+- Verify from the goal recovery contract and authoritative chain/plan evidence
+  that the blocker cleared, applicable worker is fresh, and the original plan
+  advanced beyond its frozen stage.
+- A terminal SUCCESS outcome means that full evidence contract, never a fixer
+  self-report, clean exit, or same-stage heartbeat by itself.
 - Do NOT claim success without a verified ordinary repair retrigger —
   partial_liveness and "repairing" are not terminal success.
 
@@ -532,8 +540,13 @@ ordinary repair can succeed.
 ### Retrigger
 - After applying any fix, retrigger the ordinary repair loop for
   session `$SESSION` using the command stored in REPAIR_LOOP_BIN.
-- Verify that the retriggered ordinary repair reaches a terminal
-  SUCCESS outcome.
+- Preserve a correct live target when the durable repair goal says
+  `control_action=preserve_live`; do not mechanically relaunch it.
+- Verify from the goal recovery contract and authoritative chain/plan evidence
+  that the blocker cleared, applicable worker is fresh, and the original plan
+  advanced beyond its frozen stage.
+- A terminal SUCCESS outcome means that full evidence contract, never a fixer
+  self-report, clean exit, or same-stage heartbeat by itself.
 - Do NOT claim success without a verified ordinary repair retrigger —
   partial_liveness and "repairing" are not terminal success.
 
