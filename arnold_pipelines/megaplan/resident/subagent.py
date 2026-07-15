@@ -116,6 +116,9 @@ _DELIVERY_MAX_ATTEMPTS = 8
 _MAX_COMPLETION_DELIVERY_CHARS = 7_600
 QUEUE_SCHEMA = "arnold-resident-subagent-queue-v1"
 QUEUE_REFERENCE_SCHEMA = "arnold-resident-subagent-reference-v1"
+QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA = (
+    "arnold-resident-cross-request-queue-authorization-v1"
+)
 QUEUE_TRIGGER_POLICY = "on_predecessor_success"
 MAX_QUEUE_CHAIN_DEPTH = 32
 MAX_QUEUE_PROMPT_CHARS = 16_000
@@ -1188,6 +1191,280 @@ def _queue_provenance_identity(value: Mapping[str, Any]) -> tuple[object, ...]:
     )
 
 
+def _queue_mapping_digest(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(dict(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _queue_store_root(project_root: Path) -> Path:
+    configured = str(os.environ.get("MEGAPLAN_RESIDENT_STORE_ROOT") or "").strip()
+    return (
+        Path(configured).resolve()
+        if configured
+        else project_root / ".megaplan" / "resident"
+    )
+
+
+def _authoritative_queue_request(
+    project_root: Path, provenance: Mapping[str, Any]
+) -> dict[str, str]:
+    """Resolve one Discord envelope against its immutable inbound record."""
+
+    normalized = normalize_delegation_provenance(provenance)
+    if normalized.get("applicability") != "applicable":
+        raise SubagentQueueError(
+            "cross-request queue authorization requires Discord provenance"
+        )
+    source_record_id = str(normalized.get("source_record_id") or "")
+    conversation_id = str(normalized.get("resident_conversation_id") or "")
+    if not _RESIDENT_MESSAGE_ID_RE.fullmatch(source_record_id):
+        raise SubagentQueueError(
+            "cross-request queue authorization source record is malformed"
+        )
+    store_root = _queue_store_root(project_root)
+    message_path = store_root / "messages" / f"{source_record_id}.json"
+    try:
+        raw = message_path.read_bytes()
+        message = json.loads(raw)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SubagentQueueError(
+            "cross-request queue authorization source record is unavailable"
+        ) from exc
+    reply = message.get("discord_reply_provenance") if isinstance(message, dict) else None
+    scope = reply.get("scope") if isinstance(reply, Mapping) else None
+    author_id = str(reply.get("source_author_id") or "") if isinstance(reply, Mapping) else ""
+    if (
+        not isinstance(message, dict)
+        or message.get("id") != source_record_id
+        or message.get("direction") != "inbound"
+        or message.get("conversation_id") != conversation_id
+        or str(message.get("discord_message_id") or "")
+        != str(normalized.get("discord_message_id") or "")
+        or not isinstance(reply, Mapping)
+        or reply.get("transport") != "discord"
+        or str(reply.get("source_message_id") or "")
+        != str(normalized.get("discord_message_id") or "")
+        or str(reply.get("conversation_key") or "")
+        != str(normalized.get("conversation_key") or "")
+        or not _is_discord_snowflake(author_id)
+        or not isinstance(scope, Mapping)
+        or str(scope.get("channel_id") or "")
+        != str(normalized.get("channel_id") or "")
+        or str(scope.get("dm_user_id") or "")
+        != str(normalized.get("dm_user_id") or "")
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization source record conflicts with provenance"
+        )
+    conversation_path = store_root / "resident_conversations" / f"{conversation_id}.json"
+    try:
+        conversation = json.loads(conversation_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        raise SubagentQueueError(
+            "cross-request queue authorization conversation is unavailable"
+        ) from exc
+    if (
+        not isinstance(conversation, dict)
+        or conversation.get("id") != conversation_id
+        or conversation.get("transport") != "discord"
+        or conversation.get("conversation_key") != normalized.get("conversation_key")
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization conversation conflicts with provenance"
+        )
+    return {
+        "source_record_id": source_record_id,
+        "record_sha256": hashlib.sha256(raw).hexdigest(),
+        "subject_sha256": hashlib.sha256(
+            f"discord-subject\0{author_id}".encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def _cross_request_queue_authorization(
+    root: Path,
+    *,
+    project_root: Path,
+    predecessor_run_id: str,
+    predecessor: Mapping[str, Any],
+    current_provenance: Mapping[str, Any],
+    require_active_caller: bool,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Bind one exact dependency to a later same-subject request, fail closed."""
+
+    predecessor_provenance = predecessor.get("launch_provenance")
+    if not isinstance(predecessor_provenance, Mapping):
+        raise SubagentQueueError("predecessor lacks immutable launch provenance")
+    predecessor_provenance = normalize_delegation_provenance(predecessor_provenance)
+    if (
+        predecessor_provenance.get("applicability") != "applicable"
+        or current_provenance.get("applicability") != "applicable"
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization requires two Discord envelopes"
+        )
+    if predecessor_provenance.get("resident_conversation_id") != current_provenance.get(
+        "resident_conversation_id"
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization changed resident conversation"
+        )
+    current_request = _authoritative_queue_request(project_root, current_provenance)
+    predecessor_request = _authoritative_queue_request(
+        project_root, predecessor_provenance
+    )
+    if current_request["subject_sha256"] != predecessor_request["subject_sha256"]:
+        raise SubagentQueueError(
+            "cross-request queue authorization changed Discord subject"
+        )
+
+    caller_run_id = str(current_provenance.get("root_run_id") or "")
+    if not _RUN_ID_RE.fullmatch(caller_run_id):
+        raise SubagentQueueError(
+            "cross-request queue authorization lacks immutable caller root_run_id"
+        )
+    caller_path = root / caller_run_id / "manifest.json"
+    try:
+        caller = _read_managed_resident_manifest(caller_path)
+    except SubagentFollowupError as exc:
+        raise SubagentQueueError(
+            "cross-request queue authorization caller manifest is unavailable"
+        ) from exc
+    if require_active_caller and str(caller.get("status") or "") not in {
+        "launching",
+        "running",
+    }:
+        raise SubagentQueueError(
+            "cross-request queue authorization caller is not active"
+        )
+    caller_provenance = caller.get("launch_provenance")
+    if (
+        not isinstance(caller_provenance, Mapping)
+        or _queue_provenance_identity(
+            normalize_delegation_provenance(caller_provenance)
+        )
+        != _queue_provenance_identity(current_provenance)
+        or Path(str(caller.get("project_dir") or "")).resolve() != project_root
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization caller does not own current custody"
+        )
+    if caller.get("work_intent") != predecessor.get("work_intent"):
+        raise SubagentQueueError(
+            "cross-request queue authorization cannot broaden work intent"
+        )
+    prompt_path = Path(str(caller.get("prompt_path") or ""))
+    if prompt_path.parent.resolve() != caller_path.parent.resolve():
+        raise SubagentQueueError(
+            "cross-request queue authorization caller prompt path is invalid"
+        )
+    try:
+        caller_prompt = prompt_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SubagentQueueError(
+            "cross-request queue authorization caller prompt is unavailable"
+        ) from exc
+    caller_prompt_sha256 = hashlib.sha256(caller_prompt.encode("utf-8")).hexdigest()
+    if (
+        caller_prompt_sha256 != caller.get("prompt_sha256")
+        or re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(predecessor_run_id)}(?![A-Za-z0-9])",
+            caller_prompt,
+        )
+        is None
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization does not explicitly name predecessor"
+        )
+
+    relationship = caller.get("query_relationship")
+    current_source = str(current_provenance.get("source_record_id") or "")
+    if not isinstance(relationship, Mapping):
+        raise SubagentQueueError(
+            "cross-request queue authorization lacks current query relationship"
+        )
+    for field in ("current_request", "delivery_owner", "aggregation_owner"):
+        ref = relationship.get(field)
+        if not isinstance(ref, Mapping) or ref.get("source_record_id") != current_source:
+            raise SubagentQueueError(
+                "cross-request queue authorization changed current delivery ownership"
+            )
+    if relationship.get("conversation_id") != current_provenance.get(
+        "resident_conversation_id"
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization relationship changed conversation"
+        )
+    aggregation = caller.get("aggregation")
+    delivery = caller.get("completion_delivery")
+    reply_target = delivery.get("reply_target") if isinstance(delivery, Mapping) else None
+    if (
+        not isinstance(aggregation, Mapping)
+        or aggregation.get("role") != "internal_contributor"
+        or not aggregation.get("key")
+        or not aggregation.get("synthesis_group")
+        or aggregation.get("delivery_target_source_record_id") != current_source
+        or not isinstance(delivery, Mapping)
+        or delivery.get("status") not in {"suppressed", "superseded"}
+        or not isinstance(reply_target, Mapping)
+        or reply_target.get("source_record_id") != current_source
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization lacks conflict-free aggregation custody"
+        )
+
+    authorization = {
+        "schema_version": QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA,
+        "mode": "same_subject_same_conversation_explicit_predecessor",
+        "predecessor_run_id": predecessor_run_id,
+        "resident_conversation_id": current_provenance.get(
+            "resident_conversation_id"
+        ),
+        "subject_sha256": current_request["subject_sha256"],
+        "current_source_record_id": current_source,
+        "current_source_record_sha256": current_request["record_sha256"],
+        "predecessor_source_record_id": predecessor_request["source_record_id"],
+        "predecessor_source_record_sha256": predecessor_request["record_sha256"],
+        "caller_run_id": caller_run_id,
+        "caller_task_sha256": caller.get("task_sha256"),
+        "caller_prompt_sha256": caller_prompt_sha256,
+        "caller_provenance_sha256": _queue_mapping_digest(current_provenance),
+        "predecessor_provenance_sha256": _queue_mapping_digest(
+            predecessor_provenance
+        ),
+        "query_relationship_sha256": _queue_mapping_digest(relationship),
+        "aggregation_key": aggregation.get("key"),
+        "synthesis_group": aggregation.get("synthesis_group"),
+        "delivery_target_source_record_id": current_source,
+    }
+    return authorization, dict(aggregation), dict(relationship)
+
+
+def _queue_has_conflicting_delivered_owner(
+    root: Path, *, aggregation_key: str, successor_run_id: str
+) -> bool:
+    for path in root.glob("*/manifest.json"):
+        try:
+            row = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        if str(row.get("run_id") or path.parent.name) == successor_run_id:
+            continue
+        if _manifest_aggregation_key(row) != aggregation_key:
+            continue
+        aggregation = row.get("aggregation")
+        delivery = row.get("completion_delivery")
+        if (
+            isinstance(aggregation, Mapping)
+            and aggregation.get("role") == "synthesis_delivery_owner"
+            and isinstance(delivery, Mapping)
+            and delivery.get("status") == "delivered"
+        ):
+            return True
+    return False
+
+
 def _queue_ancestor_ids(root: Path, predecessor_run_id: str) -> list[str]:
     """Walk immutable predecessor links and fail closed on cycles or excessive depth."""
 
@@ -1222,7 +1499,7 @@ def _queue_ancestor_ids(root: Path, predecessor_run_id: str) -> list[str]:
 
 
 def _validate_queue_authorization(
-    predecessor: Mapping[str, Any], successor: Mapping[str, Any]
+    predecessor: Mapping[str, Any], successor: Mapping[str, Any], *, manifest_path: Path
 ) -> None:
     predecessor_provenance = predecessor.get("launch_provenance")
     successor_provenance = successor.get("launch_provenance")
@@ -1230,10 +1507,9 @@ def _validate_queue_authorization(
         successor_provenance, Mapping
     ):
         raise SubagentQueueError("queued dependency lacks immutable launch provenance")
-    if _queue_provenance_identity(predecessor_provenance) != _queue_provenance_identity(
-        successor_provenance
-    ):
-        raise SubagentQueueError("queued successor provenance differs from predecessor")
+    same_request = _queue_provenance_identity(
+        predecessor_provenance
+    ) == _queue_provenance_identity(successor_provenance)
     for field in ("project_dir", "work_intent"):
         if predecessor.get(field) != successor.get(field):
             raise SubagentQueueError(
@@ -1245,10 +1521,53 @@ def _validate_queue_authorization(
         successor_aggregation, Mapping
     ):
         raise SubagentQueueError("queued dependency lacks aggregation custody")
-    if predecessor_aggregation.get("key") != successor_aggregation.get("key"):
-        raise SubagentQueueError("queued successor changed logical delivery ownership")
     if successor_aggregation.get("role") != "synthesis_delivery_owner":
         raise SubagentQueueError("queued successor must be the sole synthesis delivery owner")
+    if same_request:
+        if predecessor_aggregation.get("key") != successor_aggregation.get("key"):
+            raise SubagentQueueError("queued successor changed logical delivery ownership")
+        return
+    queue = successor.get("queue")
+    authorization = (
+        queue.get("cross_request_authorization") if isinstance(queue, Mapping) else None
+    )
+    if not isinstance(authorization, Mapping):
+        raise SubagentQueueError("queued successor provenance differs from predecessor")
+    recomputed, aggregation, relationship = _cross_request_queue_authorization(
+        manifest_path.parent.parent,
+        project_root=Path(str(successor.get("project_dir") or "")).resolve(),
+        predecessor_run_id=str(queue.get("predecessor_run_id") or ""),
+        predecessor=predecessor,
+        current_provenance=normalize_delegation_provenance(successor_provenance),
+        require_active_caller=False,
+    )
+    if dict(authorization) != recomputed:
+        raise SubagentQueueError("cross-request queue authorization evidence changed")
+    if (
+        successor.get("query_relationship") != relationship
+        or successor_aggregation.get("key") != aggregation.get("key")
+        or successor_aggregation.get("synthesis_group")
+        != aggregation.get("synthesis_group")
+        or successor_aggregation.get("delivery_target_source_record_id")
+        != successor_provenance.get("source_record_id")
+    ):
+        raise SubagentQueueError(
+            "cross-request queued successor changed current aggregation custody"
+        )
+    delivery = successor.get("completion_delivery")
+    reply_target = delivery.get("reply_target") if isinstance(delivery, Mapping) else None
+    if (
+        not isinstance(reply_target, Mapping)
+        or reply_target.get("source_record_id") != successor_provenance.get("source_record_id")
+        or _queue_has_conflicting_delivered_owner(
+            manifest_path.parent.parent,
+            aggregation_key=str(successor_aggregation.get("key") or ""),
+            successor_run_id=str(successor.get("run_id") or manifest_path.parent.name),
+        )
+    ):
+        raise SubagentQueueError(
+            "cross-request queued successor has a delivery ownership conflict"
+        )
 
 
 def _queue_result_is_valid(
@@ -1963,6 +2282,8 @@ def launch_codex_subagent_detached(
     predecessor_path: Path | None = None
     predecessor: dict[str, Any] | None = None
     predecessor_references: list[dict[str, Any]] = []
+    cross_request_authorization: dict[str, Any] | None = None
+    queue_aggregation_key: str | None = None
     current_provenance = _canonical_launch_provenance(
         launch_origin,
         project_root=project_root,
@@ -1990,34 +2311,54 @@ def launch_codex_subagent_detached(
         if not isinstance(predecessor_provenance, Mapping):
             raise SubagentQueueError("predecessor lacks immutable launch provenance")
         predecessor_provenance = normalize_delegation_provenance(predecessor_provenance)
-        if _queue_provenance_identity(current_provenance) != _queue_provenance_identity(
-            predecessor_provenance
-        ):
-            raise SubagentQueueError(
-                "queued successor caller does not own the predecessor Discord/delegation custody"
+        same_request = _queue_provenance_identity(
+            current_provenance
+        ) == _queue_provenance_identity(predecessor_provenance)
+        if same_request:
+            provenance = predecessor_provenance
+            request_id = str(predecessor.get("request_id") or "") or None
+        else:
+            (
+                cross_request_authorization,
+                current_aggregation,
+                current_relationship,
+            ) = _cross_request_queue_authorization(
+                root,
+                project_root=project_root,
+                predecessor_run_id=depends_on_run_id,
+                predecessor=predecessor,
+                current_provenance=current_provenance,
+                require_active_caller=True,
             )
-        provenance = predecessor_provenance
-        request_id = str(predecessor.get("request_id") or "") or None
+            provenance = current_provenance
+            request_id = str(current_provenance.get("source_record_id") or "") or None
+            query_relationship = current_relationship
+            queue_aggregation_key = str(current_aggregation["key"])
+            synthesis_group = str(current_aggregation["synthesis_group"])
         model = str(predecessor.get("model") or model)
         reasoning_effort = str(predecessor.get("reasoning_effort") or reasoning_effort)
         task_kind = str(predecessor.get("task_kind") or task_kind)
         work_intent = str(predecessor.get("work_intent") or work_intent)
         difficulty = int(predecessor.get("difficulty") or difficulty)
-        route_class = "queued_successor"
-        query_relationship = (
-            dict(predecessor["query_relationship"])
-            if isinstance(predecessor.get("query_relationship"), Mapping)
-            else None
+        route_class = (
+            "queued_successor" if same_request else "queued_cross_request_successor"
         )
+        if same_request:
+            query_relationship = (
+                dict(predecessor["query_relationship"])
+                if isinstance(predecessor.get("query_relationship"), Mapping)
+                else None
+            )
         predecessor_aggregation = predecessor.get("aggregation")
         if not isinstance(predecessor_aggregation, Mapping) or not predecessor_aggregation.get(
             "key"
         ):
             raise SubagentQueueError("predecessor lacks logical aggregation custody")
         aggregation_role = "synthesis_delivery_owner"
-        synthesis_group = (
-            str(predecessor_aggregation.get("synthesis_group") or "") or None
-        )
+        if same_request:
+            synthesis_group = (
+                str(predecessor_aggregation.get("synthesis_group") or "") or None
+            )
         predecessor_references = _queue_predecessor_references(
             predecessor_path, predecessor
         )
@@ -2096,7 +2437,10 @@ def launch_codex_subagent_detached(
         return _result_from_manifest(*existing)
     created_at = _utc_now()
     aggregation_key = (
-        str((predecessor.get("aggregation") or {})["key"])
+        (
+            queue_aggregation_key
+            or str((predecessor.get("aggregation") or {})["key"])
+        )
         if predecessor is not None
         else (
             _aggregation_key(
@@ -2250,6 +2594,10 @@ def launch_codex_subagent_detached(
             "updated_at": created_at,
             "attention": "waiting_for_predecessor",
         }
+        if cross_request_authorization is not None:
+            manifest["queue"]["cross_request_authorization"] = (
+                cross_request_authorization
+            )
         manifest["parent_run_id"] = depends_on_run_id
         manifest["lineage_root_run_id"] = str(
             predecessor.get("lineage_root_run_id")
@@ -3022,7 +3370,9 @@ def reconcile_managed_subagent_queues(
                 refs = _queue_predecessor_references(predecessor_path, predecessor)
                 if queue.get("predecessor_references") != refs:
                     raise SubagentQueueError("queued predecessor references changed after commit")
-                _validate_queue_authorization(predecessor, manifest)
+                _validate_queue_authorization(
+                    predecessor, manifest, manifest_path=manifest_path
+                )
             except (SubagentFollowupError, SubagentQueueError, OSError, ValueError):
                 _queue_terminalize(
                     manifest_path,
