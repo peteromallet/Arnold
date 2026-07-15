@@ -68,7 +68,25 @@ fi
 
 # ---- in-container audit -----------------------------------------------------
 
-WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+# Audit reviews can run long enough to overlap hot activation.  Pin the final
+# selected in-container source before gathering so Bash cannot resume into a
+# different revision after an agentic child returns.
+ARNOLD_PROGRESS_AUDITOR_ORIGIN="${ARNOLD_PROGRESS_AUDITOR_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
+if [[ "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  progress_auditor_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-progress-auditor.XXXXXXXX")"
+  if ! cp -- "$ARNOLD_PROGRESS_AUDITOR_ORIGIN" "$progress_auditor_snapshot" \
+    || ! bash -n "$progress_auditor_snapshot"; then
+    rm -f -- "$progress_auditor_snapshot"
+    echo "arnold-progress-auditor: immutable wrapper snapshot failed validation" >&2
+    exit 78
+  fi
+  export ARNOLD_PROGRESS_AUDITOR_ORIGIN
+  export ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE=1
+  exec bash "$progress_auditor_snapshot" "$@"
+fi
+trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+
+WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/../../../.." && pwd)"
 
 MARKER_DIR="${MEGAPLAN_AUDIT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_AUDIT_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
@@ -79,7 +97,7 @@ REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"
 REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
 ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}}"
-SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
 fi
@@ -91,7 +109,7 @@ fi
 arnold_supervisor_stdlib_init progress-auditor || exit $?
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$REPORT_DIR"
-SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-gap-scan}"
+SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/arnold-supervisor-gap-scan}"
 if [[ ! -x "$SUPERVISOR_GAP_SCAN" ]]; then
   SUPERVISOR_GAP_SCAN="/usr/local/bin/arnold-supervisor-gap-scan"
 fi

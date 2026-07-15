@@ -22,6 +22,24 @@
 #   7. Persists a redacted meta-repair record under repair-data/meta/.
 set -uo pipefail
 
+# Long L2 runs must not resume through a wrapper that activation rewrote while
+# Bash was waiting on a child.  Pin a syntax-checked per-invocation snapshot;
+# keep the original path only for repository and sibling discovery.
+ARNOLD_META_REPAIR_LOOP_ORIGIN="${ARNOLD_META_REPAIR_LOOP_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
+if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  meta_repair_loop_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-meta-repair-loop.XXXXXXXX")"
+  if ! cp -- "$ARNOLD_META_REPAIR_LOOP_ORIGIN" "$meta_repair_loop_snapshot" \
+    || ! bash -n "$meta_repair_loop_snapshot"; then
+    rm -f -- "$meta_repair_loop_snapshot"
+    echo "arnold-meta-repair-loop: immutable wrapper snapshot failed validation" >&2
+    exit 78
+  fi
+  export ARNOLD_META_REPAIR_LOOP_ORIGIN
+  export ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE=1
+  exec bash "$meta_repair_loop_snapshot" "$@"
+fi
+trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+
 if [[ $# -lt 1 ]]; then
   echo "usage: arnold-meta-repair-loop <session> [trigger]" >&2
   exit 64
@@ -40,7 +58,7 @@ fi
 MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_META_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
-SELF_PATH="${MEGAPLAN_META_SELF_PATH:-${BASH_SOURCE[0]:-$0}}"
+SELF_PATH="${MEGAPLAN_META_SELF_PATH:-$ARNOLD_META_REPAIR_LOOP_ORIGIN}"
 if command -v readlink >/dev/null 2>&1; then
   SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
 fi
@@ -49,7 +67,7 @@ if [[ ! -f "$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-m
   && [[ -f "$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop" ]]; then
   WRAPPER_REPO_ROOT="$ARNOLD_SRC"
 fi
-SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_META_REPAIR_LOOP_ORIGIN")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
 fi
@@ -60,7 +78,7 @@ fi
 . "$SUPERVISOR_RUNTIME_LIB"
 arnold_supervisor_stdlib_init meta-repair-loop || exit $?
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
-SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-gap-scan}"
+SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "$ARNOLD_META_REPAIR_LOOP_ORIGIN")/arnold-supervisor-gap-scan}"
 if [[ ! -x "$SUPERVISOR_GAP_SCAN" ]]; then
   SUPERVISOR_GAP_SCAN="/usr/local/bin/arnold-supervisor-gap-scan"
 fi
