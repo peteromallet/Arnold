@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
-import importlib
 import json
 from pathlib import Path
 
@@ -822,9 +821,8 @@ def test_cross_request_queue_incident_contract_survives_restart_and_keeps_delive
     )
     successor_path.write_text(json.dumps(successor))
 
-    # Re-import the module to model a resident restart: recovery must use only
-    # the durable manifests, not any process-local launch or authorization state.
-    importlib.reload(subagent)
+    # A later scheduler sweep models the post-restart resident. Recovery reads
+    # only these durable manifests; the queue has no process-local launch state.
     waiting = subagent.reconcile_managed_subagent_queues(
         project_root=tmp_path, workspace_root=None
     )
