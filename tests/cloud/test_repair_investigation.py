@@ -144,3 +144,19 @@ def test_repair_loop_embeds_bounded_context_for_sandbox_independent_investigatio
     assert '<authoritative_repair_context>' in wrapper
     assert 'cat "$INVESTIGATION_CONTEXT_PATH" >> "$INVESTIGATOR_PROMPT_PATH"' in wrapper
     assert "does not depend on filesystem sandbox availability" in wrapper
+
+
+def test_mechanical_fence_keeps_exact_status_channel_clean() -> None:
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'log "mechanical relaunch fenced: correct target worker is alive and fresh '
+        'session=$session iteration=$iteration" >&2'
+    ) in wrapper
+    assert (
+        'log "mechanical relaunch fenced: deterministic owner circuit requires replan '
+        'session=$session iteration=$iteration" >&2'
+    ) in wrapper
