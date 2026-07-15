@@ -12760,6 +12760,13 @@ def test_auditor_gather_retains_recent_l2_sandbox_failure_after_later_runs(tmp_p
         path.write_text("accepted L2 verdict\n", encoding="utf-8")
         advanced_mtime = failed.stat().st_mtime + index + 1
         os.utime(path, (advanced_mtime, advanced_mtime))
+    for index in range(2):
+        path = meta_runs / f"20260715T030{index}00Z-demo-session-invalid-{index}.log"
+        path.write_text(
+            "L2 investigator failed or returned no valid receipt\n", encoding="utf-8"
+        )
+        advanced_mtime = failed.stat().st_mtime + 10 + index
+        os.utime(path, (advanced_mtime, advanced_mtime))
 
     gather_dir = tmp_path / "gather"
     gather_dir.mkdir()
@@ -12797,12 +12804,16 @@ def test_auditor_gather_retains_recent_l2_sandbox_failure_after_later_runs(tmp_p
     failure_refs = [
         item for item in meta_summary["meta_run_refs"] if item.get("failure_code")
     ]
-    assert [item["failure_code"] for item in failure_refs] == [
-        "investigator_read_sandbox_unavailable"
-    ]
-    assert meta_summary["failed_meta_run_count"] == 1
+    assert {item["failure_code"] for item in failure_refs} == {
+        "investigator_invalid_or_missing_receipt",
+        "investigator_read_sandbox_unavailable",
+    }
+    assert meta_summary["failed_meta_run_count"] >= 2
     reasons = " ".join(finding["reasons"])
-    assert "failure_codes=investigator_read_sandbox_unavailable" in reasons
+    assert (
+        "failure_codes=investigator_invalid_or_missing_receipt,"
+        "investigator_read_sandbox_unavailable"
+    ) in reasons
 
 
 def test_auditor_gather_flags_running_repair_without_attempt_context(tmp_path: Path) -> None:

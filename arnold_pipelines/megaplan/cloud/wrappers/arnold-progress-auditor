@@ -1030,6 +1030,7 @@ def _collect_meta_run_refs(session):
     ordered.sort(reverse=True)
     selected = list(ordered[:5])
     failure_by_path = {}
+    selected_failure_codes = set()
     window_seconds = float(window) * 3600
     for mtime, path in ordered[:MAX_META_RUN_INSPECT_ITEMS]:
         if mtime and now.timestamp() - mtime > window_seconds:
@@ -1038,9 +1039,12 @@ def _collect_meta_run_refs(session):
         if not failure_code:
             continue
         failure_by_path[str(path)] = failure_code
+        if failure_code in selected_failure_codes:
+            continue
+        selected_failure_codes.add(failure_code)
         if all(existing != path for _, existing in selected):
             selected.append((mtime, path))
-        if len(selected) >= 7:
+        if len(selected_failure_codes) >= 4:
             break
     for mtime, path in selected:
         tail = _tail_with_line_numbers(path, lines=12)
