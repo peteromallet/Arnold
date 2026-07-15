@@ -125,6 +125,11 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert 'META_INVESTIGATION_ACTION" == "replan"' in wrapper
     assert "meta_repair_replan_handoff" in wrapper
     assert "ordinary_l1_repair" in wrapper
+    repair_wrapper = Path(
+        "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+    assert 'for handoff_key in ("meta_investigation", "meta_replan_handoff")' in repair_wrapper
+    assert "payload[handoff_key] = dict(handoff_value)" in repair_wrapper
     launcher = Path(
         "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
     ).read_text(encoding="utf-8")

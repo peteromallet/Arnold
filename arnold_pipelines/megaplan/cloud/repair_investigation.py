@@ -361,13 +361,26 @@ def build_investigation_context(
     access_receipt_path = Path(str(meta_handoff.get("access_receipt_path") or ""))
     access_receipt = _load(access_receipt_path)
     external_observation: dict[str, Any] = {}
-    if access_receipt.get("access_verified") is True:
+    external_observation_path = ""
+    if str(meta_handoff.get("access_receipt_path") or "").strip():
+        if (
+            access_receipt.get("schema_version") != META_REPAIR_OBSERVATION_BUNDLE_SCHEMA
+            or access_receipt.get("access_verified") is not True
+            or access_receipt.get("context_digest")
+            != meta_handoff.get("context_digest")
+        ):
+            raise ValueError("L2-to-L1 evidence handoff receipt is invalid")
         for item in access_receipt.get("observations") or []:
             if isinstance(item, Mapping) and item.get("kind") == "external_state":
-                observed = item.get("observed")
+                observed = _bounded_observation(
+                    "external_state", _verified_reference_bytes(item)
+                )
                 if isinstance(observed, Mapping):
                     external_observation = dict(observed)
+                    external_observation_path = str(item.get("path") or "")
                 break
+        if not external_observation:
+            raise ValueError("L2-to-L1 evidence handoff lacks external state")
     evidence_sources = [
         _evidence_source("repair_data", repair_data_path, {
             "outcome": repair_data.get("outcome"),
@@ -399,9 +412,9 @@ def build_investigation_context(
         evidence_sources.append(
             _evidence_source(
                 "external_state",
-                access_receipt_path,
+                external_observation_path,
                 external_observation,
-                authority=3,
+                authority=4,
             )
         )
     external_guard = (

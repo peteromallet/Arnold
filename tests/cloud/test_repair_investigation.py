@@ -194,25 +194,42 @@ def test_fresh_quality_phase_result_is_exact_error_when_latest_failure_cleared(t
 def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     access = tmp_path / "meta-observations.json"
+    external = tmp_path / "external-state.json"
+    external_value = {
+        "available": True,
+        "pull_request": {
+            "headRefOid": "deadbeef",
+            "mergeStateStatus": "UNSTABLE",
+            "statusCheckRollup": [
+                {"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}
+            ],
+        },
+    }
+    _write(external, external_value)
+    encoded_external = external.read_bytes()
+    context_digest = "c" * 64
     _write(
         access,
         {
+            "schema_version": "arnold-meta-repair-observation-bundle-v1",
+            "context_digest": context_digest,
             "access_verified": True,
             "observations": [
                 {
                     "kind": "external_state",
-                    "observed": {
-                        "external_guard": {
-                            "status": "failed",
-                            "failing_checks": [{"name": "test", "conclusion": "FAILURE"}],
-                        }
-                    },
+                    "path": str(external),
+                    "sha256": hashlib.sha256(encoded_external).hexdigest(),
+                    "size_bytes": len(encoded_external),
+                    "observed": external_value,
                 }
             ],
         },
     )
     payload = json.loads(repair_data.read_text(encoding="utf-8"))
-    payload["meta_investigation"] = {"access_receipt_path": str(access)}
+    payload["meta_investigation"] = {
+        "access_receipt_path": str(access),
+        "context_digest": context_digest,
+    }
     _write(repair_data, payload)
 
     context = build_investigation_context(
@@ -225,7 +242,21 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
     )
 
     assert context["exact_error"]["failure_kind"] == "external_pr_ci_guard_failed"
-    assert any(item["kind"] == "external_state" for item in context["evidence_sources"])
+    source = next(
+        item for item in context["evidence_sources"] if item["kind"] == "external_state"
+    )
+    assert source["path"] == str(external)
+
+    external.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="size disagrees|digest disagrees|content disagrees"):
+        build_investigation_context(
+            workspace=workspace,
+            session="custody-control-plane-20260714",
+            remote_spec=str(spec),
+            repair_data_path=repair_data,
+            request_path=request,
+            goal_path=goal,
+        )
 
 
 def _receipt(digest: str = "digest-1", *, target_kind: str = "l1_repair_target") -> dict:

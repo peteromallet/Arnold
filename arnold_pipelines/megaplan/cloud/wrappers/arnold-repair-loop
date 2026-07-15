@@ -4291,6 +4291,13 @@ payload = {
     "request_id": dispatch_request_id,
     "blocker_id": dispatch_blocker_id,
 }
+# L2-to-L1 evidence is a typed, immutable custody handoff.  Preserve it while
+# re-initializing an ordinary repair owner; dropping it makes L1 diagnose stale
+# local custody instead of the fresh external failure that caused the handoff.
+for handoff_key in ("meta_investigation", "meta_replan_handoff"):
+    handoff_value = existing.get(handoff_key)
+    if isinstance(handoff_value, dict):
+        payload[handoff_key] = dict(handoff_value)
 if managed_launch_verified:
     payload["managed_agent_run_id"] = managed_run_id
     payload["managed_agent_manifest_path"] = managed_manifest
