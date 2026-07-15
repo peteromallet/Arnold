@@ -486,6 +486,24 @@ def test_queue_predecessor_failure_fails_closed(
     assert successor["queue"]["attention"] == "predecessor_terminal_failure"
 
 
+def test_queue_unknown_predecessor_status_fails_closed_instead_of_waiting(
+    tmp_path, monkeypatch
+) -> None:
+    _write_predecessor(tmp_path, status="UNKNOWN_FROM_STALE_READER")
+    queued = _queue_successor(tmp_path, monkeypatch)
+
+    result = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    successor = json.loads(Path(queued.manifest_path).read_text())
+
+    assert result.failed_closed == 1
+    assert result.waiting == 0
+    assert successor["status"] == "failed"
+    assert successor["queue"]["predecessor_status"] == "unknown"
+    assert successor["queue"]["attention"] == "predecessor_status_unknown"
+
+
 @pytest.mark.parametrize("predecessor_status", ["cancelled", "superseded"])
 def test_queue_cancellation_and_supersession_propagate(
     tmp_path, monkeypatch, predecessor_status
@@ -675,6 +693,142 @@ def test_cross_request_queue_reconciliation_revalidates_authorization_after_rest
     assert launched == [Path(queued.manifest_path)]
 
 
+def test_cross_request_queue_recovers_exact_stale_runtime_unknown_predecessor_rejection(
+    tmp_path, monkeypatch
+) -> None:
+    """A pre-feature predecessor worker must not permanently kill a newer queue."""
+
+    _, predecessor_path = _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+    rejected_at = "2026-07-15T21:20:43.605255+00:00"
+    successor.update(
+        {
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "finished_at": rejected_at,
+            "updated_at": rejected_at,
+            "error": "queued successor dependency failed closed",
+            "error_class": "ResidentSubagentDependencyFailure",
+        }
+    )
+    successor["queue"].update(
+        {
+            "state": "dependency_failed",
+            "attention": "invalid_dependency_contract",
+            "predecessor_status": "unknown",
+            "failed_at": rejected_at,
+            "updated_at": rejected_at,
+        }
+    )
+    successor["status_history"].append(
+        {
+            "status": "failed",
+            "at": rejected_at,
+            "evidence": "invalid_dependency_contract",
+            "predecessor_status": "unknown",
+        }
+    )
+    successor_path.write_text(json.dumps(successor))
+
+    waiting = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    recovered = json.loads(successor_path.read_text())
+
+    assert waiting.waiting == 1
+    assert waiting.failed_closed == 0
+    assert recovered["status"] == "queued"
+    assert recovered["queue"]["state"] == "waiting_predecessor"
+    assert recovered["queue"]["predecessor_status"] == "running"
+    assert recovered["queue"]["attention"] == "waiting_for_predecessor"
+    assert "revalidated_at" in recovered["queue"]
+    assert "terminal_outcome" not in recovered
+    assert recovered["status_history"][-1]["evidence"] == (
+        "valid_contract_recovered_after_stale_runtime_rejection"
+    )
+
+    _complete_predecessor(predecessor_path)
+    launches = []
+
+    def launch(path, manifest):
+        launches.append(path)
+        running = json.loads(path.read_text())
+        running.update({"status": "running", "pid": _Supervisor.pid})
+        path.write_text(json.dumps(running))
+        return _Supervisor(), manifest
+
+    monkeypatch.setattr(
+        subagent,
+        "_spawn_managed_supervisor",
+        launch,
+    )
+    monkeypatch.setattr(
+        subagent, "_pid_matches_manifest", lambda pid, path: pid == _Supervisor.pid
+    )
+
+    first = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    second = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+
+    assert first.launched == 1
+    assert second.launched == 0
+    assert launches == [successor_path]
+
+
+def test_cross_request_queue_stale_rejection_recovery_remains_fail_closed_on_tamper(
+    tmp_path, monkeypatch
+) -> None:
+    _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+    rejected_at = "2026-07-15T21:20:43.605255+00:00"
+    successor.update(
+        {
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "finished_at": rejected_at,
+            "error": "queued successor dependency failed closed",
+            "error_class": "ResidentSubagentDependencyFailure",
+        }
+    )
+    successor["queue"].update(
+        {
+            "state": "dependency_failed",
+            "attention": "invalid_dependency_contract",
+            "predecessor_status": "unknown",
+            "failed_at": rejected_at,
+        }
+    )
+    successor["queue"]["cross_request_authorization"][
+        "predecessor_run_id"
+    ] = "subagent-20260715-120000-ffffffff"
+    successor["status_history"].append(
+        {
+            "status": "failed",
+            "at": rejected_at,
+            "evidence": "invalid_dependency_contract",
+            "predecessor_status": "unknown",
+        }
+    )
+    successor_path.write_text(json.dumps(successor))
+
+    result = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    terminal = json.loads(successor_path.read_text())
+
+    assert result.failed_closed == 1
+    assert terminal["status"] == "failed"
+    assert terminal["queue"]["attention"] == "invalid_dependency_contract"
+    assert "revalidated_at" not in terminal["queue"]
+
+
 def test_cross_request_queue_preserves_failure_propagation(
     tmp_path, monkeypatch
 ) -> None:
@@ -717,6 +871,7 @@ def test_cross_request_queue_fails_closed_if_authorization_or_source_record_chan
     assert terminal["queue"]["last_validation_error"]["error_class"] == (
         "SubagentQueueError"
     )
+    assert terminal["queue"]["predecessor_status"] == "running"
 
 
 def test_idempotent_replay_recovers_zero_attempt_cross_request_false_terminal(

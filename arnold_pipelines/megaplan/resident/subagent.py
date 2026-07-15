@@ -3371,6 +3371,88 @@ def _queue_terminalize(
     _atomic_json(manifest_path, manifest)
 
 
+def _is_cross_revision_contract_rejection(manifest: Mapping[str, Any]) -> bool:
+    """Recognize the one terminal state an older worker can falsely produce.
+
+    Detached workers retain the Python code loaded when they were launched.  A
+    worker from before cross-request queues existed can therefore reject a
+    newer, valid authorization contract when it reconciles queues on exit.
+    Recovery remains fail closed: only the exact pre-launch rejection shape is
+    eligible, and the current runtime must subsequently validate the complete
+    authorization contract before this terminal state is removed.
+    """
+
+    queue = manifest.get("queue")
+    authorization = (
+        queue.get("cross_request_authorization") if isinstance(queue, Mapping) else None
+    )
+    history = manifest.get("status_history")
+    last_history = history[-1] if isinstance(history, list) and history else None
+    return bool(
+        manifest.get("status") == "failed"
+        and manifest.get("terminal_outcome") == "failed"
+        and manifest.get("error_class") == "ResidentSubagentDependencyFailure"
+        and isinstance(queue, Mapping)
+        and queue.get("schema_version") == QUEUE_SCHEMA
+        and queue.get("state") == "dependency_failed"
+        and queue.get("attention") == "invalid_dependency_contract"
+        and queue.get("predecessor_status") == "unknown"
+        and queue.get("attempt_count") in {None, 0, "0"}
+        and isinstance(authorization, Mapping)
+        and authorization.get("schema_version")
+        == QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA
+        and isinstance(last_history, Mapping)
+        and last_history.get("status") == "failed"
+        and last_history.get("evidence") == "invalid_dependency_contract"
+    )
+
+
+def _restore_cross_revision_queue(
+    manifest: dict[str, Any], *, predecessor_status: str, now: datetime
+) -> None:
+    """Restore a currently validated cross-request queue to pre-launch state."""
+
+    queue = dict(manifest.get("queue") or {})
+    queue.update(
+        {
+            "state": "waiting_predecessor",
+            "attention": "dependency_contract_revalidated",
+            "predecessor_status": predecessor_status,
+            "revalidated_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+    )
+    queue.pop("failed_at", None)
+    manifest.update(
+        {
+            "status": "queued",
+            "queue": queue,
+            "updated_at": now.isoformat(),
+        }
+    )
+    for field in ("terminal_outcome", "finished_at", "error", "error_class"):
+        manifest.pop(field, None)
+    history = list(manifest.get("status_history") or [])
+    history.append(
+        {
+            "status": "queued",
+            "at": now.isoformat(),
+            "evidence": "valid_contract_recovered_after_stale_runtime_rejection",
+            "predecessor_status": predecessor_status,
+        }
+    )
+    manifest["status_history"] = history[-100:]
+
+
+def _normalized_queue_predecessor_status(predecessor: Mapping[str, Any]) -> str:
+    """Return a canonical managed status without inventing terminal success."""
+
+    status = str(predecessor.get("status") or "").strip().casefold()
+    if status in _ACTIVE_STATUSES or status in _TERMINAL_STATUSES or status == "queued":
+        return status
+    return "unknown"
+
+
 def reconcile_managed_subagent_queues(
     *,
     project_root: str | Path = ".",
@@ -3404,7 +3486,10 @@ def reconcile_managed_subagent_queues(
                 failed_closed += 1
                 continue
             status = str(manifest.get("status") or "")
-            if status in _TERMINAL_STATUSES:
+            recovering_cross_revision = _is_cross_revision_contract_rejection(
+                manifest
+            )
+            if status in _TERMINAL_STATUSES and not recovering_cross_revision:
                 skipped += 1
                 continue
             if status in {"launching", "running"}:
@@ -3441,8 +3526,10 @@ def reconcile_managed_subagent_queues(
                 continue
             predecessor_run_id = str(queue.get("predecessor_run_id") or "")
             predecessor_path = manifest_path.parent.parent / predecessor_run_id / "manifest.json"
+            predecessor_status = "unknown"
             try:
                 predecessor = _read_managed_resident_manifest(predecessor_path)
+                predecessor_status = _normalized_queue_predecessor_status(predecessor)
                 ancestors = _queue_ancestor_ids(
                     manifest_path.parent.parent, predecessor_run_id
                 )
@@ -3465,17 +3552,35 @@ def reconcile_managed_subagent_queues(
                     "at": observed_at.isoformat(),
                 }
                 manifest["queue"] = queue
+                if not recovering_cross_revision:
+                    _queue_terminalize(
+                        manifest_path,
+                        manifest,
+                        status="failed",
+                        reason="invalid_dependency_contract",
+                        predecessor_status=predecessor_status,
+                        now=observed_at,
+                    )
+                failed_closed += 1
+                continue
+            if recovering_cross_revision:
+                _restore_cross_revision_queue(
+                    manifest,
+                    predecessor_status=predecessor_status,
+                    now=observed_at,
+                )
+                queue = dict(manifest["queue"])
+            if predecessor_status == "unknown":
                 _queue_terminalize(
                     manifest_path,
                     manifest,
                     status="failed",
-                    reason="invalid_dependency_contract",
-                    predecessor_status="unknown",
+                    reason="predecessor_status_unknown",
+                    predecessor_status=predecessor_status,
                     now=observed_at,
                 )
                 failed_closed += 1
                 continue
-            predecessor_status = str(predecessor.get("status") or "unknown")
             if predecessor_status not in _TERMINAL_STATUSES:
                 queue.update(
                     {
