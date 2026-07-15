@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
+import importlib
 import json
 from pathlib import Path
 
@@ -778,6 +779,95 @@ def test_cross_request_queue_recovers_exact_stale_runtime_unknown_predecessor_re
     assert first.launched == 1
     assert second.launched == 0
     assert launches == [successor_path]
+
+
+def test_cross_request_queue_incident_contract_survives_restart_and_keeps_delivery_owner(
+    tmp_path, monkeypatch
+) -> None:
+    """The live incident shape remains success-gated, durable, and exactly once."""
+
+    _, predecessor_path = _cross_request_fixture(tmp_path, monkeypatch)
+    queued = _queue_cross_request(tmp_path)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+    expected_aggregation = successor["aggregation"]
+    expected_delivery = successor["completion_delivery"]
+    rejected_at = "2026-07-15T21:20:43.605255+00:00"
+    successor.update(
+        {
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "finished_at": rejected_at,
+            "updated_at": rejected_at,
+            "error": "queued successor dependency failed closed",
+            "error_class": "ResidentSubagentDependencyFailure",
+        }
+    )
+    successor["queue"].update(
+        {
+            "state": "dependency_failed",
+            "attention": "invalid_dependency_contract",
+            "predecessor_status": "unknown",
+            "failed_at": rejected_at,
+            "updated_at": rejected_at,
+        }
+    )
+    successor["status_history"].append(
+        {
+            "status": "failed",
+            "at": rejected_at,
+            "evidence": "invalid_dependency_contract",
+            "predecessor_status": "unknown",
+        }
+    )
+    successor_path.write_text(json.dumps(successor))
+
+    # Re-import the module to model a resident restart: recovery must use only
+    # the durable manifests, not any process-local launch or authorization state.
+    importlib.reload(subagent)
+    waiting = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    recovered = json.loads(successor_path.read_text())
+
+    assert waiting.waiting == 1
+    assert waiting.launched == 0
+    assert recovered["status"] == "queued"
+    assert recovered["queue"]["predecessor_status"] == "running"
+    assert recovered["aggregation"] == expected_aggregation
+    assert recovered["aggregation"]["role"] == "synthesis_delivery_owner"
+    assert recovered["completion_delivery"] == expected_delivery
+    assert recovered["completion_delivery"]["status"] == "pending"
+
+    _complete_predecessor(predecessor_path)
+    launches = []
+
+    def launch(path, manifest):
+        launches.append(path)
+        running = json.loads(path.read_text())
+        running.update({"status": "running", "pid": _Supervisor.pid})
+        path.write_text(json.dumps(running))
+        return _Supervisor(), manifest
+
+    monkeypatch.setattr(subagent, "_spawn_managed_supervisor", launch)
+    monkeypatch.setattr(
+        subagent, "_pid_matches_manifest", lambda pid, path: pid == _Supervisor.pid
+    )
+
+    first = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    second = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    running = json.loads(successor_path.read_text())
+
+    assert first.launched == 1
+    assert second.launched == 0
+    assert launches == [successor_path]
+    assert running["queue"]["attempt_count"] == 1
+    assert running["aggregation"] == expected_aggregation
+    assert running["completion_delivery"] == expected_delivery
 
 
 def test_cross_request_queue_stale_rejection_recovery_remains_fail_closed_on_tamper(
