@@ -1701,7 +1701,7 @@ class TestEdgeCases:
         assert result.trigger == MetaRepairTrigger.PERSISTENT_RECURRING_RETRY
 
     def test_all_triggers_represented(self) -> None:
-        """Ensure all seven trigger enum values are distinct and enumerable."""
+        """Ensure every canonical fixer-custody trigger is enumerable."""
         triggers = set(t.value for t in MetaRepairTrigger)
         assert triggers == {
             "repair_timeout",
@@ -1711,8 +1711,11 @@ class TestEdgeCases:
             "partial_liveness_recurrence",
             "discord_delivery_failure",
             "l1_custody_failure",
+            "repair_goal_owner_missing",
+            "repair_context_target_mismatch",
+            "repair_goal_circuit_breaker",
         }
-        assert len(triggers) == 7
+        assert len(triggers) == 10
 
     def test_trigger_label_for_non_trigger(self) -> None:
         result = classify_repair_system_failure(session="edge-5")

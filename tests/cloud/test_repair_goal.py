@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud import repair_contract
@@ -32,6 +33,11 @@ def _target(tmp_path: Path) -> tuple[Path, Path, str, str]:
             "name": plan,
             "current_state": "blocked",
             "iteration": 3,
+            "latest_failure": {
+                "failure_kind": "review_quality_blocked",
+                "phase": "review",
+                "message": "exact frozen review error",
+            },
             "history": [{"step": "review", "result": "blocked"}],
         },
     )
@@ -84,7 +90,7 @@ def test_fixer_exit_without_target_change_keeps_goal_active(tmp_path: Path) -> N
     assert result["semantic_completion"] is False
     assert repair_contract.is_terminal_outcome("partial_liveness") is False
     assert result["checkpoint_digest"] == initial["checkpoint_digest"]
-    assert "not produced authoritative acceptance progress" in result["evaluation"]["reason"]
+    assert "blocker-clearance" in result["evaluation"]["reason"]
 
 
 def test_heartbeat_and_log_churn_do_not_count_as_acceptance_progress(tmp_path: Path) -> None:
@@ -141,7 +147,8 @@ def test_later_authoritative_transition_beyond_checkpoint_completes_goal(tmp_pat
     path, goal = _goal(tmp_path)
     state_path = Path(goal["frozen_checkpoint"]["plan_state_path"])
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    state["current_state"] = "executed"
+    state["current_state"] = "reviewed"
+    state["latest_failure"] = None
     _write_json(state_path, state)
     events = Path(goal["frozen_checkpoint"]["events_path"])
     with events.open("a", encoding="utf-8") as handle:
@@ -151,7 +158,7 @@ def test_later_authoritative_transition_beyond_checkpoint_completes_goal(tmp_pat
                     "kind": "state_transition",
                     "seq": 14,
                     "ts_utc": "2026-07-15T00:02:00+00:00",
-                    "payload": {"from": "blocked", "to": "executed"},
+                    "payload": {"from": "blocked", "to": "reviewed"},
                 }
             )
             + "\n"
@@ -163,6 +170,68 @@ def test_later_authoritative_transition_beyond_checkpoint_completes_goal(tmp_pat
     assert result["semantic_completion"] is True
     assert result["evaluation"]["authoritative_progress"] is True
     assert result["evaluation"]["acceptance_event"]["seq"] == 14
+
+
+def test_live_execute_worker_is_preserved_until_review_stage(tmp_path: Path) -> None:
+    workspace, marker_dir, plan, spec = _target(tmp_path)
+    state_path = workspace / ".megaplan" / "plans" / plan / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["latest_failure"] = {
+        "failure_kind": "execution_blocked",
+        "phase": "execute",
+        "message": "exact execute blocker",
+    }
+    state["history"] = [{"step": "execute", "result": "blocked"}]
+    _write_json(state_path, state)
+    path, goal = ensure_repair_goal(
+        marker_dir=marker_dir,
+        session="demo-session",
+        workspace=workspace,
+        remote_spec=spec,
+        plan_name=plan,
+        blocker_id="blocker:v1:execute",
+        request_id="request-execute",
+        owner_run_id="repair-owner-1",
+        owner_manifest_path="/manifests/repair-owner-1.json",
+    )
+    state_path = Path(goal["frozen_checkpoint"]["plan_state_path"])
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["current_state"] = "finalized"
+    state["latest_failure"] = None
+    state["active_step"] = {
+        "phase": "execute",
+        "worker_pid": os.getpid(),
+        "run_id": "execute-run-1",
+        "last_activity_at": goal["frozen_checkpoint"]["captured_at"],
+        "last_activity_kind": "llm_stream",
+    }
+    _write_json(state_path, state)
+
+    result = evaluate_repair_goal(path, action="pre-mechanical-relaunch")
+
+    assert result["status"] == GOAL_ACTIVE
+    assert result["evaluation"]["control_action"] == "preserve_live"
+    assert result["evaluation"]["blocker_cleared"] is True
+    assert result["evaluation"]["stage_advanced"] is False
+    assert result["evaluation"]["correct_worker_alive"] is True
+
+    repeated_poll = evaluate_repair_goal(
+        path, action="owner-iteration-1-post-dev-fix"
+    )
+    assert repeated_poll["evaluation"]["control_action"] == "preserve_live"
+    assert repeated_poll["evaluation"].get("circuit_breaker_required") is not True
+
+
+def test_same_owner_failure_twice_opens_replan_circuit(tmp_path: Path) -> None:
+    path, _ = _goal(tmp_path)
+
+    first = evaluate_repair_goal(path, action="owner-iteration-1-post-dev-fix")
+    second = evaluate_repair_goal(path, action="owner-iteration-2-post-dev-fix")
+
+    assert first["evaluation"]["control_action"] == "investigate"
+    assert second["evaluation"]["control_action"] == "replan"
+    assert second["evaluation"]["circuit_breaker_required"] is True
+    assert second["evaluation"]["deterministic_repeat_count"] == 2
 
 
 def test_explicit_authorization_gate_terminates_with_exact_gate_evidence(tmp_path: Path) -> None:
@@ -214,3 +283,28 @@ def test_repair_loop_refuses_goal_custody_without_request_and_blocker_links() ->
     assert 'request_id="${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"' in wrapper
     assert 'if [[ -z "$blocker_id" || -z "$request_id" ]]; then' in wrapper
     assert "blocker:session:$SESSION" not in wrapper
+
+
+def test_repair_loop_fences_mechanical_relaunch_and_uses_two_stage_owner() -> None:
+    wrapper = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    mechanical = wrapper[wrapper.index("mechanical_launch_step() {") :]
+    mechanical = mechanical[: mechanical.index("\n}\n")]
+    assert 'repair_goal_control_snapshot "pre-mechanical-relaunch-$iteration"' in mechanical
+    assert 'control_action"' in mechanical
+    assert 'echo "preserved:live_progress"' in mechanical
+    assert mechanical.index("preserved:live_progress") < mechanical.index("kill_matching_runner_processes")
+    assert "run_repair_investigator_turn()" in wrapper
+    assert "automatic_research_subagent" in wrapper
+    assert "--sandbox read-only" in wrapper
+    assert 'REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"' in wrapper
+    assert 'REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-1}"' in wrapper
+    assert "sole high-reasoning goal owner" in wrapper
+    assert "Success requires the blocker cleared" in wrapper

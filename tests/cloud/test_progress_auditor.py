@@ -2350,6 +2350,99 @@ class TestAuditorWrapperBoundary:
 
 
 class TestLiveSignalFiltering:
+    def test_meta_repair_summary_detects_stale_request_under_live_goal_owner(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "current-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc).isoformat()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "current-plan",
+                    "current_state": "finalized",
+                    "latest_failure": {},
+                    "active_step": {
+                        "active": True,
+                        "phase": "execute",
+                        "worker_pid": os.getpid(),
+                        "last_activity_at": now,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        owner_manifest = tmp_path / "owner-manifest.json"
+        owner_manifest.write_text(
+            json.dumps({"status": "running", "pid": os.getpid()}), encoding="utf-8"
+        )
+        goal_path = tmp_path / "goal.json"
+        goal_path.write_text(
+            json.dumps(
+                {
+                    "status": "active",
+                    "goal_id": "goal-1",
+                    "checkpoint_digest": "checkpoint-1",
+                    "owners": [{"manifest_path": str(owner_manifest)}],
+                    "last_evaluation": {"control_action": "preserve_live"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        request_id = "stale-request"
+        queue_request = tmp_path / ".megaplan" / "repair-queue" / "requests" / f"{request_id}.json"
+        queue_request.parent.mkdir(parents=True)
+        queue_request.write_text(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "problem_signature": {
+                        "milestone_or_plan": "old-plan",
+                        "phase_or_step": "review",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "request_id": request_id,
+                    "repair_goal": {"goal_path": str(goal_path)},
+                    "outcome": "running",
+                    "current_attempt_id": "attempt-1",
+                    "current_signature": {"plan_name": "current-plan", "phase": "execute"},
+                    "attempts": [{"attempt_id": "attempt-1", "dispatched_at": now}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "current-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        meta = findings["findings"][0]["meta_repair_summary"]
+        assert meta["should_dispatch"] is True
+        assert meta["trigger"] == "repair_context_target_mismatch"
+        assert meta["repair_goal"]["owner_live"] is True
+        assert meta["repair_goal"]["request_target_mismatch"] is True
+
     def test_chain_log_awaiting_human_ignores_pytest_command_substring(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"

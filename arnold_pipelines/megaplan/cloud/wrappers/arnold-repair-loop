@@ -22,6 +22,7 @@ WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)
 
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
+REPAIR_QUEUE_DIR="${CLOUD_WATCHDOG_REPAIR_QUEUE_DIR:-$(dirname "$MARKER_DIR")/repair-queue}"
 ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
 DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
@@ -57,7 +58,12 @@ ROOT_CAUSE_REASONING_EFFORT="${CLOUD_WATCHDOG_ROOT_CAUSE_REASONING_EFFORT:-high}
 REPAIR_RECURRENCE_MIN_DISPATCHES="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_MIN_DISPATCHES:-3}"
 REPAIR_RECURRENCE_WINDOW_SECS="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_WINDOW_SECS:-21600}"
 REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
-REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-3}"
+REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-1}"
+REPAIR_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-gpt-5.6-sol}"
+REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"
+REPAIR_GOAL_POLL_SECS="${CLOUD_WATCHDOG_REPAIR_GOAL_POLL_SECS:-30}"
+DURABLE_GOAL_OWNER_ENABLED="${CLOUD_WATCHDOG_DURABLE_GOAL_OWNER_ENABLED:-1}"
+KIMI_AFTER_OWNER_ENABLED="${CLOUD_WATCHDOG_KIMI_AFTER_OWNER_ENABLED:-0}"
 DISCORD_DM_BIN="${DISCORD_DM_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -69,6 +75,9 @@ PROGRESS_FILE="$MARKER_DIR/${SAFE_SESSION}.repair-progress.json"
 NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
 REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"
 REPAIR_LOCK_DIR="${CLOUD_WATCHDOG_REPAIR_LOCK_DIR:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.lock}"
+INVESTIGATION_CONTEXT_PATH="$RUN_DIR/repair-investigation-context.json"
+INVESTIGATOR_PROMPT_PATH="$RUN_DIR/repair-investigator-prompt.md"
+INVESTIGATOR_RECEIPT_PATH="$RUN_DIR/repair-investigator-receipt.json"
 
 load_resident_delegation_context() {
   local encoded rc
@@ -4840,6 +4849,58 @@ repair_goal_evaluate_or_exit() {
   esac
 }
 
+repair_goal_control_snapshot() {
+  local phase="$1"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+    arnold_pipelines.megaplan.cloud.repair_goal evaluate \
+    --goal-path "$ARNOLD_REPAIR_GOAL_PATH" \
+    --action "$phase" \
+    --owner-run-id "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" \
+    --owner-manifest-path "${ARNOLD_MANAGED_AGENT_MANIFEST:-}"
+}
+
+wait_for_repair_goal_progress_if_live() {
+  local phase="$1" result status action reason sleep_secs
+  while true; do
+    result="$(repair_goal_control_snapshot "$phase")" || {
+      repair_data_set_outcome "repairing"
+      log "repair goal control snapshot failed closed session=$SESSION phase=$phase"
+      return 1
+    }
+    IFS=$'\t' read -r status action reason <<< "$(
+      python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), str(e.get("reason") or ""))))' <<< "$result"
+    )"
+    case "$status:$action" in
+      progressed:*)
+        repair_data_set_outcome "progressed" "$status"
+        clear_repair_markers
+        log "retained goal owner verified beyond-stage recovery session=$SESSION phase=$phase reason=$reason"
+        return 0
+        ;;
+      approval_required:*)
+        repair_data_set_outcome "true_human_blocker" "$status"
+        write_needs_human_marker "goal_gate_recorded" "approval_required: $reason"
+        log "retained goal owner reached explicit approval gate session=$SESSION phase=$phase reason=$reason"
+        return 0
+        ;;
+      active:preserve_live)
+        ensure_repair_budget_available "goal-preserve-live-$phase"
+        sleep_secs="$(cap_timeout_to_repair_budget "$REPAIR_GOAL_POLL_SECS" "goal-preserve-live-$phase")"
+        log "preserving correct live worker while retained goal remains active session=$SESSION phase=$phase poll_secs=$sleep_secs reason=$reason"
+        sleep "$sleep_secs"
+        ;;
+      active:replan)
+        repair_data_set_outcome "deterministic_failure"
+        log "deterministic owner circuit breaker requires L2 replan session=$SESSION phase=$phase reason=$reason"
+        return 2
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done
+}
+
 repair_save_verdict_evidence() {
   # best-effort: do not require the repair lock (the data file has already
   # been written by repair_data_set_outcome or save_repair_data). If the
@@ -5416,7 +5477,25 @@ mechanical_launch_step() {
   local run_kind="$5"
   local plan_name="$6"
   local relaunch_command="$7"
-  local quoted_command launch_script safe detail health
+  local quoted_command launch_script safe detail health control_result control_status control_action
+
+  control_result="$(repair_goal_control_snapshot "pre-mechanical-relaunch-$iteration")" || {
+    echo "failed:repair_goal_control_unavailable"
+    return 1
+  }
+  IFS=$'\t' read -r control_status control_action <<< "$(
+    python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print(str(d.get("status") or "")+"\t"+str(e.get("control_action") or ""))' <<< "$control_result"
+  )"
+  if [[ "$control_status" == "active" && "$control_action" == "preserve_live" ]]; then
+    log "mechanical relaunch fenced: correct target worker is alive and fresh session=$session iteration=$iteration"
+    echo "preserved:live_progress"
+    return 0
+  fi
+  if [[ "$control_status" == "active" && "$control_action" == "replan" ]]; then
+    log "mechanical relaunch fenced: deterministic owner circuit requires replan session=$session iteration=$iteration"
+    echo "failed:replan_required"
+    return 1
+  fi
 
   quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
     echo "failed:missing_relaunch_command"
@@ -5888,12 +5967,16 @@ Repair data file: $DATA_FILE
 Durable repair goal: $ARNOLD_REPAIR_GOAL_PATH
 Repair goal ID: $ARNOLD_REPAIR_GOAL_ID
 Frozen acceptance checkpoint digest: $ARNOLD_REPAIR_CHECKPOINT_DIGEST
+Bounded investigator context: $INVESTIGATION_CONTEXT_PATH
+Validated investigator receipt: $INVESTIGATOR_RECEIPT_PATH
+Investigator context digest: ${INVESTIGATION_CONTEXT_DIGEST:-unavailable}
 Persistent findings doc: $FINDINGS_DOC
 JSON report path (write this before exiting): $report_path
 Requested model label for this iteration: $requested_model
 Actual dispatch model: $dispatch_model
 
 Task:
+0. You are the sole high-reasoning goal owner for this repair cycle. Read the validated investigator receipt first. Keep working through productive evidence-changing iterations inside this turn, but report `replan` when the same deterministic failure/progress token repeats. Never launch or retain a second mutating owner.
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
    Read the LAST EXECUTE ATTEMPT summary first. The root cause might be in the Arnold SOURCE (a code bug) OR in the PLAN STATE (a deferred task, a missing baseline, stale tests for deleted modules). If a task was deferred or blocked rather than failed, investigate the task-level deferral reason; the fix might be to clear or resolve the deferral/state, not to change source code.
    Classification guide:
@@ -5916,8 +5999,8 @@ Task:
 6. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
 7. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
 8. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
-9. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
-   Your process exit, report, commit, push, or a fresh target heartbeat is not semantic success. The durable goal remains open until the wrapper observes an authoritative state-transition or milestone-acceptance receipt beyond the frozen checkpoint, or an explicit approval/authorization gate.
+9. Do not relaunch the run yourself. The wrapper will use the marker's run-kind-aware command only when the durable goal proves there is no correct fresh worker to preserve.
+   Your process exit, report, commit, push, or a fresh target heartbeat is not semantic success. Success requires the blocker cleared, the correct worker alive where applicable, fresh progress, and the original plan advancing beyond its frozen stage, or an explicit approval/authorization gate. Never weaken a completion, safety, authority, or verification guard to manufacture progress.
 $mode_tasks
 
 Constraints:
@@ -5987,6 +6070,108 @@ repair_agent_workdir() {
   else
     printf '%s\n' "$ARNOLD_SRC"
   fi
+}
+
+run_repair_investigator_turn() {
+  require_repair_lock_held
+  local request_path context_digest run_id_file investigator_run_id rc investigator_timeout recommended_action
+  local -a parent_args
+  request_path="$REPAIR_QUEUE_DIR/requests/${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-missing}.json"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+    arnold_pipelines.megaplan.cloud.repair_investigation build \
+    --workspace "$WORKSPACE" \
+    --session "$SESSION" \
+    --remote-spec "$REMOTE_SPEC" \
+    --repair-data "$DATA_FILE" \
+    --request-path "$request_path" \
+    --goal-path "$ARNOLD_REPAIR_GOAL_PATH" \
+    --output "$INVESTIGATION_CONTEXT_PATH" >>"$LOG" 2>&1 || {
+      repair_data_set_outcome "fixer_infrastructure_failure"
+      log "bounded repair investigation context build failed session=$SESSION"
+      return 1
+    }
+  context_digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$INVESTIGATION_CONTEXT_PATH")"
+  cat > "$INVESTIGATOR_PROMPT_PATH" <<EOF
+You are the read-only investigator for automatic repair session $SESSION.
+
+Read the bounded authoritative context at $INVESTIGATION_CONTEXT_PATH. Its digest is $context_digest.
+It contains the exact current error, frozen goal checkpoint, current process/stage evidence, queued request identity, and recent prior repair history. Inspect only cited authoritative paths needed to resolve contradictions.
+
+Determine the real blocker mechanism and whether the correct target worker must be preserved. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object with schema_version="arnold-repair-investigator-receipt-v1", context_digest="$context_digest", non-empty real_blocker, evidence_paths, prior_repairs_considered, boolean preserve_live, recommended_action (preserve_live|repair_source|repair_target|recover_state|replan), and guard_weakening_risk.
+EOF
+  redact_file_in_place "$INVESTIGATOR_PROMPT_PATH"
+  investigator_timeout="$(cap_timeout_to_repair_budget "$DEV_ROOT_CAUSE_TIMEOUT" "repair-investigator")"
+  run_id_file="$RUN_DIR/repair-investigator-managed-run-id"
+  parent_args=()
+  if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
+    parent_args=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
+  fi
+  (
+    cd "$(repair_agent_workdir)" || exit 1
+    python3 -m arnold_pipelines.megaplan.managed_agent run \
+      --run-kind automatic_research_subagent \
+      --identity-key "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:investigator:$context_digest" \
+      --project-dir "$(repair_agent_workdir)" \
+      --task-kind root_cause \
+      --difficulty 8 \
+      --model "$REPAIR_INVESTIGATOR_MODEL" \
+      --reasoning-effort high \
+      --route-class repair_read_only_investigator \
+      --backend codex \
+      --command-display "automatic repair bounded investigator" \
+      --origin-kind repair_loop_worker \
+      --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}" \
+      --origin-component arnold-repair-loop \
+      --trigger-id "investigator:$context_digest" \
+      --require-output \
+      --lineage-key "repair-investigator:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}" \
+      --run-id-file "$run_id_file" \
+      --stdin-file "$INVESTIGATOR_PROMPT_PATH" \
+      --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
+      --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" \
+      --link "cloud_session=$SESSION" \
+      --link "repair_goal_id=$ARNOLD_REPAIR_GOAL_ID" \
+      --link "repair_goal_path=$ARNOLD_REPAIR_GOAL_PATH" \
+      --link "phase=repair_investigator" \
+      "${parent_args[@]}" \
+      -- timeout "$investigator_timeout" codex exec --skip-git-repo-check --sandbox read-only \
+        -c model="$REPAIR_INVESTIGATOR_MODEL" -c model_reasoning_effort=high \
+        --output-last-message "$INVESTIGATOR_RECEIPT_PATH" -
+  ) >>"$LOG" 2>&1
+  rc=$?
+  investigator_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
+  if [[ "$rc" != "0" ]] || ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+      arnold_pipelines.megaplan.cloud.repair_investigation validate \
+      --receipt "$INVESTIGATOR_RECEIPT_PATH" \
+      --context-digest "$context_digest" >>"$LOG" 2>&1; then
+    repair_data_set_outcome "fixer_infrastructure_failure"
+    log "repair investigator failed or returned an invalid receipt session=$SESSION run_id=${investigator_run_id:-unknown}"
+    return 1
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY'
+import pathlib, sys
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
+data_path, context_path, receipt_path, digest, run_id = sys.argv[1:]
+payload = load_json(pathlib.Path(data_path), default={})
+payload["investigation"] = {
+    "context_path": context_path,
+    "context_digest": digest,
+    "receipt_path": receipt_path,
+    "investigator_run_id": run_id,
+    "bounded": True,
+}
+save_repair_data(pathlib.Path(data_path), payload)
+PY
+  export INVESTIGATION_CONTEXT_DIGEST="$context_digest"
+  recommended_action="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("recommended_action") or "")' "$INVESTIGATOR_RECEIPT_PATH")"
+  export INVESTIGATOR_RECOMMENDED_ACTION="$recommended_action"
+  log "bounded repair investigator receipt accepted session=$SESSION run_id=$investigator_run_id digest=$context_digest action=$recommended_action"
+  if [[ "$recommended_action" == "replan" ]]; then
+    repair_data_set_outcome "deterministic_failure"
+    return 2
+  fi
+  return 0
 }
 
 run_dev_fix_turn() {
@@ -6526,8 +6711,12 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
-    log "repair target already running, but liveness does not satisfy the durable repair goal session=$SESSION"
-    repair_goal_evaluate_or_exit "initial-alive" || true
+    log "repair target already running under retained goal custody; waiting for beyond-stage evidence without re-drive session=$SESSION"
+    if wait_for_repair_goal_progress_if_live "initial-alive"; then
+      exit 0
+    elif [[ "$?" == "2" ]]; then
+      exit 1
+    fi
   fi
 fi
 
@@ -6884,6 +7073,29 @@ mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE
 if [[ "${mechanical_status:-}" == "running" ]]; then
   repair_data_record_mechanical "0" "0" "running" "baseline mechanical relaunch came up and held"
   repair_goal_evaluate_or_exit "post-baseline-mechanical-launch" || true
+elif [[ "${mechanical_status:-}" == preserved:* ]]; then
+  repair_data_record_mechanical "0" "0" "preserved_live" "$mechanical_status"
+  if wait_for_repair_goal_progress_if_live "baseline-preserved-live"; then
+    exit 0
+  elif [[ "$?" == "2" ]]; then
+    exit 1
+  fi
+fi
+
+investigator_rc=0
+run_repair_investigator_turn || investigator_rc=$?
+if [[ "$investigator_rc" == "2" ]]; then
+  log "investigator requires L2 replan before a mutating owner is launched session=$SESSION"
+  exit 1
+elif [[ "$investigator_rc" != "0" ]]; then
+  exit 1
+fi
+if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "preserve_live" ]]; then
+  if wait_for_repair_goal_progress_if_live "investigator-preserve-live"; then
+    exit 0
+  elif [[ "$?" == "2" ]]; then
+    exit 1
+  fi
 fi
 
 GLM_MODEL=""
@@ -6931,6 +7143,12 @@ for iteration in 1 2 3; do
       DEV_FALLBACK_REASON=""
       ;;
   esac
+  if [[ "$DURABLE_GOAL_OWNER_ENABLED" == "1" ]]; then
+    DEV_REQUESTED_MODEL="codex:$REPAIR_OWNER_MODEL"
+    DEV_DISPATCH_MODEL="$REPAIR_OWNER_MODEL"
+    DEV_DISPATCH_KIND="codex"
+    DEV_FALLBACK_REASON=""
+  fi
 
   if ! IFS=$'\t' read -r CURRENT_ATTEMPT_ID CURRENT_RECURRING CURRENT_DETERMINISTIC_BREAKER <<< "$(repair_recurrence_prepare_attempt "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL")"; then
     log "failed to prepare recurrence context; continuing in shallow mode iteration=$iteration"
@@ -6938,6 +7156,9 @@ for iteration in 1 2 3; do
     CURRENT_RECURRING="0"
     CURRENT_DETERMINISTIC_BREAKER="0"
   fi
+  # The bounded investigator has already separated diagnosis from mutation;
+  # the single retained owner always runs at high root-cause depth.
+  CURRENT_RECURRING="1"
   if [[ "${CURRENT_DETERMINISTIC_BREAKER:-0}" == "1" && "${CLOUD_WATCHDOG_DETERMINISTIC_BREAKER:-1}" == "1" ]]; then
     repair_data_set_outcome "deterministic_failure"
     BREAKER_TRIPPED="1"
@@ -6947,6 +7168,12 @@ for iteration in 1 2 3; do
   run_dev_fix_turn "$iteration" "$CURRENT_ATTEMPT_ID" "${CURRENT_RECURRING:-0}" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
   exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
   recover_blocked_after_dev_fix_if_possible "$iteration" "$CURRENT_ATTEMPT_ID" || true
+  if wait_for_repair_goal_progress_if_live "owner-iteration-$iteration-post-dev-fix"; then
+    exit 0
+  elif [[ "$?" == "2" ]]; then
+    BREAKER_TRIPPED="1"
+    break
+  fi
 
   mechanical_status="$(mechanical_launch_step "$iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "$mechanical_status" "$mechanical_status"
@@ -6954,19 +7181,28 @@ for iteration in 1 2 3; do
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
     repair_goal_evaluate_or_exit "iteration-$iteration-post-mechanical-launch" || true
+  elif [[ "${mechanical_status:-}" == preserved:* ]]; then
+    repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "preserved_live" "$mechanical_status"
+    if wait_for_repair_goal_progress_if_live "owner-iteration-$iteration-preserved-live"; then
+      exit 0
+    elif [[ "$?" == "2" ]]; then
+      BREAKER_TRIPPED="1"
+      break
+    fi
   fi
 
-  if [[ -z "${KIMI_API_KEY:-}" ]]; then
-    repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "failed:KIMI_API_KEY missing" "$RUN_DIR/iter${iteration}-kimi-report.json" 78
-    continue
+  if [[ "$KIMI_AFTER_OWNER_ENABLED" == "1" ]]; then
+    if [[ -z "${KIMI_API_KEY:-}" ]]; then
+      repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "failed:KIMI_API_KEY missing" "$RUN_DIR/iter${iteration}-kimi-report.json" 78
+      continue
+    fi
+    exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
+    resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
+    if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
+      repair_goal_evaluate_or_exit "iteration-$iteration-post-kimi-launch" || true
+    fi
+    exit_if_repair_target_complete "iteration-$iteration-post-kimi"
   fi
-
-  exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
-  resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
-  if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-    repair_goal_evaluate_or_exit "iteration-$iteration-post-kimi-launch" || true
-  fi
-  exit_if_repair_target_complete "iteration-$iteration-post-kimi"
 done
 
 exit_if_repair_target_complete "post-iterations"
