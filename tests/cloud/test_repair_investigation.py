@@ -509,6 +509,17 @@ def test_context_separates_safe_target_from_handoff_mutation_contract(tmp_path: 
     assert "L2/root-cause target" in context["required_investigator_output"][
         "replan_contract"
     ]
+    examples = context["required_investigator_output"][
+        "action_specific_handoff_examples"
+    ]
+    assert set(examples) == {
+        "preserve_live", "replan", "repair_source", "repair_target", "recover_state"
+    }
+    assert all(
+        isinstance(example.get("forbidden_mutations"), list)
+        and example["forbidden_mutations"]
+        for example in examples.values()
+    )
 
     receipt = _receipt()
     receipt["recommended_action"] = "replan"
