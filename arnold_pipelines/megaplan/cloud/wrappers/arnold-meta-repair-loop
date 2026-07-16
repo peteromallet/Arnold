@@ -326,6 +326,71 @@ PY
 fi
 log "recursion guard: $RECURSION_OUTPUT"
 
+# A literal L3 trigger is not launch authority. Validate the bounded auditor
+# context against its queued request and immutable resident provenance before
+# trigger classification. The same check runs again when the prompt pointer is
+# assembled, so a changed artifact fails closed before model dispatch.
+validate_l3_dispatch_context() {
+  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$SESSION" \
+    "${ARNOLD_L3_REPAIR_CONTEXT_PATH:-}" \
+    "${ARNOLD_L3_REPAIR_CONTEXT_DIGEST:-}" \
+    "${ARNOLD_L3_ESCALATION_ID:-}" \
+    "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
+    "${ARNOLD_REPAIR_QUEUE_ROOT:-}" \
+    "${ARNOLD_L3_REPAIR_OUTCOME_PATH:-}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    validate_l3_repair_dispatch_context,
+)
+from arnold_pipelines.megaplan.cloud.repair_requests import requests_dir
+
+session, context_path, digest, escalation_id, request_id, queue_root, outcome_path = sys.argv[1:]
+try:
+    if not queue_root or not request_id:
+        raise ValueError("L3 repair queue identity is incomplete")
+    request_path = requests_dir(queue_root) / f"{request_id}.json"
+    pointer = validate_l3_repair_dispatch_context(
+        context_path=context_path,
+        request_path=request_path,
+        expected_session=session,
+        expected_context_digest=digest,
+        expected_escalation_id=escalation_id,
+        expected_request_id=request_id,
+    )
+    expected_outcome = Path(context_path).resolve(strict=True).with_name(
+        "repair-outcome.json"
+    )
+    if not outcome_path or Path(outcome_path).resolve(strict=False) != expected_outcome:
+        raise ValueError("L3 repair outcome pointer disagrees with its context")
+    pointer["outcome_path"] = str(expected_outcome)
+except (OSError, ValueError) as exc:
+    print(f"L3 dispatch validation failed: {exc}", file=sys.stderr)
+    raise SystemExit(65)
+print(json.dumps(pointer, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+L3_REPAIR_POINTER_JSON=""
+if [[ "$WATCHDOG_TRIGGER" == "l3_progress_auditor" ]]; then
+  if [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" != "1" ]]; then
+    log "L3 trigger missing explicit deep-repair authorization; refusing dispatch"
+    exit 65
+  fi
+  if ! L3_REPAIR_POINTER_JSON="$(validate_l3_dispatch_context 2>&1)"; then
+    log "$L3_REPAIR_POINTER_JSON"
+    exit 65
+  fi
+  export L3_REPAIR_POINTER_JSON
+  log "validated typed L3 repair request request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-} escalation_id=${ARNOLD_L3_ESCALATION_ID:-}"
+elif [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" == "1" ]]; then
+  log "deep-repair authorization supplied without the L3 trigger; refusing dispatch"
+  exit 65
+fi
+
 # ---- classify failure + build redacted prompt via Python handoff -------------
 classification_and_prompt() {
   local force_emergency="${1:-0}"
@@ -766,48 +831,39 @@ append_l3_repair_contract() {
   if [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" != "1" ]]; then
     return 0
   fi
+  local revalidated_pointer
+  revalidated_pointer="$(validate_l3_dispatch_context)" || return $?
+  if [[ "$revalidated_pointer" != "$L3_REPAIR_POINTER_JSON" ]]; then
+    echo "L3 repair pointer changed after trigger validation" >&2
+    return 65
+  fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
-    "${ARNOLD_L3_REPAIR_CONTEXT_PATH:-}" \
-    "${ARNOLD_L3_REPAIR_CONTEXT_DIGEST:-}" \
-    "$SUPERFIXER_SKILL" <<'PY'
-import hashlib
+    "$revalidated_pointer" "$SUPERFIXER_SKILL" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-context_path = Path(sys.argv[1])
-expected_digest = sys.argv[2]
-skill_path = Path(sys.argv[3])
-if not context_path.is_file():
-    raise SystemExit("deep repair context artifact is missing")
-payload = json.loads(context_path.read_text(encoding="utf-8"))
-observed = str(payload.get("context_digest") or "")
-digest_payload = dict(payload)
-digest_payload.pop("context_digest", None)
-recomputed = hashlib.sha256(
-    json.dumps(digest_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-).hexdigest()
-if not expected_digest or observed != expected_digest or observed != recomputed:
-    raise SystemExit("deep repair context digest disagrees with the queued request")
+pointer = json.loads(sys.argv[1])
+skill_path = Path(sys.argv[2])
 if not skill_path.is_file():
     raise SystemExit("superfixer-debug skill is unavailable")
-encoded = json.dumps(payload, indent=2, sort_keys=True)
-if len(encoded.encode("utf-8")) > 65536:
-    raise SystemExit("deep repair context exceeds the bounded artifact budget")
+encoded = json.dumps(pointer, indent=2, sort_keys=True)
+if len(encoded.encode("utf-8")) > 8192:
+    raise SystemExit("deep repair pointer exceeds its 8 KiB prompt budget")
 print("\n## Six-hour L3 escalation contract\n")
 print(f"Read and follow `{skill_path}` fully before changing anything.")
 print("Walk L1/L2/L3 with TRACKED/FIXED/INTENT/CONTEXT. Fix the first broken fixer/backstop first, then hunt sibling instances of the failure class, then re-trigger the ordinary canonical recovery path. Never alter chain/plan state directly, weaken completion or safety guards, or treat a pause/human gate as a fault.")
 print("You are the retained root-cause owner and the only execution owner. You may fan out at most three bounded read-only investigators through the canonical nested launcher; contributors must not edit. Synthesize their receipts yourself before making any change. Never launch or retain a second mutating owner.")
 print("Treat the repair goal as the durable /goal-style success authority, not the lifetime or exit status of any fixer process. Inspect its frozen checkpoint, recovery_contract, last observation, exact request identity, and bounded investigator receipt. If control_action=preserve_live, do not kill, relaunch, or duplicate the correct worker; if control_action=replan, stop the repeated mechanism and change the plan.")
 print("Recovery is verified only when the blocker is cleared, the applicable correct worker is alive with fresh progress, and the original plan advances beyond its frozen stage. A fixer report, clean exit, heartbeat, or same-stage liveness is not success.")
-print("The concrete auditor artifact below is authoritative bounded launch context; inspect its cited raw artifacts for full stderr, exit codes, exceptions, commands, token drift, stale projections, false success, missing launch evidence, and spinning fixers.")
+print("The pointer below was validated against the immutable queued request and 64 KiB auditor artifact. Read that artifact and its typed references for full stderr, exit codes, exceptions, commands, token drift, stale projections, false success, missing launch evidence, and spinning fixers; do not copy expanding evidence into another prompt.")
 print("```json")
 print(encoded)
 print("```")
 print("Your response must include exact lines `FIXER_FIXED=true|false`, `BACKSTOP_FIXED=true|false`, and `GUARD_WEAKENED=true|false`, followed by evidence paths/tests. A FIXED verdict without those receipts is false success.")
 PY
 }
-{
+if ! {
   echo "# Meta-Repair Diagnosis: $SESSION"
   echo
   echo "**Trigger:** \`$TRIGGER_TYPE\`"
@@ -886,7 +942,10 @@ Then cite specific evidence, the root cause, the change(s) made
 PROMPT_POLICY
   echo "- Canonical nested launcher: $LAUNCHER. Automatic nested launches through this path self-register as child managed-agent runs; do not use another launcher path."
   append_l3_repair_contract
-} > "$BRIEF_PATH"
+} > "$BRIEF_PATH"; then
+  log "meta-repair brief assembly failed custody validation; refusing dispatch"
+  exit 65
+fi
 redact_file_in_place "$BRIEF_PATH"
 BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
 if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS )); then
@@ -902,7 +961,7 @@ if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS 
     log "emergency prompt assembly produced empty output; exiting"
     exit 1
   fi
-  {
+  if ! {
     echo "# Meta-Repair Diagnosis: $SESSION"
     echo
     echo "**Trigger:** \`$TRIGGER_TYPE\`"
@@ -981,7 +1040,10 @@ Then cite specific evidence, the root cause, the change(s) made
 PROMPT_POLICY
     echo "- Canonical nested launcher: $LAUNCHER. Automatic nested launches through this path self-register as child managed-agent runs; do not use another launcher path."
     append_l3_repair_contract
-  } > "$BRIEF_PATH"
+  } > "$BRIEF_PATH"; then
+    log "emergency brief assembly failed custody validation; refusing dispatch"
+    exit 65
+  fi
   redact_file_in_place "$BRIEF_PATH"
   BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
   log "emergency brief rebuilt chars=$BRIEF_SIZE"
