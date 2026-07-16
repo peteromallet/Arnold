@@ -329,6 +329,20 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
     assert "explicit approval" in policy["external_actions"]
     assert "label it unintegrated" in policy["tentative_work"]
     assert "durable ancestry evidence" in policy["completion_evidence"]
+    schedules = context["resident_schedules"]
+    assert schedules["window"]["hours"] == 12
+    assert schedules["upcoming_enabled"] == []
+    assert "Monday at 6:00 AM" in schedules["guidance"]["create_calendar_sample"]
+    assert "--every PT6H --start now" in schedules["guidance"][
+        "create_anchored_interval_sample"
+    ]
+    capability_names = {
+        row.get("name") or row.get("tool")
+        for row in profile._context_source_cache["missing-conversation"]["capabilities"]
+    }
+    assert {
+        "resident_schedule_add", "resident_schedule_list", "resident_schedule_cancel"
+    } <= capability_names
 
 
 def test_hot_context_fan_in_example_matches_tool_and_cli_contract(tmp_path) -> None:

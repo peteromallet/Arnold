@@ -70,8 +70,20 @@ never causes the schedule task to execute again.
 Version 1 deliberately supports one file-store writer guarded by an OS lock.
 Database multi-worker scheduling is rejected until transactional occurrence
 insert, admission reservation, and fenced claims have parity. Legacy
-`ScheduledJob` handlers continue in parallel; no VP/cloud recurrence migrates
-without an explicit single-owner cutover.
+`ScheduledJob` handlers continue in parallel. The configured six-hour VP audit
+is the first explicit single-owner cutover: startup adopts its pending due time,
+cancels legacy pending recurrence jobs, and registers exactly one fixed-delay
+resident definition. Each occurrence still enters the unchanged VP handler,
+including its report-only payload and safety behavior; a schedule-owned marker
+prevents the handler from creating a second recurrence.
+
+The supported operator front door is `megaplan resident schedule add`. It
+accepts one-shot `--at`, anchored `--every ... --start ...`, five-field `--cron`,
+or wall-clock `--calendar 'Monday at 6:00 AM'` input. Wall-clock forms require an
+IANA timezone (or the current resident provenance timezone) and persist DST
+gap/fold policy. `schedule list --upcoming-hours 12` and `schedule cancel` are
+the bounded status and lifecycle paths. Creation requires an immutable grant;
+timing never expands the underlying work intent, route, expiry, or authority.
 
 ## Resident-Delegated Agent Lifecycle
 

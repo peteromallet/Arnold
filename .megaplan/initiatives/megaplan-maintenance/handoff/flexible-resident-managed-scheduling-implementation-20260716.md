@@ -22,7 +22,7 @@ The normal resident scheduler sweep materializes and claims schedule occurrences
 
 The `resident_orchestrator_turn` adapter supports no-effect probes and schedule-owned VP todo sweeps. A VP occurrence commits one idempotent legacy job carrying the occurrence custody; the existing VP handler performs its conditional todo/provenance turn and the schedule-owned marker prevents that handler from creating a second recurrence owner. The occurrence reconciles from the legacy job terminal receipt.
 
-Lifecycle operations are exposed at `megaplan resident schedule`: create/dry-run, preview, get/history, list, update with optimistic revision, activate, pause, resume, cancel, occurrences, typed event ingestion, dead-letter listing, replay under a new grant, and run-once. Mutation receipts retain actor, source digest, revision/generation, nominal time, previous event hash, and policy decision. `resident health` projects schedule/occurrence counts, stale claims, orphan launch commits, and next nominal times.
+Lifecycle operations are exposed at `megaplan resident schedule`: the easy `add` front door accepts explicit-time one-shots, anchored intervals, cron, and timezone/DST-aware wall-clock calendar expressions; full-definition create/dry-run, preview, get/history, bounded list, update with optimistic revision, activate, pause, resume, easy cancel, occurrences, typed event ingestion, dead-letter listing, replay under a new grant, and run-once remain available. Mutation receipts retain actor, source digest, revision/generation, nominal time, previous event hash, and policy decision. `resident health` projects schedule/occurrence counts, stale claims, orphan launch commits, and next nominal times. Bounded hot context documents create/list/cancel and projects enabled triggers in the next 12 hours with canonical UTC/local fields.
 
 Recovery uses one OS-flocked file writer, deterministic occurrence keys, bounded claims with monotonically increasing fences, stable managed launch keys, exponential pre-launch retry, explicit dead letters, restart materialization/reconciliation, and replay that requires a new immutable grant. Duplicate definition and event retries return the prior object; conflicting idempotency bodies fail closed.
 
@@ -31,7 +31,7 @@ Admission enforces schedule, concurrency-group, principal, custody-scope, model,
 ## Conservative decisions
 
 - File mode is an explicitly single-writer v1 contract protected by an OS lock. Database multi-worker scheduling remains disabled rather than claiming unproved transactional parity.
-- Fixed-rate is the default interval cadence; fixed-delay remains available when drift is intentional. No automatic VP sweep cutover occurred, so legacy recurrence cannot split-brain.
+- Fixed-rate is the default interval cadence; fixed-delay remains available when drift is intentional. The configured six-hour VP sweep now uses an idempotent startup cutover that adopts the legacy due instant, cancels legacy pending recurrence jobs, preserves schedule-owned handler payload state, and asserts exactly one active VP recurrence definition.
 - Gap/fold choices are mandatory persisted policy. Defaults are fail-closed gap rejection and first-fold selection; definitions should state them explicitly.
 - Terminal occurrence decisions, including suppression and dead letter, count toward `max_occurrences`.
 - Ordinary revisions may not mutate owner/custody. Authorization changes require a new `grant_id`, and all replacements are revalidated against work-intent and route constraints.
@@ -41,7 +41,7 @@ Admission enforces schedule, concurrency-group, principal, custody-scope, model,
 
 ## Rollback and compatibility
 
-Existing `ScheduledJob` records and handlers remain unchanged. With no active definitions the only runtime change is an empty, locked schedule scan before each legacy scheduler batch. Paused/cancelled definitions do not materialize. Rollback removes the scheduler callback or pauses definitions; already committed managed runs and delivery outboxes continue normal reconciliation. Occurrences and receipts are never deleted or rewritten.
+Existing `ScheduledJob` records and handlers remain the occurrence compatibility adapter. The VP handler no longer owns recurrence after cutover; its schedule-owned jobs persist repeat-state evidence but do not enqueue a successor. Paused/cancelled definitions do not materialize. Rollback requires deliberately restoring one recurrence owner before pausing the resident definition; already committed managed runs and delivery outboxes continue normal reconciliation. Occurrences and receipts are never deleted or rewritten.
 
 ## Verification and deployment record
 

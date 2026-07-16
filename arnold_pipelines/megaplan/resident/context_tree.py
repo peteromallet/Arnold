@@ -225,6 +225,7 @@ def build_context_root(
     ticket_count: int = 0,
     document_count: int = 0,
     intent_packs: Sequence[str] = (),
+    schedules: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the small always-on orientation and navigation node."""
 
@@ -276,6 +277,12 @@ def build_context_root(
             ),
             "agent_delivery_attention_count": (agents or {}).get("delivery_attention_count", 0),
             "pending_todo_count": (todos or {}).get("pending_count", 0),
+            "upcoming_schedule_count_12h": (schedules or {}).get(
+                "upcoming_enabled_count", 0
+            ),
+            "upcoming_schedules": _safe(
+                list((schedules or {}).get("upcoming_enabled") or [])[:4], depth=3
+            ),
         },
         "knowledge_lifecycle": _safe(knowledge_lifecycle or {}, depth=4),
         # Causal initiative activity is intentionally nested (initiative ->
@@ -290,6 +297,7 @@ def build_context_root(
             {"node_id": "documents", "contains": "durable non-state document inventory"},
             {"node_id": "runtime", "contains": "resident configuration, restart and lifecycle"},
             {"node_id": "todos", "contains": "VP special requests"},
+            {"node_id": "schedules", "contains": "upcoming enabled occurrences and operator guidance"},
             {"node_id": "capabilities", "contains": "resident tool directory"},
             {"node_id": "policies", "contains": "full operating policy packs"},
         ],
@@ -416,6 +424,10 @@ def read_context_node(
         return _page(normalized, list(sources.get("documents") or []), cursor, limit)
     if head == "todos":
         return _page(normalized, list(sources.get("todos") or []), cursor, limit)
+    if head == "schedules":
+        if tail in {"", "upcoming"}:
+            return _page(normalized, list(sources.get("schedules") or []), cursor, limit)
+        return _error(normalized, "unknown schedules branch")
     if head == "capabilities":
         return _page(normalized, list(sources.get("capabilities") or []), cursor, limit)
     if head == "runtime":
@@ -446,6 +458,7 @@ def search_context(
         "initiatives",
         "documents",
         "todos",
+        "schedules",
         "capabilities",
         "policies",
     }:
@@ -468,6 +481,8 @@ def search_context(
         values = list(sources.get("documents") or [])
     elif scope == "todos":
         values = list(sources.get("todos") or [])
+    elif scope == "schedules":
+        values = list(sources.get("schedules") or [])
     elif scope == "capabilities":
         values = list(sources.get("capabilities") or [])
     else:
