@@ -1,0 +1,149 @@
+base_branch: consolidate/arnold-runtime-activation-20260714
+anchors:
+  north_star: NORTHSTAR.md
+
+milestones:
+  - label: m1-capture-contracts
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m1-capture-contracts.md
+    branch: megaplan/session-knowledge-compiler/m1-capture-contracts
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: Map all persisted managed-session evidence sources and backend identity/position semantics before freezing the capture contract.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 5/5; partnered-5/thorough/high because source identity and range mistakes can silently lose evidence across every later sprint."
+
+  - label: m2-trigger-lifecycle
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m2-trigger-lifecycle.md
+    branch: megaplan/session-knowledge-compiler/m2-trigger-lifecycle
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: Verify the M1 handoff and existing store/scheduler concurrency seams before designing cursors, leases, attempts, and triggers.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 5/5; partnered-5/thorough/high because cursor/commit ordering can pass happy-path tests while skipping ranges."
+
+  - label: m3-record-contracts
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m3-record-contracts.md
+    branch: megaplan/session-knowledge-compiler/m3-record-contracts
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: Read the M2 checkpoint handoff and freeze versioned record, claim-kind, evidence-reference, and persistence contracts.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 5/5; partnered-5/thorough/high because these schemas become durable truth contracts."
+
+  - label: m4-extractor-acceptance
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m4-extractor-acceptance.md
+    branch: megaplan/session-knowledge-compiler/m4-extractor-acceptance
+    profile: partnered-4
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: Trace structured-worker routing and validate the exact direct-Pro path plus M3 schemas before implementing bounded extraction and acceptance.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 4/5; partnered-4/full/high because predecessor contracts bound the design but model/error topology remains subtle."
+
+  - label: m5-synthesis-corrections
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m5-synthesis-corrections.md
+    branch: megaplan/session-knowledge-compiler/m5-synthesis-corrections
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: Verify accepted-checkpoint enumeration and correction/event patterns before defining rolling/final synthesis and supersession.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 5/5; partnered-5/thorough/high because correction must never rewrite primary evidence or create a parallel truth."
+
+  - label: m6-search-agent-ux
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m6-search-agent-ux.md
+    branch: megaplan/session-knowledge-compiler/m6-search-agent-ux
+    profile: partnered-4
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: Trace authorization, pagination, tool registration, and managed-agent prompt seams against the M5 synthesis handoff.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 4/5; partnered-4/full/high because scoped search and five tool adapters cross several existing surfaces."
+
+  - label: m7-promotion-governance
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m7-promotion-governance.md
+    branch: megaplan/session-knowledge-compiler/m7-promotion-governance
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: Inventory repository identity and review authority, then bind promotion candidates to explicit applicability and evidence.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 5/5; partnered-5/thorough/high because an apparently valid promotion can mislead work outside its source revision."
+
+  - label: m8-contradiction-lifecycle
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m8-contradiction-lifecycle.md
+    branch: megaplan/session-knowledge-compiler/m8-contradiction-lifecycle
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: Read M7 governance records and current git/worktree revision semantics before implementing contradiction and knowledge lifecycle behavior.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 5/5; partnered-5/thorough/high because contradiction and invalidation errors are non-local and history-sensitive."
+
+  - label: m9-paper-cut-backlog
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m9-paper-cut-backlog.md
+    branch: megaplan/session-knowledge-compiler/m9-paper-cut-backlog
+    profile: partnered-4
+    vendor: codex
+    robustness: full
+    depth: medium
+    with_prep: true
+    prep_direction: Inspect immutable observations, governed search, and the existing ticket substrate before defining deterministic consolidation and adapter semantics.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 4/5; partnered-4/full/medium because the design needs judgment but is bounded by preserved observation lineage."
+
+  - label: m10-rollout-observability
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m10-rollout-observability.md
+    branch: megaplan/session-knowledge-compiler/m10-rollout-observability
+    profile: partnered-4
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: Inventory configuration, scheduler budgets, telemetry, privacy inheritance, and rollback seams before defining rollout policy.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 4/5; partnered-4/full/high because failure isolation, budgets, and rollback cross runtime boundaries."
+
+  - label: m11-conformance-closeout
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m11-conformance-closeout.md
+    branch: megaplan/session-knowledge-compiler/m11-conformance-closeout
+    profile: partnered-4
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: Read every predecessor handoff and map representative resident and automatic-repair backends before building conformance and closeout evidence.
+    deepseek_provider: direct
+    notes: "~2 human weeks. Difficulty 4/5; partnered-4/full/high because end-to-end failure matrices can expose cross-layer gaps that focused suites miss."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: false
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0

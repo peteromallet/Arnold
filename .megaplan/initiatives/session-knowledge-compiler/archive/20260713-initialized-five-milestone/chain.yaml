@@ -1,0 +1,102 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+
+milestones:
+  - label: m1
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m1.md
+    branch: megaplan/session-knowledge-compiler/m1
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    with_prep: true
+    prep_direction: >-
+      Map every managed-session event, manifest, log, lifecycle transition,
+      token-usage source, Store backend, and scheduler seam before choosing the
+      canonical cursor and trigger contract.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/full with default depth. A bad
+      persistence or cursor design can pass local tests while permanently
+      skipping evidence or coupling compiler failure to session completion.
+
+  - label: m2
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m2.md
+    branch: megaplan/session-knowledge-compiler/m2
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    with_prep: true
+    prep_direction: >-
+      Read the M1 contracts and existing structured worker/model seams; verify
+      direct DeepSeek Pro invocation, schema validation, and evidence-reference
+      boundaries before designing extraction.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/full with default depth. The
+      evidence and claim taxonomy becomes a durable product contract, and a
+      plausible but weak extractor could silently turn inference into fact.
+
+  - label: m3
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m3.md
+    branch: megaplan/session-knowledge-compiler/m3
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    with_prep: true
+    prep_direction: >-
+      Trace resident tool registration, context/search surfaces, managed-agent
+      prompt construction, and durable correction/event patterns before adding
+      synthesis and agent-facing controls.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/full with default depth. Search,
+      correction, and rolling/final synthesis must preserve lineage across
+      checkpoints and must not create a second source of truth.
+
+  - label: m4
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m4.md
+    branch: megaplan/session-knowledge-compiler/m4
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    with_prep: true
+    prep_direction: >-
+      Inventory repository identity, revision/version evidence, initiative and
+      document stores, review/approval patterns, and contradiction surfaces
+      before defining project-knowledge promotion.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/full with default depth. Stale or
+      contradictory knowledge can look locally valid while misleading future
+      agents across versions and repositories.
+
+  - label: m5
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m5.md
+    branch: megaplan/session-knowledge-compiler/m5
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    with_prep: true
+    prep_direction: >-
+      Read all prior milestone contracts, existing ticket/backlog mechanisms,
+      rollout/config patterns, and end-to-end managed-agent tests; preserve
+      source observation lineage while consolidating work items.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/full with default depth. Naive
+      deduplication or rollout can erase evidence, amplify noise, or impose
+      unexpected cost on every managed session.
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: false
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0
