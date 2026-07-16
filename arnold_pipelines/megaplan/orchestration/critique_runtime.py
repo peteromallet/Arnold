@@ -176,6 +176,24 @@ def _apply_adaptive_critique_routing(
     """
     _pin = pinned_critic_model(state)
 
+    # The evaluator's score is the 1..10 contract.  Validate it before
+    # looking at the profile so a global pin cannot hide malformed evaluator
+    # output.
+    for _check in active_checks:
+        _cid = _check.get("id", "?")
+        _cx = _check.get("complexity")
+        if (
+            not isinstance(_cx, int)
+            or isinstance(_cx, bool)
+            or not 1 <= _cx <= 10
+        ):
+            raise CliError(
+                "critique_complexity_invariant",
+                f"Check '{_cid}' has missing or invalid complexity "
+                f"({_cx!r}); expected an integer in 1..10 for evaluator "
+                "output.",
+            )
+
     # Resolve per-check AgentMode from tier_models.critique (complexity-based
     # routing, SD1). Cache complexity -> AgentMode to avoid redundant resolution
     # when multiple checks share the same complexity tier.
@@ -220,20 +238,33 @@ def _apply_adaptive_critique_routing(
     if not isinstance(_critique_tiers, dict) or not _critique_tiers:
         return _pin
 
+    # Historical profiles use a 1..5 table.  Presence of any tier above 5 is
+    # the deliberate, unambiguous marker for a current 1..10 table.
+    _numeric_tiers = {
+        int(key)
+        for key in _critique_tiers
+        if isinstance(key, int) and not isinstance(key, bool)
+        or isinstance(key, str) and key.isdigit()
+    }
+    _legacy_critique_tiers = not any(key > 5 for key in _numeric_tiers)
+
     from arnold_pipelines.megaplan.execute.batch import _resolve_tier_spec
     from arnold_pipelines.megaplan.types import AgentMode as _TierAgentMode
 
     _complexity_cache: dict[int, _TierAgentMode] = {}
     _pin_agent_mode: _TierAgentMode | None = None
 
-    def _tier_spec_for(complexity: int) -> str | None:
-        _raw = _critique_tiers.get(complexity)
+    def _resolved_routing_tier(complexity: int) -> int:
+        return (complexity + 1) // 2 if _legacy_critique_tiers else complexity
+
+    def _tier_spec_for(routing_tier: int) -> str | None:
+        _raw = _critique_tiers.get(routing_tier)
         if _raw is None:
-            _raw = _critique_tiers.get(str(complexity))
+            _raw = _critique_tiers.get(str(routing_tier))
         if isinstance(_raw, str):
             return _raw or None
         if isinstance(_raw, list):
-            return select_fallback_spec(_raw, 0, path=f"tier_models.critique.{complexity}")
+            return select_fallback_spec(_raw, 0, path=f"tier_models.critique.{routing_tier}")
         return None
 
     def _resolved_pin_agent_mode() -> _TierAgentMode:
@@ -256,16 +287,9 @@ def _apply_adaptive_critique_routing(
     for _check in active_checks:
         _cid = _check.get("id", "?")
         _cx = _check.get("complexity")
-        if not isinstance(_cx, int) or _cx < 1 or _cx > 5:
-            raise CliError(
-                "critique_complexity_invariant",
-                f"Check '{_cid}' has missing or invalid "
-                f"complexity ({_cx!r}); cannot resolve tier "
-                "routing. This is an invariant error in "
-                "the evaluator output.",
-            )
+        _routing_tier = _resolved_routing_tier(_cx)
         if _cx not in _complexity_cache:
-            _spec = _tier_spec_for(_cx)
+            _spec = _tier_spec_for(_routing_tier)
             if not _spec:
                 if _pin:
                     _complexity_cache[_cx] = _resolved_pin_agent_mode()
@@ -273,6 +297,7 @@ def _apply_adaptive_critique_routing(
                     raise CliError(
                         "critique_tier_missing",
                         f"No tier spec for complexity {_cx} "
+                        f"(resolved critique tier {_routing_tier}) "
                         f"in tier_models.critique; cannot "
                         f"route check '{_cid}'.",
                     )
@@ -291,8 +316,9 @@ def _apply_adaptive_critique_routing(
                         resolved_model=_t_model,
                     )
         _check["_resolved_agent_mode"] = _complexity_cache[_cx]
-        _check["_routing_selected_spec"] = _tier_spec_for(_cx) or f"critic_model:{_pin}"
-        _check["_routing_tier"] = _cx
+        _check["_routing_selected_spec"] = _tier_spec_for(_routing_tier) or f"critic_model:{_pin}"
+        _check["_routing_evaluator_complexity"] = _cx
+        _check["_routing_tier"] = _routing_tier
         _check["_routing_tier_active"] = True
 
     return None

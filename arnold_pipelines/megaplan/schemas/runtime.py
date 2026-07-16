@@ -657,7 +657,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "auto_attributed_files": {"type": ["boolean", "null"]},
                         "evidence_files": {"type": "array", "items": {"type": "string"}},
                         "reviewer_verdict": {"type": "string"},
-                        "complexity": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "complexity": {"type": "integer", "minimum": 1, "maximum": 10},
                         "complexity_justification": {"type": "string"},
                         "stance": deepcopy(STANCE_SCHEMA),
                         "stop_signal": deepcopy(STOP_SIGNAL_SCHEMA),
