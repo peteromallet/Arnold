@@ -1,1 +1,173 @@
-chain-v3-20260716.yaml
+base_branch: consolidate/arnold-runtime-activation-20260714
+
+anchors:
+  north_star: NORTHSTAR.md
+
+milestones:
+  - label: l1-lifecycle-contract-journal
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/l1-lifecycle-contract-journal.md
+    branch: megaplan/session-knowledge-compiler/l1-lifecycle-contract-journal
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Resolve gates G1-G5, re-inventory the selected target revision, map the
+      arnold.agent dispatcher, managed v2 supervisor, Store/WBC transaction
+      boundaries, authority/privacy owners, and Codex/Claude/Hermes capability
+      evidence before freezing an additive v3 lifecycle contract.
+    deepseek_provider: direct
+    notes: >-
+      About two skilled-human weeks; difficulty 5/5; partnered-5/full/high because
+      a locally valid schema or transaction split can create duplicate effects,
+      competing authority, or privacy leakage.
+
+  - label: l2-resident-automatic-dual-record
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/l2-resident-automatic-dual-record.md
+    branch: megaplan/session-knowledge-compiler/l2-resident-automatic-dual-record
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Verify the reviewed L1 handoff, then trace resident delegation/follow-up/
+      cancellation/result/delivery and watchdog/repair/meta-repair/auditor/fixer
+      start, adoption, terminal, and delivery seams before adding one-execution
+      v2/v3 dual recording, deterministic role policy, parity, and rollback.
+    deepseek_provider: direct
+    notes: >-
+      About two skilled-human weeks; difficulty 5/5; partnered-5/full/high because
+      restart, dual-write, observer classification, or delivery errors can
+      duplicate provider starts or user-visible effects while happy paths pass.
+
+  - label: l3-megaplan-phase-migration
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/l3-megaplan-phase-migration.md
+    branch: megaplan/session-knowledge-compiler/l3-megaplan-phase-migration
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Verify the L1-L2 handoffs, enumerate every shared/direct Megaplan worker
+      launch seam and phase/iteration/plan/chain receipt, then preserve exact
+      WorkerResult, route/fallback/session, gate/retry/rework, approval,
+      acceptance, and execution-binding behavior while adding v3 lifecycle calls.
+    deepseek_provider: direct
+    notes: >-
+      About two skilled-human weeks; difficulty 5/5; partnered-5/full/high because
+      a shared-launch refactor can silently absorb or alter Megaplan orchestration
+      and authorization semantics.
+
+  - label: c1-compiler-capture-cursors
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/c1-compiler-capture-cursors.md
+    branch: megaplan/session-knowledge-compiler/c1-compiler-capture-cursors
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Verify the L3 launch-seam registry and compiler ownership matrix, resolve
+      G6, then map v3 journal sequences, evidence ranges, Store atomicity,
+      scheduler claims, terminal transitions, privacy scopes, and anti-recursion
+      predicates before implementing the smallest accepted-checkpoint slice.
+    deepseek_provider: direct
+    notes: >-
+      About two skilled-human weeks; difficulty 5/5; partnered-5/full/high because
+      evidence-owner, native-position, eligibility, or atomicity mistakes can
+      silently skip or duplicate durable knowledge.
+
+  - label: c2-evidence-compiler-records
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/c2-evidence-compiler-records.md
+    branch: megaplan/session-knowledge-compiler/c2-evidence-compiler-records
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Verify C1 accepted-checkpoint and immutable evidence contracts, then trace
+      structured-worker routing and exact direct DeepSeek Pro resolution before
+      freezing four record schemas, claim kinds, bounded context, validation,
+      failure classification, and one-commit acceptance.
+    deepseek_provider: direct
+    notes: >-
+      About two skilled-human weeks; difficulty 5/5; partnered-5/full/high because
+      evidence and claim taxonomy errors can persist plausible inference or
+      proposed work as fact.
+
+  - label: c3-synthesis-search-agent-ux
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/c3-synthesis-search-agent-ux.md
+    branch: megaplan/session-knowledge-compiler/c3-synthesis-search-agent-ux
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Verify C1-C2 lineage and authorization contracts, then map resident/CLI
+      tool registration, scoped Store queries, projection rebuild, correction,
+      terminal synthesis, pagination, and prompt/context surfaces before adding
+      the five controls without bulk corpus injection.
+    deepseek_provider: direct
+    notes: >-
+      About two skilled-human weeks; difficulty 5/5; partnered-5/full/high because
+      correction, hierarchy, and retrieval can create a leaking mutable parallel
+      truth source.
+
+  - label: c4-promotion-governance
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/c4-promotion-governance.md
+    branch: megaplan/session-knowledge-compiler/c4-promotion-governance
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Resolve G7 and verify C3 candidate/search/correction contracts, repository
+      identity and revision evidence, existing review/authorization patterns,
+      branch divergence, applicability, contradiction, and invalidation surfaces
+      before allowing any accepted project knowledge.
+    deepseek_provider: direct
+    notes: >-
+      About two skilled-human weeks; difficulty 5/5; partnered-5/full/high because
+      stale, contradictory, or over-authorized promoted knowledge can mislead
+      future work outside the producing run.
+
+  - label: c5-paper-cut-rollout-proof
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/c5-paper-cut-rollout-proof.md
+    branch: megaplan/session-knowledge-compiler/c5-paper-cut-rollout-proof
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Verify all prior handoffs, then map ticket authority, schema/upcast/privacy
+      compatibility, read-only reconciliation, rollout flags and diagnostics,
+      the full producer/backend matrix, and a redacted non-mutating real-epic
+      replay before closing North Star traceability and retirement readiness.
+    deepseek_provider: direct
+    notes: >-
+      About two skilled-human weeks; difficulty 4/5 but partnered-5/full/high is
+      retained because silent launch-seam gaps and non-reversible consolidation
+      can false-green conformance.
+
+on_failure:
+  abort: stop_chain
+
+on_escalate:
+  abort: stop_chain
+
+merge_policy: auto
+
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: false
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0
