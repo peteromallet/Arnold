@@ -289,6 +289,22 @@ def test_terminal_cursor_transition_closes_stale_goal_before_successor_launch(
     assert result["evaluation"]["control_action"] == "complete"
 
 
+def test_watchdog_relaunches_successor_after_stale_goal_closes() -> None:
+    wrapper = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-watchdog"
+    ).read_text(encoding="utf-8")
+
+    assert "local repair_goal_progressed=0" in wrapper
+    assert "repair_goal_progressed=1" in wrapper
+    assert 'if [[ "$repair_goal_progressed" != "1" ]]; then' in wrapper
+    assert "bypassing historical repair-failure routing for successor relaunch" in wrapper
+
+
 def test_replacement_session_evidence_cannot_complete_original_goal(tmp_path: Path) -> None:
     path, goal = _goal(tmp_path)
     target = goal["target"]
