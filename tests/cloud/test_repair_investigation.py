@@ -131,7 +131,8 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     assert len(context["context_digest"]) == 64
     supported_cli = context["safe_repair_boundaries"]["supported_recovery_cli"]
     assert supported_cli == (
-        f"python -P -m arnold_pipelines.megaplan chain start --spec {spec} "
+        f"env PYTHONSAFEPATH=1 PYTHONPATH={REPO_ROOT} python -P -m "
+        f"arnold_pipelines.megaplan chain start --spec {spec} "
         f"--project-dir {workspace}"
     )
     assert context["required_investigator_output"][
@@ -277,6 +278,8 @@ def test_verified_deterministic_phase_repair_uses_guarded_override_before_chain_
         f"--failure-fingerprint {recovery['repair_evidence']['failure_fingerprint']}"
         in supported_cli
     )
+    assert supported_cli.count(f"PYTHONPATH={REPO_ROOT}") == 2
+    assert supported_cli.count("PYTHONSAFEPATH=1") == 2
     assert f"commit {head}" in supported_cli
     assert supported_cli.endswith(
         f"chain start --spec {spec} --project-dir {workspace}"

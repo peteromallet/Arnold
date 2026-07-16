@@ -888,10 +888,17 @@ def build_investigation_context(
         and current_authoritative_failure
         and _digest(dict(frozen_failure)) != _digest(dict(current_authoritative_failure))
     )
+    repair_runtime_root = Path(__file__).resolve().parents[3]
+    attested_python = [
+        "env",
+        "PYTHONSAFEPATH=1",
+        f"PYTHONPATH={repair_runtime_root}",
+        "python",
+        "-P",
+    ]
     chain_start_cli = shlex.join(
         [
-            "python",
-            "-P",
+            *attested_python,
             "-m",
             "arnold_pipelines.megaplan",
             "chain",
@@ -931,8 +938,7 @@ def build_investigation_context(
                 "a historical occurrence superseded by a later same-phase success"
             )
         recover_blocked_args = [
-            "python",
-            "-P",
+            *attested_python,
             "-m",
             "arnold_pipelines.megaplan",
             "override",
