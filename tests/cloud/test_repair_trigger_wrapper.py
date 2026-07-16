@@ -907,6 +907,78 @@ def test_trigger_keeps_accepted_request_visible_until_dispatchable(tmp_path: Pat
     assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
 
 
+def test_trigger_routes_typed_supervisor_binding_drift_to_l2(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace, plan_name="m6-plan")
+    _write_chain_state_for_spec(workspace, spec, current_plan_name="m6-plan")
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=_queue_root(workspace),
+        marker_dir=marker_dir,
+        session="demo",
+        source="arnold_supervise_exit",
+        workspace=workspace,
+        run_kind="chain",
+        target={
+            "plan_name": "m6-plan",
+            "remote_spec": str(spec),
+            "workspace": str(workspace),
+        },
+        problem_signature={
+            "failure_kind": "chain_execution_binding_drift",
+            "current_state": "process_exited",
+            "phase_or_step": "chain_execution_binding",
+            "milestone_or_plan": "m6-plan",
+            "gate_recommendation": (
+                "Explicit operator-authorized content-addressed rebind is required."
+            ),
+            "blocked_task_id": (
+                "chain_execution_binding:editable_runtime_import_root_mismatch"
+            ),
+            "event_signature": (
+                "chain_execution_binding_drift;"
+                "active_errors=editable_runtime_import_root_mismatch"
+            ),
+        },
+        root_cause_hint="typed binding drift",
+    )
+    repair_bin = _repair_stub(tmp_path)
+    meta_repair_bin = tmp_path / "meta-repair-loop"
+    meta_log = tmp_path / "meta-repair-args.json"
+    meta_repair_bin.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        f"Path({str(meta_log)!r}).write_text(json.dumps({{'argv': sys.argv[1:], 'request_id': os.environ.get('CLOUD_WATCHDOG_REPAIR_REQUEST_ID', '')}}), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    meta_repair_bin.chmod(meta_repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    result = _run_trigger(
+        marker_dir,
+        repair_bin,
+        enabled=True,
+        env_overrides={"ARNOLD_META_REPAIR_ENABLED": "1"},
+        meta_repair_bin=meta_repair_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    observe = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_observe"
+    )
+    assert observe["dispatch_decision"] == "broken_superfixer"
+    assert observe["dispatch_intent"] == "broken_superfixer"
+    dispatch = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
+    )
+    assert dispatch["repair_layer"] == "l2"
+    assert dispatch["request_id"] == queued["request"]["request_id"]
+    launched = _read_json_eventually(meta_log)
+    assert launched["argv"] == ["demo", "l1_custody_failure"]
+    assert launched["request_id"] == queued["request"]["request_id"]
+    assert not (tmp_path / "repair-args.json").exists()
+
+
 def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
