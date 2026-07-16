@@ -117,8 +117,8 @@ milestones:
   with_prep: true
   prep_clarify: false
   prep_direction: 'Start only from M6''s exact final landed WBC revision/runtime vector,
-    generated zero-exemption boundary inventory, and accepted ownership-decision record. The
-    audited candidate ledger is schema-only: implement the WBC-owned transactional
+    generated zero-exemption boundary inventory, and accepted ownership-decision record.
+    The audited candidate ledger is schema-only: implement the WBC-owned transactional
     store/API, durable start-before-dispatch and exactly-one- terminal invariants,
     outbox/reconciliation semantics, process-safe adapters, enforced payload privacy/retention/encryption,
     and deterministic crash-resumable migrations. Preserve the Run Authority/WBC/Custody
@@ -128,10 +128,9 @@ milestones:
   - m6-authority-contract-and-residual-inventory
   notes: Difficulty 5/5; partnered-5/thorough/high @codex +prep. This is the first
     implementation milestone and remains blocked until the exact landed WBC revision,
-    landed/source/editable/runtime proof, M6 inventory, and machine-verifiable
-    ownership-decision evidence are current.
-    Persistence ambiguity must be explicit and replayable; deployment, restart, and
-    production effects remain disabled.
+    landed/source/editable/runtime proof, M6 inventory, and machine-verifiable ownership-decision
+    evidence are current. Persistence ambiguity must be explicit and replayable; deployment,
+    restart, and production effects remain disabled.
 - label: m7-controlled-authoritative-writers
   idea: .megaplan/initiatives/custody-control-plane/briefs/m7-controlled-authoritative-writers.md
   branch: megaplan/custody-control-plane/m7-controlled-authoritative-writers
@@ -140,8 +139,8 @@ milestones:
   robustness: thorough
   depth: high
   prep_clarify: false
-  prep_direction: Start only after M6's accepted ownership handoff, M6A's proved
-    WBC transactional ledger/API, and accepted ownership-decision record. Reuse the landed
+  prep_direction: Start only after M6's accepted ownership handoff, M6A's proved WBC
+    transactional ledger/API, and accepted ownership-decision record. Reuse the landed
     Run Authority decisions/fences and WBC-owned execution-attempt/ effect ledger.
     Define the custody-owned action-target, repair-occurrence, and renewable lease
     contract, including ownership transfer, expiry, reconciliation, and a monotonic
@@ -156,8 +155,9 @@ milestones:
   - m6a-wbc-transactional-ledger-foundation
   notes: Difficulty 5/5; partnered-5/thorough/high @codex. M7 is the first Custody
     implementation milestone and must fail closed unless M5/M6/M6A evidence and the
-    ownership-decision record remain current. Writer ordering, fencing, and partial persistence
-    can pass local tests while duplicating effects or advancing global authority.
+    ownership-decision record remain current. Writer ordering, fencing, and partial
+    persistence can pass local tests while duplicating effects or advancing global
+    authority.
 - label: m8-runtime-and-boundary-adoption
   idea: .megaplan/initiatives/custody-control-plane/briefs/m8-runtime-and-boundary-adoption.md
   branch: megaplan/custody-control-plane/m8-runtime-and-boundary-adoption
