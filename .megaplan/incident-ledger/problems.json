@@ -1,19 +1,19 @@
 {
   "integrity": [
     {
-      "actual": "sha256:7681839a61b53ad966141fc7c3e8d365152a9eab614f18a81fec998675267e80",
+      "actual": "sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2",
       "code": "index_divergence",
-      "expected": "sha256:b732f6bc3940db31e070c9e14d3d7b2b8bc0cbf9338874ffbf98c309e6ff17ea",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:7681839a61b53ad966141fc7c3e8d365152a9eab614f18a81fec998675267e80' != 'sha256:b732f6bc3940db31e070c9e14d3d7b2b8bc0cbf9338874ffbf98c309e6ff17ea'",
+      "expected": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2' != 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d'",
       "projection": "incidents",
       "recommendation": "system.integrity_repair",
       "severity": "error"
     },
     {
-      "actual": "sha256:7681839a61b53ad966141fc7c3e8d365152a9eab614f18a81fec998675267e80",
+      "actual": "sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2",
       "code": "index_divergence",
-      "expected": "sha256:b732f6bc3940db31e070c9e14d3d7b2b8bc0cbf9338874ffbf98c309e6ff17ea",
-      "message": "problems projection source metadata diverged for digest: 'sha256:7681839a61b53ad966141fc7c3e8d365152a9eab614f18a81fec998675267e80' != 'sha256:b732f6bc3940db31e070c9e14d3d7b2b8bc0cbf9338874ffbf98c309e6ff17ea'",
+      "expected": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
+      "message": "problems projection source metadata diverged for digest: 'sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2' != 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d'",
       "projection": "problems",
       "recommendation": "system.integrity_repair",
       "severity": "error"
@@ -105,15 +105,15 @@
       "first_seen_seq": 487,
       "first_seen_ts": "2026-07-13T22:44:54.539079+00:00",
       "fix_commits": [],
-      "last_seen_seq": 569,
-      "last_seen_ts": "2026-07-15T13:41:16.728574+00:00",
+      "last_seen_seq": 583,
+      "last_seen_ts": "2026-07-16T06:30:05.917356+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair accepted execution custody",
-      "occurrence_count": 13,
+      "occurrence_count": 20,
       "owner_actor": "six_hour_auditor",
       "problem_id": "problem-51b6859a7c76",
       "recurred_after_fix": false,
@@ -125,15 +125,15 @@
       "first_seen_seq": 532,
       "first_seen_ts": "2026-07-15T02:07:53.638543+00:00",
       "fix_commits": [],
-      "last_seen_seq": 552,
-      "last_seen_ts": "2026-07-15T11:19:06.502148+00:00",
+      "last_seen_seq": 571,
+      "last_seen_ts": "2026-07-15T13:41:19.708216+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair request claim failed",
-      "occurrence_count": 10,
-      "owner_actor": "watchdog",
+      "occurrence_count": 11,
+      "owner_actor": "github_sync",
       "problem_id": "problem-5b2d4b8c99c1",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -163,15 +163,15 @@
       "first_seen_seq": 348,
       "first_seen_ts": "2026-07-11T15:36:45.288233+00:00",
       "fix_commits": [],
-      "last_seen_seq": 565,
-      "last_seen_ts": "2026-07-15T12:04:06.183855+00:00",
+      "last_seen_seq": 578,
+      "last_seen_ts": "2026-07-16T06:14:27.753429+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing kind chain workspace transient path",
-      "occurrence_count": 30,
+      "occurrence_count": 32,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-67a765759422",
       "recurred_after_fix": false,
@@ -436,15 +436,15 @@
       "first_seen_seq": 488,
       "first_seen_ts": "2026-07-13T22:44:54.540909+00:00",
       "fix_commits": [],
-      "last_seen_seq": 563,
-      "last_seen_ts": "2026-07-15T12:03:45.826769+00:00",
+      "last_seen_seq": 576,
+      "last_seen_ts": "2026-07-16T06:14:11.439547+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair execution started",
-      "occurrence_count": 6,
+      "occurrence_count": 8,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-bca9d501eede",
       "recurred_after_fix": false,
@@ -534,15 +534,15 @@
       "first_seen_seq": 351,
       "first_seen_ts": "2026-07-11T22:46:03.299023+00:00",
       "fix_commits": [],
-      "last_seen_seq": 564,
-      "last_seen_ts": "2026-07-15T12:03:47.087263+00:00",
+      "last_seen_seq": 577,
+      "last_seen_ts": "2026-07-16T06:14:12.897499+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair loop background dispatched",
-      "occurrence_count": 26,
+      "occurrence_count": 28,
       "owner_actor": "watchdog",
       "problem_id": "problem-e20c45ae0eb0",
       "recurred_after_fix": false,
@@ -554,10 +554,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:b732f6bc3940db31e070c9e14d3d7b2b8bc0cbf9338874ffbf98c309e6ff17ea",
-    "event_count": 569,
-    "journal_line_count": 569,
-    "last_seq": 569,
+    "digest": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
+    "event_count": 583,
+    "journal_line_count": 583,
+    "last_seq": 583,
     "malformed_line_count": 0
   }
 }
