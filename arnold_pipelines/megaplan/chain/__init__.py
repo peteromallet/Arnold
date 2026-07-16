@@ -3032,6 +3032,7 @@ def _recover_stale_merged_pr_for_unfinished_plan(
                 f"{terminal_finalize_reason}"
             ),
             writer=writer,
+            state=state,
         )
         state.last_state = STATE_DONE
         state.metadata["stale_merged_pr_recovery"] = {
@@ -3102,6 +3103,35 @@ def _block_pr_progression_guard_failure(
     )
 
 
+def _apply_committed_acceptance_state(
+    state: ChainState, new_state: dict[str, Any]
+) -> None:
+    """Mirror a durably-committed acceptance state into the in-memory state.
+
+    :func:`prepare_acceptance_commit` / :func:`commit_acceptance_commit`
+    atomically wrote *new_state* (completed record, cursor advance, and
+    milestone-boundary evidence) under the CAS guard.  Reflect only the fields
+    the acceptance commit owns into the live state object so subsequent
+    in-memory work (further mutations plus a final ``save_chain_state``) stays
+    consistent with the committed durable state.  All other state attributes
+    are left exactly as the caller set them.
+    """
+    completed_raw = new_state.get("completed")
+    if isinstance(completed_raw, list):
+        state.completed = [
+            dict(r) if isinstance(r, dict) else r for r in completed_raw
+        ]
+    idx_raw = new_state.get("current_milestone_index")
+    if isinstance(idx_raw, int):
+        state.current_milestone_index = idx_raw
+    evidence_raw = new_state.get("milestone_boundary_evidence")
+    if isinstance(evidence_raw, dict):
+        state.milestone_boundary_evidence = {
+            key: dict(val) if isinstance(val, dict) else val
+            for key, val in evidence_raw.items()
+        }
+
+
 def _append_completed_with_guard(
     root: Path,
     state: ChainState,
@@ -3109,6 +3139,16 @@ def _append_completed_with_guard(
     *,
     implementation_milestone: bool,
     writer,
+    # T16 — atomic/enforce-mode acceptance-commit wiring.  Every parameter
+    # below is optional; when they are absent (all legacy callers today) the
+    # function falls back to the original shadow-mode behavior exactly.
+    acceptance_result: Any = None,
+    spec_path: "Path | None" = None,
+    plan_dir: "Path | None" = None,
+    milestone_index: "int | None" = None,
+    predicate_failures: "list[dict[str, Any]] | None" = None,
+    acceptance_transaction_id: str = "",
+    acceptance_snapshot_hash: str = "",
 ) -> tuple[bool, str]:
     ok, reason = _chain_completion_guard(
         root,
@@ -3116,12 +3156,165 @@ def _append_completed_with_guard(
         implementation_milestone=implementation_milestone,
         chain_state=state,
     )
+    label = record.get("label") or "unknown"
+
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        PREDICATE_KIND_DIVERGENT,
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    fail_closed = is_fail_closed_mode(
+        normalize_contract_mode(state.completion_contract_mode)
+    )
+
+    if not fail_closed:
+        # ── Shadow / warn / off: preserve legacy behavior exactly ─────────
+        if not ok:
+            state.last_state = "authority_divergence"
+            writer(f"[chain] completion guard blocked {label}: {reason}\n")
+            return False, reason
+        state.completed.append(record)
+        return True, reason
+
+    # ── Atomic / enforce (fail-closed) mode ──────────────────────────────
+    def _record_repair_target(
+        kind: str,
+        summary: str,
+        *,
+        details: "dict[str, Any] | None" = None,
+        evidence_kind: str = "completion_guard",
+    ) -> None:
+        """Record a typed acceptance repair target without mutating completion
+        or cursor state (prior state stays unchanged on failure)."""
+        targets = list(state.metadata.get("completion_guard_repair_targets") or [])
+        target: dict[str, Any] = {
+            "kind": str(kind),
+            "evidence_kind": str(evidence_kind),
+            "summary": str(summary),
+            "details": dict(details or {}),
+        }
+        if acceptance_transaction_id:
+            target["acceptance_transaction_id"] = acceptance_transaction_id
+        if acceptance_snapshot_hash:
+            target["acceptance_snapshot_hash"] = acceptance_snapshot_hash
+        targets.append(target)
+        state.metadata["completion_guard_repair_targets"] = targets
+
+    # (1) Predicate failure -> fail closed; prior state unchanged.
     if not ok:
-        state.last_state = "authority_divergence"
-        label = record.get("label") or "unknown"
-        writer(f"[chain] completion guard blocked {label}: {reason}\n")
+        writer(f"[chain] completion guard blocked {label} (atomic): {reason}\n")
+        if predicate_failures:
+            for pf in predicate_failures:
+                if not isinstance(pf, dict):
+                    continue
+                _record_repair_target(
+                    str(pf.get("kind") or PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE),
+                    str(pf.get("summary") or reason),
+                    details=dict(pf.get("details") or {}),
+                    evidence_kind=str(pf.get("evidence_kind") or "completion_guard"),
+                )
+        else:
+            _record_repair_target(
+                PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+                reason,
+                details={
+                    "legacy": True,
+                    "plan_name": str(record.get("plan") or ""),
+                    "milestone_label": label,
+                    "predicate_reason": reason,
+                },
+            )
         return False, reason
-    state.completed.append(record)
+
+    # (2) Predicate passed.  Atomic completion requires a durably committed
+    #     accepted boundary to advance the completion cursor.  Without one the
+    #     cursor must never advance (fail-closed: never complete without
+    #     accepted acceptance evidence).
+    if acceptance_result is None or spec_path is None or plan_dir is None:
+        block_reason = (
+            f"atomic completion for {label} requires an accepted acceptance "
+            "boundary; none provided (fail-closed)"
+        )
+        writer(f"[chain] {block_reason}\n")
+        _record_repair_target(
+            PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+            block_reason,
+            details={
+                "legacy": True,
+                "plan_name": str(record.get("plan") or ""),
+                "milestone_label": label,
+                "missing_acceptance_evidence": True,
+            },
+        )
+        return False, block_reason
+
+    # (3) Stage the acceptance commit as one CAS-backed journal transaction.
+    from arnold_pipelines.megaplan.orchestration.completion_io import (
+        commit_acceptance_commit,
+        discard_acceptance_commit,
+        prepare_acceptance_commit,
+    )
+
+    try:
+        commit_plan = prepare_acceptance_commit(
+            plan_dir=Path(plan_dir),
+            spec_path=Path(spec_path),
+            result=acceptance_result,
+            state=state,
+            milestone_index=milestone_index,
+        )
+    except ValueError as exc:
+        # Boundary precondition rejected (not accepted, unbound identity, ...).
+        prep_reason = f"acceptance commit prepare rejected for {label}: {exc}"
+        writer(f"[chain] {prep_reason}\n")
+        _record_repair_target(
+            PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+            prep_reason,
+            details={
+                "plan_name": str(record.get("plan") or ""),
+                "milestone_label": label,
+                "prepare_error": str(exc),
+            },
+        )
+        return False, prep_reason
+
+    # (4) Apply durably under the CAS guard.
+    cas_result = commit_acceptance_commit(commit_plan)
+    if not getattr(cas_result, "committed", False):
+        # CAS violation -> prior durable state unchanged (the journal already
+        # discarded the staged transaction).  Discard any remaining staged
+        # prepare and emit a typed divergent repair target.
+        discard_acceptance_commit(commit_plan)
+        violations = getattr(cas_result, "violations", ()) or ()
+        viol_summary = (
+            "; ".join(
+                f"{v.guard}@{Path(v.target_path).name}" for v in violations
+            )
+            or "cas guard mismatch"
+        )
+        cas_reason = (
+            f"acceptance commit CAS violation for {label} (prior state "
+            f"unchanged): {viol_summary}"
+        )
+        writer(f"[chain] {cas_reason}\n")
+        _record_repair_target(
+            PREDICATE_KIND_DIVERGENT,
+            cas_reason,
+            details={
+                "plan_name": str(record.get("plan") or ""),
+                "milestone_label": label,
+                "cas_violations": [v.to_dict() for v in violations],
+            },
+            evidence_kind="acceptance_commit",
+        )
+        return False, cas_reason
+
+    # (5) Commit succeeded.  Mirror the durably-committed completion fields
+    #     into the in-memory state so downstream callers observe the same
+    #     state that was just written under the CAS guard.
+    _apply_committed_acceptance_state(state, commit_plan.new_state)
     return True, reason
 
 
@@ -3181,6 +3374,33 @@ def _emit_chain_complete_evidence(
     state.set_milestone_evidence(evidence)
 
 
+def _reconciliation_fail_closed(state: ChainState) -> tuple[bool, str]:
+    """Return ``(True, reason)`` when reconciliation operates in fail-closed mode.
+
+    In atomic/enforce mode, reconciliation must never grant completion
+    authority from a ground-truth projection (terminal plan state, merged PR
+    state, reviewed finalized state, or any other derived observation).  Only
+    an accepted acceptance transaction recorded through the CAS-backed commit
+    helper can advance the completion cursor.  This helper lets the
+    reconciliation append primitives short-circuit before mutating
+    ``state.completed`` so projections cannot masquerade as acceptance
+    authority.
+    """
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    mode = normalize_contract_mode(state.completion_contract_mode)
+    if is_fail_closed_mode(mode):
+        return True, (
+            "reconciliation cannot grant atomic-mode completion authority "
+            "from a ground-truth projection without an accepted acceptance "
+            "transaction (fail-closed)"
+        )
+    return False, ""
+
+
 def _append_reconciled_completed_record(
     root: Path,
     state: ChainState,
@@ -3191,7 +3411,16 @@ def _append_reconciled_completed_record(
     pr_state: str | None,
     completion_reason: str,
     writer,
-) -> None:
+) -> bool:
+    # T17 — reconciliation cannot grant atomic-mode completion authority from
+    # ground-truth projections without an accepted acceptance transaction.
+    fail_closed, reason = _reconciliation_fail_closed(state)
+    if fail_closed:
+        writer(
+            f"[chain] reconciliation blocked completed record for "
+            f"{milestone.label} in atomic mode: {reason}\n"
+        )
+        return False
     state.completed.append(
         {
             "label": milestone.label,
@@ -3207,6 +3436,7 @@ def _append_reconciled_completed_record(
         milestone_label=milestone.label,
         completion_reason=completion_reason,
         writer=writer,
+        state=state,
     )
     # Emit milestone completion boundary evidence for the reconciled record.
     _emit_milestone_completion_evidence(
@@ -3215,6 +3445,7 @@ def _append_reconciled_completed_record(
         milestone_index=-1,  # caller is responsible for setting the right index
         plan_name=plan_name,
     )
+    return True
 
 
 def _reconcile_chain_from_ground_truth(
@@ -3227,6 +3458,19 @@ def _reconcile_chain_from_ground_truth(
     push_enabled: bool = True,
 ) -> ChainState:
     """Derive the chain cursor from plan state.json and live GitHub PR state."""
+
+    # T17 — In atomic/enforce mode reconciliation must NEVER derive completion
+    # authority from a ground-truth projection. Only an accepted acceptance
+    # transaction committed through the CAS-backed helper can advance the
+    # completion cursor. Short-circuit before any projection-derived logic.
+    fail_closed, fc_reason = _reconciliation_fail_closed(state)
+    if fail_closed:
+        writer(
+            f"[chain] reconciliation skipped in atomic mode for "
+            f"{state.current_plan_name or 'current milestone'}: {fc_reason}\n"
+        )
+        chain_spec.save_chain_state(spec_path, state)
+        return state
 
     labels_to_index = {
         milestone.label: index for index, milestone in enumerate(spec.milestones)
@@ -3371,7 +3615,7 @@ def _reconcile_chain_from_ground_truth(
             or (state.pr_number is not None and live_active_pr_state == "merged")
         )
     ):
-        _append_reconciled_completed_record(
+        if _append_reconciled_completed_record(
             root,
             state,
             plan_name=plan_name,
@@ -3380,8 +3624,8 @@ def _reconcile_chain_from_ground_truth(
             pr_state="merged" if active_uses_pr else None,
             completion_reason="terminal plan state reconciled from ground truth",
             writer=writer,
-        )
-        completed_labels.add(active_milestone.label)
+        ):
+            completed_labels.add(active_milestone.label)
 
     reviewed_finalized_plan = (
         bool(plan_name)
@@ -3400,7 +3644,7 @@ def _reconcile_chain_from_ground_truth(
                 live_active_pr_state == "merged"
                 and active_milestone.label not in completed_labels
             ):
-                _append_reconciled_completed_record(
+                if _append_reconciled_completed_record(
                     root,
                     state,
                     plan_name=plan_name,
@@ -3409,10 +3653,10 @@ def _reconcile_chain_from_ground_truth(
                     pr_state="merged",
                     completion_reason="reviewed finalized plan with merged PR",
                     writer=writer,
-                )
-                completed_labels.add(active_milestone.label)
+                ):
+                    completed_labels.add(active_milestone.label)
         elif not active_uses_pr and active_milestone.label not in completed_labels:
-            _append_reconciled_completed_record(
+            if _append_reconciled_completed_record(
                 root,
                 state,
                 plan_name=plan_name,
@@ -3421,8 +3665,8 @@ def _reconcile_chain_from_ground_truth(
                 pr_state=None,
                 completion_reason="reviewed finalized local plan",
                 writer=writer,
-            )
-            completed_labels.add(active_milestone.label)
+            ):
+                completed_labels.add(active_milestone.label)
     if (
         active_uses_pr
         and state.pr_number is not None
@@ -3473,6 +3717,18 @@ def _append_reconciled_completed_record_with_guard(
     completion_reason: str,
     writer,
 ) -> tuple[bool, str]:
+    # T17 — reconciliation cannot grant atomic-mode completion authority from
+    # ground-truth projections without an accepted acceptance transaction.
+    # Short-circuit before delegating to _append_completed_with_guard so the
+    # projection is never turned into completion authority and no spurious
+    # repair target is recorded for an expected reconciliation block.
+    fail_closed, fail_reason = _reconciliation_fail_closed(state)
+    if fail_closed:
+        writer(
+            f"[chain] reconciliation blocked completed record for "
+            f"{milestone.label} in atomic mode: {fail_reason}\n"
+        )
+        return False, fail_reason
     record = {
         "label": milestone.label,
         "plan": plan_name,
@@ -3495,6 +3751,7 @@ def _append_reconciled_completed_record_with_guard(
         milestone_label=milestone.label,
         completion_reason=completion_reason if completion_reason else reason,
         writer=writer,
+        state=state,
     )
     writer(
         f"[chain] reconciled terminal plan {plan_name} into completed "
@@ -3515,11 +3772,92 @@ def _handle_completion_guard_failure(
     reason: str,
     events: list[dict[str, Any]],
     writer,
+    predicate_failures: list[dict[str, Any]] | None = None,
+    acceptance_transaction_id: str = "",
+    acceptance_snapshot_hash: str = "",
 ) -> dict[str, Any]:
     writer(
         f"[chain] milestone {milestone.label} completion guard rejected terminal "
         f"claim for {plan_name}: {reason}\n"
     )
+
+    # ── Build typed acceptance repair targets ──────────────────────────
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+    )
+
+    repair_targets: list[dict[str, Any]] = []
+    if predicate_failures:
+        # Caller provided typed V2 context — use it directly.
+        for pf in predicate_failures:
+            if not isinstance(pf, dict):
+                continue
+            target: dict[str, Any] = {
+                "kind": str(pf.get("kind") or PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE),
+                "evidence_kind": str(pf.get("evidence_kind") or "completion_guard"),
+                "summary": str(pf.get("summary") or reason),
+                "details": dict(pf.get("details") or {}),
+            }
+            if acceptance_transaction_id:
+                target["acceptance_transaction_id"] = acceptance_transaction_id
+            if acceptance_snapshot_hash:
+                target["acceptance_snapshot_hash"] = acceptance_snapshot_hash
+            repair_targets.append(target)
+    else:
+        # Legacy caller — no V2 context available.  Emit a fail-closed
+        # unknown acceptance failure so downstream repair tooling knows
+        # the guard blocked but cannot yet attribute it to a specific
+        # predicate.
+        legacy_target: dict[str, Any] = {
+            "kind": PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+            "evidence_kind": "completion_guard",
+            "summary": reason,
+            "details": {
+                "legacy": True,
+                "plan_name": plan_name,
+                "milestone_label": milestone.label,
+                "outcome_status": outcome_status,
+            },
+        }
+        if acceptance_transaction_id:
+            legacy_target["acceptance_transaction_id"] = acceptance_transaction_id
+        if acceptance_snapshot_hash:
+            legacy_target["acceptance_snapshot_hash"] = acceptance_snapshot_hash
+        repair_targets.append(legacy_target)
+
+    state.metadata["completion_guard_repair_targets"] = repair_targets
+
+    # ── T14 — invalidate prior acceptance candidates ───────────────────
+    # After a completion guard blocks, any prior uncommitted acceptance
+    # candidate is stale.  The caller must produce a new snapshot and run
+    # the full acceptance boundary before committing.
+    try:
+        plan_path = resolve_plan_dir(root, plan_name) if plan_name else None
+    except Exception:
+        plan_path = None
+    if plan_path is not None and plan_path.is_dir():
+        now_iso = datetime.now(timezone.utc).isoformat()
+        state.invalidate_candidate(
+            milestone.label,
+            transaction_id=acceptance_transaction_id or "",
+            reason=reason or "completion guard blocked",
+            superseded_by="",
+            invalidated_at=now_iso,
+        )
+        # Also call the cloud-level candidate invalidation to discard
+        # any uncommitted candidate files on disk.
+        try:
+            from arnold_pipelines.megaplan.cloud.repair_revalidation import (
+                invalidate_acceptance_candidates_after_repair,
+            )
+            invalidate_acceptance_candidates_after_repair(
+                plan_path,
+                milestone_label=milestone.label,
+                repair_reason=f"completion guard blocked: {reason}",
+            )
+        except Exception:
+            pass
+
     synthetic = DriverOutcome(
         plan=plan_name,
         status="blocked",
@@ -3863,11 +4201,35 @@ def _mark_plan_completed_by_chain(
     milestone_label: str,
     completion_reason: str,
     writer,
+    state: "ChainState | None" = None,
 ) -> None:
-    """Mirror an authoritative chain-level milestone completion into plan state."""
+    """Mirror an authoritative chain-level milestone completion into plan state.
+
+    T18 — In atomic/enforce (fail-closed) mode the plan-done projection
+    requires an accepted acceptance transaction for this milestone.  Without
+    one the projection is never written (fail-closed: plan state must not
+    signal completion authority that was not accepted).
+    """
 
     from arnold_pipelines.megaplan._core.state import write_plan_state
     from arnold_pipelines.megaplan.observability.events import EventKind, emit as emit_event
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    # ── T18: atomic/enforce gate ─────────────────────────────────────────
+    if state is not None:
+        mode = normalize_contract_mode(state.completion_contract_mode)
+        if is_fail_closed_mode(mode):
+            if not state.has_acceptance_receipt(milestone_label):
+                writer(
+                    f"[chain] plan-done marker blocked for {plan_name} "
+                    f"milestone={milestone_label} in atomic mode: "
+                    f"no accepted acceptance transaction for this milestone "
+                    f"(fail-closed — plan-done projection requires accepted evidence)\n"
+                )
+                return
 
     try:
         plan_dir = resolve_plan_dir(root, plan_name)
@@ -3890,7 +4252,7 @@ def _mark_plan_completed_by_chain(
         return True
 
     try:
-        state = write_plan_state(
+        written_state = write_plan_state(
             plan_dir,
             mode="patch-many",
             patch={},
@@ -3906,7 +4268,7 @@ def _mark_plan_completed_by_chain(
             EventKind.PLAN_FINISHED,
             plan_dir=plan_dir,
             payload={
-                "state": state,
+                "state": written_state,
                 "source": "chain_completion",
                 "milestone_label": milestone_label,
                 "reason": completion_reason,
@@ -4844,6 +5206,29 @@ def _reconcile_chain_from_ground_truth(
         operation="chain reconciliation",
         allow_unbound_new=True,
     )
+
+    # T17 — In atomic/enforce mode reconciliation must NEVER derive completion
+    # authority (cursor advancement, ``last_state = "done"``, completed-record
+    # rebuild from live PR state, cursor/last_state sync from plan state.json)
+    # from a ground-truth projection. Only an accepted acceptance transaction
+    # committed through the CAS-backed helper can advance the completion cursor.
+    # We short-circuit here so the projection cannot masquerade as authority,
+    # while still persisting an audit trail of the reconciliation attempt.
+    fail_closed, fc_reason = _reconciliation_fail_closed(state)
+    if fail_closed:
+        writer(
+            f"[chain] reconciliation skipped in atomic mode for "
+            f"{state.current_plan_name or 'current milestone'}: {fc_reason}\n"
+        )
+        _append_reconciliation_audit(
+            state,
+            plan_name=state.current_plan_name,
+            plan_state={},
+            pr_number=state.pr_number,
+            pr_state=state.pr_state,
+        )
+        chain_spec.save_chain_state(spec_path, state)
+        return state
 
     labels_to_index = {
         milestone.label: index for index, milestone in enumerate(spec.milestones)
@@ -6015,6 +6400,7 @@ def run_chain(
                         milestone_label=milestone.label,
                         completion_reason=reason,
                         writer=writer,
+                        state=state,
                     )
                 _emit_milestone_completion_evidence(
                     state,
@@ -6266,6 +6652,7 @@ def run_chain(
                     milestone_label=milestone.label,
                     completion_reason=reason,
                     writer=writer,
+                    state=state,
                 )
             _emit_milestone_completion_evidence(
                 state,
@@ -6940,6 +7327,7 @@ def run_chain(
             milestone_label=milestone.label,
             completion_reason=reason,
             writer=writer,
+            state=state,
         )
         idx += 1
         _mark_chain_after_milestone_advance(spec, state, next_index=idx)
@@ -6980,7 +7368,81 @@ def run_chain(
             )
 
     log("all milestones complete")
+    # ── Successor gate check ──────────────────────────────────────────
+    # In fail-closed (atomic/enforce) mode a completed chain must carry a
+    # validated acceptance receipt for its final milestone before any
+    # declared successor may be initialised.  The gate is generic – it
+    # reads SuccessorSpec declarations from the chain YAML rather than
+    # hardcoding initiative names (M5→M5A→M6 is the first consumer).
+    successor_block = _check_successor_gate_at_chain_completion(
+        state, spec, spec_path, events, writer=writer
+    )
+    if successor_block is not None:
+        return successor_block
     return _result("done", state, events, spec=spec)
+
+
+def _check_successor_gate_at_chain_completion(
+    state: ChainState,
+    spec: ChainSpec,
+    spec_path: Path,
+    events: list[dict[str, Any]],
+    *,
+    writer,
+) -> dict[str, Any] | None:
+    """Check the successor gate when a chain completes all milestones.
+
+    Returns a blocked result dict when the gate is closed (successor
+    requires an accepted transaction but none is present), or ``None``
+    when the gate is open / not applicable / not in fail-closed mode.
+
+    The gate is generic: it reads ``SuccessorSpec`` declarations from
+    the chain YAML rather than hardcoding initiative names.
+    """
+    successors = getattr(spec, "successors", None) or []
+    if not successors:
+        return None
+
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    mode = normalize_contract_mode(state.completion_contract_mode)
+    if not is_fail_closed_mode(mode):
+        return None  # shadow / warn / off — gate is always open
+
+    any_require = any(
+        getattr(s, "require_accepted_transaction", True) for s in successors
+    )
+    if not any_require:
+        return None
+
+    if not spec.milestones:
+        return None
+
+    final_milestone = spec.milestones[-1]
+    has_receipt = state.has_acceptance_receipt(final_milestone.label)
+
+    if has_receipt:
+        # Gate is open — chain may advertise completion to successor init.
+        return None
+
+    writer(
+        f"[chain] successor gate closed: chain is complete but no validated "
+        f"acceptance receipt for final milestone {final_milestone.label!r}; "
+        f"declared successors require acceptance evidence before initialisation\n"
+    )
+    return _result(
+        "blocked",
+        state,
+        events,
+        spec=spec,
+        reason=(
+            f"successor gate closed: chain complete but no acceptance receipt "
+            f"for final milestone {final_milestone.label!r}"
+        ),
+    )
 
 
 def _result(

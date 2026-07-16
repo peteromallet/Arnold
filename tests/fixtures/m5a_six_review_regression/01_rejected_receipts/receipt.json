@@ -1,0 +1,9 @@
+{
+  "schema": "megaplan.acceptance_receipt",
+  "schema_version": 1,
+  "transaction_id": "txn-m5a-rejected-001",
+  "snapshot_hash": "sha256:000000000000000000000000000000000000000000000000000000000000dead",
+  "milestone_label": "m5a",
+  "milestone_index": 2,
+  "plan_name": "m5a-regression-01"
+}

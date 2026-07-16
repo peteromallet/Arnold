@@ -1,5 +1,8 @@
 """Neutral profile loading and validation helpers for Arnold pipelines.
 
+This neutral module is isolated from Megaplan policy imports.  The profile
+package re-exports its generic contract without duplicating the implementation.
+
 This module owns only generic mechanics:
 
 * parse TOML profile documents

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from arnold_pipelines.megaplan.cli import COMMAND_HANDLERS
-from arnold_pipelines.megaplan.cli.parser import build_parser
+from arnold_pipelines.megaplan.cli import COMMAND_HANDLERS, build_parser
 
 
 def test_automation_commands_registered_in_parser_and_handler_table() -> None:

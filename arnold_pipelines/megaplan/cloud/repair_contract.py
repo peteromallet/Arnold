@@ -92,6 +92,10 @@ BLOCKER_FINGERPRINT_VERSION = 1
 BLOCKER_FINGERPRINT_V1_PREFIX = "repair-blocker-fingerprint/v1"
 BLOCKER_ID_V1_PREFIX = "blocker:v1:"
 
+BLOCKER_FINGERPRINT_V2_VERSION = 2
+BLOCKER_FINGERPRINT_V2_PREFIX = "repair-blocker-fingerprint/v2"
+BLOCKER_ID_V2_PREFIX = "blocker:v2:"
+
 RepairRequestStatus: TypeAlias = Literal[
     "accepted",
     "coalesced",
@@ -226,7 +230,21 @@ def normalize_blocker_fingerprint_v1(
 
 
 def blocker_id_for_fingerprint(payload: Mapping[str, Any] | None) -> str | None:
-    """Return a deterministic blocker id for a canonical v1 fingerprint."""
+    """Return a deterministic blocker id for a canonical v1 or v2 fingerprint."""
+
+    # Try V2 first, then fall back to V1.
+    normalized_v2 = normalize_blocker_fingerprint_v2(payload)
+    if normalized_v2 is not None:
+        prefix = BLOCKER_FINGERPRINT_V2_PREFIX
+        id_prefix = BLOCKER_ID_V2_PREFIX
+        canonical_payload = {
+            "prefix": prefix,
+            "fingerprint": normalized_v2,
+        }
+        digest = sha256(
+            json.dumps(canonical_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return f"{id_prefix}{digest}"
 
     normalized = normalize_blocker_fingerprint_v1(payload)
     if normalized is None:
@@ -239,6 +257,207 @@ def blocker_id_for_fingerprint(payload: Mapping[str, Any] | None) -> str | None:
         json.dumps(canonical_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return f"{BLOCKER_ID_V1_PREFIX}{digest}"
+
+
+# ---------------------------------------------------------------------------
+# BlockerFingerprintV2 — extended repair identity with acceptance context
+# ---------------------------------------------------------------------------
+
+
+class BlockerFingerprintV2(TypedDict, total=False):
+    """Canonical blocker identity payload with acceptance-transaction context.
+
+    Schema version 2 extends V1 with the full acceptance transaction, predicate
+    kind, expected/observed hashes, runtime identity, custody ownership, retry
+    state, and causal predecessor so distinct failures never collapse into the
+    same repair recurrence.
+
+    All V1 fields are **required** and must be non-empty strings.
+    V2 extension fields are **optional** and carry empty-string defaults.
+    """
+
+    # ── V1 identity fields (required) ────────────────────────────────────────
+    schema_version: Literal[2]
+    current_state: str
+    retry_strategy: str
+    failure_kind: str
+    phase_or_step: str
+    milestone_or_plan: str
+    blocked_task_id: str
+    target_fingerprint: str
+
+    # ── V2 acceptance-transaction fields (optional) ──────────────────────────
+    acceptance_transaction_id: str
+    acceptance_snapshot_hash: str
+
+    # ── V2 predicate fields (optional) ───────────────────────────────────────
+    predicate_kind: str
+    predicate_evidence_kind: str
+    predicate_summary: str
+    evidence_refs: str
+    safe_recovery_action: str
+    recovery_action: str
+
+    # ── V2 hash fields (optional) ────────────────────────────────────────────
+    expected_hash: str
+    observed_hash: str
+
+    # ── V2 runtime fields (optional) ─────────────────────────────────────────
+    runtime_identity: str
+    source_commit_ref: str
+
+    # ── V2 custody fields (optional) ─────────────────────────────────────────
+    custody_owner: str
+    custody_epoch: str
+
+    # ── V2 retry fields (optional) ───────────────────────────────────────────
+    retry_count: str
+    retry_cap: str
+
+    # ── V2 predecessor fields (optional) ─────────────────────────────────────
+    predecessor_blocker_id: str
+    predecessor_fingerprint_hash: str
+
+
+#: Required V1 fields that must always be non-empty strings in V2.
+_BLOCKER_FINGERPRINT_V2_REQUIRED_FIELDS: tuple[str, ...] = (
+    "current_state",
+    "retry_strategy",
+    "failure_kind",
+    "phase_or_step",
+    "milestone_or_plan",
+    "blocked_task_id",
+    "target_fingerprint",
+)
+
+#: Optional V2 extension fields — may be empty strings when not available.
+_BLOCKER_FINGERPRINT_V2_OPTIONAL_FIELDS: tuple[str, ...] = (
+    "acceptance_transaction_id",
+    "acceptance_snapshot_hash",
+    "predicate_kind",
+    "predicate_evidence_kind",
+    "predicate_summary",
+    "evidence_refs",
+    "safe_recovery_action",
+    "recovery_action",
+    "expected_hash",
+    "observed_hash",
+    "runtime_identity",
+    "source_commit_ref",
+    "custody_owner",
+    "custody_epoch",
+    "retry_count",
+    "retry_cap",
+    "predecessor_blocker_id",
+    "predecessor_fingerprint_hash",
+)
+
+#: All V2 fields in canonical order (required first, then optional).
+_BLOCKER_FINGERPRINT_V2_ALL_FIELDS: tuple[str, ...] = (
+    _BLOCKER_FINGERPRINT_V2_REQUIRED_FIELDS + _BLOCKER_FINGERPRINT_V2_OPTIONAL_FIELDS
+)
+
+
+def normalize_blocker_fingerprint_v2(
+    payload: Mapping[str, Any] | None,
+) -> BlockerFingerprintV2 | None:
+    """Return a canonical v2 blocker fingerprint or ``None`` for unsafe inputs.
+
+    V1 payloads (``schema_version == 1``) are **upgraded** to V2 by copying the
+    seven required V1 fields and leaving all extension fields as empty strings.
+    This guarantees V1 normalization is preserved byte-for-byte while producing
+    a V2-shaped fingerprint.
+
+    V2 payloads are validated the same way: every required V1 field must be a
+    non-empty string; optional extension fields default to ``""`` when missing.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    schema_version = payload.get("schema_version")
+    if schema_version not in (BLOCKER_FINGERPRINT_VERSION, BLOCKER_FINGERPRINT_V2_VERSION):
+        return None
+
+    normalized: dict[str, Any] = {"schema_version": BLOCKER_FINGERPRINT_V2_VERSION}
+    for field in _BLOCKER_FINGERPRINT_V2_REQUIRED_FIELDS:
+        value = payload.get(field)
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        normalized[field] = cleaned
+
+    # Optional V2 fields: present → stripped string, absent → ""
+    for field in _BLOCKER_FINGERPRINT_V2_OPTIONAL_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, str):
+            normalized[field] = value.strip()
+        else:
+            normalized[field] = ""
+
+    return cast(BlockerFingerprintV2, normalized)
+
+
+def blocker_fingerprint_from_acceptance(
+    *,
+    v1_fingerprint: BlockerFingerprintV1 | None = None,
+    acceptance_transaction_id: str = "",
+    acceptance_snapshot_hash: str = "",
+    predicate_kind: str = "",
+    predicate_evidence_kind: str = "",
+    predicate_summary: str = "",
+    evidence_refs: str = "",
+    safe_recovery_action: str = "",
+    recovery_action: str = "",
+    expected_hash: str = "",
+    observed_hash: str = "",
+    runtime_identity: str = "",
+    source_commit_ref: str = "",
+    custody_owner: str = "",
+    custody_epoch: str = "",
+    retry_count: str = "",
+    retry_cap: str = "",
+    predecessor_blocker_id: str = "",
+    predecessor_fingerprint_hash: str = "",
+) -> BlockerFingerprintV2 | None:
+    """Build a V2 fingerprint from an existing V1 fingerprint plus acceptance context.
+
+    Returns ``None`` when the V1 fingerprint is ``None`` (no identity to extend).
+    All extension fields default to ``""`` so callers that only have a V1
+    fingerprint get a valid V2 shape with empty extension slots.
+    """
+    if v1_fingerprint is None:
+        return None
+
+    payload: dict[str, Any] = {
+        "schema_version": BLOCKER_FINGERPRINT_V2_VERSION,
+        "current_state": v1_fingerprint.get("current_state", ""),
+        "retry_strategy": v1_fingerprint.get("retry_strategy", ""),
+        "failure_kind": v1_fingerprint.get("failure_kind", ""),
+        "phase_or_step": v1_fingerprint.get("phase_or_step", ""),
+        "milestone_or_plan": v1_fingerprint.get("milestone_or_plan", ""),
+        "blocked_task_id": v1_fingerprint.get("blocked_task_id", ""),
+        "target_fingerprint": v1_fingerprint.get("target_fingerprint", ""),
+        "acceptance_transaction_id": acceptance_transaction_id,
+        "acceptance_snapshot_hash": acceptance_snapshot_hash,
+        "predicate_kind": predicate_kind,
+        "predicate_evidence_kind": predicate_evidence_kind,
+        "predicate_summary": predicate_summary,
+        "evidence_refs": evidence_refs,
+        "safe_recovery_action": safe_recovery_action,
+        "recovery_action": recovery_action,
+        "expected_hash": expected_hash,
+        "observed_hash": observed_hash,
+        "runtime_identity": runtime_identity,
+        "source_commit_ref": source_commit_ref,
+        "custody_owner": custody_owner,
+        "custody_epoch": custody_epoch,
+        "retry_count": retry_count,
+        "retry_cap": retry_cap,
+        "predecessor_blocker_id": predecessor_blocker_id,
+        "predecessor_fingerprint_hash": predecessor_fingerprint_hash,
+    }
+    return normalize_blocker_fingerprint_v2(payload)
 
 
 class RepairRequestDecisionRecord(TypedDict):
@@ -257,7 +476,7 @@ class RepairCustodyRequestRecord(TypedDict):
     source: str
     path: str
     blocker_id: str
-    blocker_fingerprint: BlockerFingerprintV1 | None
+    blocker_fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None
     problem_signature: dict[str, Any]
     target: dict[str, Any]
     status: RepairRequestStatus | str
@@ -272,7 +491,7 @@ class RepairCustodyAttemptRecord(TypedDict):
     source: str
     path: str
     blocker_id: str
-    blocker_fingerprint: BlockerFingerprintV1 | None
+    blocker_fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None
     request_id: str
     state: RepairAttemptState
     outcome: str
@@ -283,7 +502,7 @@ class RepairCustodyAttemptRecord(TypedDict):
 
 class RepairCustodyProjection(TypedDict):
     blocker_id: str
-    blocker_fingerprint: BlockerFingerprintV1 | None
+    blocker_fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None
     custody_bucket: RepairCustodyBucket
     current_state: str
     retry_strategy: str
@@ -3290,7 +3509,7 @@ def _collect_custody_attempts(
     repair_data_dir: str | Path | None,
     sidecar_dir: str | Path | None,
     blocker_id: str,
-    fingerprint: BlockerFingerprintV1 | None,
+    fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None,
     target_session: str = "",
 ) -> list[RepairCustodyAttemptRecord]:
     attempts: list[RepairCustodyAttemptRecord] = []
@@ -3430,7 +3649,7 @@ def _attempts_from_snapshot(
     path: Path,
     payload: Mapping[str, Any],
     blocker_id: str,
-    fingerprint: BlockerFingerprintV1 | None,
+    fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None,
 ) -> list[RepairCustodyAttemptRecord]:
     session = _record_session_id(payload, path)
     snapshot_outcome = _as_text(payload.get("outcome")) or REPAIRING
@@ -3510,7 +3729,7 @@ def _managed_attempts_from_snapshot(
     payload: Mapping[str, Any],
     session: str,
     blocker_id: str,
-    fingerprint: BlockerFingerprintV1 | None,
+    fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None,
 ) -> list[RepairCustodyAttemptRecord]:
     """Project real managed-run evidence without fabricating legacy attempts."""
 
@@ -3607,7 +3826,7 @@ def _attempts_from_sidecar(
     *,
     sidecar_dir: Path,
     blocker_id: str,
-    fingerprint: BlockerFingerprintV1 | None,
+    fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None,
     snapshot_request_ids: set[tuple[str, str]],
     target_session: str = "",
 ) -> list[RepairCustodyAttemptRecord]:
@@ -3648,7 +3867,7 @@ def _build_attempt_record(
     source: str,
     path: str,
     blocker_id: str,
-    fingerprint: BlockerFingerprintV1 | None,
+    fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None,
     request_id: str,
     state: RepairAttemptState,
     outcome: str,
@@ -4897,9 +5116,14 @@ __all__ = [
     "ATTEMPT_STATE_CANCELLED",
     "ALL_OUTCOMES",
     "BLOCKER_FINGERPRINT_V1_PREFIX",
+    "BLOCKER_FINGERPRINT_V2_PREFIX",
     "BLOCKER_FINGERPRINT_VERSION",
+    "BLOCKER_FINGERPRINT_V2_VERSION",
     "BLOCKER_ID_V1_PREFIX",
+    "BLOCKER_ID_V2_PREFIX",
     "BlockerFingerprintV1",
+    "BlockerFingerprintV2",
+    "blocker_fingerprint_from_acceptance",
     "COMPLETE",
     "CUSTODY_BUCKET_BROKEN_SUPERFIXER",
     "CUSTODY_BUCKET_HUMAN_REQUIRED",
@@ -4961,6 +5185,7 @@ __all__ = [
     "load_repair_index",
     "merge_additive_fields",
     "normalize_blocker_fingerprint_v1",
+    "normalize_blocker_fingerprint_v2",
     "project_repair_custody",
     "RepairDispatchDecision",
     "RepairDispatchDecisionKind",

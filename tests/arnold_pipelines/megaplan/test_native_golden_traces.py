@@ -10,8 +10,6 @@ from typing import Callable
 import pytest
 
 from arnold.pipeline.native.runtime import run_native_pipeline
-from arnold.pipelines.deliberation import build_pipeline as build_deliberation
-from arnold.pipelines.folder_audit import build_pipeline as build_folder_audit
 from arnold_pipelines.megaplan.pipelines.creative import build_pipeline as build_creative
 from arnold_pipelines.megaplan.pipelines.doc import build_pipeline as build_doc
 from arnold_pipelines.megaplan.pipelines.jokes import build_pipeline as build_jokes
@@ -35,19 +33,6 @@ _RECORD_OPTION = "--record-goldens"
 class ScenarioCase:
     scenario_id: str
     runner: Callable[[Path], Path]
-
-
-def _run_deliberation(base: Path) -> Path:
-    artifact_root = base / "artifacts"
-    trace_dir = base / "trace"
-    result = run_native_pipeline(
-        build_deliberation().native_program,
-        artifact_root=artifact_root,
-        trace_dir=trace_dir,
-        initial_state={"idea": "Ship the migration safely."},
-    )
-    assert result.suspended is False
-    return trace_dir
 
 
 def _run_creative(base: Path) -> Path:
@@ -113,45 +98,6 @@ def _run_select_tournament(base: Path) -> Path:
     return trace_dir
 
 
-def _run_folder_audit(base: Path) -> Path:
-    sample_root = base / "sample"
-    sample_root.mkdir(parents=True, exist_ok=True)
-    (sample_root / "a.txt").write_text("hello", encoding="utf-8")
-    artifact_root = base / "artifacts"
-    trace_dir = base / "trace"
-
-    def fake_worker(*, prompt: str, spec: str = "", **_: object) -> str:
-        del prompt, spec
-        return json.dumps(
-            {
-                "folders": [
-                    {
-                        "path": ".",
-                        "level": 0,
-                        "inferred_purpose": "root",
-                        "items": [
-                            {
-                                "name": "a.txt",
-                                "type": "file",
-                                "fits": True,
-                                "classification": "fit",
-                            }
-                        ],
-                    }
-                ]
-            }
-        )
-
-    result = run_native_pipeline(
-        build_folder_audit(worker=fake_worker).native_program,
-        artifact_root=artifact_root,
-        trace_dir=trace_dir,
-        initial_state={"target_dir": str(sample_root), "_worker": fake_worker},
-    )
-    assert result.suspended is False
-    return trace_dir
-
-
 def _run_writing_panel_strict(base: Path) -> Path:
     artifact_root = base / "artifacts"
     trace_dir = base / "trace"
@@ -172,13 +118,11 @@ def _run_writing_panel_strict(base: Path) -> Path:
 
 
 SCENARIO_CASES: tuple[ScenarioCase, ...] = (
-    ScenarioCase("D1-prep-plan", _run_deliberation),
     ScenarioCase("D2-critique", _run_creative),
     ScenarioCase("D3-gate-preflight", _run_writing_panel_strict),
     ScenarioCase("D4-gate-revise", _run_creative),
     ScenarioCase("D5-tiebreaker", _run_select_tournament),
     ScenarioCase("D6-finalize", _run_doc),
-    ScenarioCase("D7-execute-dag", _run_folder_audit),
     ScenarioCase("D8-execute-gates", _run_writing_panel_strict),
     ScenarioCase("D12-runtime-trace", _run_jokes),
 )

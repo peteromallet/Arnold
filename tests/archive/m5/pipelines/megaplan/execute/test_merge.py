@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+pytest.skip("archived legacy runtime; active merge coverage lives under tests/execute", allow_module_level=True)
+
 from arnold.pipelines.megaplan.execute.merge import TERMINAL_TASK_STATUSES, _validate_and_merge_batch
 
 

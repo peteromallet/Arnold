@@ -6,6 +6,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+pytest.skip("archived deleted executor runtime", allow_module_level=True)
+
 from arnold.pipeline.executor import run_pipeline, run_pipeline_resume
 from arnold.pipeline.native.checkpoint import persist_native_cursor, read_native_cursor
 from arnold.pipeline.native.ir import NativeInstruction, NativeProgram

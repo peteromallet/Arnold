@@ -425,6 +425,118 @@ def synthesize_artifacts(
     return binding.synthesize_artifacts(run_state, transition)
 
 
+_OVERRIDE_BYPASS_TARGETS: frozenset[str] = frozenset(
+    {
+        CONTROL_TARGET_FORCE_ADVANCE,
+        CONTROL_TARGET_RECOVER_FROM_STUCK,
+        CONTROL_TARGET_REROUTE,
+    }
+)
+
+
+def _check_override_acceptance_gate(
+    run_state: RunStateView | Mapping[str, Any],
+    transition: ControlTransition | ControlTransitionRequest,
+    binding_result: ControlTransitionResult,
+    *,
+    plan_dir: Path,
+) -> ControlTransitionResult | None:
+    """Check the acceptance gate for override transitions that could bypass chain completion.
+
+    In fail-closed (atomic/enforce) mode, override transitions like force_advance,
+    recover_from_stuck, and reroute must not bypass the acceptance gate.  When the
+    plan is in fail-closed mode and no committed acceptance transaction exists,
+    this function returns a typed blocker ``ControlTransitionResult`` with
+    ``accepted=False``.
+
+    Returns ``None`` when the gate is open / not applicable.
+    """
+    op = getattr(transition, "op", None)
+    target_id = getattr(transition, "target_id", None)
+    if op != "override" or not isinstance(target_id, str) or not target_id:
+        return None
+    if target_id not in _OVERRIDE_BYPASS_TARGETS:
+        return None
+
+    # ── Resolve plan state to check completion contract mode ──────────
+    raw_state: dict[str, Any] = {}
+    if isinstance(run_state, RunStateView):
+        raw_state = dict(run_state.raw_state) if isinstance(run_state.raw_state, Mapping) else {}
+    elif isinstance(run_state, Mapping):
+        raw_state = dict(run_state)
+
+    config = raw_state.get("config")
+    if not isinstance(config, Mapping):
+        return None
+    mode = str(config.get("completion_contract_mode") or "shadow")
+
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+    )
+
+    if not is_fail_closed_mode(mode):
+        return None  # shadow / warn / off — gate is always open
+
+    # ── Check for committed acceptance evidence ───────────────────────
+    has_acceptance_evidence = False
+    try:
+        from arnold_pipelines.megaplan.orchestration.completion_io import (
+            list_committed_acceptance_transactions,
+        )
+
+        committed = list_committed_acceptance_transactions(plan_dir)
+        if committed:
+            has_acceptance_evidence = True
+    except Exception:
+        pass
+
+    if has_acceptance_evidence:
+        return None  # gate is open — acceptance evidence exists
+
+    # ── Gate is closed — emit typed blocker event ────────────────────
+    blocker_event = _event_payload(
+        "OVERRIDE_ACCEPTANCE_GATE_CLOSED",
+        run_state=(
+            run_state
+            if isinstance(run_state, RunStateView)
+            else RunStateView(
+                run_id=str(raw_state.get("name") or plan_dir.name),
+                outcome=None,
+                cursor=None,
+                metadata={},
+                raw_state=raw_state,
+            )
+        ),
+        transition=transition,
+        mutated=False,
+    )
+    blocker_event["predicate_kind"] = PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE
+    blocker_event["evidence_kind"] = "override_acceptance"
+    blocker_event["summary"] = (
+        f"override transition {target_id!r} blocked: plan is in fail-closed "
+        f"mode ({mode!r}) and no committed acceptance transaction exists; "
+        f"override cannot bypass the acceptance gate"
+    )
+    blocker_event["details"] = {
+        "target_id": target_id,
+        "completion_contract_mode": mode,
+        "plan_dir": str(plan_dir),
+    }
+
+    return ControlTransitionResult(
+        accepted=False,
+        mutated=False,
+        reason=(
+            f"override acceptance gate closed: plan in {mode!r} mode "
+            f"has no committed acceptance evidence; {target_id} blocked"
+        ),
+        artifacts=dict(binding_result.artifacts),
+        state_deltas=binding_result.state_deltas,
+        events=tuple(binding_result.events) + (blocker_event,),
+    )
+
+
 def apply_transition(
     run_state: RunStateView | Mapping[str, Any],
     transition: ControlTransition | ControlTransitionRequest,
@@ -448,6 +560,13 @@ def apply_transition(
     binding_result = binding.apply_transition(run_state, transition)
     if not binding_result.accepted:
         return binding_result
+
+    # ── acceptance gate for override transitions ─────────────────────
+    override_blocker = _check_override_acceptance_gate(
+        run_state, transition, binding_result, plan_dir=Path(plan_dir)
+    )
+    if override_blocker is not None:
+        return override_blocker
 
     deltas = _extract_state_deltas(binding_result)
     if not deltas:

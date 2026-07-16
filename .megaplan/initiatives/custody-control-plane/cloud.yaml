@@ -19,10 +19,10 @@ chain:
   spec: /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml
 
 megaplan:
-  ref: custody-control-plane-delivery-20260714
+  ref: editible-install
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/arnold-custody-delivery-20260714
+  src_path: /workspace/arnold-custody-runtime
 
 resources:
   volume: agent-volume

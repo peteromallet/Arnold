@@ -72,4 +72,66 @@ def plan_status_presentation(
     }
 
 
-__all__ = ["plan_status_presentation"]
+def accepted_progress_presentation(
+    accepted_progress: Mapping[str, Any] | None,
+    *,
+    chain_complete: bool = False,
+) -> dict[str, str | None]:
+    """Project accepted-progress snapshot data into a stable display contract.
+
+    Consumers (watchdog, resident, human operators) use this to distinguish
+    authoritative milestone transitions (backed by acceptance receipts) from
+    worker activity, review, repair, custody, and fixer-infrastructure
+    liveness signals.
+
+    Returns a dict with these keys:
+
+    * ``acceptance_state`` — one of ``accepted``, ``waiting_for_acceptance``,
+      ``activity_only``, or ``not_applicable``.
+    * ``display_label`` — a short human-readable label for the state.
+    """
+
+    if not isinstance(accepted_progress, Mapping) or not accepted_progress:
+        return {
+            "acceptance_state": "not_applicable",
+            "display_label": None,
+        }
+
+    waiting = bool(accepted_progress.get("waiting_for_acceptance"))
+    final_accepted = bool(accepted_progress.get("final_milestone_accepted"))
+    acceptance_required = bool(accepted_progress.get("acceptance_required"))
+    accepted_labels = accepted_progress.get("accepted_milestones")
+    accepted_count = len(accepted_labels) if isinstance(accepted_labels, list) else 0
+
+    if waiting:
+        return {
+            "acceptance_state": "waiting_for_acceptance",
+            "display_label": "chain complete — waiting for acceptance evidence",
+        }
+    if chain_complete and final_accepted:
+        return {
+            "acceptance_state": "accepted",
+            "display_label": "chain complete — accepted",
+        }
+    if chain_complete and not acceptance_required:
+        return {
+            "acceptance_state": "not_applicable",
+            "display_label": "chain complete — acceptance not required (shadow mode)",
+        }
+    if accepted_count > 0:
+        return {
+            "acceptance_state": "accepted",
+            "display_label": f"{accepted_count} milestone(s) accepted",
+        }
+    if acceptance_required and not final_accepted:
+        return {
+            "acceptance_state": "activity_only",
+            "display_label": "activity observed — no accepted milestone transitions yet",
+        }
+    return {
+        "acceptance_state": "activity_only",
+        "display_label": "activity observed",
+    }
+
+
+__all__ = ["plan_status_presentation", "accepted_progress_presentation"]

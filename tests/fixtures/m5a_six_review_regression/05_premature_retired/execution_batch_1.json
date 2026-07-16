@@ -1,0 +1,10 @@
+{
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "commands_run": ["echo \"retired prematurely\""],
+      "files_changed": [".retired"]
+    }
+  ]
+}

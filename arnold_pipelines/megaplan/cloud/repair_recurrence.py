@@ -27,6 +27,24 @@ PROBLEM_SIGNATURE_FIELDS = (
     "event_signature",
 )
 
+# ── Acceptance predicate signature fields ─────────────────────────────────
+# Appended to PROBLEM_SIGNATURE_FIELDS to create distinct repair identities
+# for atomic completion predicate failures versus fixer-infrastructure
+# failures.  Every field defaults to "" when no acceptance context is present,
+# so legacy fixer-infrastructure signatures remain byte-identical.
+ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS = (
+    "acceptance_predicate_kind",
+    "acceptance_predicate_evidence_kind",
+    "acceptance_predicate_summary",
+    "acceptance_transaction_id",
+    "acceptance_snapshot_hash",
+    "acceptance_evidence_refs",
+    "safe_recovery_action",
+    "recovery_action",
+)
+
+EXTENDED_PROBLEM_SIGNATURE_FIELDS = PROBLEM_SIGNATURE_FIELDS + ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS
+
 
 def atomic_write_json(path: str | Path, payload: Mapping[str, Any]) -> None:
     """Atomically replace a JSON file used by the repair loop."""
@@ -434,6 +452,77 @@ def build_problem_signature(failure_context: Mapping[str, Any]) -> dict[str, str
         # new 7-tuples (breaker stays conservative on first deploy).
         "event_signature": _event_signature_field(context, plan_failure),
     }
+
+
+def build_acceptance_predicate_signature(
+    failure_context: Mapping[str, Any],
+) -> dict[str, str]:
+    """Return acceptance predicate fields extracted from *failure_context*.
+
+    When the failure originated from an atomic completion boundary the context
+    carries a structured ``acceptance_predicate_failure`` block (from
+    :class:`~arnold_pipelines.megaplan.orchestration.completion_contract.BlockingPredicateFailure`)
+    plus the transaction and snapshot identity.  This function extracts those
+    fields into a stable dict keyed by :data:`ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS`.
+
+    Returns a dict with every field set to ``\"\"`` when no acceptance context
+    is present — the signature is still shaped correctly so the
+    extended-tuple comparison works for both predicate and fixer-infra
+    failures.
+    """
+    context = _as_dict(failure_context)
+    predicate_failure = _as_dict(context.get("acceptance_predicate_failure"))
+    predicate_details = _as_dict(predicate_failure.get("details"))
+    evidence_refs = predicate_details.get("evidence_refs")
+    if isinstance(evidence_refs, list):
+        evidence_refs_text = ",".join(_as_text(item) for item in evidence_refs if _as_text(item))
+    else:
+        evidence_refs_text = _as_text(evidence_refs)
+    return {
+        "acceptance_predicate_kind": _as_text(predicate_failure.get("kind")),
+        "acceptance_predicate_evidence_kind": _as_text(
+            predicate_failure.get("evidence_kind")
+        ),
+        "acceptance_predicate_summary": _as_text(predicate_failure.get("summary")),
+        "acceptance_transaction_id": _as_text(
+            context.get("acceptance_transaction_id")
+        ),
+        "acceptance_snapshot_hash": _as_text(
+            context.get("acceptance_snapshot_hash")
+        ),
+        "acceptance_evidence_refs": evidence_refs_text,
+        "safe_recovery_action": _as_text(
+            predicate_details.get("safe_recovery_action")
+            or context.get("safe_recovery_action")
+        ),
+        "recovery_action": _as_text(
+            predicate_details.get("recovery_action")
+            or context.get("recovery_action")
+        ),
+    }
+
+
+def build_extended_problem_signature(
+    failure_context: Mapping[str, Any],
+) -> dict[str, str]:
+    """Return the full problem signature including acceptance predicate fields.
+
+    Merges :func:`build_problem_signature` (fixer-infrastructure fields) with
+    :func:`build_acceptance_predicate_signature` (acceptance predicate fields).
+    The result carries every key from :data:`EXTENDED_PROBLEM_SIGNATURE_FIELDS`
+    so recurrence identity distinguishes predicate failures from fixer-infra
+    failures.
+    """
+    base = build_problem_signature(failure_context)
+    acceptance = build_acceptance_predicate_signature(failure_context)
+    return {**base, **acceptance}
+
+
+def extended_signature_tuple(signature: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the ordered tuple of extended signature values."""
+    return tuple(
+        _as_text(signature.get(field)) for field in EXTENDED_PROBLEM_SIGNATURE_FIELDS
+    )
 
 
 def _event_signature_field(context: Mapping[str, Any], plan_failure: Mapping[str, Any]) -> str:
