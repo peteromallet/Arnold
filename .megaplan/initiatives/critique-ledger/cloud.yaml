@@ -19,7 +19,7 @@ chain:
   spec: /workspace/critique-ledger-bigbang-20260716/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml
 
 megaplan:
-  ref: resident-scheduling/deployed-20260716
+  ref: resident/critique-ledger-cloud-engine-20260716
   codex_auth: chatgpt
   repo: /workspace/arnold-runtime-resident-scheduling-1e76dbe
   src_path: /workspace/arnold-critique-ledger-cloud-engine
