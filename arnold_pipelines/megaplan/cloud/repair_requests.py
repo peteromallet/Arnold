@@ -233,6 +233,17 @@ def _canonicalize_blocked_task_id(problem_signature: dict[str, Any]) -> None:
         problem_signature["blocked_task_id"] = f"plan:{milestone}"
 
 
+def _has_evidence_payload(value: Any) -> bool:
+    """Return whether *value* contains non-empty, redacted evidence material."""
+
+    redacted = redact_payload(value)
+    if isinstance(redacted, Mapping):
+        return any(_has_evidence_payload(item) for item in redacted.values())
+    if isinstance(redacted, (list, tuple, set)):
+        return any(_has_evidence_payload(item) for item in redacted)
+    return bool(str(redacted or "").strip())
+
+
 def _canonical_request_blocker_identity(
     *,
     session: str,
@@ -312,6 +323,40 @@ def _has_canonical_blocker_identity(request: Mapping[str, Any]) -> bool:
     return bool(blocker_id and request.get("blocker_id") == blocker_id)
 
 
+def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
+    """Return whether a persisted request is self-contained and claimable."""
+
+    if not _has_canonical_blocker_identity(request):
+        return False
+    source = str(request.get("source") or "").strip()
+    session = str(request.get("session") or "").strip()
+    provenance = request.get("provenance")
+    if (
+        not source
+        or not session
+        or not isinstance(provenance, Mapping)
+        or str(provenance.get("producer") or "").strip() != source
+        or str(provenance.get("session") or "").strip() != session
+    ):
+        return False
+    problem_signature = request.get("problem_signature")
+    evidence_refs = request.get("evidence_refs")
+    if not isinstance(problem_signature, Mapping) or not isinstance(evidence_refs, list):
+        return False
+    expected_signature_digest = _sha256_json(problem_signature)
+    valid_signature_ref = False
+    for value in evidence_refs:
+        if not isinstance(value, Mapping):
+            return False
+        kind = str(value.get("kind") or "").strip()
+        digest = str(value.get("sha256") or "").strip()
+        if not kind or not digest:
+            return False
+        if kind == "problem_signature_digest" and digest == expected_signature_digest:
+            valid_signature_ref = True
+    return valid_signature_ref
+
+
 def enqueue_repair_request(
     *,
     queue_root: str | Path,
@@ -341,6 +386,10 @@ def enqueue_repair_request(
     """
 
     queue_root = validate_queue_root(queue_root)
+
+    source_identity = str(source or "").strip()
+    if not source_identity:
+        raise ValueError("repair request provenance source is required")
 
     # ── Merge acceptance predicate fields into the problem signature ──────
     extended_signature = dict(problem_signature)
@@ -394,6 +443,26 @@ def enqueue_repair_request(
         signature_key=signature_key,
     )
     hint_hash = redacted_hint_hash(root_cause_hint)
+    evidence_refs = [
+        {
+            "kind": "problem_signature_digest",
+            "sha256": _sha256_json(normalized_signature),
+        }
+    ]
+    if _has_evidence_payload(root_cause_hint):
+        evidence_refs.append(
+            {
+                "kind": "redacted_root_cause_hint_digest",
+                "sha256": hint_hash,
+            }
+        )
+    if acceptance_predicate_failure is not None:
+        evidence_refs.append(
+            {
+                "kind": "acceptance_predicate_failure_digest",
+                "sha256": _sha256_json(redact_payload(acceptance_predicate_failure)),
+            }
+        )
     request_id = request_id_for(
         session=session,
         problem_signature=extended_signature,
@@ -407,7 +476,7 @@ def enqueue_repair_request(
             existing_request = json.loads(request_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             existing_request = {}
-        if not isinstance(existing_request, Mapping) or not _has_canonical_blocker_identity(
+        if not isinstance(existing_request, Mapping) or not has_claimable_repair_request_contract(
             existing_request
         ):
             predecessor_request_id = request_id
@@ -424,7 +493,7 @@ def enqueue_repair_request(
         "kind": "repair_request",
         "request_id": request_id,
         "created_at": created_at or utc_now(),
-        "source": str(source or "").strip(),
+        "source": source_identity,
         "session": str(session or "").strip(),
         "workspace": str(workspace or ""),
         "run_kind": str(run_kind or "").strip(),
@@ -436,6 +505,12 @@ def enqueue_repair_request(
         "blocker_fingerprint": blocker_fingerprint,
         "blocker_id": blocker_id,
         "predecessor_request_id": predecessor_request_id,
+        "provenance": {
+            "producer": source_identity,
+            "session": str(session or "").strip(),
+            "run_kind": str(run_kind or "").strip(),
+        },
+        "evidence_refs": evidence_refs,
         "root_cause_hint_hash": hint_hash,
         "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
     }
@@ -659,7 +734,7 @@ def find_pending_by_signature(
     for record in iter_repair_requests(queue_dir):
         if record.get("request_id") in decided:
             continue
-        if not _has_canonical_blocker_identity(record):
+        if not has_claimable_repair_request_contract(record):
             continue
         if session and str(record.get("session") or "").strip() != session:
             continue
@@ -687,11 +762,11 @@ def write_decision(
             request = json.loads(request_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError(
-                "accepted repair request requires a persisted canonical blocker identity"
+                "accepted repair request requires a persisted canonical blocker identity, provenance, and evidence"
             ) from exc
-        if not isinstance(request, dict) or not _has_canonical_blocker_identity(request):
+        if not isinstance(request, dict) or not has_claimable_repair_request_contract(request):
             raise ValueError(
-                "accepted repair request requires a persisted canonical blocker identity"
+                "accepted repair request requires a persisted canonical blocker identity, provenance, and evidence"
             )
 
     when = created_at or utc_now()
@@ -1251,6 +1326,7 @@ __all__ = [
     "enqueue_human_gate_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
+    "has_claimable_repair_request_contract",
     "iter_repair_decisions",
     "iter_repair_attempts",
     "iter_repair_requests",

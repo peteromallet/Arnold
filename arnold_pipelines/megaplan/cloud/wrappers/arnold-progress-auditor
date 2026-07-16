@@ -2432,6 +2432,27 @@ def _repair_data_summary(session):
                 if isinstance(item, dict)
             ],
         }
+    verification = payload.get("verification") if isinstance(payload, dict) else {}
+    verification = verification if isinstance(verification, dict) else {}
+    recovery_verification = verification.get("recovery_verification")
+    recovery_verification = (
+        recovery_verification if isinstance(recovery_verification, dict) else {}
+    )
+    recovery_verified = (
+        payload.get("recovery_verified")
+        if isinstance(payload, dict) and payload.get("recovery_verified") is not None
+        else verification.get("recovery_verified")
+    )
+    authorizes_verified_recovered = (
+        payload.get("authorizes_verified_recovered")
+        if isinstance(payload, dict)
+        and payload.get("authorizes_verified_recovered") is not None
+        else verification.get("authorizes_verified_recovered")
+    )
+    if authorizes_verified_recovered is None:
+        authorizes_verified_recovered = recovery_verification.get(
+            "authorizes_verified_recovered"
+        )
     return {
         "path": str(path),
         "exists": True,
@@ -2450,6 +2471,8 @@ def _repair_data_summary(session):
         "mtime_age_min": int((now.timestamp() - _mtime(path)) // 60) if _mtime(path) else None,
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "outcome": payload.get("outcome") if isinstance(payload, dict) else "",
+        "recovery_verified": recovery_verified is True,
+        "authorizes_verified_recovered": authorizes_verified_recovered is True,
         "l1_outcome_raw": payload.get("outcome") if isinstance(payload, dict) else "",
         "meta_replan_handoff": (
             payload.get("meta_replan_handoff")
@@ -2581,6 +2604,8 @@ def _repair_custody_summary(session, plan_state, current_target):
         "request_status_counts": projection.get("request_status_counts") or {},
         "claim_count": projection.get("claim_count") or 0,
         "attempt_count": projection.get("attempt_count") or 0,
+        "lifecycle_counts": projection.get("lifecycle_counts") or {},
+        "lifecycle_request_ids": projection.get("lifecycle_request_ids") or {},
         "claim_retry_counts": projection.get("claim_retry_counts") or {},
         "claim_alert_request_ids": projection.get("claim_alert_request_ids") or [],
         "retry_budget": projection.get("retry_budget") or {},
@@ -4340,13 +4365,17 @@ def _superfixer_cycle_evidence(ev):
     retry_budget = custody.get("retry_budget") if isinstance(custody.get("retry_budget"), dict) else {}
     repair_outcome = str(repair.get("outcome") or "").strip().lower()
     repair_age = repair.get("mtime_age_min")
+    verified_recovery = bool(
+        repair.get("recovery_verified") is True
+        and repair.get("authorizes_verified_recovered") is True
+    )
     stale_l1 = (
         repair_outcome in {"repair_timeout", "repair_exhausted"}
         or (
             repair.get("exists")
             and isinstance(repair_age, int)
             and repair_age > 60
-            and repair_outcome not in {"complete", "completed", "progressed", "live_with_fresh_activity"}
+            and not verified_recovery
         )
     )
     malformed_count = int(custody.get("malformed_request_count") or 0) + int(
@@ -4401,9 +4430,13 @@ def _superfixer_cycle_evidence(ev):
     current_l2 = bool(meta_ages and min(meta_ages) <= 60 and not failed_l2)
     absent_or_stale_l2 = not current_l2
 
+    # An accepted request with no claim/attempt is itself proof that a live PID
+    # is not linked recovery custody.  Liveness may suppress stale-sidecar
+    # escalation, but it cannot suppress an accepted-unclaimed queue record.
+    runner_gate = bool(runner_dead or accepted_unclaimed)
     actionable = bool(
         l1_failed
-        and runner_dead
+        and runner_gate
         and incomplete_chain
         and absent_or_stale_l2
         and not unknown_evidence
@@ -4422,6 +4455,7 @@ def _superfixer_cycle_evidence(ev):
         "retry_budget": retry_budget,
         "repair_outcome": repair_outcome,
         "repair_age_min": repair_age,
+        "verified_recovery": verified_recovery,
         "runner_dead": runner_dead,
         "runner_liveness": liveness,
         "dead_active_step": dead_active_step,
@@ -4455,8 +4489,8 @@ def _stale_l1_l2_cycle_reason(ev):
     if not evidence.get("actionable"):
         return ""
     return (
-        "stale_l1_l2_cycle: incomplete chain has a stopped/dead runner and "
-        "accepted-unclaimed, exhausted, stale, or malformed L1 custody with no current L2 evidence; "
+        "stale_l1_l2_cycle: incomplete chain has accepted-unclaimed custody or a "
+        "stopped/dead runner with exhausted or stale L1 custody and no current L2 evidence; "
         f"accepted_unclaimed={evidence.get('accepted_unclaimed_count')} "
         f"claim_count={evidence.get('claim_count')} attempt_count={evidence.get('attempt_count')} "
         f"repair_outcome={evidence.get('repair_outcome') or 'unknown'} "

@@ -1377,6 +1377,8 @@ def _compose_repair_decision_projection(
                 "request_count": custody.get("request_count", 0),
                 "claim_count": custody.get("claim_count", 0),
                 "attempt_count": custody.get("attempt_count", 0),
+                "lifecycle_counts": custody.get("lifecycle_counts", {}),
+                "lifecycle_request_ids": custody.get("lifecycle_request_ids", {}),
                 "retry_budget": custody.get("retry_budget", {}),
             },
             "repair_projection_degraded": None,
