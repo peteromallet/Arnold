@@ -203,6 +203,19 @@ def test_live_slow_chain_with_fresh_heartbeat_is_a_hard_noop() -> None:
     ]
 
 
+def test_superseded_snapshot_fails_closed() -> None:
+    finding = _true_stall()
+    finding["evidence_snapshot"] = {
+        "status": "superseded",
+        "changed_refs": [{"kind": "repair_data", "path": "/tmp/repair.json"}],
+    }
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is False
+    assert "evidence_snapshot_superseded" in gate["blocks"]
+
+
 def test_partial_liveness_with_unclaimed_request_is_l1_context_failure() -> None:
     finding = _true_stall()
     finding["repair_data_summary"]["outcome"] = "partial_liveness"

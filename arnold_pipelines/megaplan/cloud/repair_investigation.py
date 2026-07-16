@@ -1407,6 +1407,7 @@ def summarize_investigation_artifacts(
         "safe_repair_target": validated.get("safe_repair_target"),
         "intended_recovery": validated.get("intended_recovery"),
         "four_axis": validated.get("four_axis"),
+        "access_receipt_path": str(investigation.get("access_receipt_path") or ""),
     }
 
 

@@ -839,6 +839,13 @@ def evaluate_meta_repair_triggers(*args, **kwargs):
 def read_jsonl_records(*args, **kwargs):
     return []
 """,
+        "arnold_pipelines/megaplan/cloud/progress_auditor_liveness.py": """
+def classify_runner_liveness(tmux, active_step, watchdog_statuses=()):
+    live = bool((tmux or {}).get("pid_live") is True or (active_step or {}).get("worker_pid_alive") is True)
+    dead = bool(not live and (active_step or {}).get("worker_pid_alive") is False)
+    state = "alive" if live else ("dead" if dead else "unknown")
+    return {"state": state, "live": live, "dead": dead, "known": state != "unknown", "source": "stub"}
+""",
         "arnold_pipelines/megaplan/cloud/current_target.py": (
             "from arnold_pipelines.megaplan.cloud._stub_capture import append_call\n\n\n"
             "def resolve_current_target(session, **kwargs):\n"
@@ -1843,7 +1850,7 @@ class TestAuditorWrapperBoundary:
         repair_root = tmp_path / "repair-data"
         repair_root.mkdir(parents=True, exist_ok=True)
 
-        _run_gather_program(
+        findings = _run_gather_program(
             [
                 {
                     "workspace": str(workspace),
@@ -1890,6 +1897,8 @@ class TestAuditorWrapperBoundary:
         assert projection_input["ci_health"]["failing_run_count"] == 2
         assert projection_input["engine_tree"]["status"] == "red"
         assert projection_input["engine_tree"]["import_consumers"] == ["cloud_wrappers"]
+        assert findings["findings"][0]["ci_health"]["status"] == "red"
+        assert findings["findings"][0]["engine_tree"]["status"] == "red"
 
     def test_gather_filters_dead_liveness_and_uses_drift_metadata_for_reasons(
         self, tmp_path: Path
@@ -6155,7 +6164,7 @@ def test_gather_flags_deterministic_repair_failure_exhaustion(
     )
 
 
-def test_gather_suppresses_clean_completed_shadow_but_not_session_custody(
+def test_gather_suppresses_completed_shadow_including_session_custody(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -6211,11 +6220,12 @@ def test_gather_suppresses_clean_completed_shadow_but_not_session_custody(
         extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
     )
 
-    assert suspicious["green_checks"] == []
-    assert any(
-        reason.startswith("repair_data_ghost_running:")
-        for reason in suspicious["findings"][0]["reasons"]
+    assert suspicious["findings"] == []
+    assert suspicious["green_checks"][0]["suppression"]["reason"] == (
+        "completed_plan_shadow_plan_local_evidence_suppressed"
     )
+    chain = suspicious["green_checks"][0]["chain_state_summary"]["current"]
+    assert any(item.get("plan") == shadow for item in chain["completed"])
 
 
 def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(

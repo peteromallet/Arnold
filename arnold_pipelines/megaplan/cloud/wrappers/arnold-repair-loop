@@ -5569,16 +5569,24 @@ export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "${ARNOLD_REPAIR_QUEUE_ROOT:-$REPA
 export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
 export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
 export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
+# tmux clients do not automatically copy arbitrary environment variables into
+# an already-running server.  Carry the two L1 gates from this already
+# authorized repair owner into the child explicitly; copying their exact
+# values cannot widen authority and keeps arnold-supervise's effect-boundary
+# check authoritative.
+export ARNOLD_AUTONOMY=$(printf '%q' "${ARNOLD_AUTONOMY:-}")
+export ARNOLD_REPAIR_TRIGGER_ENABLED=$(printf '%q' "${ARNOLD_REPAIR_TRIGGER_ENABLED:-}")
+started_at="\$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"
 /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $(printf '%q' "$quoted_command") >>$(printf '%q' "$launch_log") 2>&1
 rc=\$?
-python3 -P - $(printf '%q' "$launch_receipt") "\$rc" $(printf '%q' "$launch_log") $(printf '%q' "$command_sha") $(printf '%q' "$session") $(printf '%q' "${ARNOLD_MANAGED_AGENT_RUN_ID:-}") <<'PY'
+python3 -P - $(printf '%q' "$launch_receipt") "\$rc" $(printf '%q' "$launch_log") $(printf '%q' "$command_sha") $(printf '%q' "$session") $(printf '%q' "${ARNOLD_MANAGED_AGENT_RUN_ID:-}") "\$started_at" <<'PY'
 import datetime as dt
 import json
 import os
 import pathlib
 import sys
 
-path_raw, returncode, log_path, command_sha, session, owner_run_id = sys.argv[1:]
+path_raw, returncode, log_path, command_sha, session, owner_run_id, started_at = sys.argv[1:]
 path = pathlib.Path(path_raw)
 temporary = path.with_suffix(path.suffix + ".tmp")
 payload = {
@@ -5588,6 +5596,7 @@ payload = {
     "command_sha256": command_sha,
     "log_path": log_path,
     "returncode": int(returncode),
+    "started_at": started_at,
     "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
 }
 temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
