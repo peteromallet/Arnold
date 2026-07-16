@@ -509,6 +509,12 @@ EOF
 </verified_bounded_observations>
 
 Follow the objective and authorization in the envelope. Return only one JSON object matching the referenced arnold-repair-investigator-receipt-v2 contract, with no markdown fence or commentary.
+Populate every required field, including a non-empty safe_repair_target.scope and
+the complete intended_recovery object. A historical needs_human artifact,
+manual_review retry strategy, or absent target worker is not by itself a human
+gate. preserve_live is valid only when a correct live worker is actually present;
+an active unowned repair goal with no live worker requires a replan handoff or a
+bounded repair-system target.
 EOF
   } > "$META_INVESTIGATION_PROMPT_PATH"
   redact_file_in_place "$META_INVESTIGATION_PROMPT_PATH"
@@ -568,10 +574,69 @@ EOF
   fi
   (cd "$ARNOLD_SRC" && "${managed_cmd[@]}") >>"$RUN_LOG" 2>&1 || return 1
   META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
-    arnold_pipelines.megaplan.cloud.repair_investigation validate \
-    --receipt "$META_INVESTIGATION_RECEIPT_PATH" --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
-    --observation "$META_INVESTIGATION_OBSERVATION_PATH" >>"$RUN_LOG" 2>&1 || return 1
+  local validation_output="" correction_prompt_path="" invalid_receipt_path=""
+  if ! validation_output="$(
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+      arnold_pipelines.megaplan.cloud.repair_investigation validate \
+      --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
+      --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
+      --observation "$META_INVESTIGATION_OBSERVATION_PATH" 2>&1
+  )"; then
+    printf '%s\n' "$validation_output" >>"$RUN_LOG"
+    invalid_receipt_path="${META_INVESTIGATION_RECEIPT_PATH%.json}.invalid-1.json"
+    correction_prompt_path="${META_INVESTIGATION_PROMPT_PATH%.md}.correction-1.md"
+    cp -- "$META_INVESTIGATION_RECEIPT_PATH" "$invalid_receipt_path" || return 1
+    {
+      cat "$META_INVESTIGATION_PROMPT_PATH"
+      cat <<EOF
+
+<invalid_candidate_receipt>
+EOF
+      cat "$invalid_receipt_path"
+      cat <<EOF
+</invalid_candidate_receipt>
+
+The trusted validator rejected that candidate with this exact error:
+<validator_error>
+${validation_output:0:2000}
+</validator_error>
+
+Return one complete corrected JSON receipt only. Preserve evidence-grounded
+diagnosis, authority, and safety guards. Correct the contract defect; do not
+invent new evidence, broaden mutation scope, or omit any required field.
+EOF
+    } >"$correction_prompt_path"
+    redact_file_in_place "$correction_prompt_path"
+    envelope_bytes="$(wc -c < "$correction_prompt_path" | tr -d ' ')"
+    if [[ ! "$envelope_bytes" =~ ^[0-9]+$ ]] || (( envelope_bytes > META_INVESTIGATION_MAX_BYTES )); then
+      log "L2 investigator correction envelope failed 64 KiB preflight bytes=${envelope_bytes:-unknown}"
+      return 1
+    fi
+    local -a correction_cmd
+    correction_cmd=("${managed_cmd[@]}")
+    local command_index
+    for command_index in "${!correction_cmd[@]}"; do
+      if [[ "${correction_cmd[$command_index]}" == "$META_INVESTIGATION_PROMPT_PATH" ]]; then
+        correction_cmd[$command_index]="$correction_prompt_path"
+      elif [[ "${correction_cmd[$command_index]}" == "meta-repair-investigator:${SESSION}:${TRIGGER_TYPE}:${META_INVESTIGATION_CONTEXT_DIGEST}" ]]; then
+        correction_cmd[$command_index]="meta-repair-investigator:${SESSION}:${TRIGGER_TYPE}:${META_INVESTIGATION_CONTEXT_DIGEST}:correction:1"
+      elif [[ "${correction_cmd[$command_index]}" == "investigator:${META_INVESTIGATION_CONTEXT_DIGEST}" ]]; then
+        correction_cmd[$command_index]="investigator:${META_INVESTIGATION_CONTEXT_DIGEST}:correction:1"
+      fi
+    done
+    log "L2 investigator receipt failed schema validation; launching one bounded correction session=$SESSION invalid_receipt=$invalid_receipt_path"
+    (cd "$ARNOLD_SRC" && "${correction_cmd[@]}") >>"$RUN_LOG" 2>&1 || return 1
+    META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+      arnold_pipelines.megaplan.cloud.repair_investigation validate \
+      --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
+      --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
+      --observation "$META_INVESTIGATION_OBSERVATION_PATH" >>"$RUN_LOG" 2>&1 || return 1
+  else
+    printf '%s\n' "$validation_output" >>"$RUN_LOG"
+  fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" \
     "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RUN_ID" "$investigator_mode" \
