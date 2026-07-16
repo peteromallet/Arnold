@@ -311,6 +311,53 @@ def test_run_chain_commits_base_branch_milestone_without_pr_branch(tmp_path: Pat
     commit_and_push.assert_not_called()
 
 
+def test_run_chain_persists_successor_state_before_driving_plan(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_base_branch_chain_spec(tmp_path)
+    _write_plan(
+        tmp_path,
+        current_state="initialized",
+        execution_batch=False,
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(current_milestone_index=0, last_state="done"),
+    )
+
+    def assert_initialized_chain_projection(*_args, **_kwargs):
+        saved = load_chain_state(spec_path)
+        assert saved.current_plan_name == "plan-m1"
+        assert saved.last_state == "initialized"
+        return chain_module.DriverOutcome(
+            status="blocked",
+            plan="plan-m1",
+            final_state="blocked",
+            iterations=1,
+            reason="fixture stop after successor-state assertion",
+        )
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._init_plan", return_value="plan-m1"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            side_effect=assert_initialized_chain_projection,
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+            no_push=True,
+        )
+
+    assert result["status"] == "stopped"
+
+
 def test_non_terminal_gated_plan_cannot_complete_from_pr_merge_alone(
     tmp_path: Path,
 ) -> None:
