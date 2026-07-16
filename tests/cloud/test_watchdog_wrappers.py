@@ -5700,6 +5700,15 @@ def _post_dev_quality_recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path
         ),
         encoding="utf-8",
     )
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "review_verdict": "needs_rework",
+                "rework_items": [{"evidence_file": "module.py"}],
+            }
+        ),
+        encoding="utf-8",
+    )
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
     subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
@@ -5712,7 +5721,7 @@ def _post_dev_quality_recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path
         text=True,
     ).stdout.strip()
     report_path = tmp_path / "dev-report.json"
-    safe_target = {"kind": "target_file", "path": "module.py"}
+    safe_target = {"kind": "target_workspace", "scope": "module.py"}
     dev_report = {
         "local_commit": head,
         "safe_repair_target": safe_target,
@@ -5778,6 +5787,82 @@ def test_post_dev_quality_recovery_uses_fixed_resolution_and_supported_cli(
     assert len(result.stdout.encode("utf-8")) <= 16384
 
 
+def test_post_dev_quality_recovery_accepts_exact_recover_state_cli(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    ordinary_relaunch = "echo ordinary-relaunch"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "recommended_action": "recover_state",
+                "safe_repair_target": {
+                    "kind": "plan_state_via_cli",
+                    "scope": "supported chain start",
+                },
+                "handoff": {
+                    "allowed_mutations": [f"supported_cli:{ordinary_relaunch}"]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"post_dev_fix_quality_recovery_command_if_needed 1 {ordinary_relaunch!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert "quality-gate resolve" in result.stdout
+    assert "--resolution fixed" in result.stdout
+    assert "override recover-blocked" in result.stdout
+    assert ordinary_relaunch in result.stdout
+
+
+def test_post_dev_quality_recovery_rejects_recover_state_cli_mismatch(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "recommended_action": "recover_state",
+                "safe_repair_target": {
+                    "kind": "plan_state_via_cli",
+                    "scope": "supported chain start",
+                },
+                "handoff": {"allowed_mutations": ["supported_cli:echo stale-command"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
 def test_post_dev_quality_recovery_rejects_unchanged_or_unbounded_evidence(
     tmp_path: Path,
 ) -> None:
@@ -5829,6 +5914,57 @@ def test_prior_receipted_legacy_dev_fix_can_enter_quality_recovery(tmp_path: Pat
     assert lines[0] == "1"
     assert "quality-gate resolve" in result.stdout
     assert f"bounded repair data:{data_path}#iterations[0].dev_report" in result.stdout
+
+
+def test_prior_receipted_attempt_can_enter_recover_state_quality_recovery(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    entry = payload.pop("iterations")[0]
+    entry.pop("dev_before_sha")
+    entry.pop("dev_after_sha")
+    entry.pop("dev_fix_changed")
+    entry.pop("dev_report_path")
+    payload["attempts"] = [entry]
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+    ordinary_relaunch = "echo ordinary-relaunch"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "recommended_action": "recover_state",
+                "safe_repair_target": {
+                    "kind": "plan_state_via_cli",
+                    "scope": "supported chain start",
+                },
+                "handoff": {
+                    "allowed_mutations": [f"supported_cli:{ordinary_relaunch}"]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("prior_receipted_dev_fix_iteration"),
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            'locator="$(prior_receipted_dev_fix_iteration)"',
+            'printf "%s\\n" "$locator"',
+            f"post_dev_fix_quality_recovery_command_if_needed \"$locator\" {ordinary_relaunch!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "attempts:0"
+    assert "quality-gate resolve" in result.stdout
+    assert f"bounded repair data:{data_path}#attempts[0].dev_report" in result.stdout
 
 
 def test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_required(tmp_path: Path) -> None:

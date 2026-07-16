@@ -234,6 +234,75 @@ def _review_quality_blocker_summary(plan_state_path: object) -> dict[str, Any]:
     }
 
 
+def _durable_quality_repair_evidence(
+    repair_data: Mapping[str, Any],
+    current: Mapping[str, Any],
+    review_quality_blocker: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind a prior target repair to the current HEAD and review rework scope."""
+
+    workspace_head = _text(current.get("workspace_head"), 100).lower()
+    if len(workspace_head) != 40 or any(
+        char not in "0123456789abcdef" for char in workspace_head
+    ):
+        return {"verified": False, "reason": "current workspace HEAD is unavailable"}
+    rework_scopes = {
+        _text(item.get("evidence_file"), 1000)
+        for item in review_quality_blocker.get("rework_items") or []
+        if isinstance(item, Mapping) and _text(item.get("evidence_file"), 1000)
+    }
+    candidates = [
+        item
+        for collection in (
+            repair_data.get("attempts") or [],
+            repair_data.get("iterations") or [],
+        )
+        for item in collection
+        if isinstance(item, Mapping)
+    ]
+    for item in reversed(candidates):
+        try:
+            if int(item.get("dev_turn_rc")) != 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        dev_fix_sha = _text(item.get("dev_fix_sha"), 100).lower()
+        if dev_fix_sha != workspace_head:
+            continue
+        report = item.get("dev_report")
+        report = report if isinstance(report, Mapping) else {}
+        validation = report.get("validation")
+        if validation in (None, "", [], {}):
+            continue
+        local_commit = _text(report.get("local_commit"), 100).lower()
+        if len(local_commit) < 7 or not workspace_head.startswith(local_commit):
+            continue
+        target = report.get("safe_repair_target")
+        target = target if isinstance(target, Mapping) else {}
+        target_scope = _text(target.get("scope") or target.get("path"), 2000)
+        if target.get("kind") != "target_workspace" or not target_scope:
+            continue
+        if rework_scopes and not any(
+            scope == target_scope or target_scope.endswith(f"/{scope}")
+            for scope in rework_scopes
+        ):
+            continue
+        return {
+            "verified": True,
+            "workspace_head": workspace_head,
+            "dev_fix_sha": dev_fix_sha,
+            "attempt_id": item.get("attempt_id") or item.get("i"),
+            "target_kind": target.get("kind"),
+            "target_scope": target_scope,
+            "validation_present": True,
+        }
+    return {
+        "verified": False,
+        "workspace_head": workspace_head,
+        "reason": "no successful validated target repair is bound to current HEAD and rework scope",
+    }
+
+
 def _evidence_source(kind: str, path: object, observed: object, *, authority: int) -> dict[str, Any]:
     return {
         "kind": kind,
@@ -470,6 +539,15 @@ def build_investigation_context(
         if durable_quality_block
         else {}
     )
+    durable_quality_repair = (
+        _durable_quality_repair_evidence(
+            repair_data,
+            current,
+            review_quality_blocker,
+        )
+        if durable_quality_block
+        else {"verified": False, "reason": "no active durable quality block"}
+    )
     request_signature = (
         request.get("problem_signature")
         if isinstance(request.get("problem_signature"), Mapping)
@@ -674,7 +752,7 @@ def build_investigation_context(
     required_investigator_output["action_specific_handoff_examples"]["recover_state"][
         "allowed_mutations"
     ] = [f"supported_cli:{supported_recovery_cli}"]
-    if durable_quality_block:
+    if durable_quality_block and durable_quality_repair.get("verified") is not True:
         rework_items = (
             review_quality_blocker.get("rework_items")
             if isinstance(review_quality_blocker.get("rework_items"), list)
@@ -732,21 +810,37 @@ def build_investigation_context(
         "current_phase_result": phase_result,
         "durable_quality_block": {
             "active": durable_quality_block,
-            "recover_state_allowed": False if durable_quality_block else True,
+            "recover_state_allowed": bool(
+                not durable_quality_block
+                or durable_quality_repair.get("verified") is True
+            ),
             "reason": (
                 "A persisted blocked review verdict is authoritative until its concrete "
-                "rework is repaired; an unrelated workspace HEAD change is not blocker clearance."
-                if durable_quality_block
-                else ""
+                "rework is repaired by a validated commit bound to the current HEAD and "
+                "target scope."
+                if durable_quality_block and durable_quality_repair.get("verified") is not True
+                else (
+                    "The bounded target repair is durably bound to the current HEAD; "
+                    "recovery may record resolution=fixed and must rerun review."
+                    if durable_quality_block
+                    else ""
+                )
             ),
+            "repair_evidence": durable_quality_repair,
             "review_artifact": {
                 key: review_quality_blocker.get(key)
                 for key in ("path", "present", "sha256", "size_bytes", "review_verdict")
             },
             "allowed_actions": (
                 ["repair_source", "repair_target", "replan"]
-                if durable_quality_block
-                else ["preserve_live", "repair_source", "repair_target", "recover_state", "replan"]
+                if durable_quality_block and durable_quality_repair.get("verified") is not True
+                else [
+                    "preserve_live",
+                    "repair_source",
+                    "repair_target",
+                    "recover_state",
+                    "replan",
+                ]
             ),
         },
         "exact_error": external_failure
@@ -1499,10 +1593,32 @@ def validate_investigator_receipt(
             and quality_block.get("active") is True
             and action == "recover_state"
         ):
-            raise ValueError(
-                "state recovery cannot replay a durable review-quality block before its "
-                "bounded rework target is repaired"
+            repair_evidence = quality_block.get("repair_evidence")
+            repair_evidence = (
+                repair_evidence if isinstance(repair_evidence, Mapping) else {}
             )
+            current = investigation_context.get("current")
+            current = current if isinstance(current, Mapping) else {}
+            current_head = str(current.get("workspace_head") or "").strip().lower()
+            evidence_head = str(
+                repair_evidence.get("workspace_head") or ""
+            ).strip().lower()
+            if not (
+                quality_block.get("recover_state_allowed") is True
+                and repair_evidence.get("verified") is True
+                and len(current_head) == 40
+                and all(char in "0123456789abcdef" for char in current_head)
+                and evidence_head == current_head
+                and str(repair_evidence.get("dev_fix_sha") or "").strip().lower()
+                == current_head
+                and repair_evidence.get("target_kind") == "target_workspace"
+                and str(repair_evidence.get("target_scope") or "").strip()
+                and repair_evidence.get("validation_present") is True
+            ):
+                raise ValueError(
+                    "state recovery cannot replay a durable review-quality block before its "
+                    "bounded rework target is repaired"
+                )
     if isinstance(observation_bundle, Mapping):
         if observation_bundle.get("context_digest") != expected_context_digest:
             raise ValueError("investigator observation bundle digest disagrees")

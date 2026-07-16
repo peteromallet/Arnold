@@ -5549,7 +5549,7 @@ from pathlib import Path
     data_raw,
     investigator_receipt_raw,
     arnold_src_raw,
-    iteration_raw,
+    receipt_locator,
     normal_relaunch_command,
 ) = sys.argv[1:]
 workspace = Path(workspace_raw)
@@ -5575,25 +5575,41 @@ def valid_sha(value: object) -> str:
 
 if not plan_name or "/" in plan_name or not normal_relaunch_command.strip():
     raise SystemExit(0)
-try:
-    iteration = int(iteration_raw)
-except ValueError:
-    raise SystemExit(0)
-if iteration < 1:
-    raise SystemExit(0)
-
 receipt = load_object(receipt_path)
-if receipt.get("recommended_action") != "repair_target":
+receipt_action = str(receipt.get("recommended_action") or "")
+if receipt_action not in {"repair_target", "recover_state"}:
     raise SystemExit(0)
 safe_target = receipt.get("safe_repair_target")
 if not isinstance(safe_target, dict) or safe_target.get("kind") in {None, "", "none"}:
     raise SystemExit(0)
+if receipt_action == "recover_state":
+    handoff = receipt.get("handoff")
+    handoff = handoff if isinstance(handoff, dict) else {}
+    allowed_mutations = handoff.get("allowed_mutations")
+    if (
+        safe_target.get("kind") != "plan_state_via_cli"
+        or allowed_mutations != [f"supported_cli:{normal_relaunch_command}"]
+    ):
+        raise SystemExit(0)
 
 repair_data = load_object(data_path)
-iterations = repair_data.get("iterations")
-if not isinstance(iterations, list) or len(iterations) < iteration:
+collection_name = "iterations"
+try:
+    if receipt_locator.startswith("attempts:"):
+        collection_name = "attempts"
+        collection_index = int(receipt_locator.partition(":")[2])
+    else:
+        collection_index = int(receipt_locator) - 1
+except ValueError:
     raise SystemExit(0)
-entry = iterations[iteration - 1]
+collection = repair_data.get(collection_name)
+if (
+    collection_index < 0
+    or not isinstance(collection, list)
+    or len(collection) <= collection_index
+):
+    raise SystemExit(0)
+entry = collection[collection_index]
 if not isinstance(entry, dict):
     raise SystemExit(0)
 try:
@@ -5608,7 +5624,7 @@ embedded_report = entry.get("dev_report")
 embedded_report = embedded_report if isinstance(embedded_report, dict) else {}
 if not report_path.is_file():
     run_dir = Path(str(repair_data.get("run_dir") or ""))
-    candidate = run_dir / f"iter{iteration}-dev-fix-report.json"
+    candidate = run_dir / f"iter{collection_index + 1}-dev-fix-report.json"
     report_path = candidate if candidate.is_file() else Path()
 
 try:
@@ -5645,15 +5661,13 @@ if not report_path.is_file() and not embedded_report:
 dev_report = embedded_report or load_object(report_path)
 prior_target = dev_report.get("safe_repair_target")
 prior_target = prior_target if isinstance(prior_target, dict) else {}
-current_locator = str(safe_target.get("scope") or safe_target.get("path") or "").strip()
 prior_locator = str(prior_target.get("scope") or prior_target.get("path") or "").strip()
-if (
-    not current_locator
-    or prior_target.get("kind") != safe_target.get("kind")
-    or prior_locator != current_locator
-    or not dev_report.get("validation")
-):
+if not dev_report.get("validation") or prior_target.get("kind") != "target_workspace" or not prior_locator:
     raise SystemExit(0)
+if receipt_action == "repair_target":
+    current_locator = str(safe_target.get("scope") or safe_target.get("path") or "").strip()
+    if prior_target.get("kind") != safe_target.get("kind") or prior_locator != current_locator:
+        raise SystemExit(0)
 
 plan_dir = workspace / ".megaplan" / "plans" / plan_name
 state = load_object(plan_dir / "state.json")
@@ -5668,6 +5682,17 @@ if (
     or cursor.get("retry_strategy") != "manual_review"
     or not str(failure.get("kind") or "").startswith("review_quality_blocked")
     or failure.get("phase") != "review"
+):
+    raise SystemExit(0)
+review = load_object(plan_dir / "review.json")
+rework_scopes = set(
+    str(item.get("evidence_file") or "").strip()
+    for item in review.get("rework_items") or []
+    if isinstance(item, dict) and str(item.get("evidence_file") or "").strip()
+)
+if not rework_scopes or not any(
+    scope == prior_locator or prior_locator.endswith(f"/{scope}")
+    for scope in rework_scopes
 ):
     raise SystemExit(0)
 
@@ -5719,7 +5744,10 @@ for blocker_id in blocker_ids:
                 (
                     f"bounded dev report:{report_path}"
                     if report_path.is_file()
-                    else f"bounded repair data:{data_path}#iterations[{iteration - 1}].dev_report"
+                    else (
+                        f"bounded repair data:{data_path}"
+                        f"#{collection_name}[{collection_index}].dev_report"
+                    )
                 ),
             ]
         )
@@ -5754,7 +5782,7 @@ PY
 
 prior_receipted_dev_fix_iteration() {
   PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
-    "$WORKSPACE" "$DATA_FILE" <<'PY'
+    "$WORKSPACE" "$DATA_FILE" "$PLAN_NAME" <<'PY'
 import json
 import subprocess
 import sys
@@ -5762,6 +5790,7 @@ from pathlib import Path
 
 workspace = Path(sys.argv[1])
 data_path = Path(sys.argv[2])
+plan_name = sys.argv[3]
 try:
     payload = json.loads(data_path.read_text(encoding="utf-8"))
     head = subprocess.run(
@@ -5775,37 +5804,67 @@ except Exception:
     raise SystemExit(0)
 if len(head) != 40 or any(ch not in "0123456789abcdef" for ch in head):
     raise SystemExit(0)
-iterations = payload.get("iterations")
-if not isinstance(iterations, list):
+if not plan_name or "/" in plan_name:
     raise SystemExit(0)
-for index in range(len(iterations) - 1, -1, -1):
-    entry = iterations[index]
-    if not isinstance(entry, dict):
+try:
+    review = json.loads(
+        (workspace / ".megaplan" / "plans" / plan_name / "review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+except Exception:
+    raise SystemExit(0)
+review = review if isinstance(review, dict) else {}
+rework_scopes = set(
+    str(item.get("evidence_file") or "").strip()
+    for item in review.get("rework_items") or []
+    if isinstance(item, dict) and str(item.get("evidence_file") or "").strip()
+)
+if not rework_scopes:
+    raise SystemExit(0)
+for collection_name in ("attempts", "iterations"):
+    collection = payload.get(collection_name)
+    if not isinstance(collection, list):
         continue
-    try:
-        if int(entry.get("dev_turn_rc")) != 0:
+    for index in range(len(collection) - 1, -1, -1):
+        entry = collection[index]
+        if not isinstance(entry, dict):
             continue
-    except (TypeError, ValueError):
-        continue
-    sha = str(entry.get("dev_fix_sha") or "").strip().lower()
-    if sha != head:
-        continue
-    report = entry.get("dev_report")
-    report = report if isinstance(report, dict) else {}
-    local_commit = str(report.get("local_commit") or "").strip().lower()
-    new_receipt = bool(
-        entry.get("dev_fix_changed") is True
-        and str(entry.get("dev_after_sha") or "").strip().lower() == head
-    )
-    legacy_receipt = bool(
-        len(local_commit) >= 7
-        and head.startswith(local_commit)
-        and not entry.get("dev_before_sha")
-        and not entry.get("dev_after_sha")
-    )
-    if new_receipt or legacy_receipt:
-        print(index + 1)
-        raise SystemExit(0)
+        try:
+            if int(entry.get("dev_turn_rc")) != 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        sha = str(entry.get("dev_fix_sha") or "").strip().lower()
+        if sha != head:
+            continue
+        report = entry.get("dev_report")
+        report = report if isinstance(report, dict) else {}
+        local_commit = str(report.get("local_commit") or "").strip().lower()
+        if not report.get("validation"):
+            continue
+        target = report.get("safe_repair_target")
+        if not isinstance(target, dict) or target.get("kind") != "target_workspace":
+            continue
+        target_scope = str(target.get("scope") or target.get("path") or "").strip()
+        if not target_scope or not any(
+            scope == target_scope or target_scope.endswith(f"/{scope}")
+            for scope in rework_scopes
+        ):
+            continue
+        new_receipt = bool(
+            entry.get("dev_fix_changed") is True
+            and str(entry.get("dev_after_sha") or "").strip().lower() == head
+        )
+        legacy_receipt = bool(
+            len(local_commit) >= 7
+            and head.startswith(local_commit)
+            and not entry.get("dev_before_sha")
+            and not entry.get("dev_after_sha")
+        )
+        if new_receipt or legacy_receipt:
+            print(f"attempts:{index}" if collection_name == "attempts" else index + 1)
+            raise SystemExit(0)
 PY
 }
 
@@ -5899,19 +5958,19 @@ mechanical_launch_step() {
       echo "failed:missing_relaunch_command"
       return 1
     }
-    if [[ -n "${POST_DEV_FIX_ITERATION:-}" ]]; then
-      local quality_recovery_command
-      quality_recovery_command="$(
-        post_dev_fix_quality_recovery_command_if_needed \
-          "$POST_DEV_FIX_ITERATION" "$quoted_command"
-      )" || {
-        echo "failed:quality_recovery_command_invalid"
-        return 1
-      }
-      if [[ -n "$quality_recovery_command" ]]; then
-        log "using receipt-bound supported quality recovery before ordinary relaunch session=$session iteration=$iteration" >&2
-        quoted_command="$quality_recovery_command"
-      fi
+  fi
+  if [[ -n "${POST_DEV_FIX_ITERATION:-}" ]]; then
+    local quality_recovery_command
+    quality_recovery_command="$(
+      post_dev_fix_quality_recovery_command_if_needed \
+        "$POST_DEV_FIX_ITERATION" "$quoted_command"
+    )" || {
+      echo "failed:quality_recovery_command_invalid"
+      return 1
+    }
+    if [[ -n "$quality_recovery_command" ]]; then
+      log "using receipt-bound supported quality recovery before ordinary relaunch session=$session iteration=$iteration" >&2
+      quoted_command="$quality_recovery_command"
     fi
   fi
   if tmux has-session -t "$session" 2>/dev/null; then
@@ -7809,6 +7868,10 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
 fi
 
 if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
+  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || true)"
+  if [[ -n "$prior_fix_iteration" ]]; then
+    export POST_DEV_FIX_ITERATION="$prior_fix_iteration"
+  fi
   require_investigation_before_mutation "baseline-mechanical-relaunch"
   mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
     repair_data_record_mechanical "0" "0" "$mechanical_status" "baseline mechanical relaunch: $mechanical_status"
