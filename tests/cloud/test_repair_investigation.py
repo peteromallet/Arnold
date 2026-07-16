@@ -199,6 +199,87 @@ def test_historical_recount_recovery_uses_guarded_override_before_chain_start(
     ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
 
 
+def test_verified_deterministic_phase_repair_uses_guarded_override_before_chain_start(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state_path = workspace / ".megaplan/plans/current-m5a/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["latest_failure"] = {
+        "kind": "deterministic_phase_failure",
+        "phase": "finalize",
+        "message": "critique_finding_identity_reused",
+        "metadata": {"count": 3},
+    }
+    state["resume_cursor"] = {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+    _write(state_path, state)
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=workspace,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=workspace, check=True
+    )
+    subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "verified target repair"],
+        cwd=workspace,
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    repair_payload = json.loads(repair_data.read_text(encoding="utf-8"))
+    repair_payload["attempts"].append(
+        {
+            "attempt_id": 23,
+            "dev_turn_rc": 0,
+            "dev_fix_sha": head,
+            "problem_signature": {
+                "failure_kind": "deterministic_phase_failure",
+                "milestone_or_plan": "current-m5a",
+                "phase_or_step": "finalize",
+            },
+            "dev_report": {
+                "classification": "live_failure_repaired_in_target_workspace_pending_wrapper_recovery_proof",
+                "validation": ["focused tests passed"],
+            },
+        }
+    )
+    _write(repair_data, repair_payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    recovery = context["phase_contract_recovery"]
+    supported_cli = context["safe_repair_boundaries"]["supported_recovery_cli"]
+    assert recovery["applicable"] is True
+    assert recovery["repair_evidence"]["dev_fix_sha"] == head
+    assert "override recover-blocked" in supported_cli
+    assert f"commit {head}" in supported_cli
+    assert supported_cli.endswith(
+        f"chain start --spec {spec} --project-dir {workspace}"
+    )
+    assert context["required_investigator_output"][
+        "action_specific_handoff_examples"
+    ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
+
+
 def test_l1_broker_observation_is_digest_bound_typed_and_bounded(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     context = build_investigation_context(
@@ -1190,6 +1271,47 @@ def test_durable_quality_block_allows_receipt_bound_recovery_after_target_repair
         investigation_context=context,
     )
 
+    assert validated["recommended_action"] == "recover_state"
+
+
+def test_phase_contract_recovery_requires_fixed_axis_for_verified_target_repair() -> None:
+    receipt = _receipt()
+    receipt["actual_failure"]["classification"] = "stale_state"
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": [
+            "supported_cli:python -m arnold_pipelines.megaplan override "
+            "recover-blocked && python -m arnold_pipelines.megaplan chain start"
+        ],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "plan_state_via_cli",
+        "scope": "supported guarded blocked recovery",
+        "rationale": "the validated target repair is committed at current HEAD",
+    }
+    context = {
+        "context_digest": "digest-1",
+        "phase_contract_recovery": {
+            "applicable": True,
+            "repair_evidence": {"verified": True},
+        },
+    }
+
+    with pytest.raises(ValueError, match="validated target repair is fixed"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            investigation_context=context,
+        )
+
+    receipt["four_axis"]["FIXED"] = "pass"
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest="digest-1",
+        investigation_context=context,
+    )
     assert validated["recommended_action"] == "recover_state"
 
 

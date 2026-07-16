@@ -363,6 +363,90 @@ def _durable_quality_repair_evidence(
     }
 
 
+def _durable_phase_contract_repair_evidence(
+    repair_data: Mapping[str, Any],
+    current: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind a deterministic phase-contract repair to the current target HEAD."""
+
+    workspace_head = _text(current.get("workspace_head"), 100).lower()
+    latest_failure = (
+        current.get("latest_failure")
+        if isinstance(current.get("latest_failure"), Mapping)
+        else {}
+    )
+    failure_kind = _text(latest_failure.get("kind"), 300).lower()
+    failure_phase = _text(
+        latest_failure.get("phase") or current.get("target_stage"), 300
+    ).lower()
+    current_plan = _text(current.get("plan_name"), 500)
+    if (
+        str(current.get("plan_state") or "").lower() != "blocked"
+        or failure_kind != "deterministic_phase_failure"
+        or len(workspace_head) != 40
+        or any(char not in "0123456789abcdef" for char in workspace_head)
+    ):
+        return {
+            "verified": False,
+            "workspace_head": workspace_head,
+            "reason": "current target is not a deterministic phase-contract block with a Git HEAD",
+        }
+    candidates = [
+        item
+        for collection in (
+            repair_data.get("attempts") or [],
+            repair_data.get("iterations") or [],
+        )
+        for item in collection
+        if isinstance(item, Mapping)
+    ]
+    for item in reversed(candidates):
+        try:
+            if int(item.get("dev_turn_rc")) != 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        dev_fix_sha = _text(item.get("dev_fix_sha"), 100).lower()
+        if dev_fix_sha != workspace_head:
+            continue
+        signature = (
+            item.get("problem_signature")
+            if isinstance(item.get("problem_signature"), Mapping)
+            else {}
+        )
+        repaired_plan = _text(signature.get("milestone_or_plan"), 500)
+        repaired_phase = _text(signature.get("phase_or_step"), 300).lower()
+        repaired_kind = _text(signature.get("failure_kind"), 300).lower()
+        if repaired_plan and current_plan and repaired_plan != current_plan:
+            continue
+        if repaired_phase and failure_phase and repaired_phase != failure_phase:
+            continue
+        if repaired_kind and repaired_kind != failure_kind:
+            continue
+        report = item.get("dev_report")
+        report = report if isinstance(report, Mapping) else {}
+        classification = _text(report.get("classification"), 500).lower()
+        validation = item.get("dev_validation") or report.get("validation")
+        if "repaired" not in classification or validation in (None, "", [], {}):
+            continue
+        return {
+            "verified": True,
+            "workspace_head": workspace_head,
+            "dev_fix_sha": dev_fix_sha,
+            "attempt_id": item.get("attempt_id") or item.get("i"),
+            "failure_kind": failure_kind,
+            "phase": failure_phase,
+            "plan_name": current_plan,
+            "validation_present": True,
+            "authority": "validated_target_commit_bound_to_current_head",
+        }
+    return {
+        "verified": False,
+        "workspace_head": workspace_head,
+        "reason": "no validated deterministic phase repair is bound to the current target HEAD",
+    }
+
+
 def _evidence_source(kind: str, path: object, observed: object, *, authority: int) -> dict[str, Any]:
     return {
         "kind": kind,
@@ -608,6 +692,10 @@ def build_investigation_context(
         if durable_quality_block
         else {"verified": False, "reason": "no active durable quality block"}
     )
+    durable_phase_contract_repair = _durable_phase_contract_repair_evidence(
+        repair_data,
+        current,
+    )
     request_signature = (
         request.get("problem_signature")
         if isinstance(request.get("problem_signature"), Mapping)
@@ -815,8 +903,27 @@ def build_investigation_context(
         "evidence": superseded_failure,
         "authority": "guarded_override_cli_then_ordinary_chain_start",
     }
+    phase_contract_recovery = {
+        "applicable": durable_phase_contract_repair.get("verified") is True,
+        "repair_evidence": durable_phase_contract_repair,
+        "authority": "guarded_override_cli_then_ordinary_chain_start",
+    }
     supported_recovery_cli = chain_start_cli
-    if superseded_failure.get("detected") is True and plan_name:
+    if (
+        superseded_failure.get("detected") is True
+        or durable_phase_contract_repair.get("verified") is True
+    ) and plan_name:
+        if durable_phase_contract_repair.get("verified") is True:
+            recovery_reason = (
+                "automatic repair verified the deterministic phase contract at commit "
+                f"{durable_phase_contract_repair.get('dev_fix_sha')}; clear the blocked "
+                "latch and rerun the same phase"
+            )
+        else:
+            recovery_reason = (
+                "automatic repair verified that the repeated-failure block references "
+                "a historical occurrence superseded by a later same-phase success"
+            )
         recover_blocked_cli = shlex.join(
             [
                 "python",
@@ -830,10 +937,7 @@ def build_investigation_context(
                 "--plan",
                 plan_name,
                 "--reason",
-                (
-                    "automatic repair verified that the repeated-failure block references "
-                    "a historical occurrence superseded by a later same-phase success"
-                ),
+                recovery_reason,
             ]
         )
         supported_recovery_cli = f"{recover_blocked_cli} && {chain_start_cli}"
@@ -985,6 +1089,7 @@ def build_investigation_context(
             ),
         },
         "historical_failure_recovery": historical_failure_recovery,
+        "phase_contract_recovery": phase_contract_recovery,
         "intended_recovery": {
             "predicate": _text(
                 recovery_contract.get("predicate")
@@ -1835,6 +1940,7 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
         "durable_quality_block",
         "goal_continuity",
         "historical_failure_recovery",
+        "phase_contract_recovery",
         "intended_recovery",
         "l2_replan_authorization",
         "prior_repairs",
@@ -1986,6 +2092,28 @@ def validate_investigator_receipt(
     if isinstance(investigation_context, Mapping):
         if investigation_context.get("context_digest") != expected_context_digest:
             raise ValueError("investigator context digest disagrees")
+        phase_contract_recovery = investigation_context.get(
+            "phase_contract_recovery"
+        )
+        phase_contract_recovery = (
+            phase_contract_recovery
+            if isinstance(phase_contract_recovery, Mapping)
+            else {}
+        )
+        phase_repair = phase_contract_recovery.get("repair_evidence")
+        phase_repair = phase_repair if isinstance(phase_repair, Mapping) else {}
+        if (
+            action == "recover_state"
+            and phase_contract_recovery.get("applicable") is True
+            and (
+                four_axis.get("FIXED") != "pass"
+                or phase_repair.get("verified") is not True
+            )
+        ):
+            raise ValueError(
+                "state recovery cannot clear a deterministic phase block before its "
+                "validated target repair is fixed"
+            )
         quality_block = investigation_context.get("durable_quality_block")
         if (
             isinstance(quality_block, Mapping)
