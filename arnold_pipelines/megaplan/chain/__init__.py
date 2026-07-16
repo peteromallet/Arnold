@@ -7825,7 +7825,11 @@ def build_chain_parser(subparsers: Any) -> None:
     rebind_parser.add_argument("--from-bundle-sha256", required=True)
     rebind_parser.add_argument("--to-bundle-sha256", required=True)
     rebind_parser.add_argument("--expected-current-milestone", required=True)
-    rebind_parser.add_argument("--expected-current-plan", required=True)
+    rebind_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help="Exact current plan name, or @none when the cursor has no plan yet.",
+    )
     rebind_parser.add_argument("--expected-next-milestone", required=True)
     rebind_parser.add_argument("--reason", required=True)
     rebind_parser.add_argument("--actor", default="operator")

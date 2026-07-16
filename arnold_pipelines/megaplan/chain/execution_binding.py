@@ -667,6 +667,7 @@ def rebind_execution_identity(
     unchanged prefix of both identities; only the future suffix may differ.
     """
 
+    no_current_plan_guard = expected_current_plan == "@none"
     arguments = {
         "expected_previous_bundle_sha256": expected_previous_bundle_sha256,
         "expected_active_bundle_sha256": expected_active_bundle_sha256,
@@ -678,6 +679,7 @@ def rebind_execution_identity(
     }
     if any(not str(value or "").strip() for value in arguments.values()):
         raise CliError(DRIFT_ERROR, "chain rebind refused: every rebind guard is required")
+    guarded_current_plan = "" if no_current_plan_guard else expected_current_plan
     if not _FULL_SHA256.fullmatch(expected_previous_bundle_sha256):
         raise CliError(DRIFT_ERROR, "chain rebind refused: previous bundle SHA-256 is invalid")
     if not _FULL_SHA256.fullmatch(expected_active_bundle_sha256):
@@ -757,7 +759,7 @@ def rebind_execution_identity(
             DRIFT_ERROR,
             "chain rebind refused: active source changed the current milestone",
         )
-    if str(getattr(state, "current_plan_name", "") or "") != expected_current_plan:
+    if str(getattr(state, "current_plan_name", "") or "") != guarded_current_plan:
         raise CliError(DRIFT_ERROR, "chain rebind refused: current plan does not match the guard")
     next_index = current_index + 1
     if next_index >= len(active_labels):
@@ -786,7 +788,7 @@ def rebind_execution_identity(
         "to_bundle_sha256": expected_active_bundle_sha256,
         "current_milestone_index": current_index,
         "current_milestone": expected_current_milestone,
-        "current_plan": expected_current_plan,
+        "current_plan": guarded_current_plan,
         "next_milestone": expected_next_milestone,
         "completed_prefix": completed_labels,
     }
