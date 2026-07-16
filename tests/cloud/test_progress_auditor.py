@@ -155,9 +155,25 @@ def test_l3_carries_repair_root_cause_into_terminal_owner_finding() -> None:
 
 def test_l3_routes_stranded_cursor_and_stale_repair_goal() -> None:
     text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _chain_milestone_total(data):")
+    end = text.index("\ndef _chain_state_summary", start)
+    namespace: dict[str, object] = {}
+    exec(text[start:end], namespace)
+    assert namespace["_chain_milestone_total"](
+        {
+            "metadata": {
+                "execution_binding": {
+                    "launched_identity": {
+                        "milestone_sequence": [{"index": index} for index in range(10)]
+                    }
+                }
+            }
+        }
+    ) == 10
+
     start = text.index("def _between_milestone_cycling(chain_log, chain_state, repair_data):")
     end = text.index("\ndef _stale_state_evidence", start)
-    namespace: dict[str, object] = {}
+    namespace = {}
     exec(text[start:end], namespace)
 
     stale = namespace["_between_milestone_cycling"](
