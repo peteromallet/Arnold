@@ -80,6 +80,7 @@ REPAIR_RECURRENCE_WINDOW_SECS="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_WINDOW_SECS:-2
 REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
 REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-1}"
 REPAIR_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-gpt-5.6-sol}"
+REPAIR_BROKERED_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_BROKERED_INVESTIGATOR_MODEL:-deepseek:deepseek-v4-pro}"
 REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"
 COMMIT_REPAIRS="${CLOUD_WATCHDOG_COMMIT_REPAIRS:-1}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
@@ -98,6 +99,7 @@ NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
 REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"
 REPAIR_LOCK_DIR="${CLOUD_WATCHDOG_REPAIR_LOCK_DIR:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.lock}"
 INVESTIGATION_CONTEXT_PATH="$RUN_DIR/repair-investigation-context.json"
+INVESTIGATION_OBSERVATION_PATH="$RUN_DIR/repair-investigator-observations.json"
 INVESTIGATOR_PROMPT_PATH="$RUN_DIR/repair-investigator-prompt.md"
 INVESTIGATOR_RECEIPT_PATH="$RUN_DIR/repair-investigator-receipt.json"
 INVESTIGATION_BUILD_ERROR_PATH="$RUN_DIR/repair-investigation-context-error.log"
@@ -6924,7 +6926,7 @@ PY
 
 run_repair_investigator_turn() {
   require_repair_lock_held
-  local request_path context_digest context_bytes context_sha256 run_id_file investigator_run_id rc investigator_timeout recommended_action
+  local request_path context_digest context_bytes context_sha256 run_id_file investigator_run_id rc investigator_timeout recommended_action investigator_mode investigator_model
   local validation_output invalid_receipt_path invalid_receipt_bytes invalid_receipt_sha256 correction_prompt_path validation_error_path validation_error_bytes validation_error_sha256 prompt_bytes
   local command_index
   local -a parent_args context_build_cmd managed_cmd correction_cmd
@@ -6962,6 +6964,38 @@ run_repair_investigator_turn() {
   context_digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$INVESTIGATION_CONTEXT_PATH")"
   context_bytes="$(wc -c < "$INVESTIGATION_CONTEXT_PATH" | tr -d ' ')"
   context_sha256="$(sha256sum "$INVESTIGATION_CONTEXT_PATH" | awk '{print $1}')"
+  if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+    "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+    arnold_pipelines.megaplan.cloud.repair_investigation observe \
+    --context "$INVESTIGATION_CONTEXT_PATH" \
+    --output "$INVESTIGATION_OBSERVATION_PATH" >>"$LOG" 2>&1; then
+    repair_data_set_outcome "fixer_infrastructure_failure"
+    persist_repair_investigation_failure \
+      "context_construction" \
+      "bounded repair observation construction failed" \
+      "$INVESTIGATION_OBSERVATION_PATH" "$context_digest"
+    log "bounded repair observation build failed session=$SESSION"
+    return 1
+  fi
+  investigator_mode="${CLOUD_WATCHDOG_REPAIR_FORCE_INVESTIGATOR_MODE:-auto}"
+  investigator_model="$REPAIR_INVESTIGATOR_MODEL"
+  if [[ "$investigator_mode" == "auto" ]]; then
+    if command -v bwrap >/dev/null 2>&1 && bwrap --ro-bind / / true >/dev/null 2>&1; then
+      investigator_mode="codex_read_only"
+    else
+      investigator_mode="brokered_no_tools"
+    fi
+  fi
+  if [[ "$investigator_mode" == "codex_read_only" ]] && ! command -v codex >/dev/null 2>&1; then
+    investigator_mode="brokered_no_tools"
+  fi
+  if [[ "$investigator_mode" == "brokered_no_tools" ]] && [[ ! -f "$HERMES_LAUNCHER" ]]; then
+    log "L1 brokered investigation unavailable: Hermes launcher missing; refusing mutation"
+    return 1
+  fi
+  if [[ "$investigator_mode" == "brokered_no_tools" ]]; then
+    investigator_model="$REPAIR_BROKERED_INVESTIGATOR_MODEL"
+  fi
   cat > "$INVESTIGATOR_PROMPT_PATH" <<EOF
 You are the read-only investigator for automatic repair session $SESSION.
 
@@ -6983,6 +7017,20 @@ Read that artifact. It contains the exact current error, frozen goal checkpoint,
 
 Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. A frozen repair checkpoint is the immutable acceptance baseline for an outcome, not a requirement that every successor blocker have the same failure label; when goal/session/plan identity remains consistent, a fresh authoritative successor blocker should receive its bounded repair action under the same goal. Unknown or genuinely conflicting identity/custody, guard-weakening risk, or no safe target must recommend replan. When l2_replan_authorization.verified is true, its receipt-bound epoch resolves the otherwise-unowned repair-custody contradiction for this one L1 cycle: if identity and external guards agree and no runner must be preserved, choose recover_state with the exact supported_cli mutation; never replan solely because the goal was previously unowned. Without that verified authorization, contradictory repair ownership must use replan with safe_repair_target.kind=repair_custody, which names the L2/root-cause target but authorizes no L1 mutation. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
 EOF
+  if [[ "$investigator_mode" == "brokered_no_tools" ]]; then
+    cat >>"$INVESTIGATOR_PROMPT_PATH" <<EOF
+
+The host cannot enforce filesystem sandboxing. A trusted local broker verified
+the authoritative context digest and emitted this bounded, typed observation.
+You have no tools and no mutation authority; reason only from this observation.
+
+<verified_bounded_observation>
+EOF
+    cat "$INVESTIGATION_OBSERVATION_PATH" >>"$INVESTIGATOR_PROMPT_PATH"
+    cat >>"$INVESTIGATOR_PROMPT_PATH" <<'EOF'
+</verified_bounded_observation>
+EOF
+  fi
   redact_file_in_place "$INVESTIGATOR_PROMPT_PATH"
   prompt_bytes="$(wc -c < "$INVESTIGATOR_PROMPT_PATH" | tr -d ' ')"
   if [[ ! "$prompt_bytes" =~ ^[0-9]+$ ]] || (( prompt_bytes > 65536 )); then
@@ -7002,10 +7050,10 @@ EOF
     --project-dir "$RUN_DIR"
     --task-kind root_cause
     --difficulty 8
-    --model "$REPAIR_INVESTIGATOR_MODEL"
+    --model "$investigator_model"
     --reasoning-effort high
     --route-class repair_read_only_investigator
-    --backend codex
+    --backend "$investigator_mode"
     --command-display "automatic repair bounded investigator"
     --description "Read-only investigation of ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-repair blocker} for $SESSION at ${PLAN_NAME:-current plan}; produce evidence and a mutation verdict"
     --origin-kind repair_loop_worker
@@ -7021,10 +7069,21 @@ EOF
     --link "cloud_session=$SESSION"
     --link "phase=repair_investigator"
     "${parent_args[@]}"
-    -- timeout "$investigator_timeout" codex exec --skip-git-repo-check --sandbox read-only
-      -c model="$REPAIR_INVESTIGATOR_MODEL" -c model_reasoning_effort=high
-      --output-last-message "$INVESTIGATOR_RECEIPT_PATH" -
   )
+  if [[ "$investigator_mode" == "codex_read_only" ]]; then
+    managed_cmd+=(
+      -- timeout "$investigator_timeout" codex exec --skip-git-repo-check --sandbox read-only
+        -c model="$REPAIR_INVESTIGATOR_MODEL" -c model_reasoning_effort=high
+        --output-last-message "$INVESTIGATOR_RECEIPT_PATH" -
+    )
+  else
+    managed_cmd+=(
+      -- bash -c 'ARNOLD_NESTED_MANAGED_AGENT_WORKER=1 exec "$1" -P "$2" --model "$3" --toolsets "" --query_file "$4" --project_dir "$5" --max_tokens 16384 > "$6"' \
+        _ "$MEGAPLAN_SUPERVISOR_PYTHON" "$HERMES_LAUNCHER" \
+        "$REPAIR_BROKERED_INVESTIGATOR_MODEL" "$INVESTIGATOR_PROMPT_PATH" \
+        "$RUN_DIR" "$INVESTIGATOR_RECEIPT_PATH"
+    )
+  fi
   (cd "$RUN_DIR" && "${managed_cmd[@]}") >>"$LOG" 2>&1
   rc=$?
   investigator_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
@@ -7043,6 +7102,7 @@ EOF
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$INVESTIGATOR_RECEIPT_PATH" \
       --context-digest "$context_digest" \
+      --observation "$INVESTIGATION_OBSERVATION_PATH" \
       --context "$INVESTIGATION_CONTEXT_PATH" 2>&1
   )" || {
     printf '%s\n' "$validation_output" >>"$LOG"
@@ -7092,6 +7152,29 @@ Authoritative bounded artifacts (all are inside the read-only sandbox root):
 
 Read those artifacts. Preserve the evidence-grounded diagnosis, authority boundary, and safety guards. Correct only the contract defect. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
 EOF
+    if [[ "$investigator_mode" == "brokered_no_tools" ]]; then
+      cat >>"$correction_prompt_path" <<'EOF'
+
+The host cannot enforce filesystem sandboxing. You have no tools. The trusted
+broker provides the complete bounded inputs below; do not infer other access.
+
+<verified_bounded_observation>
+EOF
+      cat "$INVESTIGATION_OBSERVATION_PATH" >>"$correction_prompt_path"
+      cat >>"$correction_prompt_path" <<'EOF'
+</verified_bounded_observation>
+<invalid_candidate_receipt>
+EOF
+      cat "$invalid_receipt_path" >>"$correction_prompt_path"
+      cat >>"$correction_prompt_path" <<'EOF'
+</invalid_candidate_receipt>
+<validator_error>
+EOF
+      cat "$validation_error_path" >>"$correction_prompt_path"
+      cat >>"$correction_prompt_path" <<'EOF'
+</validator_error>
+EOF
+    fi
     redact_file_in_place "$correction_prompt_path"
     prompt_bytes="$(wc -c < "$correction_prompt_path" | tr -d ' ')"
     if [[ ! "$prompt_bytes" =~ ^[0-9]+$ ]] || (( prompt_bytes > 65536 )); then
@@ -7123,6 +7206,7 @@ EOF
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$INVESTIGATOR_RECEIPT_PATH" \
       --context-digest "$context_digest" \
+      --observation "$INVESTIGATION_OBSERVATION_PATH" \
       --context "$INVESTIGATION_CONTEXT_PATH" >>"$LOG" 2>&1; then
       repair_data_set_outcome "fixer_infrastructure_failure"
       persist_repair_investigation_failure \
@@ -7134,25 +7218,29 @@ EOF
     fi
   }
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
-    "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY' || return 1
+    "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATION_OBSERVATION_PATH" \
+    "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY' || return 1
 import json
 import pathlib
 import sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
-data_path, context_path, receipt_path, digest, run_id = sys.argv[1:]
+data_path, context_path, observation_path, receipt_path, digest, run_id = sys.argv[1:]
 payload = load_json(pathlib.Path(data_path), default={})
 from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
 receipt = json.loads(pathlib.Path(receipt_path).read_text(encoding="utf-8"))
 context = json.loads(pathlib.Path(context_path).read_text(encoding="utf-8"))
+observation = json.loads(pathlib.Path(observation_path).read_text(encoding="utf-8"))
 validated = validate_investigator_receipt(
     receipt,
     expected_context_digest=digest,
+    observation_bundle=observation,
     investigation_context=context,
 )
 payload["investigation"] = {
     "context_path": context_path,
     "context_digest": digest,
     "receipt_path": receipt_path,
+    "observation_path": observation_path,
     "investigator_run_id": run_id,
     "receipt_digest": validated.get("receipt_digest"),
     "target_kind": validated.get("target_kind"),
