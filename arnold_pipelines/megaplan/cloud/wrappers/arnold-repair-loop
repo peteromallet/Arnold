@@ -104,7 +104,8 @@ INVESTIGATION_BUILD_ERROR_PATH="$RUN_DIR/repair-investigation-context-error.log"
 
 load_resident_delegation_context() {
   local encoded rc
-  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$MARKER_PATH" <<'PY'
+  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$MARKER_PATH" "${ARNOLD_MANAGED_AGENT_MANIFEST:-}" <<'PY'
 import json
 import os
 import sys
@@ -125,6 +126,22 @@ if raw:
         print(f"invalid inherited resident delegation provenance: {exc}", file=sys.stderr)
         raise SystemExit(65)
     raise SystemExit(0)
+
+manifest_path = str(sys.argv[2] or "").strip()
+if manifest_path:
+    try:
+        manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"invalid managed-agent provenance manifest: {exc}", file=sys.stderr)
+        raise SystemExit(65)
+    payload = manifest.get("upstream_custody") if isinstance(manifest, dict) else None
+    if payload is not None:
+        try:
+            print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+        except Exception as exc:
+            print(f"invalid managed-agent upstream custody: {exc}", file=sys.stderr)
+            raise SystemExit(65)
+        raise SystemExit(0)
 
 path = Path(sys.argv[1])
 try:

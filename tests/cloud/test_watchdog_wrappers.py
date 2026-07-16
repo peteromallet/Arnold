@@ -192,6 +192,23 @@ def _extract_repair_function(name: str) -> str:
     return text[start:end]
 
 
+def test_repair_wrappers_restore_managed_upstream_custody_before_marker() -> None:
+    repair = _repair_wrapper()
+    meta = _meta_repair_wrapper()
+
+    for wrapper in (repair, meta):
+        function = wrapper[
+            wrapper.index("load_resident_delegation_context() {") :
+            wrapper.index("\n}\n", wrapper.index("load_resident_delegation_context() {")) + 3
+        ]
+        assert '"${ARNOLD_MANAGED_AGENT_MANIFEST:-}"' in function
+        assert 'manifest.get("upstream_custody")' in function
+        assert function.index('manifest.get("upstream_custody")') < function.index(
+            'marker.get("resident_delegation")'
+        )
+        assert "invalid managed-agent upstream custody" in function
+
+
 def _extract_wrapper_function(name: str) -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index(f"{name}() {{")
