@@ -191,14 +191,14 @@ does not permit the implementation chain to claim a retired or deployed path.
 
 ## Canonical index and history
 
-- `critique-ledger/README.md` — current-truth front door for the independent
+- `../critique-ledger/README.md` — current-truth front door for the independent
   **Critique Loop / Cumulative Finding Ledger Implementation Epic**. Its scoped
-  North Star, six-sprint chain, WBC annex, M6 validation sequence, and prep
-  rubric do not replace or modify this initiative's compiler chain.
-- `briefs/domain-specific-critique-finding-ledger.md` — exact canonical source
-  plan for that critique-loop epic, imported from resident run
-  `subagent-20260716-202849-a282ad85` with SHA-256
-  `889f0f7e67e395d1f9b7a45336ddabac4ec49f940d8874ddabf0a9e094f022bc`.
+  North Star, five-sprint/approximately-ten-week big-bang chain, cloud launch
+  record, WBC annex, M6 migration gates, and prep rubric do not replace or
+  modify this initiative's compiler chain.
+- `briefs/domain-specific-critique-finding-ledger.md` — canonical source brief
+  for that critique-loop epic. Its original imported provenance remains recorded
+  in the brief; the current plan supersedes its former shadow/canary framing.
 - `NORTHSTAR.md` — locked product destination, invariants, success measures, and
   anti-scope.
 - `chain.yaml` — current eight-milestone executable chain specification.

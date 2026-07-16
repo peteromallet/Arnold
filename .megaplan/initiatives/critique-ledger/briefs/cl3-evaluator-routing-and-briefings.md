@@ -24,7 +24,7 @@ for mandatory reconciliation.
 ## Out of scope
 
 Final semantic reconciliation/disposition decisions, reviser/gate consumption,
-shadow experiments, canary enablement, changing severity/gate authority, or a
+cutover/retirement, changing severity/gate authority, or a
 new domain ontology.
 
 ## Locked decisions
@@ -42,7 +42,8 @@ new domain ontology.
 - What default/floor domains and blind capacity apply per robustness profile?
 - Is briefing synthesis performed by the evaluator or a bounded curator call?
 - What token/latency budget triggers compression versus split?
-- How are cross-domain inclusion/exclusion explanations evaluated in shadow?
+- How are cross-domain inclusion/exclusion explanations checked in the frozen
+  fixture suite before cutover?
 
 ## Constraints
 

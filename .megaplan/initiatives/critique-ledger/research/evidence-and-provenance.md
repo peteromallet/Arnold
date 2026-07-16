@@ -1,9 +1,17 @@
 # Evidence, provenance, and landed-versus-proposed audit
 
+## Superseding rollout decision
+
+The original evidence below records the proposal as it existed before the
+user's coordinated-cutover decision. Current authority lives in the epic README,
+North Star, five-milestone chain, briefs, WBC annex, and M6 validation gates.
+Canary, prolonged shadow/report-only authority, broad mixed-version support, and
+multi-boundary rollback are historical proposals, not current roadmap work.
+
 ## Canonical source and import custody
 
 The scope anchor is
-`../briefs/domain-specific-critique-finding-ledger.md`, titled **Cumulative
+`../session-knowledge-compiler/briefs/domain-specific-critique-finding-ledger.md`, titled **Cumulative
 Domain-Specific Critique Finding Ledger**. It was copied byte-for-byte from the
 untracked canonical initiative material in `/workspace/arnold` into the clean
 isolated worktree based on
@@ -73,7 +81,7 @@ semantic ledger.
 Everything under this scoped epic—cumulative semantic identity, append-only
 reconciliation/disposition events, full domain briefings, optional blind plus
 mandatory history-aware passes, model-led semantic deduplication, honest gate
-claims, shadow comparison, and canary—is proposed. CL1 must still decide the
+claims, and coordinated cutover/retirement—is proposed. CL1 must still decide the
 exact stored-versus-projected disposition mapping, evaluator-versus-curator
 split, stable semantic identity representation, privacy/retention class,
 historical unknown behavior, and the replacement UX for exact-text recurrence.
