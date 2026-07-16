@@ -126,7 +126,8 @@ META_INVESTIGATION_MAX_BYTES=65536
 load_resident_delegation_context() {
   local marker_path encoded rc
   marker_path="$MARKER_DIR/$SESSION.json"
-  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$marker_path" <<'PY'
+  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$marker_path" "${ARNOLD_MANAGED_AGENT_MANIFEST:-}" <<'PY'
 import json
 import os
 import sys
@@ -146,6 +147,21 @@ if raw:
         print(f"invalid inherited resident delegation provenance: {exc}", file=sys.stderr)
         raise SystemExit(65)
     raise SystemExit(0)
+manifest_path = str(sys.argv[2] or "").strip()
+if manifest_path:
+    try:
+        manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"invalid managed-agent provenance manifest: {exc}", file=sys.stderr)
+        raise SystemExit(65)
+    payload = manifest.get("upstream_custody") if isinstance(manifest, dict) else None
+    if payload is not None:
+        try:
+            print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+        except Exception as exc:
+            print(f"invalid managed-agent upstream custody: {exc}", file=sys.stderr)
+            raise SystemExit(65)
+        raise SystemExit(0)
 try:
     marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 except (OSError, ValueError, TypeError):
