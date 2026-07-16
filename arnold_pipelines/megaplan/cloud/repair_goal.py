@@ -1293,7 +1293,24 @@ def evaluate_repair_goal(
             and isinstance(candidate_record.get("observation"), Mapping)
             else None
         )
-        if evaluation["status"] == GOAL_PROGRESSED:
+        if (
+            evaluation["status"] == GOAL_PROGRESSED
+            and evaluation.get("superseded_blocker") is True
+        ):
+            # A durable chain cursor/plan transition makes this frozen goal's
+            # blocker identity obsolete.  The live-runner recovery contract
+            # applies to proof that the *same* target was repaired; applying
+            # it here creates a catch-22 in which the stale goal demands the
+            # successor runner before allowing the watchdog to launch it.
+            payload.pop("recovery_candidate", None)
+            evaluation.update(
+                {
+                    "recovery_gate_accepted": False,
+                    "recovery_gate_not_applicable": "superseded_target",
+                    "recovery_gate_reasons": [],
+                }
+            )
+        elif evaluation["status"] == GOAL_PROGRESSED:
             if not _canonical_runner_live(observation):
                 reasons = ["canonical_runner_not_live"]
                 receipt = _recovery_receipt(

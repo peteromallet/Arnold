@@ -263,6 +263,32 @@ def test_later_authoritative_transition_beyond_checkpoint_completes_goal(
     assert result["recovery_acceptance"]["accepted"] is True
 
 
+def test_terminal_cursor_transition_closes_stale_goal_before_successor_launch(
+    tmp_path: Path,
+) -> None:
+    path, goal = _goal(tmp_path)
+    state_path = Path(goal["frozen_checkpoint"]["plan_state_path"])
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["current_state"] = "done"
+    state["latest_failure"] = None
+    _write_json(state_path, state)
+    chain_path = Path(goal["frozen_checkpoint"]["chain_state_path"])
+    chain = json.loads(chain_path.read_text(encoding="utf-8"))
+    chain["completed"].append({"plan": "frozen-plan", "status": "done"})
+    chain["current_milestone_index"] = 5
+    chain["current_plan_name"] = None
+    chain["last_state"] = "pr_closed"
+    _write_json(chain_path, chain)
+
+    result = evaluate_repair_goal(path, action="watchdog_authority_check")
+
+    assert result["status"] == GOAL_PROGRESSED
+    assert result["semantic_completion"] is True
+    assert result["evaluation"]["superseded_blocker"] is True
+    assert result["evaluation"]["recovery_gate_not_applicable"] == "superseded_target"
+    assert result["evaluation"]["control_action"] == "complete"
+
+
 def test_replacement_session_evidence_cannot_complete_original_goal(tmp_path: Path) -> None:
     path, goal = _goal(tmp_path)
     target = goal["target"]
