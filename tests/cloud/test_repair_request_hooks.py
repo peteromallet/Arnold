@@ -230,6 +230,51 @@ class TestLifecycleFailureEnqueue:
         assert target["plan_dir"] == str(plan_dir)
         assert "workspace_path" in target
 
+    def test_phase_contract_lifecycle_request_allocates_identity_before_acceptance(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
+        from arnold_pipelines.megaplan.cloud.repair_contract import blocker_id_for_fingerprint
+
+        plan_dir = (
+            tmp_path
+            / ".megaplan"
+            / "plans"
+            / "m6-exact-contract-and-20260716-1303"
+        )
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"current_state": "blocked"}), encoding="utf-8"
+        )
+
+        _enqueue_lifecycle_failure_request(
+            plan_dir=plan_dir,
+            queue_root=_queue_root(tmp_path),
+            session="custody-control-plane-20260714",
+            run_kind="chain",
+            kind="deterministic_phase_failure",
+            message="duplicate worker-local flag IDs and blank evidence",
+            current_state="blocked",
+            phase="critique",
+            suggested_action="repair the deterministic phase contract",
+            metadata={"count": 3, "max_attempts": 3},
+            retry_strategy="repair_phase_contract",
+        )
+
+        request = _read_requests(_queue_root(tmp_path))[0]
+        assert request["problem_signature"]["blocked_task_id"] == "phase:critique"
+        assert request["target"]["retry_strategy"] == "repair_phase_contract"
+        assert request["blocker_id"] == blocker_id_for_fingerprint(
+            request["blocker_fingerprint"]
+        )
+        accepted = [
+            decision
+            for decision in _read_decisions(_queue_root(tmp_path))
+            if decision["decision"] == "accepted"
+        ]
+        assert [decision["request_id"] for decision in accepted] == [
+            request["request_id"]
+        ]
     def test_duplicate_lifecycle_failure_coalesces(self, tmp_path: Path) -> None:
         """Same failure kind+state+plan_dir submitted twice coalesces into
         a single request with a coalesced decision for the second."""

@@ -40,7 +40,12 @@ def _signature(**overrides: str) -> dict[str, str]:
     return base
 
 
-def _write_marker(marker_dir: Path, workspace: Path, session: str = "demo") -> Path:
+def _write_marker(
+    marker_dir: Path,
+    workspace: Path,
+    session: str = "demo",
+    plan_name: str = "m3",
+) -> Path:
     marker_dir.mkdir(parents=True, exist_ok=True)
     spec = workspace / "chain.yaml"
     spec.parent.mkdir(parents=True, exist_ok=True)
@@ -52,7 +57,7 @@ def _write_marker(marker_dir: Path, workspace: Path, session: str = "demo") -> P
                 "workspace": str(workspace),
                 "remote_spec": str(spec),
                 "run_kind": "chain",
-                "plan_name": "m3",
+                "plan_name": plan_name,
             }
         ),
         encoding="utf-8",
@@ -308,6 +313,7 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert managed["schema_version"] == "arnold-managed-agent-run-v2"
     assert managed["launch_provenance"]["transport"] == "automatic_system"
     assert managed["links"]["repair_request_id"] == queued["request"]["request_id"]
+    assert managed["links"]["blocker_id"] == queued["request"]["blocker_id"]
     dispatched = [item for item in _decisions(marker_dir) if item["decision"] == "dispatched"]
     assert len(dispatched) == 1
     payload = _read_json_eventually(tmp_path / "repair-args.json")
@@ -319,6 +325,79 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert payload["repair_session"] == "demo"
     assert payload["repair_run_kind"] == "chain"
     assert not (marker_dir.parent / "repair-queue").exists()
+
+
+def test_m6_phase_failure_persisted_identity_reaches_claim_and_autofixer_launch(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    plan_name = "m6-exact-contract-and-20260716-1303"
+    spec = _write_marker(marker_dir, workspace, plan_name=plan_name)
+    _write_chain_state_for_spec(workspace, spec, current_plan_name=plan_name)
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "critique",
+                    "retry_strategy": "repair_phase_contract",
+                },
+                "latest_failure": {
+                    "kind": "deterministic_phase_failure",
+                    "phase": "critique",
+                    "message": "duplicate worker-local flag IDs and blank evidence",
+                    "metadata": {"count": 3, "max_attempts": 3},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=_queue_root(workspace),
+        marker_dir=marker_dir,
+        session="demo",
+        source="lifecycle_failure",
+        workspace=workspace,
+        run_kind="chain",
+        target={
+            "plan_dir": str(plan_dir),
+            "plan_name": plan_name,
+            "workspace_path": str(workspace),
+            "retry_strategy": "repair_phase_contract",
+        },
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "critique",
+            "milestone_or_plan": plan_name,
+            "gate_recommendation": "repair the deterministic phase contract",
+            "blocked_task_id": "",
+        },
+        root_cause_hint="duplicate worker-local flag IDs and blank evidence",
+        created_at="2026-07-16T13:35:03Z",
+    )
+
+    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=True)
+
+    assert result.returncode == 0, result.stderr
+    request = queued["request"]
+    assert request["problem_signature"]["blocked_task_id"] == "phase:critique"
+    dispatch = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
+    )
+    manifest = _read_json_eventually(Path(dispatch["managed_manifest_path"]))
+    assert manifest["links"]["repair_request_id"] == request["request_id"]
+    assert manifest["links"]["blocker_id"] == request["blocker_id"]
+    claim_path = repair_requests.active_repair_claim_lock_dir(
+        _queue_root(workspace), request["blocker_id"]
+    ) / "owner.json"
+    claim = _read_json_eventually(claim_path)
+    assert claim["request_id"] == request["request_id"]
+    assert claim["blocker_id"] == request["blocker_id"]
 
 
 def test_trigger_suppresses_dispatch_claim_when_worker_is_unavailable(

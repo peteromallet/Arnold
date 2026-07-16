@@ -201,6 +201,109 @@ def request_id_for(
     )
 
 
+def _default_retry_strategy(
+    problem_signature: Mapping[str, Any],
+    target: Mapping[str, Any],
+) -> str:
+    explicit = str(
+        problem_signature.get("retry_strategy")
+        or target.get("retry_strategy")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+    failure_kind = str(problem_signature.get("failure_kind") or "").strip()
+    return {
+        "deterministic_phase_failure": "repair_phase_contract",
+        "human_gate": "human_decision",
+        "awaiting_pr_merge": "reconcile_pr_merge",
+        "blocked_recovery_not_resolved": "manual_review",
+    }.get(failure_kind, "repair_request")
+
+
+def _canonicalize_blocked_task_id(problem_signature: dict[str, Any]) -> None:
+    if str(problem_signature.get("blocked_task_id") or "").strip():
+        return
+    phase = str(problem_signature.get("phase_or_step") or "").strip()
+    if phase:
+        problem_signature["blocked_task_id"] = f"phase:{phase}"
+        return
+    milestone = str(problem_signature.get("milestone_or_plan") or "").strip()
+    if milestone:
+        problem_signature["blocked_task_id"] = f"plan:{milestone}"
+
+
+def _canonical_request_blocker_identity(
+    *,
+    session: str,
+    workspace: str | Path | None,
+    target: Mapping[str, Any],
+    problem_signature: Mapping[str, Any],
+    signature_key: str,
+) -> tuple[dict[str, Any], str]:
+    """Allocate the immutable claim identity before a request can be accepted."""
+
+    session_identity = str(session or "").strip()
+    current_state = str(problem_signature.get("current_state") or "").strip()
+    failure_kind = str(problem_signature.get("failure_kind") or "").strip()
+    phase_or_step = str(problem_signature.get("phase_or_step") or "").strip()
+    milestone_or_plan = str(
+        problem_signature.get("milestone_or_plan")
+        or target.get("plan_name")
+        or target.get("plan")
+        or target.get("pipeline_name")
+        or session_identity
+    ).strip()
+    blocked_task_id = str(problem_signature.get("blocked_task_id") or "").strip()
+    missing = [
+        field
+        for field, value in (
+            ("session", session_identity),
+            ("current_state", current_state),
+            ("failure_kind", failure_kind),
+            ("phase_or_step", phase_or_step),
+            ("milestone_or_plan", milestone_or_plan),
+            ("blocked_task_id", blocked_task_id),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(
+            "repair request cannot allocate canonical blocker identity; missing "
+            + ", ".join(missing)
+        )
+
+    target_identity = {
+        "session": session_identity,
+        "workspace": str(
+            workspace
+            or target.get("workspace_path")
+            or target.get("workspace")
+            or ""
+        ),
+        "plan": milestone_or_plan,
+        "plan_dir": str(target.get("plan_dir") or ""),
+        "pipeline": str(target.get("pipeline_name") or ""),
+        "problem_signature_key": signature_key,
+    }
+    fingerprint = repair_contract.normalize_blocker_fingerprint_v1(
+        {
+            "schema_version": repair_contract.BLOCKER_FINGERPRINT_VERSION,
+            "current_state": current_state,
+            "retry_strategy": _default_retry_strategy(problem_signature, target),
+            "failure_kind": failure_kind,
+            "phase_or_step": phase_or_step,
+            "milestone_or_plan": milestone_or_plan,
+            "blocked_task_id": blocked_task_id,
+            "target_fingerprint": "repair-target:v1:" + _sha256_json(target_identity),
+        }
+    )
+    blocker_id = repair_contract.blocker_id_for_fingerprint(fingerprint)
+    if fingerprint is None or blocker_id is None:
+        raise ValueError("repair request canonical blocker identity is invalid")
+    return dict(fingerprint), blocker_id
+
+
 def enqueue_repair_request(
     *,
     queue_root: str | Path,
@@ -233,6 +336,7 @@ def enqueue_repair_request(
 
     # ── Merge acceptance predicate fields into the problem signature ──────
     extended_signature = dict(problem_signature)
+    _canonicalize_blocked_task_id(extended_signature)
     extra_fields: tuple[str, ...] = ()
     if acceptance_predicate_failure is not None:
         extra_fields = ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS
@@ -270,6 +374,17 @@ def enqueue_repair_request(
     normalized_signature = normalize_problem_signature(
         extended_signature, extra_fields=extra_fields
     )
+    signature_key = problem_signature_key(
+        normalized_signature, extra_fields=extra_fields
+    )
+    stable_target = _stable_mapping(target or {})
+    blocker_fingerprint, blocker_id = _canonical_request_blocker_identity(
+        session=session,
+        workspace=workspace,
+        target=stable_target,
+        problem_signature=extended_signature,
+        signature_key=signature_key,
+    )
     hint_hash = redacted_hint_hash(root_cause_hint)
     request_id = request_id_for(
         session=session,
@@ -289,11 +404,11 @@ def enqueue_repair_request(
         "run_kind": str(run_kind or "").strip(),
         "marker_dir": str(Path(marker_dir)) if marker_dir is not None else "",
         "queue_dir": str(queue_root),
-        "target": _stable_mapping(target or {}),
+        "target": stable_target,
         "problem_signature": normalized_signature,
-        "problem_signature_key": problem_signature_key(
-            normalized_signature, extra_fields=extra_fields
-        ),
+        "problem_signature_key": signature_key,
+        "blocker_fingerprint": blocker_fingerprint,
+        "blocker_id": blocker_id,
         "root_cause_hint_hash": hint_hash,
         "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
     }
@@ -526,6 +641,27 @@ def write_decision(
     created_at: str | None = None,
 ) -> dict[str, Any]:
     """Write an immutable decision record separate from request markers."""
+
+    if decision == "accepted":
+        request_path = requests_dir(queue_dir) / f"{str(request_id or '').strip()}.json"
+        try:
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                "accepted repair request requires a persisted canonical blocker identity"
+            ) from exc
+        fingerprint = repair_contract.normalize_blocker_fingerprint_v2(
+            request.get("blocker_fingerprint") if isinstance(request, dict) else None
+        )
+        expected_blocker_id = repair_contract.blocker_id_for_fingerprint(fingerprint)
+        if (
+            not isinstance(request, dict)
+            or not expected_blocker_id
+            or request.get("blocker_id") != expected_blocker_id
+        ):
+            raise ValueError(
+                "accepted repair request requires a persisted canonical blocker identity"
+            )
 
     when = created_at or utc_now()
     record = {

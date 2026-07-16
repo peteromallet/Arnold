@@ -281,3 +281,38 @@ The canonical watchdog tmux supervisor remained PID 169; no resident restart, br
 | 2026-07-16T13:11:25.832123Z | More than eight minutes after launch, PID 2012436 remained live under watchdog custody and M6 event sequence 982 recorded fresh `prep-distill` token activity; no latest failure was present. |
 
 Acceptance passed because three independent sources agree: raw chain JSON names M6 as the current plan; M6's own state/events show an initialized plan with a live, fresh `prep` worker; and the matching process is alive under watchdog supervisor custody. The chain-level `last_state=done` projection remained stale-looking at the checkpoint and is explicitly not used as success evidence. M6 had initialized and was actively executing prep; it had not yet completed. Rollback was not invoked. If the live M6 worker loses fresh activity without authoritative state progress, the ordinary watchdog/L3 path remains responsible for the new M6 blocker rather than reopening the superseded M5a goal.
+
+## M6 critique repair-identity follow-up — 2026-07-16
+
+### Immutable evidence
+
+The raw follow-up run is `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m6-exact-contract-and-20260716-1303/`. Its persisted `state.json` (SHA-256 `71f6737808c524f9058e4fc0ae82a9345bff2577f443f4730d75fbde83cb57db` at capture) records a `deterministic_phase_failure` in `critique`, retry strategy `repair_phase_contract`, and the third identical `critique_finding_identity_invalid` result. The error names duplicate worker-local IDs (`FLAG-001` through `FLAG-004`) and two flags with empty evidence.
+
+The producer artifacts preserve the input shape. In particular, `critique_check_correctness_producer_v1.json` (SHA-256 `fbb20bae864de95c34085bc5ec11ba75ba9965b952b27846ca55dc41cd65d2e7`) and `critique_check_scope_producer_v1.json` (SHA-256 `aff78677ec5cf59f3f02d66c7be52d7ac0532df18f9be96f2f5e69410507fffa`) both use worker-local `FLAG-001`/`FLAG-002` identities. `critique_check_criteria_quality_producer_v1.json` (SHA-256 `95cf40e519ef76db43406d5d62267da84cc6b968c3bca83a547421648656f8ea`) contains flagged finding fields with blank category, severity, evidence, and finding identity. These are valid immutable evidence of the producer/reducer contract defect; they are not canonical repair identities.
+
+The lifecycle intake wrote `/workspace/.megaplan/repair-queue/requests/844ad06e9a0dd0bd2af37b53e5c8f4021b9117adfae2b8d4756164281450bdd2.json` at 2026-07-16T13:35:03Z (SHA-256 `ac2b43d6613d4ad06de53b8b6b15f8cdf7c66b1670b9a8c7e452c6d442e5652c`). The immutable request has `blocked_task_id: ""` and has no `blocker_id` or `blocker_fingerprint`. Its accepted decision, `/workspace/.megaplan/repair-queue/decisions/20260716T133503Z-e5099e6cc96ac3993474c4f8d40a07073861d3e6b824e25348c7bce6b2307c9d.json` (SHA-256 `dbeb27593090559cf4f9613f27e006f5a16d250030eabd5b1aff156ee7943593`), says only `accepted/queued`.
+
+The ordinary trigger then wrote two bounded failures for the same accepted request: `20260716T142448Z-efdc2e8b5bd963868713d1c3efe0e5799261df825a15cb9a3b2ae6c5eec86a80.json` and `20260716T142758Z-9e982a12872f0a4c1a46eefec73dc93c3a02c7b89605243df51a102672f9fe2f.json`. Both are `claim_retry`; their reasons are respectively `claim handoff 1/3: canonical blocker_id missing` and `claim handoff 2/3: canonical blocker_id missing`. No matching file exists under the queue's `attempts/` or `active-claims/` trees, so the request never acquired custody and never launched an autofixer.
+
+### Earliest invariant violation and causal path
+
+Evidence establishes this path:
+
+1. Parallel critique workers emitted producer-local flag IDs and incomplete finding evidence.
+2. The pre-fix reducer combined those local IDs without global identity allocation and the critique custody validator failed closed after three identical attempts.
+3. `auto._record_lifecycle_failure` called `_enqueue_lifecycle_failure_request`, which supplied the phase-level signature with an empty blocked-task identity.
+4. `repair_requests.enqueue_repair_request` persisted the request and wrote `accepted` without allocating or validating a canonical blocker fingerprint/ID.
+5. `repair_contract.project_repair_custody` attempted to reconstruct identity later from mutable live evidence. A phase-level failure had no task ID, so reconstruction returned no blocker ID.
+6. `arnold-repair-trigger` correctly refused to claim an actionable request with no blocker ID, recorded bounded retries, and did not launch.
+
+The earliest custody invariant violation is step 4, not the later claim guard: acceptance was allowed before canonical claim identity existed. The authoritative repair is therefore at queue intake/acceptance. Every new request now canonicalizes a missing task identity to a stable phase- or plan-scoped identity, allocates and persists the blocker fingerprint/ID before the request marker can receive an `accepted` decision, and rejects direct identity-free acceptance. Request IDs remain deterministic and replay-safe; replaying the legacy M6 signature produces the phase-scoped signature rather than coalescing onto the unclaimable legacy record. Projection prefers the persisted accepted-request identity and fails closed if multiple active identities conflict. The classifier recognizes exactly `blocked + repair_phase_contract + deterministic_phase_failure` as machine-repairable when current-target evidence exists.
+
+The already-landed critique reducer fix remains the upstream prevention layer: it assigns globally stable reducer-owned IDs to duplicate worker-local flags, maps local verified/disputed references, fills blank evidence from non-blank concern text, and rejects fully blank findings locally. The repair-intake fix is independently necessary because no upstream phase bug may be allowed to create accepted but unclaimable custody.
+
+### Inference and missing telemetry
+
+It is a supported inference—not a directly journaled event—that no autofixer process started specifically because claim identity was absent: the trigger source requires a blocker ID before lock acquisition, both recorded retries name the missing ID, and there is no claim/attempt artifact. A single atomic intake receipt linking the exact phase-output digest, lifecycle state mutation, request marker, blocker allocation, and accepted decision does not exist. The resident context index also advertised session child routes that the pinned runtime could not read (`unknown context-tree node`). These are observability gaps; neither is needed to establish the root cause because the immutable phase, request, decision, and absence-of-claim records agree.
+
+### Regression proof
+
+Focused tests exercise the real boundaries: parallel aggregation with repeated worker-local IDs; blank and missing evidence normalization/fail-closed behavior; lifecycle request creation for the exact M6 phase-contract shape; immutable persistence/reload and deterministic replay; rejection of identity-free acceptance; blocker-scoped claim; and the real repair-trigger wrapper carrying the same persisted blocker ID through claim, managed-run manifest, and autofixer launch. The implementation is observe/mutation-neutral outside repair custody: it does not edit the historical M6 record, hand-advance the chain, restart a service, or weaken the trigger's missing-identity guard.

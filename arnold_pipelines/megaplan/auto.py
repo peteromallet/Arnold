@@ -2088,6 +2088,7 @@ def _record_lifecycle_failure(
         phase=phase,
         suggested_action=suggested_action,
         metadata=metadata,
+        retry_strategy=str((resume_cursor or {}).get("retry_strategy") or ""),
     )
     if progress_emitter is not None and failure_details is not None:
         if current_state == STATE_BLOCKED:
@@ -2109,6 +2110,7 @@ def _enqueue_lifecycle_failure_request(
     phase: str | None,
     suggested_action: str | None,
     metadata: dict[str, Any] | None,
+    retry_strategy: str = "",
 ) -> None:
     try:
         from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
@@ -2128,6 +2130,7 @@ def _enqueue_lifecycle_failure_request(
                 "plan_dir": str(plan_dir),
                 "plan_name": plan_dir.name,
                 "workspace_path": str(workspace_path),
+                "retry_strategy": retry_strategy,
             },
             problem_signature={
                 "failure_kind": kind,
@@ -2179,6 +2182,11 @@ def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
             phase=str(failure.get("phase") or "") or None,
             suggested_action=str(failure.get("suggested_action") or "") or None,
             metadata=metadata if isinstance(metadata, dict) else None,
+            retry_strategy=str(
+                (state.get("resume_cursor") or {}).get("retry_strategy")
+                if isinstance(state.get("resume_cursor"), dict)
+                else ""
+            ),
         )
     except Exception:
         _warn_best_effort_emit_failure(
