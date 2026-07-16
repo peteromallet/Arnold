@@ -1081,7 +1081,12 @@ def _collect_meta_run_refs(session):
         tail = _tail_with_line_numbers(path, lines=12)
         failure_code = _meta_run_failure_code(path)
         current_episode = index == 0
-        launch_failure = bool(current_episode and (failure_code or _text_has_meta_launch_failure(tail)))
+        ordinary_retrigger_failed = failure_code == "ordinary_retrigger_failed"
+        launch_failure = bool(
+            current_episode
+            and not ordinary_retrigger_failed
+            and (failure_code or _text_has_meta_launch_failure(tail))
+        )
         refs.append(
             {
                 "path": _redact_scalar(path),
@@ -1089,6 +1094,7 @@ def _collect_meta_run_refs(session):
                 "tail": _redact_scalar(tail),
                 "launch_failure": launch_failure,
                 "current_episode": current_episode,
+                "ordinary_retrigger_failed": bool(current_episode and ordinary_retrigger_failed),
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 **({"failure_code": failure_code} if failure_code else {}),
             }
@@ -1575,6 +1581,9 @@ def _meta_repair_summary(
             f"repair sidecars do not prove an unhandled meta-repair dispatch gap (alive_refs={len(watchdog_alive_refs)})"
         ]
     failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
+    ordinary_retrigger_failure_refs = [
+        item for item in run_refs if item.get("ordinary_retrigger_failed")
+    ]
     failed_meta_records = []
     recursion_guard_blocked = False
     for item in meta_refs or []:
@@ -1613,6 +1622,7 @@ def _meta_repair_summary(
         "meta_run_log_count": len(run_refs),
         "meta_run_refs": run_refs,
         "failed_meta_run_count": len(failed_run_refs),
+        "ordinary_retrigger_failure_count": len(ordinary_retrigger_failure_refs),
         "failed_meta_record_count": len(failed_meta_records),
         **({"recursion_guard_blocked": True} if recursion_guard_blocked else {}),
         "missing_meta_run_evidence": bool(should_dispatch and not meta_refs and not run_refs),
@@ -4087,7 +4097,11 @@ def _superfixer_cycle_evidence(ev):
         for item in (meta.get("meta_run_refs") or [])
         if isinstance(item, dict) and isinstance(item.get("mtime_age_min"), int)
     )
-    failed_l2 = bool(meta.get("failed_meta_run_count") or meta.get("failed_meta_record_count"))
+    failed_l2 = bool(
+        meta.get("failed_meta_run_count")
+        or meta.get("failed_meta_record_count")
+        or meta.get("ordinary_retrigger_failure_count")
+    )
     current_l2 = bool(meta_ages and min(meta_ages) <= 60 and not failed_l2)
     absent_or_stale_l2 = not current_l2
 

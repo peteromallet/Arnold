@@ -216,6 +216,45 @@ def test_superseded_snapshot_fails_closed() -> None:
     assert "evidence_snapshot_superseded" in gate["blocks"]
 
 
+def test_terminal_repair_failure_is_not_semantic_progress() -> None:
+    finding = _true_stall()
+    finding["events_mtime_age_min"] = 2
+    finding["repair_data_summary"]["mtime_age_min"] = 1
+    finding["acceptance_progress"] = {"advanced": False, "accepted_event_age_min": None}
+    finding["deterministic_superfixer_evidence"].update(
+        {"actionable": True, "runner_dead": True, "chain_incomplete": True}
+    )
+
+    gate = classify_true_stall(finding)
+
+    assert "no_progress_window_not_proven" not in gate["blocks"]
+    assert gate["progress"]["terminal_repair_failure_without_progress"] is True
+
+
+def test_ordinary_retrigger_failure_is_l2_fixed_axis_not_tracking_axis() -> None:
+    finding = _true_stall()
+    finding["meta_repair_summary"]["failed_meta_run_count"] = 0
+    finding["meta_repair_summary"]["missing_meta_run_evidence"] = False
+    finding["meta_repair_summary"]["meta_record_count"] = 1
+    finding["meta_repair_summary"]["meta_run_log_count"] = 1
+    finding["meta_repair_summary"]["meta_run_refs"] = [
+        {
+            "current_episode": True,
+            "failure_code": "ordinary_retrigger_failed",
+            "ordinary_retrigger_failed": True,
+            "launch_failure": False,
+        }
+    ]
+    finding["deterministic_superfixer_evidence"]["absent_or_stale_l2"] = False
+
+    gate = classify_true_stall(finding)
+
+    assert gate["custody_walk"]["L2"]["TRACKED"] is True
+    assert gate["custody_walk"]["L2"]["CONTEXT"] is True
+    assert gate["custody_walk"]["L2"]["FIXED"] is False
+    assert gate["custody_walk"]["L2"]["failure"]["axis"] == "FIXED"
+
+
 def test_partial_liveness_with_unclaimed_request_is_l1_context_failure() -> None:
     finding = _true_stall()
     finding["repair_data_summary"]["outcome"] = "partial_liveness"
