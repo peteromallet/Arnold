@@ -562,31 +562,23 @@ def test_watchdog_repairs_setup_deviations_instead_of_skipping() -> None:
     assert '"skip" "workspace_missing"' not in text
 
 
-def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
+def test_repair_loop_dev_prompt_uses_bounded_typed_pointers() -> None:
     text = _repair_wrapper()
+    prompt = _extract_repair_function("write_dev_prompt")
 
-    assert "## Incident Snapshot" in text
-    assert "## RECURRENCE EVIDENCE" in text
-    assert "Recurrence means the prior attempts may have treated symptoms, not the cause." in text
-    assert "Start from the inline incident snapshot above." in text
-    assert "ATTEMPT to resolve those user actions before treating this as a human stop" in text
-    assert "Classification guide:" in text
-    assert "LAST EXECUTE ATTEMPT" in text
-    assert "The root cause might be in the Arnold SOURCE" in text
-    assert "OR in the PLAN STATE" in text
-    assert "deferred or blocked rather than failed" in text
-    assert "LIVE FAILURE: The latest_failure is recent" in text
-    assert "STALE STATE: The latest_failure predates a successful run" in text
-    assert "## STATE MISMATCH DETECTED + CLEARED" in text
-    assert "state mismatch detected + cleared" in text
-    assert "repair_clear_stale_state_if_needed()" in text
-    assert 'if [[ "$INITIAL_HEALTH" == "alive" ]]' in text
-    assert "repair target already running; no dev-fix needed" in text
-    assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
-    assert "Use the raw failure signal, run narrative, and prior-attempt history" in text
-    assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
-    assert "This is a recurring problem. Do NOT pick the likely fix." in text
-    assert "Trace the actual mechanism end-to-end" in text
+    assert 'DEV_PROMPT_MAX_BYTES="${CLOUD_WATCHDOG_DEV_PROMPT_MAX_BYTES:-65536}"' in text
+    assert "Bounded authoritative pointers:" in prompt
+    assert "investigator context (maximum 65,536 bytes)" in prompt
+    assert "validated receipt (maximum 65,536 bytes)" in prompt
+    assert "managed provenance manifest" in prompt
+    assert "Act only inside the receipt's mutation scope" in prompt
+    assert "never copy expanding logs, histories, state blobs" in prompt
+    assert 'prompt_bytes="$(wc -c < "$prompt_path"' in prompt
+    assert "dev prompt exceeds ${max_bytes}-byte bound" in prompt
+    assert "render_failure_summary" not in prompt
+    assert "render_chain_health_block" not in prompt
+    assert "render_recurrence_block" not in prompt
+    assert "investigation_receipt" not in prompt
 
 
 def test_repair_loop_large_failure_context_is_passed_by_file() -> None:
@@ -646,8 +638,73 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
     assert "bearer-secret-token-value" not in dev_text
     assert "supersecret" not in dev_text
     assert "supersecret" not in kimi_text
-    assert REDACTION in dev_text
     assert REDACTION in kimi_text
+
+
+def test_repair_loop_dev_prompt_does_not_inline_pathological_evidence_and_fails_closed(
+    tmp_path: Path,
+) -> None:
+    context_path = tmp_path / "context.json"
+    receipt_path = tmp_path / "receipt.json"
+    prompt_path = tmp_path / "prompt.md"
+    oversized_prompt_path = tmp_path / "oversized-prompt.md"
+    pathological = "expanding-status-history-log" * 900_000
+    context_path.write_text(pathological, encoding="utf-8")
+    receipt_path.write_text(pathological, encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("write_dev_prompt"),
+            "render_process_custody_policy() { printf '%s\\n' 'bounded custody'; }",
+            "repair_delivery_policy() { printf '%s\\n' 'commit locally; do not push'; }",
+            "redact_file_in_place() { :; }",
+            "SESSION=demo-session",
+            "WORKSPACE=/tmp/workspace",
+            "ARNOLD_SRC=/tmp/runtime",
+            "SYNC_BRANCH=target-branch",
+            "DATA_FILE=/tmp/repair-data.json",
+            "ARNOLD_REPAIR_GOAL_ID=goal-1",
+            "ARNOLD_REPAIR_GOAL_PATH=/tmp/goal.json",
+            "ARNOLD_REPAIR_CHECKPOINT_DIGEST=checkpoint-1",
+            f"INVESTIGATION_CONTEXT_PATH={shlex.quote(str(context_path))}",
+            f"INVESTIGATOR_RECEIPT_PATH={shlex.quote(str(receipt_path))}",
+            "INVESTIGATION_CONTEXT_DIGEST=context-digest-1",
+            "DEV_PROMPT_MAX_BYTES=65536",
+            (
+                f"write_dev_prompt {shlex.quote(str(prompt_path))} requested dispatch "
+                f"{shlex.quote(str(tmp_path / 'report.json'))} 0"
+            ),
+            f"test $(wc -c < {shlex.quote(str(prompt_path))}) -lt 8192",
+            f"! grep -q expanding-status-history-log {shlex.quote(str(prompt_path))}",
+            "DEV_PROMPT_MAX_BYTES=512",
+            (
+                f"! write_dev_prompt {shlex.quote(str(oversized_prompt_path))} requested dispatch "
+                f"{shlex.quote(str(tmp_path / 'report-2.json'))} 0"
+            ),
+            f"test ! -e {shlex.quote(str(oversized_prompt_path))}",
+        ]
+    )
+
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert prompt_path.stat().st_size < 8192
+
+
+def test_repair_loop_requires_fresh_investigation_after_dev_mutation() -> None:
+    text = _repair_wrapper()
+    dev_call = text.index('run_dev_fix_turn "$iteration"')
+    reinvestigate = text.index(
+        'repair_data_set_outcome "repair_applied_reinvestigate"', dev_call
+    )
+    owner_exit = text.index("exit 1", reinvestigate)
+    legacy_recovery = text.index(
+        'recover_blocked_after_dev_fix_if_possible "$iteration"', dev_call
+    ) if 'recover_blocked_after_dev_fix_if_possible "$iteration"' in text[dev_call:] else -1
+    mechanical = text.index('mechanical_launch_step "$iteration"', dev_call)
+
+    assert reinvestigate < owner_exit < mechanical
+    assert legacy_recovery == -1
+    assert "fresh investigation required before recovery" in text[reinvestigate:mechanical]
 
 
 def test_repair_loop_effective_fixer_prompts_require_canonical_process_custody_policy(
