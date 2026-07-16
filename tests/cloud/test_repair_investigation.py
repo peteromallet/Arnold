@@ -250,6 +250,23 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
         "context_digest": "d" * 64,
     }
     _write(repair_data, payload)
+    goal_payload = json.loads(goal.read_text(encoding="utf-8"))
+    goal_payload["target"].update(
+        {
+            "session": "custody-control-plane-20260714",
+            "workspace": str(workspace),
+            "remote_spec": str(spec),
+        }
+    )
+    goal_payload["active_replan_epoch"] = 3
+    goal_payload["l2_replans"] = [
+        {
+            "epoch": 3,
+            "context_digest": context_digest,
+            "frozen_checkpoint_digest": "abc",
+        }
+    ]
+    _write(goal, goal_payload)
 
     context = build_investigation_context(
         workspace=workspace,
@@ -260,6 +277,7 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
         goal_path=goal,
         l2_handoff_path=access,
         l2_context_digest=context_digest,
+        l2_replan_epoch=3,
     )
 
     assert context["exact_error"]["failure_kind"] == "external_pr_ci_guard_failed"
@@ -269,10 +287,35 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
     assert context["request"]["stage_transition_remains_same_goal"] is True
     assert context["goal_continuity"]["status"] == "successor_blocker"
     assert context["goal_continuity"]["same_goal_continuity_valid"] is True
+    assert context["l2_replan_authorization"] == {
+        "verified": True,
+        "replan_epoch": 3,
+        "context_digest": context_digest,
+        "frozen_checkpoint_digest": "abc",
+        "allowed_recovery": "recover_state_via_supported_cli_only",
+        "forbidden": [
+            "direct_state_edit",
+            "hand_advance_chain",
+            "duplicate_live_worker",
+        ],
+    }
     source = next(
         item for item in context["evidence_sources"] if item["kind"] == "external_state"
     )
     assert source["path"] == str(external)
+
+    with pytest.raises(ValueError, match="replan authorization is stale"):
+        build_investigation_context(
+            workspace=workspace,
+            session="custody-control-plane-20260714",
+            remote_spec=str(spec),
+            repair_data_path=repair_data,
+            request_path=request,
+            goal_path=goal,
+            l2_handoff_path=access,
+            l2_context_digest=context_digest,
+            l2_replan_epoch=2,
+        )
 
     external.write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="size disagrees|digest disagrees|content disagrees"):
@@ -285,6 +328,7 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
             goal_path=goal,
             l2_handoff_path=access,
             l2_context_digest=context_digest,
+            l2_replan_epoch=3,
         )
 
 

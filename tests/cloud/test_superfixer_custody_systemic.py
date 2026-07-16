@@ -151,6 +151,9 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert "payload[handoff_key] = dict(handoff_value)" in repair_wrapper
     assert '--l2-handoff-path "$ARNOLD_REPAIR_L2_HANDOFF_PATH"' in repair_wrapper
     assert '--l2-context-digest "${ARNOLD_REPAIR_L2_CONTEXT_DIGEST:-}"' in repair_wrapper
+    assert '--l2-replan-epoch "${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}"' in repair_wrapper
+    assert "l2_replan_authorization.verified is true" in repair_wrapper
+    assert "never replan solely because the goal was previously unowned" in repair_wrapper
     assert '"latest_failure", "workspace_head"' in repair_wrapper
     assert "successor blocker should receive its bounded repair action" in repair_wrapper
     assert "load_json(pathlib.Path(receipt_path), default={})" not in repair_wrapper
