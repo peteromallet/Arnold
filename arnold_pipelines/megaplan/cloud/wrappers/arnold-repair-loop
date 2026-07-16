@@ -5565,6 +5565,14 @@ set -uo pipefail
 # turn a valid canonical relaunch into a false failed:stopped result.
 rm -f -- "\${BASH_SOURCE[0]}"
 cd $(printf '%q' "$workspace")
+# A tmux server does not inherit credentials added after it started. Load the
+# operator-managed runtime environment inside the new child, then overwrite
+# mutation gates below with this repair owner's exact authorized values.
+if [[ -f /workspace/.cloud-hot-env ]]; then
+  set -a
+  . /workspace/.cloud-hot-env
+  set +a
+fi
 export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "${ARNOLD_REPAIR_QUEUE_ROOT:-$REPAIR_QUEUE_DIR}")
 export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
 export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
