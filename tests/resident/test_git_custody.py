@@ -270,7 +270,9 @@ def test_zero_exit_worker_fails_closed_without_git_custody_receipt(
                 "project_dir": str(project),
                 "model": "gpt-test",
                 "reasoning_effort": "high",
+                "task_kind": "mechanical",
                 "work_intent": "execution",
+                "mutation_claim": "git_backed",
                 "git_custody": custody,
             }
         ),
@@ -298,3 +300,79 @@ def test_zero_exit_worker_fails_closed_without_git_custody_receipt(
     assert terminal["terminal_outcome"] == "failed"
     assert terminal["error"] == "git custody verification failed"
     assert "missing or invalid git custody evidence" in terminal["git_custody_error"]
+    assert terminal["completion_verification"]["status"] == "failed"
+
+
+def test_zero_exit_non_mutating_mechanical_result_has_applicable_success_without_git_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    _repo(project)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prompt_path = run_dir / "prompt.md"
+    result_path = run_dir / "result.md"
+    manifest_path = run_dir / "manifest.json"
+    prompt_path.write_text("choose one word", encoding="utf-8")
+    result_path.write_text("WORD_1: lantern", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-managed-agent-run-v2",
+                "run_kind": "resident_delegated_agent",
+                "custodian": "arnold.megaplan.managed_agent",
+                "status": "running",
+                "pid": 111,
+                "prompt_path": str(prompt_path),
+                "result_path": str(result_path),
+                "project_dir": str(project),
+                "model": "gpt-test",
+                "reasoning_effort": "low",
+                "task_kind": "mechanical",
+                "work_intent": "execution",
+                "mutation_claim": "none",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Worker:
+        pid = 222
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(
+        subagent_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _Worker(),
+    )
+
+    assert subagent_module._run_codex_manifest(manifest_path) == 0
+    terminal = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert terminal["status"] == "completed"
+    assert terminal["terminal_outcome"] == "completed"
+    assert "git_custody" not in terminal
+    assert terminal["completion_verification"] == {
+        "schema_version": subagent_module.COMPLETION_VERIFICATION_SCHEMA,
+        "status": "success",
+        "classification": "applicable_non_mutating_success",
+        "git_custody": "not_applicable",
+        "basis": {
+            "task_kind": "mechanical",
+            "work_intent": "execution",
+            "mutation_claim": "none",
+        },
+    }
+
+
+def test_mutation_shaped_execution_cannot_opt_out_of_git_custody() -> None:
+    with pytest.raises(ValueError, match="cannot opt out"):
+        subagent_module.resolve_delegated_mutation_claim(
+            task_kind="coding",
+            work_intent="execution",
+            mutation_claim="none",
+        )

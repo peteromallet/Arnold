@@ -1538,6 +1538,16 @@ def _managed_completion_verification_prompt(
         if isinstance(relationship, Mapping)
         else ""
     )
+    completion_verification = manifest.get("completion_verification")
+    verification_context = (
+        "Resident completion-verification contract outcome:\n"
+        + json.dumps(completion_verification, sort_keys=True, default=str)
+        + "\nTreat applicable_non_mutating_success as an explicit applicable success; do not "
+        "request git commit/diff/clean-worktree evidence for that classification. Git-backed "
+        "mutation still requires git_backed_mutation_custody_verified.\n\n"
+        if isinstance(completion_verification, Mapping)
+        else ""
+    )
     return (
         "A resident-managed delegated execution has reached a terminal state and now requires "
         "independent completion verification. Do not accept its final response as proof.\n\n"
@@ -1550,6 +1560,7 @@ def _managed_completion_verification_prompt(
         f"Delegated final claim: {resolved_path('result_path', 'result.md')}\n"
         f"Full delegated log: {resolved_path('full_log_path', str(manifest.get('log_path') or 'run.log'))}\n\n"
         f"{relationship_context}"
+        f"{verification_context}"
         "Authoritative original user request (preserve its requirements):\n"
         f"{source_message[:12000]}"
     )

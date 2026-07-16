@@ -498,6 +498,151 @@ def test_queue_happy_path_is_durable_and_duplicate_terminal_observation_launches
     assert json.loads(successor_path.read_text())["status"] == "running"
 
 
+def _launch_four_deep_non_mutating_chain(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[Path], list[Path]]:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    provenance = _discord_provenance()
+    group = "four-word-regression"
+    launched: list[Path] = []
+
+    def launch(path, manifest):
+        launched.append(path)
+        running = dict(manifest)
+        running.update({"status": "running", "pid": _Supervisor.pid})
+        path.write_text(json.dumps(running), encoding="utf-8")
+        return _Supervisor(), running
+
+    monkeypatch.setattr(subagent, "_spawn_managed_supervisor", launch)
+    first = subagent.launch_codex_subagent_detached(
+        task="Choose WORD_1 without modifying the repository.",
+        description="Choose word one",
+        project_dir=str(root),
+        launch_origin=provenance,
+        task_kind="mechanical",
+        work_intent="execution",
+        aggregation_role="internal_contributor",
+        synthesis_group=group,
+    )
+    second = subagent.launch_codex_subagent_detached(
+        task="Read WORD_1 and choose WORD_2 without modifying the repository.",
+        description="Choose word two",
+        project_dir=str(root),
+        launch_origin=provenance,
+        aggregation_role="internal_contributor",
+        synthesis_group=group,
+        depends_on_run_id=first.run_id,
+    )
+    third = subagent.launch_codex_subagent_detached(
+        task="Read two words and choose WORD_3 without modifying the repository.",
+        description="Choose word three",
+        project_dir=str(root),
+        launch_origin=provenance,
+        aggregation_role="internal_contributor",
+        synthesis_group=group,
+        depends_on_run_id=second.run_id,
+    )
+    fourth = subagent.launch_codex_subagent_detached(
+        task="Read three words, choose WORD_4, and synthesize all four.",
+        description="Synthesize all four words",
+        project_dir=str(root),
+        launch_origin=provenance,
+        aggregation_role="synthesis_delivery_owner",
+        synthesis_group=group,
+        depends_on_run_id=third.run_id,
+    )
+    return [
+        Path(item.manifest_path) for item in (first, second, third, fourth)
+    ], launched
+
+
+def _complete_non_mutating_run(path: Path, result: str) -> None:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "status": "completed",
+            "terminal_outcome": "completed",
+            "returncode": 0,
+            "finished_at": "2026-07-16T19:00:00+00:00",
+            "completion_verification": {
+                "schema_version": subagent.COMPLETION_VERIFICATION_SCHEMA,
+                "status": "success",
+                "classification": "applicable_non_mutating_success",
+                "git_custody": "not_applicable",
+                "basis": {
+                    "task_kind": "mechanical",
+                    "work_intent": "execution",
+                    "mutation_claim": "none",
+                },
+            },
+        }
+    )
+    Path(manifest["result_path"]).write_text(result, encoding="utf-8")
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_non_mutating_mechanical_predecessor_launches_successor_and_four_deep_chain_reaches_owner(
+    tmp_path, monkeypatch
+) -> None:
+    paths, launched = _launch_four_deep_non_mutating_chain(tmp_path, monkeypatch)
+    assert launched == [paths[0]]
+
+    words = ["lantern", "meadow", "cobalt"]
+    for index, word in enumerate(words):
+        _complete_non_mutating_run(paths[index], f"WORD_{index + 1}: {word}")
+        sweep = subagent.reconcile_managed_subagent_queues(
+            project_root=tmp_path, workspace_root=None
+        )
+        assert sweep.launched == 1
+        assert launched[-1] == paths[index + 1]
+
+    manifests = [json.loads(path.read_text()) for path in paths]
+    assert [item["mutation_claim"] for item in manifests] == ["none"] * 4
+    assert [item["aggregation"]["role"] for item in manifests] == [
+        "internal_contributor",
+        "internal_contributor",
+        "internal_contributor",
+        "synthesis_delivery_owner",
+    ]
+    assert [item["completion_delivery"]["status"] for item in manifests] == [
+        "suppressed",
+        "suppressed",
+        "suppressed",
+        "pending",
+    ]
+    assert manifests[3]["status"] == "running"
+
+
+def test_four_deep_dependency_failure_propagates_without_executing_successors(
+    tmp_path, monkeypatch
+) -> None:
+    paths, launched = _launch_four_deep_non_mutating_chain(tmp_path, monkeypatch)
+    first = json.loads(paths[0].read_text())
+    first.update(
+        {
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "returncode": 1,
+            "finished_at": "2026-07-16T19:00:00+00:00",
+        }
+    )
+    paths[0].write_text(json.dumps(first))
+
+    for _ in range(4):
+        subagent.reconcile_managed_subagent_queues(
+            project_root=tmp_path, workspace_root=None
+        )
+
+    assert launched == [paths[0]]
+    successors = [json.loads(path.read_text()) for path in paths[1:]]
+    assert [item["status"] for item in successors] == ["failed"] * 3
+    assert all(item.get("started_at") is None for item in successors)
+    assert all(
+        item["queue"]["attention"] == "predecessor_terminal_failure"
+        for item in successors
+    )
+
+
 def test_queue_fanin_waits_for_all_then_launches_exactly_once_after_restart(
     tmp_path, monkeypatch
 ) -> None:

@@ -954,6 +954,14 @@ class LaunchSubagentInput(ToolInput):
             "conservatively from task_kind, and the launch boundary always appends one instruction."
         ),
     )
+    mutation_claim: Literal["auto", "none", "git_backed"] = Field(
+        default="auto",
+        description=(
+            "Claim the task's actual repository effect. Auto treats lookup/extraction/mechanical "
+            "execution as non-mutating and mutation-shaped execution as git-backed. Git-backed "
+            "completion always requires strict isolated-worktree custody evidence."
+        ),
+    )
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     project_dir: str | None = None
@@ -3170,6 +3178,7 @@ class MegaplanResidentProfile:
             reasoning_effort=payload.reasoning_effort,
             task_kind=payload.task_kind,
             work_intent=payload.work_intent,
+            mutation_claim=payload.mutation_claim,
             difficulty=payload.difficulty,
             request_id=payload.request_id,
             launch_origin=launch_origin,
