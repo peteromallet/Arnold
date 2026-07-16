@@ -14,6 +14,7 @@ from arnold.workflow import authoring
 from arnold.workflow.compiler import compile_pipeline
 from arnold_pipelines.megaplan.control_interface import DECLARED_OVERRIDE_POLICY_TARGETS
 from arnold_pipelines.megaplan.control_interface import apply_transition
+from arnold_pipelines.megaplan.blocker_recovery import compact_failure_identity
 from arnold_pipelines.megaplan.handlers.override import handle_override
 from arnold_pipelines.megaplan.outcomes import OverrideOutcome, OverridePolicyRoute
 from arnold_pipelines.megaplan.planning.control_binding import planning_run_state_view
@@ -541,6 +542,9 @@ def test_recover_blocked_replays_repaired_deterministic_phase_without_phase_resu
         "fingerprint": "f" * 64,
         "message": "phase contract failed before phase_result emission",
     }
+    failure_fingerprint = compact_failure_identity(state["latest_failure"])[
+        "fingerprint"
+    ]
     _write_json(plan_dir / "state.json", state)
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(
@@ -574,7 +578,7 @@ def test_recover_blocked_replays_repaired_deterministic_phase_without_phase_resu
                 payload={
                     "reason": "unbound deterministic phase repair",
                     "repair_commit": "a" * 40,
-                    "failure_fingerprint": "f" * 64,
+                    "failure_fingerprint": failure_fingerprint,
                     "root": str(tmp_path),
                 },
             ),
@@ -607,7 +611,7 @@ def test_recover_blocked_replays_repaired_deterministic_phase_without_phase_resu
             payload={
                 "reason": "validated deterministic phase repair",
                 "repair_commit": head,
-                "failure_fingerprint": "f" * 64,
+                "failure_fingerprint": failure_fingerprint,
                 "root": str(tmp_path),
             },
         ),
@@ -621,7 +625,7 @@ def test_recover_blocked_replays_repaired_deterministic_phase_without_phase_resu
         "phase": "finalize",
         "repair_commit": head,
         "workspace_head": head,
-        "failure_fingerprint": "f" * 64,
+        "failure_fingerprint": failure_fingerprint,
         "authority": "explicit_repair_commit_bound_to_target_head",
     }
     persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
