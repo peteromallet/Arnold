@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,43 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     search_parser.add_argument("--cursor", type=int, default=0)
     search_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
 
+    schedule_parser = sub.add_parser(
+        "schedule", parents=[shared], help="Manage durable resident-managed schedules"
+    )
+    schedule_sub = schedule_parser.add_subparsers(dest="schedule_action", required=True)
+    create = schedule_sub.add_parser("create", help="Create a versioned schedule definition")
+    create.add_argument("--file", required=True)
+    create.add_argument("--idempotency-key", required=True)
+    create.add_argument("--dry-run", action="store_true")
+    preview = schedule_sub.add_parser("preview", help="Preview nominal instants without writing")
+    preview.add_argument("--file", required=True)
+    preview.add_argument("--count", type=int, default=10)
+    get = schedule_sub.add_parser("get")
+    get.add_argument("schedule_id")
+    get.add_argument("--history", action="store_true")
+    listing = schedule_sub.add_parser("list")
+    listing.add_argument("--state")
+    update = schedule_sub.add_parser("update")
+    update.add_argument("schedule_id")
+    update.add_argument("--file", required=True)
+    update.add_argument("--if-revision", required=True, type=int)
+    for action in ("activate", "pause", "resume", "cancel"):
+        lifecycle = schedule_sub.add_parser(action)
+        lifecycle.add_argument("schedule_id")
+        lifecycle.add_argument("--if-revision", required=True, type=int)
+        lifecycle.add_argument("--reason", required=True)
+    occurrences = schedule_sub.add_parser("occurrences")
+    occurrences.add_argument("schedule_id")
+    occurrences.add_argument("--state")
+    schedule_sub.add_parser("dead-letters").add_argument("--schedule")
+    replay = schedule_sub.add_parser("replay", help="Replay a dead letter under a new grant")
+    replay.add_argument("occurrence_id")
+    replay.add_argument("--grant-file", required=True)
+    event = schedule_sub.add_parser("event", help="Ingest one typed append-only event")
+    event.add_argument("--file", required=True)
+    run_once = schedule_sub.add_parser("run-once", help="Materialize and process due occurrences")
+    run_once.add_argument("--worker-id", default="resident-schedule-cli")
+
 
 def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     config = _resident_config(args)
@@ -95,6 +133,8 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
             return _resident_health(store, config, limit=args.limit)
         if action == "scheduler-once":
             return asyncio.run(_resident_scheduler_once(store, config, worker_id=args.worker_id))
+        if action == "schedule":
+            return _resident_schedule(root, store, args)
         if action == "read-reply-chain":
             return _resident_read_reply_chain(
                 store,
@@ -128,6 +168,152 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
         if callable(close):
             close()
     raise CliError("invalid_args", f"Unknown resident action: {getattr(args, 'resident_action', None)!r}")
+
+
+def _resident_schedule(root: Path, store: Store, args: argparse.Namespace) -> dict[str, Any]:
+    from .schedules import (
+        AuthorizationGrant,
+        ScheduleService,
+        definition_from_file,
+        schedule_store_root,
+    )
+
+    store_root = schedule_store_root(store)
+    if store_root is None:
+        raise CliError(
+            "unsupported_store",
+            "resident schedule v1 is single-writer file mode; database multi-worker support is not enabled",
+        )
+    service = ScheduleService(store_root, project_root=root)
+    action = args.schedule_action
+    try:
+        if action in {"create", "preview"}:
+            definition = definition_from_file(Path(args.file).expanduser().resolve())
+            preview = service.preview(definition, count=getattr(args, "count", 10))
+            if action == "preview" or args.dry_run:
+                return {
+                    "success": True,
+                    "step": "resident",
+                    "action": f"schedule-{action}",
+                    "dry_run": True,
+                    "definition": definition.model_dump(mode="json", by_alias=True),
+                    "nominal_times": [item.isoformat() for item in preview],
+                }
+            created, changed = service.create(
+                definition, idempotency_key=args.idempotency_key,
+            )
+            return {
+                "success": True,
+                "step": "resident",
+                "action": "schedule-create",
+                "created": changed,
+                "definition": created.model_dump(mode="json", by_alias=True),
+                "nominal_times": [item.isoformat() for item in preview],
+            }
+        if action == "get":
+            definition = service.repo.read_definition(args.schedule_id)
+            payload: dict[str, Any] = {
+                "success": True,
+                "step": "resident",
+                "action": "schedule-get",
+                "definition": definition.model_dump(mode="json", by_alias=True),
+            }
+            if args.history:
+                payload["history"] = [
+                    service.repo.read_definition(args.schedule_id, revision).model_dump(
+                        mode="json", by_alias=True
+                    )
+                    for revision in range(1, definition.revision + 1)
+                ]
+            return payload
+        if action == "list":
+            rows = service.repo.definitions(state=args.state)
+            return {
+                "success": True,
+                "step": "resident",
+                "action": "schedule-list",
+                "count": len(rows),
+                "items": [row.model_dump(mode="json", by_alias=True) for row in rows],
+            }
+        if action == "update":
+            replacement = definition_from_file(Path(args.file).expanduser().resolve())
+            revised = service.revise(
+                args.schedule_id, replacement, if_revision=args.if_revision
+            )
+            return {
+                "success": True,
+                "step": "resident",
+                "action": "schedule-update",
+                "definition": revised.model_dump(mode="json", by_alias=True),
+            }
+        if action in {"activate", "pause", "resume", "cancel"}:
+            state = {
+                "activate": "active",
+                "resume": "active",
+                "pause": "paused",
+                "cancel": "cancelled",
+            }[action]
+            revised = service.set_state(
+                args.schedule_id,
+                state,
+                if_revision=args.if_revision,
+                audit_reason=args.reason,
+            )
+            return {
+                "success": True,
+                "step": "resident",
+                "action": f"schedule-{action}",
+                "definition": revised.model_dump(mode="json", by_alias=True),
+            }
+        if action in {"occurrences", "dead-letters"}:
+            schedule_id = args.schedule_id if action == "occurrences" else args.schedule
+            rows = service.repo.occurrences(schedule_id)
+            wanted = getattr(args, "state", None) or (
+                "dead_letter" if action == "dead-letters" else None
+            )
+            if wanted:
+                rows = [row for row in rows if row.state == wanted]
+            return {
+                "success": True,
+                "step": "resident",
+                "action": f"schedule-{action}",
+                "count": len(rows),
+                "items": [row.model_dump(mode="json") for row in rows],
+            }
+        if action == "event":
+            event = json.loads(
+                Path(args.file).expanduser().resolve().read_text(encoding="utf-8")
+            )
+            created = service.ingest_event(event)
+            return {
+                "success": True,
+                "step": "resident",
+                "action": "schedule-event",
+                "created_occurrence_ids": created,
+            }
+        if action == "replay":
+            grant = AuthorizationGrant.model_validate_json(
+                Path(args.grant_file).expanduser().resolve().read_text(encoding="utf-8")
+            )
+            created = service.replay(args.occurrence_id, grant=grant)
+            return {
+                "success": True,
+                "step": "resident",
+                "action": "schedule-replay",
+                "occurrence_id": created,
+                "replay_of_occurrence_id": args.occurrence_id,
+            }
+        if action == "run-once":
+            receipt = asyncio.run(service.run_due_once(worker_id=args.worker_id))
+            return {
+                "success": True,
+                "step": "resident",
+                "action": "schedule-run-once",
+                "receipt": receipt.model_dump(),
+            }
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+        raise CliError("schedule_rejected", str(exc)) from exc
+    raise CliError("invalid_args", f"unknown schedule action: {action}")
 
 
 def _resident_config(args: argparse.Namespace) -> ResidentConfig:
