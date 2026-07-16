@@ -4787,7 +4787,8 @@ def test_watchdog_skips_relaunch_while_review_pr_is_still_open() -> None:
     assert 'wait_status="$(chain_wait_status "$workspace" "$remote_spec")"' in text
     assert 'if [[ "$health" == "awaiting_pr_merge" ]]; then' in text
     assert "reconcile_awaiting_pr_merge" in text
-    assert 'report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge: ${pr_reconcile_message:-$pr_reconcile_status}"' in text
+    assert 'PLAN_STATUS_CURRENT_STATE="awaiting_pr_merge"' in text
+    assert '"stable_human_gate"' in text
     assert '["gh", "pr", "view", str(pr_number), "--json", "state"]' in text
     assert '["gh", "pr", "merge", str(pr_number), *flags]' in text
 
@@ -5190,6 +5191,9 @@ report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "
 session_health_status() { echo awaiting_pr_merge; }
 chain_health_status() { CHAIN_HEALTH_STATUS=ok; }
 repair_needs_human_path() { printf '%s/%s.needs-human.json\n' "$REPAIR_DATA_DIR" "$1"; }
+notify_needs_human() {
+  report_item "$1" "$2" "notify" "human_gate_notification_queued" "$7" "$3" "$4"
+}
 tmux() { printf 'TMUX %s\n' "$*" >> "$CALL_LOG"; return 0; }
 """.strip(),
             f"CALL_LOG={str(call_log)!r}",
@@ -5204,7 +5208,7 @@ tmux() { printf 'TMUX %s\n' "$*" >> "$CALL_LOG"; return 0; }
     assert "session awaiting PR merge: demo-session detail=PR #43 state=open evidence=queued" in calls
     assert "TMUX" not in calls
     report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #43 state=open evidence=queued\t" in report
+    assert "\tnotify\thuman_gate_notification_queued\tawaiting_human halt; state=awaiting_pr_merge;" in report
     queued = list((tmp_path / ".megaplan" / "repair-queue" / "requests").glob("*.json"))
     assert len(queued) == 1
     payload = json.loads(queued[0].read_text(encoding="utf-8"))
@@ -6815,7 +6819,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert "TMUX" not in result.stderr
 
 
-def test_watchdog_awaiting_human_plan_state_dispatches_repair_before_needs_human(
+def test_watchdog_awaiting_human_plan_state_routes_to_notification_not_repair(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -6869,17 +6873,17 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
-    assert "\tobserve\tneeds_human\t" not in report
+    assert "\trepair\trepair_dispatched\t" not in report
+    assert "\tnotify\ttest_notification_suppressed\t" in report
     assert "\tobserve\tcomplete\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_awaiting_human_verify_prep_clarification_dispatches_repair(
+def test_watchdog_awaiting_human_verify_prep_routes_to_notification_not_repair(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -6915,7 +6919,7 @@ report_item() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
 }
 log() { printf '%s\n' "$*" >> "$LOG"; }
-session_health_status() { echo stopped; }
+session_health_status() { echo alive; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
@@ -6933,9 +6937,9 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
-    assert "\tobserve\tneeds_human\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "\trepair\trepair_dispatched\t" not in report
+    assert "\tnotify\ttest_notification_suppressed\t" in report
+    assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
@@ -7817,7 +7821,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_awaiting_human_verify_chain_state_dispatches_repair_before_relaunch(
+def test_watchdog_awaiting_human_verify_chain_state_routes_to_notification_before_relaunch(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -7894,9 +7898,10 @@ chain_health_status() {
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\trepair\trepair_dispatched\t" not in report
+    assert "\tnotify\ttest_notification_suppressed\t" in report
     assert "\trestart\trestarted\tstopped session relaunched\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "DISPATCH" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "REPAIR" not in result.stderr
@@ -8610,6 +8615,69 @@ PLAN_STATUS_PUSHED_COMMITS='abc123def456, fedcba654321'
     report = report_path.read_text(encoding="utf-8")
     assert "\tnotify\tdiagnostic_agent_launched\t" in report
     assert "needs-human webhook delivered" not in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_stable_human_gate_launches_notification_agent_with_exact_gate(
+    tmp_path: Path,
+) -> None:
+    diagnostic_helper = tmp_path / "arnold-human-review-diagnostic"
+    diagnostic_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        "payload=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == --payload-file ]]; then payload=\"$2\"; shift 2; else shift; fi\n"
+        "done\n"
+        f"cp \"$payload\" {str(tmp_path / 'stable-gate-payload.json')!r}\n"
+        "printf '%s\\n' '{\"ok\":true,\"status\":\"launched\",\"run_id\":\"subagent-20260716-230000-feedface\",\"manifest_path\":\"/tmp/manifest.json\",\"state_path\":\"/tmp/state.json\",\"fallback_delivery_required\":false}'\n",
+        encoding="utf-8",
+    )
+    diagnostic_helper.chmod(diagnostic_helper.stat().st_mode | stat.S_IXUSR)
+    dm_helper = tmp_path / "arnold-discord-dm"
+    dm_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        f"cat > {str(tmp_path / 'stable-gate-dm-called.json')!r}\n",
+        encoding="utf-8",
+    )
+    dm_helper.chmod(dm_helper.stat().st_mode | stat.S_IXUSR)
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            f"LOG={str(log_path)!r}",
+            "MARKER_DIR=/tmp/stable-human-gate-markers",
+            "REPAIR_DATA_DIR=/tmp/stable-human-gate-repair-data",
+            f"DISCORD_DM_BIN={str(dm_helper)!r}",
+            f"HUMAN_REVIEW_DIAGNOSTIC_BIN={str(diagnostic_helper)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+PLAN_STATUS_PLAN_NAME='demo-plan'
+PLAN_STATUS_CURRENT_STATE='awaiting_human_verify'
+PLAN_STATUS_RETRY_STRATEGY=''
+PLAN_STATUS_FAILURE_KIND=''
+PLAN_STATUS_FAILURE_MESSAGE=''
+PLAN_STATUS_FAILURE_PHASE='prep'
+PLAN_STATUS_FAILURE_RECORDED_AT='2026-07-16T22:06:58Z'
+PLAN_STATUS_TIERS_TRIED=''
+PLAN_STATUS_PUSHED_COMMITS=''
+""".strip(),
+            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/initiatives/demo/chain.yaml chain stopped 'awaiting_human halt; state=awaiting_human_verify; reason=prep clarification requires answer (1 question)' stable_human_gate",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((tmp_path / "stable-gate-payload.json").read_text(encoding="utf-8"))
+    assert payload["notification_kind"] == "stable_human_gate"
+    assert payload["human_gate"]["state_token"] == "awaiting_human_verify"
+    assert "prep clarification requires answer" in payload["human_gate"]["reason"]
+    assert "supported resume/verify transition" in payload["human_gate"]["required_action"]
+    assert not (tmp_path / "stable-gate-dm-called.json").exists()
+    assert "\tnotify\tdiagnostic_agent_launched\t" in report_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_needs_human_launch_failure_sends_truthful_actionable_fallback(
@@ -9823,6 +9891,7 @@ def test_watchdog_clears_stale_needs_human_sidecar_for_superseded_plan(tmp_path:
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("repair_needs_human_summary"),
             _extract_wrapper_function("repair_needs_human_matches_current_plan"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -9858,11 +9927,12 @@ chain_health_status() {
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
     log = log_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\trepair\trepair_dispatched\t" not in report
+    assert "\tnotify\ttest_notification_suppressed\t" in report
     assert "\tobserve\tneeds_human\told repair exhaustion" not in report
     assert "stale repair needs-human marker cleared" in log
     assert not sidecar_path.exists()
-    assert "DISPATCH" in result.stderr
+    assert "DISPATCH" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
 
@@ -9929,6 +9999,7 @@ def test_watchdog_logs_needs_human_comparison_agreement(tmp_path: Path) -> None:
             _extract_wrapper_function("repair_needs_human_summary"),
             _extract_wrapper_function("repair_needs_human_matches_current_plan"),
             _extract_wrapper_function("compare_needs_human_to_resolver"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -9970,8 +10041,10 @@ chain_health_status() {
     assert not sidecar_path.exists()
     # Comparison diagnostic is logged
     assert "AGREEMENT needs_human_comparison" in log or "DISCREPANCY needs_human_comparison" in log
-    # Legacy behavior is authoritative: sidecar cleared, dispatch proceeds
-    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    # The stale sidecar is cleared, but the current typed gate notifies instead
+    # of entering machine repair.
+    assert "\trepair\trepair_dispatched\t" not in report
+    assert "\tnotify\ttest_notification_suppressed\t" in report
     assert "\tobserve\tneeds_human\told repair exhaustion" not in report
 
 
@@ -10064,6 +10137,9 @@ chain_health_status() {
   CHAIN_HEALTH_ARTIFACT_PATH=
   CHAIN_HEALTH_LOG_MESSAGE=
 }
+notify_needs_human() {
+  report_item "$1" "$2" "notify" "human_gate_notification_queued" "$7" "$3" "$4"
+}
 """.strip(),
             f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
         ]
@@ -10073,9 +10149,10 @@ chain_health_status() {
     log = log_path.read_text(encoding="utf-8")
     # Comparison diagnostic is logged
     assert "AGREEMENT needs_human_comparison" in log or "DISCREPANCY needs_human_comparison" in log
-    # Legacy behavior is authoritative: sidecar kept (plan matches), needs_human reported
+    # The matching legacy sidecar remains diagnostic evidence, but the typed
+    # gate now owns user notification and bypasses repair.
     report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tneeds_human\t" in report
+    assert "\tnotify\thuman_gate_notification_queued\t" in report
     assert sidecar_path.exists()
 
 

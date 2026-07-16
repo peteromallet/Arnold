@@ -458,6 +458,10 @@ import shlex
 import sys
 from pathlib import Path
 
+from arnold_pipelines.megaplan.run_state.decision_contract import (
+    is_human_required_state,
+)
+
 workspace = Path(sys.argv[1])
 remote_spec_raw = sys.argv[2]
 run_kind = sys.argv[3]
@@ -708,8 +712,6 @@ if (
     manual_review_origin = "auto_stall_legacy"
 
 awaiting_human_reason = ""
-awaiting_human_states = {"awaiting_human", "awaiting_human_verify"}
-
 def first_string(*values: object) -> str:
     for value in values:
         if isinstance(value, str) and value:
@@ -773,7 +775,6 @@ if (
 ):
     current_state = "done"
 
-human_gate_states = {"awaiting_human", "awaiting_human_verify", "human_prerequisite"}
 ready_plan_states = {"planned", "finalized"}
 
 state_mismatch = (
@@ -790,7 +791,10 @@ if state_mismatch:
         f"chain last_state={chain_last_state} is stale; repair-loop should sync chain last_state"
     )
 
-if (current_state in human_gate_states or chain_last_state in human_gate_states) and not state_mismatch:
+if (
+    is_human_required_state(current_state)
+    or is_human_required_state(chain_last_state)
+) and not state_mismatch:
     metadata = chain_state.get("metadata") if isinstance(chain_state, dict) else None
     metadata_reason = ""
     if isinstance(metadata, dict):
@@ -899,7 +903,10 @@ if isinstance(active_step, dict):
                 active_step_pid_alive = "1"
 
 manual_review = current_state == "manual_review" or retry_strategy == "manual_review"
-awaiting_human = (current_state in human_gate_states or chain_last_state in human_gate_states) and not state_mismatch
+awaiting_human = (
+    is_human_required_state(current_state)
+    or is_human_required_state(chain_last_state)
+) and not state_mismatch
 
 emit("PLAN_STATUS_FOUND", "1" if state else "0")
 emit("PLAN_STATUS_PLAN_NAME", resolved_plan_name)
@@ -935,8 +942,9 @@ notify_needs_human() {
   local run_kind="${5:-chain}"
   local health="${6:-stopped}"
   local summary="$7"
+  local notification_kind="${8:-repair_exhaustion_diagnostic}"
   local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir suppression_reason
-  local diagnostic_bin diagnostic_result_tmp diagnostic_status diagnostic_run_id diagnostic_state_path diagnostic_fallback_required diagnostic_error
+  local diagnostic_bin diagnostic_result_tmp diagnostic_status diagnostic_run_id diagnostic_state_path diagnostic_fallback_required diagnostic_error diagnostic_retry_pending diagnostic_retry_exhausted
   suppression_reason="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$workspace" "$session" "$remote_spec" "$MARKER_DIR" <<'PY'
 import json
 import pathlib
@@ -973,7 +981,7 @@ PY
   repair_data_dir="${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
   discord_dm_bin="${DISCORD_DM_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
   diagnostic_bin="${HUMAN_REVIEW_DIAGNOSTIC_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-human-review-diagnostic}"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" "$notification_kind" \
     "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
     "${PLAN_STATUS_FAILURE_KIND:-}" "${PLAN_STATUS_FAILURE_MESSAGE:-}" "${PLAN_STATUS_FAILURE_PHASE:-}" \
     "${PLAN_STATUS_FAILURE_RECORDED_AT:-}" "${PLAN_STATUS_TIERS_TRIED:-}" "${PLAN_STATUS_PUSHED_COMMITS:-}" <<'PY'
@@ -991,6 +999,7 @@ from arnold_pipelines.megaplan.cloud.redact import redact_payload
     run_kind,
     health,
     summary,
+    notification_kind,
     plan_name,
     current_state,
     retry_strategy,
@@ -1011,6 +1020,7 @@ payload = {
     "run_kind": run_kind,
     "health": health,
     "summary": summary,
+    "notification_kind": notification_kind,
     "plan": {
         "name": plan_name,
         "current_state": current_state,
@@ -1025,6 +1035,28 @@ payload = {
         "pushed_commit_shas": [item for item in pushed_commits.split(", ") if item],
     },
 }
+if notification_kind == "stable_human_gate":
+    state = current_state.strip().lower()
+    reason = summary.split("; reason=", 1)[-1] if "; reason=" in summary else summary
+    if state == "awaiting_human_verify":
+        required_action = "Answer the recorded blocking clarification or verification criterion; only then use the supported resume/verify transition."
+    elif state == "awaiting_pr_merge":
+        required_action = "Review the pending milestone PR and decide whether to merge or decline it."
+    elif state == "human_prerequisite":
+        required_action = "Provide the required prerequisite recorded by the chain policy."
+    else:
+        required_action = "Complete or decide the recorded user action, then use the supported resume transition."
+    payload["human_gate"] = {
+        "state_token": state,
+        "reason": reason,
+        "evidence": {
+            "plan": plan_name,
+            "current_state": current_state,
+            "failure_kind": failure_kind or None,
+            "failure_phase": failure_phase or None,
+        },
+        "required_action": required_action,
+    }
 failure_parts = [part for part in (failure_kind, failure_message, failure_phase) if part]
 fields = [
     {"label": "Session", "value": session, "style": "code"},
@@ -1128,7 +1160,11 @@ PY
       --project-dir "$workspace" \
       > "$diagnostic_result_tmp" 2>>"$LOG" || true
   else
-    printf '%s\n' '{"ok":false,"status":"launch_failed","error":"dedicated resident diagnostic launcher unavailable","fallback_delivery_required":true,"state_path":""}' > "$diagnostic_result_tmp"
+    if [[ "$notification_kind" == "stable_human_gate" ]]; then
+      printf '%s\n' '{"ok":false,"status":"launch_failed","error":"dedicated resident diagnostic launcher unavailable","fallback_delivery_required":false,"retry_pending":true,"state_path":""}' > "$diagnostic_result_tmp"
+    else
+      printf '%s\n' '{"ok":false,"status":"launch_failed","error":"dedicated resident diagnostic launcher unavailable","fallback_delivery_required":true,"state_path":""}' > "$diagnostic_result_tmp"
+    fi
   fi
   eval "$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$diagnostic_result_tmp" <<'PY'
 import json
@@ -1149,6 +1185,8 @@ for shell_name, field, default in (
     ("diagnostic_state_path", "state_path", ""),
     ("diagnostic_fallback_required", "fallback_delivery_required", True),
     ("diagnostic_error", "error", "resident diagnostic launch failed"),
+    ("diagnostic_retry_pending", "retry_pending", False),
+    ("diagnostic_retry_exhausted", "retry_exhausted", False),
 ):
     value = payload.get(field, default)
     if isinstance(value, bool):
@@ -1160,6 +1198,19 @@ PY
   if [[ "$diagnostic_status" == "launched" && -n "$diagnostic_run_id" ]]; then
     log "needs-human resident diagnostic launched session=$session plan=${PLAN_STATUS_PLAN_NAME:-} run_id=$diagnostic_run_id"
     report_item "$report_items" "$session" "notify" "diagnostic_agent_launched" "resident diagnostic launched; terminal result will use durable Discord delivery" "$workspace" "$remote_spec"
+    rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
+    return 0
+  fi
+
+  if [[ "$notification_kind" == "stable_human_gate" && "$diagnostic_retry_pending" == "1" ]]; then
+    log "human-gate notification agent launch failed; bounded retry pending session=$session plan=${PLAN_STATUS_PLAN_NAME:-} error=$diagnostic_error"
+    report_item "$report_items" "$session" "notify" "notification_agent_retry_pending" "human-gate notification agent launch failed; bounded retry remains visible: $diagnostic_error" "$workspace" "$remote_spec"
+    rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
+    return 0
+  fi
+  if [[ "$notification_kind" == "stable_human_gate" && "$diagnostic_retry_exhausted" == "1" ]]; then
+    log "human-gate notification agent launch dead-lettered session=$session plan=${PLAN_STATUS_PLAN_NAME:-} error=$diagnostic_error"
+    report_item "$report_items" "$session" "notify" "notification_agent_dead_letter" "human-gate notification agent exhausted bounded launch retries: $diagnostic_error" "$workspace" "$remote_spec"
     rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp" "$diagnostic_result_tmp"
     return 0
   fi
@@ -7937,9 +7988,6 @@ PY
 
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
-  if [[ "$resolver_human_verdict" != provider_retry:* ]] && emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
-    return 0
-  fi
 
   local resolved_remote_spec
   resolved_remote_spec="$(resolve_existing_remote_spec "$session" "$workspace" "$remote_spec" "$run_kind" 2>>"$LOG" || true)"
@@ -7977,6 +8025,39 @@ PY
 
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+
+  # Read durable plan/chain attention before process-health short circuits.
+  # A tmux shell may remain alive after its worker has intentionally stopped at
+  # a human gate; process liveness must not hide that state transition.
+  local plan_status_env
+  plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
+  if [[ -n "$plan_status_env" ]]; then
+    eval "$plan_status_env"
+  fi
+  if [[ "$health" != "awaiting_pr_merge" && "$resolver_human_verdict" != provider_retry:* && "${PLAN_STATUS_AWAITING_HUMAN:-0}" == "1" ]]; then
+    local human_summary
+    human_summary="awaiting_human halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON:-plan is awaiting human action}"
+    if [[ -n "${PLAN_STATUS_FAILURE_KIND:-}" ]]; then
+      human_summary="$human_summary; failure=${PLAN_STATUS_FAILURE_KIND}"
+    fi
+    if [[ "$resolver_human_verdict" == suppress:* ]]; then
+      route_resolver_machine_repair "$report_items" "$session" "$workspace" "$remote_spec" "${resolver_human_verdict#suppress:}" "$human_summary"
+      return 0
+    fi
+    if [[ -f "$(repair_needs_human_path "$session")" ]]; then
+      if ! repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" >/dev/null 2>&1; then
+        rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+        log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
+      fi
+      if command -v compare_needs_human_to_resolver >/dev/null 2>&1; then
+        compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "true" ""
+      fi
+    fi
+    log "session entered stable human gate; launching idempotent resident notification agent session=$session plan=${PLAN_STATUS_PLAN_NAME:-$plan_name} state=${PLAN_STATUS_CURRENT_STATE:-unknown}"
+    notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary" "stable_human_gate"
+    return 0
+  fi
+
   if [[ "$run_kind" == "chain" ]]; then
     chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
     if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
@@ -8091,7 +8172,9 @@ PY
       log "session awaiting PR merge reconciled merged; falling through to relaunch session=$session detail=$pr_reconcile_message"
     else
       log "session awaiting PR merge: $session detail=${pr_reconcile_message:-$pr_reconcile_status}"
-      report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge: ${pr_reconcile_message:-$pr_reconcile_status}" "$workspace" "$remote_spec"
+      PLAN_STATUS_CURRENT_STATE="awaiting_pr_merge"
+      PLAN_STATUS_AWAITING_HUMAN_REASON="session waiting on PR merge: ${pr_reconcile_message:-$pr_reconcile_status}"
+      notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "awaiting_human halt; state=awaiting_pr_merge; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON}" "stable_human_gate"
       return 0
     fi
   fi
@@ -8106,13 +8189,6 @@ PY
       report_item "$report_items" "$session" "observe" "complete" "plan complete" "$workspace" "$remote_spec"
       return 0
     fi
-  fi
-
-  local plan_status_env
-  # If the helper emits nothing, keep the tick on the default non-attention path.
-  plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
-  if [[ -n "$plan_status_env" ]]; then
-    eval "$plan_status_env"
   fi
 
   # --- custody structured facts ---

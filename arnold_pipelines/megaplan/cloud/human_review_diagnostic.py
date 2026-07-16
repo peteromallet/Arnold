@@ -17,6 +17,7 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,9 @@ from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.cloud.human_blockers import compute_escalation_id
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
+from arnold_pipelines.megaplan.run_state.decision_contract import (
+    typed_human_gate_for_state,
+)
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.provenance import (
     DELEGATION_CONTEXT_ENV,
@@ -35,9 +39,10 @@ from arnold_pipelines.megaplan.resident.provenance import (
 from arnold_pipelines.megaplan.resident.subagent import launch_subagent_task
 
 SCHEMA = "arnold-human-review-diagnostic-v1"
-_ESCALATION_ID = re.compile(r"^esc-[a-f0-9]{16}$")
+_ESCALATION_ID = re.compile(r"^(?:esc|gate)-[a-f0-9]{16}$")
 _MAX_EVIDENCE_CHARS = 18_000
 _MAX_ERROR_CHARS = 1_500
+_MAX_STABLE_GATE_LAUNCH_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -51,6 +56,9 @@ class HumanReviewDiagnosticResult:
     error: str | None = None
     idempotent_replay: bool = False
     fallback_delivery_required: bool = False
+    retry_pending: bool = False
+    retry_exhausted: bool = False
+    launch_attempt_count: int = 0
 
 
 def _utc_now() -> str:
@@ -192,13 +200,49 @@ def _resolve_provenance(marker: Mapping[str, Any]) -> dict[str, Any]:
         raise DelegationProvenanceError(
             "human-review diagnostic has no originating Discord reply target"
         )
-    # The canonical resident launcher reads this exact validated envelope.  It
-    # derives discord_origin and the durable completion outbox itself.
-    os.environ[DELEGATION_CONTEXT_ENV] = encoded_provenance(provenance)
     return provenance
 
 
+@contextmanager
+def _delegation_environment(provenance: Mapping[str, Any]):
+    """Rehydrate marker provenance only for the resident launch boundary."""
+
+    previous = os.environ.get(DELEGATION_CONTEXT_ENV)
+    os.environ[DELEGATION_CONTEXT_ENV] = encoded_provenance(provenance)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(DELEGATION_CONTEXT_ENV, None)
+        else:
+            os.environ[DELEGATION_CONTEXT_ENV] = previous
+
+
 def _escalation_id(payload: Mapping[str, Any], session: str, repair_data_dir: Path) -> str:
+    if payload.get("notification_kind") == "stable_human_gate":
+        plan = payload.get("plan") if isinstance(payload.get("plan"), Mapping) else {}
+        state = str(plan.get("current_state") or "").strip().lower()
+        gate = typed_human_gate_for_state(state)
+        if gate is None:
+            raise ValueError(f"unrecognized human-gate state token: {state or '<missing>'}")
+        human_gate = (
+            payload.get("human_gate")
+            if isinstance(payload.get("human_gate"), Mapping)
+            else {}
+        )
+        identity = {
+            "session": session,
+            "plan": str(plan.get("name") or ""),
+            "state": state,
+            "typed_gate": gate.name,
+            "reason": str(human_gate.get("reason") or payload.get("summary") or ""),
+            "required_action": str(human_gate.get("required_action") or ""),
+            "evidence": _bounded(human_gate.get("evidence")),
+        }
+        digest = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:16]
+        return f"gate-{digest}"
     supplied = str(payload.get("escalation_id") or "").strip()
     if supplied:
         if not _ESCALATION_ID.fullmatch(supplied):
@@ -222,6 +266,43 @@ def _task_text(
     evidence: Mapping[str, Any],
 ) -> str:
     inline = json.dumps(evidence, indent=2, sort_keys=True)
+    watchdog = (
+        evidence.get("watchdog")
+        if isinstance(evidence.get("watchdog"), Mapping)
+        else {}
+    )
+    if watchdog.get("notification_kind") == "stable_human_gate":
+        plan = watchdog.get("plan") if isinstance(watchdog.get("plan"), Mapping) else {}
+        gate = (
+            watchdog.get("human_gate")
+            if isinstance(watchdog.get("human_gate"), Mapping)
+            else {}
+        )
+        state = str(plan.get("current_state") or "unknown")
+        typed_gate = typed_human_gate_for_state(state)
+        return f"""A Megaplan session entered a stable human-required gate. Send the originating user one concise notification through the normal resident completion turn.
+
+This is notification-only, read-only work. Do not approve, reject, resume, repair, restart, mutate state, weaken the gate, or infer authority from this assignment.
+
+The message must state exactly:
+- gate: `{state}` ({typed_gate.name if typed_gate else 'UNKNOWN'});
+- why a human is required: {gate.get('reason') or watchdog.get('summary') or 'not recorded'};
+- evidence: {json.dumps(_bounded(gate.get('evidence')), sort_keys=True)};
+- narrow action/decision required: {gate.get('required_action') or 'inspect the recorded gate and provide the requested decision'}.
+
+Keep the user-facing result under 120 words. If evidence is incomplete, name the missing fact instead of guessing. Do not add a broad diagnosis or perform the requested action.
+
+Bounded routes:
+- session: {session}
+- workspace: {workspace}
+- remote chain/spec reference: {remote_spec or '<unknown>'}
+- durable gate evidence snapshot: {evidence_path}
+
+Captured evidence (secrets redacted):
+```json
+{inline}
+```
+"""
     return f"""A Megaplan cloud session reached the terminal human-review path after bounded automatic repair/backstop handling.
 
 Investigate the concrete failure for session `{session}`. This is a read-only diagnostic assignment: do not restart Discord, launch or retire an epic, weaken a completion/quality guard, or claim recovery merely from a derived status label.
@@ -277,6 +358,7 @@ def _validate_manifest(
 
 def _result_from_state(state: Mapping[str, Any], state_path: Path) -> HumanReviewDiagnosticResult:
     launched = state.get("status") == "launched"
+    stable_human_gate = state.get("notification_kind") == "stable_human_gate"
     fallback = state.get("fallback_delivery")
     fallback_delivered = isinstance(fallback, Mapping) and fallback.get("status") == "delivered"
     return HumanReviewDiagnosticResult(
@@ -288,7 +370,14 @@ def _result_from_state(state: Mapping[str, Any], state_path: Path) -> HumanRevie
         manifest_path=str(state.get("manifest_path") or "") or None,
         error=str(state.get("error") or "") or None,
         idempotent_replay=True,
-        fallback_delivery_required=not launched and not fallback_delivered,
+        fallback_delivery_required=(
+            not stable_human_gate and not launched and not fallback_delivered
+        ),
+        retry_pending=state.get("status") == "launch_failed"
+        and isinstance(fallback, Mapping)
+        and fallback.get("status") == "retry_pending",
+        retry_exhausted=state.get("status") == "launch_dead_letter",
+        launch_attempt_count=int(state.get("launch_attempt_count") or 0),
     )
 
 
@@ -315,6 +404,7 @@ def launch_human_review_diagnostic(
     evidence_path = state_dir / "evidence.json"
     lock_path = state_dir / ".lock"
     custody_id = str(provenance.get("custody_id") or "")
+    stable_human_gate = payload.get("notification_kind") == "stable_human_gate"
 
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -345,6 +435,16 @@ def launch_human_review_diagnostic(
                 or fallback_status not in {"delivered", "retry_pending"}
             ):
                 return _result_from_state(existing, state_path)
+            prior_attempts = int(existing.get("launch_attempt_count") or 1)
+            if stable_human_gate and prior_attempts >= _MAX_STABLE_GATE_LAUNCH_ATTEMPTS:
+                exhausted = {
+                    **existing,
+                    "status": "launch_dead_letter",
+                    "updated_at": _utc_now(),
+                    "retry_exhausted": True,
+                }
+                _atomic_json(state_path, exhausted)
+                return _result_from_state(exhausted, state_path)
             task_path = Path(str(existing.get("task_path") or ""))
             task = task_path.read_text(encoding="utf-8")
             if hashlib.sha256(task.encode("utf-8")).hexdigest() != existing.get(
@@ -388,6 +488,8 @@ def launch_human_review_diagnostic(
                 "task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest(),
                 "evidence_path": str(evidence_path),
                 "launch_attempt_count": 1,
+                "notification_kind": payload.get("notification_kind")
+                or "repair_exhaustion_diagnostic",
                 "created_at": created_at,
                 "updated_at": created_at,
             }
@@ -395,16 +497,24 @@ def launch_human_review_diagnostic(
         _atomic_json(state_path, initial_state)
 
         try:
-            launch = asyncio.run(
-                launch_subagent_task(
-                    ResidentConfig(),
-                    task=task,
-                    description=f"Diagnose Megaplan human review for {session}",
-                    project_dir=str(Path(project_dir).resolve()),
-                    task_kind="root_cause",
-                    difficulty=9,
+            with _delegation_environment(provenance):
+                launch = asyncio.run(
+                    launch_subagent_task(
+                        ResidentConfig(),
+                        task=task,
+                        description=(
+                            f"Notify user of Megaplan human gate for {session}"
+                            if stable_human_gate
+                            else f"Diagnose Megaplan human review for {session}"
+                        ),
+                        project_dir=str(Path(project_dir).resolve()),
+                        task_kind="routine" if stable_human_gate else "root_cause",
+                        work_intent="review" if stable_human_gate else "execution",
+                        mutation_claim="none" if stable_human_gate else "auto",
+                        difficulty=4 if stable_human_gate else 9,
+                        request_id=escalation_id,
+                    )
                 )
-            )
             if not launch.ok or not launch.run_id or not launch.manifest_path:
                 detail = launch.error or launch.stderr or launch.status or "unknown launch failure"
                 raise RuntimeError(detail)
@@ -420,8 +530,11 @@ def launch_human_review_diagnostic(
                 "status": "launch_failed",
                 "error": error,
                 "updated_at": _utc_now(),
-                "fallback_delivery": initial_state.get("fallback_delivery")
-                or {"status": "pending"},
+                "fallback_delivery": (
+                    {"status": "retry_pending"}
+                    if stable_human_gate
+                    else initial_state.get("fallback_delivery") or {"status": "pending"}
+                ),
             }
             _atomic_json(state_path, failed)
             fallback = failed.get("fallback_delivery")
@@ -434,7 +547,9 @@ def launch_human_review_diagnostic(
                 escalation_id=escalation_id,
                 state_path=str(state_path),
                 error=error,
-                fallback_delivery_required=not fallback_delivered,
+                fallback_delivery_required=not stable_human_gate and not fallback_delivered,
+                retry_pending=stable_human_gate,
+                launch_attempt_count=int(initial_state.get("launch_attempt_count") or 1),
             )
 
         launched_state = {
@@ -452,6 +567,7 @@ def launch_human_review_diagnostic(
             state_path=str(state_path),
             run_id=launch.run_id,
             manifest_path=launch.manifest_path,
+            launch_attempt_count=int(initial_state.get("launch_attempt_count") or 1),
         )
 
 
