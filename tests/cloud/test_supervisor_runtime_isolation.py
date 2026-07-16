@@ -300,6 +300,17 @@ def test_supervisor_queue_binds_current_plan_not_chain_spec(
     assert request["problem_signature"]["milestone_or_plan"] != str(spec)
 
 
+def test_supervise_python_helpers_use_pinned_runtime_source() -> None:
+    text = _text("arnold-supervise")
+
+    assert (
+        'SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-'
+        '${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"'
+    ) in text
+    assert text.count('PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}"') == 2
+    assert 'PYTHONPATH="/workspace/arnold:${PYTHONPATH:-}"' not in text
+
+
 def test_dependency_independent_gap_scan_flags_execution_binding_drift(
     tmp_path: Path,
 ) -> None:
