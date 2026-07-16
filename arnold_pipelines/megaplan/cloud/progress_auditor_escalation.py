@@ -907,6 +907,48 @@ def classify_true_stall(
     healthy_live_process = process.get("live") is True
     intentional_wait = bool(explicit_pause or human_gate or external.get("intentional_wait"))
 
+    repair = _mapping(finding.get("repair_data_summary"))
+    goal = _mapping(repair.get("repair_goal_summary"))
+    meta_goal = _mapping(_mapping(finding.get("meta_repair_summary")).get("repair_goal"))
+    investigation = _mapping(repair.get("investigation_summary"))
+    actual_failure = _mapping(investigation.get("actual_failure"))
+    safe_target = _mapping(investigation.get("safe_repair_target"))
+    approval_gate_reached = bool(
+        _text(goal.get("status")).lower() == "approval_required"
+        and _text(meta_goal.get("control_action")).lower() == "await_approval"
+        and chain_state == "awaiting_pr_merge"
+        and external.get("coherent") is True
+        and l1.get("failed")
+        and l2.get("failed")
+    )
+    corrective_path = (
+        {
+            "schema_version": "arnold-l3-corrective-path-v1",
+            "kind": "approval_gate",
+            "decision": "approval_required",
+            "action": "await_human_pr_merge",
+            "repair_dispatch_permitted": False,
+            "pr_number": external.get("expected_pr_number"),
+            "pr_state": external.get("pr_state"),
+            "gate_state": chain_state,
+            "root_cause": _text(actual_failure.get("mechanism"))[:2000],
+            "safe_repair_target": {
+                "kind": _text(safe_target.get("kind")),
+                "scope": _text(safe_target.get("scope")),
+            },
+            "first_broken_layer": "L1",
+            "first_broken_axis": _text(l1.get("axis")),
+            "missed_by_layer": "L2",
+            "missed_by_axis": _text(l2.get("axis")),
+            "reason": (
+                "the historical L1/L2 failure is detected and repaired locally, but "
+                "the authoritative review policy requires remote PR merge approval"
+            ),
+        }
+        if approval_gate_reached
+        else {}
+    )
+
     evidence_sources = {
         "live_process": process,
         "session_marker": marker,
@@ -990,7 +1032,13 @@ def classify_true_stall(
         "schema_version": ESCALATION_SCHEMA,
         "policy_version": POLICY_VERSION,
         "eligible": eligible,
-        "decision": "true_stall" if eligible else "report_only",
+        "decision": (
+            "true_stall"
+            if eligible
+            else "approval_required"
+            if approval_gate_reached
+            else "report_only"
+        ),
         "session": _text(finding.get("session")),
         "plan": _text(finding.get("plan")),
         "escalation_id": escalation_identity(finding),
@@ -1008,6 +1056,7 @@ def classify_true_stall(
             "child_difficulty_ceiling": selected.child_difficulty_ceiling,
             "promotion_reason": "",
         },
+        "corrective_path": corrective_path,
         "quarantine": {
             "required": False,
             "state": "not_applied",

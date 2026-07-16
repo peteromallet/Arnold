@@ -64,6 +64,10 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
 def _settled_managed_launch(
     manifest_path: Path,
     *,
@@ -338,26 +342,32 @@ def run_escalation_controller(
             gate = classify_true_stall(finding, policy=selected)
             finding["l3_escalation_gate"] = gate
             existing_owner = launch_suppressed_by_existing_owner(finding)
+            approval_required = gate.get("decision") == "approval_required"
             finding["l3_escalation"] = {
                 "escalation_id": gate["escalation_id"],
                 "session": gate.get("session"),
                 "plan": gate.get("plan"),
                 "gate": gate.get("decision"),
                 "decision": (
-                    "existing_owner_no_new_launch"
+                    "approval_required"
+                    if approval_required
+                    else "existing_owner_no_new_launch"
                     if existing_owner
                     else "blocked_authority"
                     if gate.get("eligible")
                     else "report_only"
                 ),
                 "reason": (
-                    "healthy canonical ownership already covers this repair objective"
+                    str(_mapping(gate.get("corrective_path")).get("reason") or "")
+                    if approval_required
+                    else "healthy canonical ownership already covers this repair objective"
                     if existing_owner
                     else "L3 master-plus-path mutation authority is absent"
                     if gate.get("eligible")
                     else "true-stall gate did not pass"
                 ),
                 "repair_dispatched": False,
+                "corrective_path": dict(_mapping(gate.get("corrective_path"))),
                 "managed_run_id": "",
                 "managed_manifest_path": "",
             }
@@ -395,6 +405,24 @@ def run_escalation_controller(
         for finding in findings:
             gate = classify_true_stall(finding, policy=selected)
             finding["l3_escalation_gate"] = gate
+            if gate.get("decision") == "approval_required":
+                record = {
+                    "escalation_id": gate["escalation_id"],
+                    "session": gate.get("session"),
+                    "plan": gate.get("plan"),
+                    "gate": "approval_required",
+                    "decision": "approval_required",
+                    "reason": str(
+                        _mapping(gate.get("corrective_path")).get("reason") or ""
+                    ),
+                    "repair_dispatched": False,
+                    "managed_run_id": "",
+                    "managed_manifest_path": "",
+                    "corrective_path": dict(_mapping(gate.get("corrective_path"))),
+                }
+                finding["l3_escalation"] = record
+                summary.append(record)
+                continue
             if launch_suppressed_by_existing_owner(finding):
                 ownership = finding.get("existing_agent_ownership") or {}
                 record = {
