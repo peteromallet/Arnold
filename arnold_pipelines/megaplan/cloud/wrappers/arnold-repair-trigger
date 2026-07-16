@@ -73,7 +73,11 @@ try:
     from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
     from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
     from arnold_pipelines.megaplan.cloud.redact import redact_payload
-    from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        classify_repair_dispatch,
+        project_repair_custody,
+        repair_request_decision_is_terminal,
+    )
     from arnold_pipelines.megaplan.cloud.repair_goal import (
         GOAL_ACTIVE,
         attach_repair_goal_owner,
@@ -1173,8 +1177,14 @@ def _terminal_request_ids(queue_dir: Path) -> set[str]:
             continue
         if payload.get("decision") not in TERMINAL_DECISIONS:
             continue
-        request_id = payload.get("request_id")
-        if isinstance(request_id, str) and request_id:
+        request_id = str(payload.get("request_id") or "").strip()
+        if not repair_request_decision_is_terminal(
+            request_id=request_id,
+            decision=str(payload.get("decision") or ""),
+            related_request_id=str(payload.get("related_request_id") or ""),
+        ):
+            continue
+        if request_id:
             result.add(request_id)
     return result
 

@@ -292,6 +292,42 @@ def test_trigger_reports_current_target_resolution_evidence(tmp_path: Path) -> N
     assert observe["dispatch_decision"] == "dispatch_l1_repair"
 
 
+def test_terminal_request_ids_preserve_self_coalesced_owner_and_skip_distinct_duplicate(
+    tmp_path: Path,
+) -> None:
+    namespace = runpy.run_path(str(TRIGGER))
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+
+    queued = _enqueue(marker_dir, workspace)
+    replay = repair_requests.enqueue_repair_request(
+        queue_root=_queue_root(workspace),
+        marker_dir=marker_dir,
+        session="demo",
+        source="test",
+        problem_signature=_signature(),
+        root_cause_hint="failure details",
+        workspace=workspace,
+        run_kind="chain",
+        created_at="2026-07-01T00:10:00Z",
+    )
+    repair_requests.write_decision(
+        _queue_root(workspace),
+        request_id="duplicate-request",
+        decision="coalesced",
+        reason="matching problem signature already queued",
+        related_request_id=queued["request"]["request_id"],
+        created_at="2026-07-01T00:11:00Z",
+    )
+
+    terminal_ids = namespace["_terminal_request_ids"](_queue_root(workspace))
+
+    assert replay["status"] == "coalesced"
+    assert replay["decision"]["related_request_id"] == queued["request"]["request_id"]
+    assert queued["request"]["request_id"] not in terminal_ids
+    assert "duplicate-request" in terminal_ids
+
+
 def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
