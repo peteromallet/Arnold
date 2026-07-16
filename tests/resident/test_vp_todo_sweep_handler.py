@@ -454,7 +454,7 @@ def test_retired_only_sweep_reconciles_todo_but_dispatches_no_model(tmp_path) ->
 
     retained = vp_todo.load_items(todo)
     assert retained[0]["id"] == item["id"]
-    assert retained[0]["status"] == vp_todo.SUPERSEDED_BY_RECORD
+    assert retained[0]["status"] == vp_todo.SUPERSEDED
     assert runtime.received == []
     logs = [
         json.loads(path.read_text(encoding="utf-8"))

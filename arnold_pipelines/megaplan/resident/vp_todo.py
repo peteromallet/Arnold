@@ -28,6 +28,9 @@ COMPLETED = "completed"
 DONE = "done"
 DELEGATED = "delegated_to_canonical_run"
 SUPERSEDED = "superseded_by_existing_run"
+# Compatibility token written by an unreleased reconciliation draft.  Keep it
+# readable so the supported migration below can normalize it to SUPERSEDED;
+# older resident processes only recognize SUPERSEDED.
 SUPERSEDED_BY_RECORD = "superseded_by_canonical_record"
 BLOCKED = "blocked"
 FAILED = "failed"
@@ -269,21 +272,36 @@ def supersede_by_record(
         for item in items:
             if item["id"] != item_id:
                 continue
-            if item["status"] == SUPERSEDED_BY_RECORD:
+            if item["status"] in {SUPERSEDED, SUPERSEDED_BY_RECORD}:
                 if (
                     item.get("canonical_record_id") == record_id
                     and item.get("canonical_record_evidence") == evidence_ref
                 ):
+                    if item["status"] == SUPERSEDED_BY_RECORD:
+                        previous = item["status"]
+                        item["status"] = SUPERSEDED
+                        item["updated_at"] = _now_iso()
+                        history = list(item.get("transition_history") or [])
+                        history.append(
+                            {
+                                "from": previous,
+                                "to": SUPERSEDED,
+                                "at": item["updated_at"],
+                                "reason": "normalize to the established resident superseded token",
+                            }
+                        )
+                        item["transition_history"] = history
+                        _save_items_unlocked(path, items)
                     return item
                 raise ValueError("todo item is already superseded by a different canonical record")
             if item["status"] != PENDING:
                 raise ValueError(
                     f"todo item in {item['status']!r} cannot transition to "
-                    f"{SUPERSEDED_BY_RECORD!r}"
+                    f"{SUPERSEDED!r}"
                 )
             _transition(
                 item,
-                SUPERSEDED_BY_RECORD,
+                SUPERSEDED,
                 canonical_record_id=record_id,
                 canonical_record_evidence=evidence_ref,
                 resolution=why,

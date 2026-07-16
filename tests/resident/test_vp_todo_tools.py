@@ -111,7 +111,7 @@ def test_supersede_tool_uses_canonical_record_without_claiming_completion(tmp_pa
 
     assert first.ok is True and second.ok is True
     item = profile._read_todo_list(ReadTodoListInput()).data["items"][0]
-    assert item["status"] == vp_todo.SUPERSEDED_BY_RECORD
+    assert item["status"] == vp_todo.SUPERSEDED
     assert item["canonical_record_id"] == "initiative:custody-control-plane"
     assert "completion" in first.message
     assert profile._read_todo_list(ReadTodoListInput()).data["pending"] == 0
