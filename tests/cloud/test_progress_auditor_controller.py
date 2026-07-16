@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import threading
 
 from arnold_pipelines.megaplan.cloud.progress_auditor_controller import (
     TriggerResult,
@@ -165,6 +166,115 @@ def test_valid_canonical_d9_manifest_is_correlated_and_deduped(tmp_path: Path) -
     assert second_item["repair_dispatched"] is False
     assert calls == 1
     assert len(list((queue / "requests").glob("*.json"))) == 1
+
+
+def test_dispatched_launch_waits_for_async_managed_start_receipt(tmp_path: Path) -> None:
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    finding = _true_stall()
+    manifest_path = tmp_path / "workspace" / "manifest.json"
+    timers: list[threading.Timer] = []
+
+    def runner(argv):
+        request_id = argv[-1]
+        from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import classify_true_stall
+
+        gate = classify_true_stall(finding)
+        manifest = _valid_manifest(gate)
+        manifest.update(
+            {
+                "run_id": "managed-delayed-root-repair",
+                "manifest_path": str(manifest_path),
+                "status": "running",
+            }
+        )
+        manifest["links"]["repair_request_id"] = request_id
+
+        def commit_manifest() -> None:
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        timer = threading.Timer(0.1, commit_manifest)
+        timer.start()
+        timers.append(timer)
+        return TriggerResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "dispatched",
+                    "request_id": request_id,
+                    "managed_run_id": "managed-delayed-root-repair",
+                    "managed_manifest_path": str(manifest_path),
+                }
+            ),
+            stderr="",
+        )
+
+    result = run_escalation_controller(
+        {"findings": [finding], "green_checks": []},
+        state_root=tmp_path / "audit-escalations",
+        queue_root=queue,
+        authorized=True,
+        trigger_argv=["repair-trigger"],
+        trigger_runner=runner,
+    )
+    for timer in timers:
+        timer.join()
+
+    item = result["l3_escalation_summary"]["items"][0]
+    assert item["decision"] == "dispatched"
+    assert item["repair_dispatched"] is True
+    assert item["managed_run_id"] == "managed-delayed-root-repair"
+
+
+def test_dispatched_launch_rejects_trigger_manifest_run_id_mismatch(tmp_path: Path) -> None:
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    finding = _true_stall()
+    manifest_path = tmp_path / "workspace" / "manifest.json"
+
+    def runner(argv):
+        request_id = argv[-1]
+        from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import classify_true_stall
+
+        gate = classify_true_stall(finding)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest = _valid_manifest(gate)
+        manifest.update(
+            {
+                "run_id": "managed-manifest-run",
+                "manifest_path": str(manifest_path),
+                "status": "running",
+            }
+        )
+        manifest["links"]["repair_request_id"] = request_id
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return TriggerResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "dispatched",
+                    "request_id": request_id,
+                    "managed_run_id": "managed-different-run",
+                    "managed_manifest_path": str(manifest_path),
+                }
+            ),
+            stderr="",
+        )
+
+    result = run_escalation_controller(
+        {"findings": [finding], "green_checks": []},
+        state_root=tmp_path / "audit-escalations",
+        queue_root=queue,
+        authorized=True,
+        trigger_argv=["repair-trigger"],
+        trigger_runner=runner,
+    )
+
+    item = result["l3_escalation_summary"]["items"][0]
+    assert item["decision"] == "launch_failed"
+    assert item["repair_dispatched"] is False
+    assert "trigger_manifest_run_id_mismatch" in item["launch_validation_errors"]
 
 
 def test_terminal_managed_run_is_reverified_before_any_retry(tmp_path: Path) -> None:

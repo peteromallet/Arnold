@@ -601,6 +601,12 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
                 "goal_path": str(goal),
                 "checkpoint_digest": "a" * 64,
             },
+            "meta_investigation": {
+                "context_digest": "stale-context-digest-that-must-not-be-reprompted",
+                "actual_failure": {"classification": "custody_failure"},
+                "recommended_action": "replan",
+                "receipt_path": "/tmp/prior-receipt.json",
+            },
         },
     )
     _write(marker_dir / "demo.json", {"workspace": "/workspace/demo"})
@@ -622,6 +628,18 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
     _write(context_path, context)
     observation = build_meta_observation_bundle(context_path)
     required = observation["required_receipt_shape"]
+    assert required["context_digest"] == context["context_digest"]
+    assert "stale-context-digest-that-must-not-be-reprompted" not in json.dumps(
+        observation, sort_keys=True
+    )
+    repair_observation = next(
+        item for item in observation["observations"] if item["kind"] == "repair_data"
+    )
+    assert repair_observation["observed"]["prior_meta_investigation_summary"] == {
+        "actual_failure": {"classification": "custody_failure"},
+        "recommended_action": "replan",
+        "receipt_path": "/tmp/prior-receipt.json",
+    }
     assert required["recommended_action"] == "replan"
     assert required["safe_repair_target"]["kind"] == "repair_custody"
     assert required["handoff"] == {

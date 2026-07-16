@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 from typing import Any
 
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
@@ -37,6 +38,8 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
 
 
 CONTROLLER_SCHEMA = "arnold-progress-auditor-escalation-controller-v1"
+MANAGED_LAUNCH_SETTLE_SECONDS = 5.0
+MANAGED_LAUNCH_SETTLE_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,37 @@ def _load_json(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _settled_managed_launch(
+    manifest_path: Path,
+    *,
+    gate: Mapping[str, Any],
+    request_id: str,
+    timeout_seconds: float = MANAGED_LAUNCH_SETTLE_SECONDS,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Wait briefly for the asynchronous managed supervisor's start receipt.
+
+    The repair trigger intentionally returns after spawning the supervisor.  Its
+    manifest is therefore allowed a small bounded establishment window.  Once a
+    non-empty manifest has non-transient contract errors, validation still fails
+    immediately rather than waiting or weakening the launch contract.
+    """
+
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        manifest = _load_json(manifest_path)
+        launch = validate_managed_launch(
+            manifest,
+            gate=gate,
+            request_id=request_id,
+        )
+        transient = not manifest or set(launch["errors"]) == {
+            "worker_start_evidence_missing"
+        }
+        if launch["valid"] or not transient or time.monotonic() >= deadline:
+            return manifest, launch
+        time.sleep(MANAGED_LAUNCH_SETTLE_POLL_SECONDS)
 
 
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -507,13 +541,35 @@ def run_escalation_controller(
             record["trigger_event"] = event
             record["trigger_stderr"] = trigger.stderr[-4000:]
             manifest_path = Path(str(event.get("managed_manifest_path") or ""))
-            manifest = _load_json(manifest_path) if str(manifest_path) else {}
-            launch = validate_managed_launch(
-                manifest,
-                gate=gate,
-                request_id=request_id,
-            )
-            if event.get("status") != "dispatched" or not launch["valid"]:
+            if event.get("status") == "dispatched" and str(manifest_path):
+                manifest, launch = _settled_managed_launch(
+                    manifest_path,
+                    gate=gate,
+                    request_id=request_id,
+                )
+            else:
+                manifest = _load_json(manifest_path) if str(manifest_path) else {}
+                launch = validate_managed_launch(
+                    manifest,
+                    gate=gate,
+                    request_id=request_id,
+                )
+            event_run_id = str(event.get("managed_run_id") or "")
+            manifest_run_id = str(manifest.get("run_id") or "")
+            if event_run_id and event_run_id != manifest_run_id:
+                launch = {
+                    **launch,
+                    "valid": False,
+                    "dispatched": False,
+                    "errors": [*launch["errors"], "trigger_manifest_run_id_mismatch"],
+                    "managed_run_id": "",
+                    "managed_manifest_path": "",
+                }
+            if (
+                trigger.returncode != 0
+                or event.get("status") != "dispatched"
+                or not launch["valid"]
+            ):
                 record.update(
                     {
                         "decision": "launch_failed",

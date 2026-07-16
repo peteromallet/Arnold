@@ -996,7 +996,7 @@ def _bounded_observation(kind: str, encoded: bytes) -> Any:
     keys_by_kind = {
         "repair_data": (
             "session", "outcome", "request_id", "blocker_id", "plan_name",
-            "repair_goal", "meta_investigation", "target", "verification",
+            "repair_goal", "target", "verification",
             "evidence_compaction", "current_failure_context",
         ),
         "session_marker": (
@@ -1077,6 +1077,17 @@ def _bounded_observation(kind: str, encoded: bytes) -> Any:
             )
             if key in current
         }
+    if kind == "repair_data" and isinstance(value.get("meta_investigation"), Mapping):
+        prior = value["meta_investigation"]
+        selected["prior_meta_investigation_summary"] = {
+            key: prior[key]
+            for key in (
+                "actual_failure", "recommended_action", "four_axis",
+                "safe_repair_target", "target_kind", "investigator_run_id",
+                "receipt_path",
+            )
+            if key in prior
+        }
     if kind in {"source_contract", "resident_delegation", "automatic_system"}:
         return {"verified": True}
     for list_key in ("attempts", "iterations"):
@@ -1139,6 +1150,10 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             }
         )
     required_receipt = _common_required_output("l2_repair_system")
+    # Replace the illustrative placeholder with the one current immutable
+    # envelope identity. Prior receipts are summarized above without their old
+    # digests so the model cannot accidentally bind its response to stale custody.
+    required_receipt["context_digest"] = context["context_digest"]
     external_guard_status = "unknown"
     for item in observations:
         if item.get("kind") != "external_state":
