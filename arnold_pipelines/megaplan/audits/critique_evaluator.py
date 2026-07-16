@@ -303,7 +303,7 @@ def validate_evaluator_verdict(
 
     ``vendor`` is retained as a deprecated no-op compatibility parameter while
     live evaluator verdicts migrate from per-lens ``critic_model`` selections
-    to complexity-only routing. The roster constants remain available for
+    to complexity-only routing (now 1-10 scale for execute). The roster constants remain available for
     operator-pin paths elsewhere; this validator no longer performs live
     per-lens roster/vendor/strength checks.
 
@@ -366,11 +366,11 @@ def validate_evaluator_verdict(
         if (
             not isinstance(complexity, int)
             or isinstance(complexity, bool)
-            or not 1 <= complexity <= 5
+            or not 1 <= complexity <= 10
         ):
             _reject(
                 f"selection {idx} ({cid}): must include an integer `complexity` "
-                f"score in 1..5 (got {complexity!r})."
+                f"score in 1..10 (got {complexity!r})."
             )
         justification = sel.get("complexity_justification")
         if not isinstance(justification, str) or not justification.strip():
