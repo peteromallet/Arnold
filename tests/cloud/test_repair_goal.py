@@ -570,6 +570,43 @@ def test_missing_quality_repair_commit_overrides_false_stage_advancement() -> No
     assert "not contained" in result["reason"]
 
 
+def test_terminal_chain_transition_supersedes_stale_commit_blocker() -> None:
+    result = evaluate_checkpoint(
+        {
+            "target_stage": "review",
+            "target_stage_rank": 7,
+            "chain_current_plan_name": "m5a",
+            "chain_current_milestone_index": 1,
+            "chain_completed_count": 1,
+        },
+        {
+            "target_stage": "done",
+            "target_stage_rank": 11,
+            "plan_state": "done",
+            "latest_failure_cleared": True,
+            "chain_current_plan_name": "",
+            "chain_current_milestone_index": 2,
+            "chain_completed_count": 2,
+            "chain_last_state": "pr_closed",
+            "quality_resolution_commit_custody": {
+                "required_commits": ["a" * 40],
+                "missing_commits": ["a" * 40],
+                "verified": False,
+            },
+        },
+    )
+
+    assert result["status"] == GOAL_PROGRESSED
+    assert result["control_action"] == "complete"
+    assert result["superseded_blocker"] is True
+    assert result["superseded_by"] == {
+        "chain_completed_count": 2,
+        "chain_current_milestone_index": 2,
+        "chain_current_plan_name": "",
+        "chain_last_state": "pr_closed",
+    }
+
+
 def test_quality_repair_commit_custody_reads_nested_state_metadata(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)

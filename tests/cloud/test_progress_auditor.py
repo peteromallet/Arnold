@@ -153,6 +153,57 @@ def test_l3_carries_repair_root_cause_into_terminal_owner_finding() -> None:
     assert "receipt-bound quality recovery" in reason
 
 
+def test_l3_routes_stranded_cursor_and_stale_repair_goal() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _between_milestone_cycling(chain_log, chain_state, repair_data):")
+    end = text.index("\ndef _stale_state_evidence", start)
+    namespace: dict[str, object] = {}
+    exec(text[start:end], namespace)
+
+    stale = namespace["_between_milestone_cycling"](
+        {"recent_stops": []},
+        {
+            "completed_count": 2,
+            "total_milestones": 10,
+            "current_milestone_index": 2,
+            "current_plan_name": None,
+            "last_state": "pr_closed",
+        },
+        {
+            "iteration_count": 55,
+            "repair_goal_summary": {
+                "status": "active",
+                "frozen_chain_completed_count": 1,
+                "frozen_chain_current_milestone_index": 1,
+            },
+        },
+    )
+
+    assert stale["stranded_between_milestones"] is True
+    assert stale["stale_repair_goal"] is True
+
+    start = text.index("def _stranded_between_milestones_reason(ev):")
+    end = text.index("\ndef _investigation_handoff_reason", start)
+    namespace = {}
+    exec(text[start:end], namespace)
+    reason = namespace["_stranded_between_milestones_reason"](
+        {
+            "stale_state_evidence": stale,
+            "chain_state_summary": {
+                "current": {
+                    "completed_count": 2,
+                    "total_milestones": 10,
+                    "current_milestone_index": 2,
+                    "current_plan_name": None,
+                    "last_state": "pr_closed",
+                }
+            },
+        }
+    )
+    assert reason.startswith("stranded_between_milestones:")
+    assert "active repair goal is stale" in reason
+
+
 def test_l3_derives_bounded_root_cause_when_active_retry_replaces_investigation() -> None:
     text = _wrapper("arnold-progress-auditor")
     start = text.index("def _repair_owner_terminal_failure_reason(ev):")

@@ -2373,10 +2373,33 @@ def _repair_data_summary(session):
     terminal_failures = repair_goal.get("terminal_failures") if isinstance(repair_goal, dict) else []
     terminal_failures = terminal_failures if isinstance(terminal_failures, list) else []
     if repair_goal:
+        frozen_checkpoint = (
+            repair_goal.get("frozen_checkpoint")
+            if isinstance(repair_goal.get("frozen_checkpoint"), dict)
+            else {}
+        )
+        last_observation = (
+            repair_goal.get("last_observation")
+            if isinstance(repair_goal.get("last_observation"), dict)
+            else {}
+        )
         repair_goal_summary = {
             "goal_id": str(repair_goal.get("goal_id") or "")[:200],
             "path": str(repair_goal_path),
             "status": str(repair_goal.get("status") or "")[:100],
+            "target_plan_name": str(
+                ((repair_goal.get("target") or {}).get("plan_name") or "")
+                if isinstance(repair_goal.get("target"), dict)
+                else ""
+            )[:300],
+            "frozen_chain_completed_count": frozen_checkpoint.get("chain_completed_count"),
+            "frozen_chain_current_milestone_index": frozen_checkpoint.get(
+                "chain_current_milestone_index"
+            ),
+            "observed_chain_completed_count": last_observation.get("chain_completed_count"),
+            "observed_chain_current_milestone_index": last_observation.get(
+                "chain_current_milestone_index"
+            ),
             "terminal_failures": [
                 {
                     "recorded_at": str(item.get("recorded_at") or "")[:100],
@@ -3545,8 +3568,46 @@ def _between_milestone_cycling(chain_log, chain_state, repair_data):
             continue
     repeated_relaunch = repair_iterations >= 2 or len((chain_log or {}).get("recent_stops") or []) >= 2
     cycling = completed_count >= 2 and repeated_relaunch and (len(cycles) >= 2 or one_step_repair_advances >= 1)
+    try:
+        total_milestones = int(
+            current.get("total_milestones")
+            or current.get("milestone_count")
+            or 0
+        )
+    except (TypeError, ValueError):
+        total_milestones = 0
+    try:
+        milestone_index = int(current.get("current_milestone_index") or 0)
+    except (TypeError, ValueError):
+        milestone_index = 0
+    current_plan = str(current.get("current_plan_name") or "").strip()
+    last_state = str(current.get("last_state") or "").strip().lower()
+    stranded = bool(
+        total_milestones > completed_count >= 1
+        and milestone_index == completed_count
+        and not current_plan
+        and last_state
+        in {"between_milestones", "done", "pr_closed", "stopped", "unknown"}
+    )
+    goal = (
+        (repair_data or {}).get("repair_goal_summary")
+        if isinstance((repair_data or {}).get("repair_goal_summary"), dict)
+        else {}
+    )
+    try:
+        frozen_completed = int(goal.get("frozen_chain_completed_count") or 0)
+        frozen_index = int(goal.get("frozen_chain_current_milestone_index") or 0)
+    except (TypeError, ValueError):
+        frozen_completed = 0
+        frozen_index = 0
+    stale_repair_goal = bool(
+        goal.get("status") == "active"
+        and (completed_count > frozen_completed or milestone_index > frozen_index)
+    )
     return {
         "between_milestone_cycling": cycling,
+        "stranded_between_milestones": stranded,
+        "stale_repair_goal": stale_repair_goal,
         "one_milestone_stop_cycle_count": len(cycles),
         "one_milestone_stop_cycles": cycles[-4:],
         "repair_one_milestone_advances": one_step_repair_advances,
@@ -3573,6 +3634,10 @@ def _stale_state_evidence(plan_latest_failure, latest_failure, events_path, hist
         clear_actions.append("clear or quarantine stale blocked phase/task artifacts before re-driving")
     if evidence.get("between_milestone_cycling"):
         clear_actions.append("fix/re-drive chain so it advances continuously instead of one milestone per relaunch")
+    if evidence.get("stranded_between_milestones"):
+        clear_actions.append("reconcile the accepted terminal milestone and initialize the next milestone")
+    if evidence.get("stale_repair_goal"):
+        clear_actions.append("supersede the stale repair goal and dispatch against the current chain cursor")
     evidence["recommended_state_clear_actions"] = clear_actions
     return evidence
 
@@ -3756,6 +3821,30 @@ def _repair_data_ghost_running_reason(ev):
             f"chain_complete={chain_current.get('chain_complete')}"
         )
     return ""
+
+def _stranded_between_milestones_reason(ev):
+    stale = ev.get("stale_state_evidence") if isinstance(ev, dict) else {}
+    stale = stale if isinstance(stale, dict) else {}
+    if not stale.get("stranded_between_milestones"):
+        return ""
+    chain_current = (
+        (ev.get("chain_state_summary") or {}).get("current")
+        if isinstance(ev.get("chain_state_summary"), dict)
+        else {}
+    )
+    repair_suffix = (
+        "; active repair goal is stale relative to the accepted chain cursor"
+        if stale.get("stale_repair_goal")
+        else ""
+    )
+    return (
+        "stranded_between_milestones: accepted milestones="
+        f"{chain_current.get('completed_count') or 0}/"
+        f"{chain_current.get('total_milestones') or '?'} cursor="
+        f"{chain_current.get('current_milestone_index')} has no current plan "
+        f"and last_state={chain_current.get('last_state') or 'unknown'}"
+        f"{repair_suffix}"
+    )
 
 def _investigation_handoff_reason(ev):
     """Surface automatic repair that mutated or claimed success without investigation."""
@@ -5180,6 +5269,7 @@ for entry in plans:
         _meta_repair_launch_failure_reason(ev),
         _watchdog_chain_health_disagreement_reason(ev),
         _repair_data_ghost_running_reason(ev),
+        _stranded_between_milestones_reason(ev),
         _investigation_handoff_reason(ev),
         _repair_owner_terminal_failure_reason(ev),
         _canonical_launch_disagreement_reason(ev),

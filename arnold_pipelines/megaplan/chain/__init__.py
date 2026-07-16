@@ -7113,6 +7113,79 @@ def run_chain(
                 root, spec_path, branch=milestone.branch, pr_number=state.pr_number
             )
             state = chain_spec.load_chain_state(spec_path)
+            # The atomic acceptance transaction may have committed the
+            # completed record and advanced the durable cursor before the
+            # publication/sync refresh above reloaded ChainState.  In that
+            # case PR context is intentionally cleared by the same
+            # transaction.  Re-check the accepted durable boundary instead of
+            # passing ``None`` to gh and manufacturing a closed PR.
+            accepted_during_sync = next(
+                (
+                    record
+                    for record in state.completed
+                    if isinstance(record, dict)
+                    and record.get("label") == milestone.label
+                    and record.get("status") == STATE_DONE
+                    and record.get("pr_number") is None
+                    and record.get("publication_evidence")
+                    == "local_no_push_reconciliation"
+                    and record.get("local_commit_sha")
+                ),
+                None,
+            )
+            if (
+                accepted_during_sync is not None
+                and state.current_milestone_index > idx
+                and state.pr_number is None
+            ):
+                accepted, accepted_reason = _chain_completion_guard(
+                    root,
+                    accepted_during_sync,
+                    implementation_milestone=True,
+                    chain_state=state,
+                )
+                if not accepted:
+                    state.last_state = STATE_BLOCKED
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=(
+                            f"milestone {milestone.label} durable local completion "
+                            f"failed revalidation after sync: {accepted_reason}"
+                        ),
+                    )
+                log(
+                    f"milestone {milestone.label} advanced by accepted local "
+                    "completion during sync; continuing without PR metadata"
+                )
+                _mark_plan_completed_by_chain(
+                    root,
+                    plan_name,
+                    milestone_label=milestone.label,
+                    completion_reason=accepted_reason,
+                    writer=writer,
+                    state=state,
+                )
+                idx = state.current_milestone_index
+                _emit_milestone_completion_evidence(
+                    state,
+                    milestone_label=milestone.label,
+                    milestone_index=idx - 1,
+                    plan_name=plan_name,
+                )
+                chain_spec.save_chain_state(spec_path, state)
+                if one:
+                    return _result(
+                        "paused",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"completed one milestone: {milestone.label}",
+                    )
+                continue
             current_pr_state = _pr_state(root, state.pr_number, writer=writer)
             if current_pr_state == "merged":
                 state.pr_state = "merged"

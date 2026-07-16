@@ -649,6 +649,54 @@ def evaluate_checkpoint(
             "observed_session_identity": dict(observed_identity),
         }
 
+    frozen_completed = int(frozen.get("chain_completed_count") or 0)
+    observed_completed = int(observation.get("chain_completed_count") or 0)
+    frozen_index = int(frozen.get("chain_current_milestone_index") or 0)
+    observed_index = int(observation.get("chain_current_milestone_index") or 0)
+    frozen_chain_plan = str(frozen.get("chain_current_plan_name") or "")
+    observed_chain_plan = str(observation.get("chain_current_plan_name") or "")
+    milestone_advanced = observed_completed > frozen_completed or observed_index > frozen_index
+    if milestone_advanced:
+        return {
+            "status": GOAL_PROGRESSED,
+            "reason": "authoritative chain milestone acceptance advanced beyond the frozen checkpoint",
+            "authoritative_progress": True,
+            "blocker_cleared": True,
+            "fresh_progress": True,
+            "stage_advanced": True,
+            "correct_worker_alive": None,
+            "control_action": "complete",
+            "superseded_blocker": True,
+            "superseded_by": {
+                "chain_completed_count": observed_completed,
+                "chain_current_milestone_index": observed_index,
+                "chain_current_plan_name": observed_chain_plan,
+                "chain_last_state": str(observation.get("chain_last_state") or ""),
+            },
+        }
+    if frozen_chain_plan and observed_chain_plan and observed_chain_plan != frozen_chain_plan:
+        return {
+            "status": GOAL_PROGRESSED,
+            "reason": "authoritative chain current plan advanced beyond the frozen plan",
+            "authoritative_progress": True,
+            "blocker_cleared": True,
+            "fresh_progress": True,
+            "stage_advanced": True,
+            "correct_worker_alive": None,
+            "control_action": "complete",
+            "superseded_blocker": True,
+            "superseded_by": {
+                "chain_current_plan_name": observed_chain_plan,
+                "chain_current_milestone_index": observed_index,
+            },
+        }
+
+    # Blocker-specific commit custody and approval gates are meaningful only
+    # while the frozen target still owns the chain cursor.  Once authoritative
+    # milestone/plan identity moves, the old goal is stale and must terminate
+    # before a fresh blocker is dispatched.  Checking these predicates first
+    # previously kept a repaired terminal transition bound to an obsolete
+    # commit forever.
     quality_commit_custody = (
         observation.get("quality_resolution_commit_custody")
         if isinstance(observation.get("quality_resolution_commit_custody"), Mapping)
@@ -682,36 +730,6 @@ def evaluate_checkpoint(
             "stage_advanced": False,
             "correct_worker_alive": None,
             "control_action": "await_approval",
-        }
-
-    frozen_completed = int(frozen.get("chain_completed_count") or 0)
-    observed_completed = int(observation.get("chain_completed_count") or 0)
-    frozen_index = int(frozen.get("chain_current_milestone_index") or 0)
-    observed_index = int(observation.get("chain_current_milestone_index") or 0)
-    frozen_chain_plan = str(frozen.get("chain_current_plan_name") or "")
-    observed_chain_plan = str(observation.get("chain_current_plan_name") or "")
-    milestone_advanced = observed_completed > frozen_completed or observed_index > frozen_index
-    if milestone_advanced:
-        return {
-            "status": GOAL_PROGRESSED,
-            "reason": "authoritative chain milestone acceptance advanced beyond the frozen checkpoint",
-            "authoritative_progress": True,
-            "blocker_cleared": True,
-            "fresh_progress": True,
-            "stage_advanced": True,
-            "correct_worker_alive": None,
-            "control_action": "complete",
-        }
-    if frozen_chain_plan and observed_chain_plan and observed_chain_plan != frozen_chain_plan:
-        return {
-            "status": GOAL_PROGRESSED,
-            "reason": "authoritative chain current plan advanced beyond the frozen plan",
-            "authoritative_progress": True,
-            "blocker_cleared": True,
-            "fresh_progress": True,
-            "stage_advanced": True,
-            "correct_worker_alive": None,
-            "control_action": "complete",
         }
 
     frozen_acceptance = frozen.get("acceptance") if isinstance(frozen.get("acceptance"), Mapping) else {}
