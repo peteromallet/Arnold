@@ -10,16 +10,23 @@ created_at: '2026-07-16T12:30:00+00:00'
 
 ## Outcome
 
-Turn M1 checkpoints into useful, correction-friendly session and project
-knowledge through one append-only lifecycle and one scoped query path: rolling
-and final synthesis, evidence-aware search, all five lightweight controls, and
-reviewed repository/revision-aware promotion with contradiction preservation.
+Turn M1 checkpoints into useful, correction-friendly run, workflow, session,
+and project knowledge through one append-only lifecycle and one scoped query
+path: layered rolling/final synthesis, evidence-aware search, all five controls,
+and reviewed repository/revision-aware promotion with complete lineage.
 
 ## In scope
 
 - Produce versioned rolling synthesis from accepted checkpoints and one
   idempotent terminal synthesis only after the terminal range is accepted.
   Preserve exact record/checkpoint inputs, claim kinds, gaps, and older versions.
+- Build rebuildable projections from agent run through attempt, phase/step,
+  plan, sprint/milestone, epic/chain, and higher workflow. Retain all child,
+  retry, fallback, rework, rejected, quarantined, superseded, indeterminate,
+  late, and contradictory inputs; active views select without deleting.
+- Keep lifecycle outcome, semantic verdict, authority acceptance, custody, and
+  knowledge acceptance as separate referenced facts. A failed attempt may
+  contain accepted learning, and a completed agent may have rejected claims.
 - Append claim/synthesis correction, supersession, rationale, actor, evidence,
   and deterministic active-view records; never mutate M1 evidence.
 - Implement bounded, paginated Store-backed search over records, syntheses,
@@ -32,6 +39,9 @@ reviewed repository/revision-aware promotion with contradiction preservation.
 - Define promotion candidate, repository/project identity, commit/branch/version/
   path/environment/time applicability, review decision, project knowledge,
   contradiction/adjudication, supersession, invalidation, and drift records.
+- Emit cross-epic and cross-workflow reuse as promotion candidates rather than
+  facts. Do not bypass applicability, evidence access, contradiction review, or
+  authority-proportionate review because a higher-level synthesis exists.
 - Require source/evidence/correction lineage and independent read/approve
   authorization. Narrow provisional claims may receive bounded automated aid;
   authoritative, broad, security, migration, public-contract, ambiguous, or
@@ -48,6 +58,9 @@ reviewed repository/revision-aware promotion with contradiction preservation.
   `propose-promotion` stops at a candidate.
 - Corrections and knowledge lifecycle are append-only; primary evidence and all
   historical versions remain resolvable.
+- Projections are disposable and rebuildable from observations. Neither a
+  summary nor an active view becomes run, scheduling, acceptance, custody, or
+  delivery authority.
 - Unverified, inferred, proposed, contradicted, stale, and out-of-applicability
   material is never presented as confirmed current knowledge.
 - No organization-wide ontology, separate promotion service, autonomous code
@@ -60,6 +73,10 @@ reviewed repository/revision-aware promotion with contradiction preservation.
   or above threshold yields one final synthesis. Rebuild, duplicate terminal,
   concurrent correction, claim/synthesis correction, active-view, authorization,
   and full-history tests pass.
+- Layered fixtures prove deterministic rebuild from agent run through workflow
+  and reviewed cross-epic candidate under retry/rework, nested/concurrent child,
+  correction, late-event, supersession, and acceptance-change scenarios. No
+  missing child or rejected attempt disappears without an explicit gap/filter.
 - Search enforces repository/session/revision/actor scope, authorization,
   pagination, bounded results, applicability, and active/superseded filters;
   leakage and decontextualized-result tests fail closed.
@@ -75,10 +92,11 @@ reviewed repository/revision-aware promotion with contradiction preservation.
 ## Dependencies and risks
 
 Requires M1 accepted-checkpoint enumeration, record/evidence schemas, exact
-route provenance, authorization, and atomicity tests. Reuse Store event/version
-patterns, repository identity helpers, existing review authority, and one query
-service with thin adapters. M2 is the densest sprint; if repository evidence
-disproves the estimate, split its implementation without narrowing acceptance.
+route provenance, complete hierarchy/causality, authority/acceptance separation,
+authorization, and atomicity tests. Reuse Store event/version patterns,
+repository identity helpers, existing review authority, and one query service
+with thin adapters. M2 is the densest sprint; if repository evidence disproves
+the estimate, split its implementation without narrowing acceptance.
 
 ## Estimate and non-goals
 
