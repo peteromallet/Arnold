@@ -3448,6 +3448,30 @@ def _append_reconciled_completed_record(
     return True
 
 
+def _revalidate_local_no_push_completed_record(
+    root: Path,
+    state: ChainState,
+    record: dict[str, Any],
+) -> tuple[bool, str]:
+    """Revalidate an explicitly accepted local-only completion record."""
+
+    if record.get("status") != STATE_DONE:
+        return False, "local/no-push completion record is not terminal done"
+    if record.get("pr_number") is not None:
+        return False, "local/no-push completion record unexpectedly has PR metadata"
+    if record.get("publication_evidence") != "local_no_push_reconciliation":
+        return False, "completed record has no explicit local/no-push publication evidence"
+    local_commit_sha = record.get("local_commit_sha")
+    if not isinstance(local_commit_sha, str) or not local_commit_sha.strip():
+        return False, "local/no-push completion record has no local commit SHA"
+    return _chain_completion_guard(
+        root,
+        record,
+        implementation_milestone=True,
+        chain_state=state,
+    )
+
+
 def _reconcile_chain_from_ground_truth(
     root: Path,
     spec_path: Path,
@@ -3485,7 +3509,23 @@ def _reconcile_chain_from_ground_truth(
             continue
         record = dict(record)
         pr_number = _record_pr_number(record)
-        if push_enabled and milestone.branch and pr_number is not None:
+        if push_enabled and milestone.branch and pr_number is None:
+            accepted, accepted_reason = _revalidate_local_no_push_completed_record(
+                root, state, record
+            )
+            if not accepted:
+                writer(
+                    f"[chain] completed record for {milestone.label} is not "
+                    "authoritative yet: branch milestone is missing PR context "
+                    f"and local/no-push revalidation failed: {accepted_reason}\n"
+                )
+                removed_completed[milestone.label] = dict(record)
+                continue
+            writer(
+                f"[chain] preserved accepted local/no-push completion for "
+                f"{milestone.label}: {accepted_reason}\n"
+            )
+        elif push_enabled and milestone.branch and pr_number is not None:
             live_pr_state = _pr_state(root, pr_number, writer=writer)
             if record.get("pr_state") != live_pr_state:
                 writer(
@@ -5251,11 +5291,22 @@ def _reconcile_chain_from_ground_truth(
         pr_number = _record_pr_number(record)
         if push_enabled and milestone.branch:
             if pr_number is None:
-                writer(
-                    f"[chain] completed record for {milestone.label} is not "
-                    "authoritative yet: branch milestone is missing PR context\n"
+                accepted, accepted_reason = _revalidate_local_no_push_completed_record(
+                    root, state, record
                 )
-                removed_completed[milestone.label] = dict(record)
+                if not accepted:
+                    writer(
+                        f"[chain] completed record for {milestone.label} is not "
+                        "authoritative yet: branch milestone is missing PR context "
+                        f"and local/no-push revalidation failed: {accepted_reason}\n"
+                    )
+                    removed_completed[milestone.label] = dict(record)
+                    continue
+                writer(
+                    f"[chain] preserved accepted local/no-push completion for "
+                    f"{milestone.label}: {accepted_reason}\n"
+                )
+                reconciled_completed.append(record)
                 continue
             live_pr_state = _pr_state(root, pr_number, writer=writer)
             if record.get("pr_state") != live_pr_state:

@@ -533,6 +533,84 @@ def test_run_chain_accepts_local_completion_committed_during_pr_sync(
     assert any("continuing without PR metadata" in message for message in messages)
 
 
+def test_reconcile_preserves_guarded_local_no_push_completion(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    local_commit_sha = _commit_semantic_change(tmp_path)
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="between_milestones",
+        completed=[
+            {
+                "label": "m1",
+                "plan": "plan-m1",
+                "status": "done",
+                "pr_number": None,
+                "local_commit_sha": local_commit_sha,
+                "publication_evidence": "local_no_push_reconciliation",
+            }
+        ],
+    )
+    save_chain_state(spec_path, state)
+    messages: list[str] = []
+
+    with patch(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        side_effect=AssertionError("local completion must not query a PR"),
+    ):
+        reconciled = chain_module._reconcile_chain_from_ground_truth(
+            tmp_path,
+            spec_path,
+            load_spec(spec_path),
+            state,
+            writer=messages.append,
+            push_enabled=True,
+        )
+
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert [record["label"] for record in reconciled.completed] == ["m1"]
+    assert any("preserved accepted local/no-push completion" in msg for msg in messages)
+
+
+def test_reconcile_rejects_unguarded_prless_branch_completion(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="between_milestones",
+        completed=[{"label": "m1", "plan": "plan-m1", "status": "done"}],
+    )
+    save_chain_state(spec_path, state)
+
+    reconciled = chain_module._reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        load_spec(spec_path),
+        state,
+        writer=lambda _message: None,
+        push_enabled=True,
+    )
+
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.completed == []
+    assert reconciled.last_state == "authority_divergence"
+
+
 def test_run_chain_publishes_claimed_changes_before_auto_merge(
     tmp_path: Path,
 ) -> None:
