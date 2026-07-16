@@ -611,6 +611,52 @@ def test_reconcile_rejects_unguarded_prless_branch_completion(
     assert reconciled.last_state == "authority_divergence"
 
 
+def test_reconcile_local_completion_clears_merge_wait_before_successor(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    with spec_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "  - label: m2\n"
+            f"    idea: {tmp_path / 'idea.md'}\n"
+            "    branch: test/m2\n"
+        )
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    _commit_semantic_change(tmp_path)
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-m1",
+        last_state=STATE_AWAITING_PR_MERGE,
+        pr_number=255,
+        pr_state="open",
+    )
+    save_chain_state(spec_path, state)
+
+    reconciled = chain_module._reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        load_spec(spec_path),
+        state,
+        writer=lambda _message: None,
+        push_enabled=False,
+    )
+
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert reconciled.last_state == "between_milestones"
+    assert reconciled.pr_number is None
+    assert [record["label"] for record in reconciled.completed] == ["m1"]
+    assert reconciled.completed[0]["publication_evidence"] == (
+        "local_no_push_reconciliation"
+    )
+
+
 def test_run_chain_publishes_claimed_changes_before_auto_merge(
     tmp_path: Path,
 ) -> None:
