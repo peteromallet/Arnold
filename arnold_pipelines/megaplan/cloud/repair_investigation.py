@@ -1574,18 +1574,32 @@ def _external_guard_applicability(
             current = observed.get("current")
             current = current if isinstance(current, Mapping) else {}
             chain_state = str(
-                observed.get("last_state") or current.get("last_state") or ""
+                observed.get("chain_last_state")
+                or observed.get("last_state")
+                or current.get("last_state")
+                or ""
             ).strip().lower()
         elif item.get("kind") == "plan_state":
+            current = observed.get("current")
+            current = current if isinstance(current, Mapping) else {}
+            chain_state = str(
+                observed.get("chain_last_state")
+                or observed.get("last_state")
+                or current.get("last_state")
+                or chain_state
+            ).strip().lower()
             latest = observed.get("latest_failure")
             latest = latest if isinstance(latest, Mapping) else {}
             metadata = latest.get("metadata")
             metadata = metadata if isinstance(metadata, Mapping) else {}
-            failure_kind = str(latest.get("kind") or "").strip().lower()
+            failure_kind = str(
+                latest.get("kind") or observed.get("failure_kind") or ""
+            ).strip().lower()
             failure_phase = str(
                 metadata.get("phase")
                 or metadata.get("failure_step")
                 or observed.get("current_phase")
+                or observed.get("target_stage")
                 or ""
             ).strip().lower()
     pr_states = {"awaiting_pr_merge", "pr_pending", "ci_pending", "ci_failed"}
@@ -1764,6 +1778,7 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
     required_receipt = context.get("required_investigator_output")
     required_receipt = dict(required_receipt) if isinstance(required_receipt, Mapping) else {}
     required_receipt["context_digest"] = digest
+    external_guard_applicability = _external_guard_applicability(observations)
     bundle = redact_payload(
         {
             "schema_version": REPAIR_OBSERVATION_BUNDLE_SCHEMA,
@@ -1775,6 +1790,13 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             "analysis_context": {
                 key: context.get(key) for key in analysis_keys if key in context
             },
+            "external_guard_policy": (
+                "A failed or pending PR/CI check forbids recover_state only when the "
+                "current chain/failure phase makes that external guard operative. When a "
+                "non-PR blocker is active, PR state is corroborating context and must not "
+                "displace the actual failure. Never hand-advance the chain."
+            ),
+            "external_guard_applicability": external_guard_applicability,
             "required_receipt_shape": required_receipt,
             "observations": observations,
         }
