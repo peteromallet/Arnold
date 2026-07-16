@@ -317,6 +317,45 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
             l2_replan_epoch=2,
         )
 
+    clear_external = {
+        "available": True,
+        "external_guard": {
+            "status": "clear",
+            "failing_checks": [],
+            "pending_checks": [],
+        },
+    }
+    _write(external, clear_external)
+    clear_encoded = external.read_bytes()
+    access_payload = json.loads(access.read_text(encoding="utf-8"))
+    access_payload["observations"][0].update(
+        {
+            "sha256": hashlib.sha256(clear_encoded).hexdigest(),
+            "size_bytes": len(clear_encoded),
+            "observed": clear_external,
+        }
+    )
+    _write(access, access_payload)
+    recovery_context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+        l2_handoff_path=access,
+        l2_context_digest=context_digest,
+        l2_replan_epoch=3,
+    )
+    assert recovery_context["exact_error"] == {
+        "failure_kind": "active_unowned_repair_goal",
+        "message": (
+            "L2 verified the recovery epoch; no canonical runner is live and "
+            "the exact supported recovery CLI has not yet produced accepted progress"
+        ),
+        "replan_epoch": 3,
+    }
+
     external.write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="size disagrees|digest disagrees|content disagrees"):
         build_investigation_context(

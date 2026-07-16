@@ -564,6 +564,18 @@ def build_investigation_context(
         "exact_error": external_failure
         or current.get("latest_failure")
         or (phase_result if phase_result_blocked else {})
+        or (
+            {
+                "failure_kind": "active_unowned_repair_goal",
+                "message": (
+                    "L2 verified the recovery epoch; no canonical runner is live and "
+                    "the exact supported recovery CLI has not yet produced accepted progress"
+                ),
+                "replan_epoch": l2_replan_authorization.get("replan_epoch"),
+            }
+            if l2_replan_authorization.get("verified") is True
+            else {}
+        )
         or frozen_checkpoint.get("latest_failure")
         or {},
         "request": {
