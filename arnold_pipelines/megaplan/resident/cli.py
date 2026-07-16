@@ -90,9 +90,17 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     queue_parser = sub.add_parser(
         "queue-subagent-successor",
         parents=[shared],
-        help="Durably queue a provenance-preserving successor after one managed run",
+        help="Durably queue a provenance-preserving successor after one or more managed runs",
     )
-    queue_parser.add_argument("--after-run-id", required=True)
+    dependency_source = queue_parser.add_mutually_exclusive_group(required=True)
+    dependency_source.add_argument(
+        "--after-run-id", help="Legacy singular predecessor run ID"
+    )
+    dependency_source.add_argument(
+        "--after-run-ids",
+        nargs="+",
+        help="Distinct predecessor run IDs; every run must succeed before launch",
+    )
     prompt_source = queue_parser.add_mutually_exclusive_group(required=True)
     prompt_source.add_argument("--prompt")
     prompt_source.add_argument("--prompt-file")
@@ -180,7 +188,8 @@ def _resident_queue_subagent_successor(
                 task=prompt.strip(),
                 description=args.description,
                 project_dir=project_dir,
-                depends_on_run_id=args.after_run_id,
+                depends_on_run_id=getattr(args, "after_run_id", None),
+                depends_on_run_ids=getattr(args, "after_run_ids", None),
                 queue_max_launch_attempts=args.max_launch_attempts,
             )
         )
@@ -193,13 +202,21 @@ def _resident_queue_subagent_successor(
             "queue_rejected", "queued successor manifest is unavailable after commit"
         ) from exc
     queue = manifest.get("queue") if isinstance(manifest, Mapping) else None
+    predecessor_run_ids = (
+        list(queue.get("predecessor_run_ids") or [])
+        if isinstance(queue, Mapping)
+        else []
+    )
     return {
         "success": True,
         "step": "resident",
         "action": "queue-subagent-successor",
         "run_id": result.run_id,
         "status": result.status,
-        "predecessor_run_id": args.after_run_id,
+        "predecessor_run_id": (
+            predecessor_run_ids[0] if len(predecessor_run_ids) == 1 else None
+        ),
+        "predecessor_run_ids": predecessor_run_ids,
         "authorization_mode": _queue_authorization_mode(queue),
         "manifest_path": result.manifest_path,
         "description": result.description,
@@ -210,9 +227,17 @@ def _queue_authorization_mode(queue: object) -> str:
     if not isinstance(queue, Mapping):
         return "invalid_queue_contract"
     authorization = queue.get("cross_request_authorization")
-    if not isinstance(authorization, Mapping):
+    if isinstance(authorization, Mapping):
+        return str(authorization.get("mode") or "invalid_cross_request_authorization")[:80]
+    authorizations = queue.get("cross_request_authorizations")
+    if not isinstance(authorizations, list):
         return "same_request_custody"
-    return str(authorization.get("mode") or "invalid_cross_request_authorization")[:80]
+    modes = {
+        str(item.get("mode") or "invalid_cross_request_authorization")[:80]
+        for item in authorizations
+        if isinstance(item, Mapping)
+    }
+    return next(iter(modes)) if len(modes) == 1 else "invalid_cross_request_authorization"
 
 
 def _resident_inspect_subagent_queue(
@@ -244,7 +269,7 @@ def _resident_inspect_subagent_queue(
         authored = queue.get("authored_prompt")
         authored = authored if isinstance(authored, dict) else {}
         references = []
-        for ref in list(queue.get("predecessor_references") or [])[:3]:
+        for ref in list(queue.get("predecessor_references") or [])[:24]:
             if not isinstance(ref, dict):
                 continue
             references.append(
@@ -256,12 +281,36 @@ def _resident_inspect_subagent_queue(
                     "content_inlined": bool(ref.get("content_inlined")),
                 }
             )
+        predecessor_run_ids = [
+            str(value)[:96]
+            for value in list(queue.get("predecessor_run_ids") or [])[:8]
+            if isinstance(value, str)
+        ]
+        if not predecessor_run_ids and queue.get("predecessor_run_id"):
+            predecessor_run_ids = [str(queue.get("predecessor_run_id"))[:96]]
+        predecessor_states = []
+        for state in list(queue.get("predecessor_states") or [])[:8]:
+            if not isinstance(state, Mapping):
+                continue
+            predecessor_states.append(
+                {
+                    "run_id": str(state.get("run_id") or "")[:96],
+                    "status": str(state.get("status") or "")[:48],
+                    "result_state": str(state.get("result_state") or "")[:48],
+                    "attention": str(state.get("attention") or "")[:120],
+                }
+            )
         bounded.append(
             {
                 "run_id": str(row.get("run_id") or "")[:96],
                 "status": str(row.get("status") or "")[:48],
                 "description": str(row.get("description") or "")[:180],
                 "predecessor_run_id": str(queue.get("predecessor_run_id") or "")[:96],
+                "predecessor_run_ids": predecessor_run_ids,
+                "predecessor_states": predecessor_states,
+                "failed_predecessor_run_id": str(
+                    queue.get("failed_predecessor_run_id") or ""
+                )[:96],
                 "successor_run_id": str(queue.get("successor_run_id") or "")[:96],
                 "dependency_state": str(queue.get("state") or "")[:48],
                 "predecessor_status": str(queue.get("predecessor_status") or "")[:48],

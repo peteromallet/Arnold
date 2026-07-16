@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import argparse
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -121,6 +121,8 @@ QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA = (
 )
 QUEUE_TRIGGER_POLICY = "on_predecessor_success"
 MAX_QUEUE_CHAIN_DEPTH = 32
+MAX_QUEUE_PREDECESSORS = 8
+MAX_QUEUE_ANCESTOR_RUNS = 256
 MAX_QUEUE_PROMPT_CHARS = 16_000
 MAX_QUEUE_HOT_CONTEXT_ROWS = 8
 _QUEUE_RETRY_BASE_S = 5
@@ -1159,17 +1161,87 @@ def _queue_predecessor_references(
 
 
 def _render_queue_references(
-    *, predecessor_run_id: str, references: list[dict[str, Any]]
+    *, predecessor_run_ids: Sequence[str], references: list[dict[str, Any]]
 ) -> str:
     lines = [
         "[Queued predecessor references — bounded typed refs only]",
         f"- schema: {QUEUE_REFERENCE_SCHEMA}",
-        f"- predecessor_run_id: {predecessor_run_id}",
+        f"- predecessor_run_ids: {json.dumps(list(predecessor_run_ids))}",
         "- instruction: inspect only the artifacts needed for the authored prompt; full content is not embedded",
     ]
     for ref in references:
         lines.append(f"- {ref['artifact_type']}: {ref['path']}")
     return "\n".join(lines)
+
+
+def _normalize_dependency_run_ids(
+    *,
+    depends_on_run_id: str | None,
+    depends_on_run_ids: Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Normalize the public singular/plural contract without silently merging it."""
+
+    if depends_on_run_id is not None and depends_on_run_ids is not None:
+        raise SubagentQueueError(
+            "depends_on_run_id and depends_on_run_ids are mutually exclusive"
+        )
+    if depends_on_run_ids is None:
+        raw: list[object] = [] if depends_on_run_id is None else [depends_on_run_id]
+    else:
+        if isinstance(depends_on_run_ids, (str, bytes)) or not isinstance(
+            depends_on_run_ids, Sequence
+        ):
+            raise SubagentQueueError("depends_on_run_ids must be a list of run IDs")
+        raw = list(depends_on_run_ids)
+        if not raw:
+            raise SubagentQueueError("depends_on_run_ids must not be empty")
+    if len(raw) > MAX_QUEUE_PREDECESSORS:
+        raise SubagentQueueError(
+            f"depends_on_run_ids exceeds the maximum of {MAX_QUEUE_PREDECESSORS}"
+        )
+    normalized: list[str] = []
+    for value in raw:
+        if not isinstance(value, str) or not _RUN_ID_RE.fullmatch(value):
+            raise SubagentQueueError("predecessor run_id is malformed")
+        if value in normalized:
+            raise SubagentQueueError(f"duplicate predecessor run_id: {value}")
+        normalized.append(value)
+    return tuple(normalized)
+
+
+def _queue_predecessor_run_ids(queue: Mapping[str, Any]) -> tuple[str, ...]:
+    """Read a committed dependency set, accepting legacy singular manifests."""
+
+    singular = queue.get("predecessor_run_id")
+    plural = queue.get("predecessor_run_ids")
+    if plural is None:
+        if not isinstance(singular, str) or not _RUN_ID_RE.fullmatch(singular):
+            raise SubagentQueueError("queued predecessor run_id is malformed")
+        return (singular,)
+    if isinstance(plural, (str, bytes)) or not isinstance(plural, list) or not plural:
+        raise SubagentQueueError("queued predecessor_run_ids must be a nonempty list")
+    if len(plural) > MAX_QUEUE_PREDECESSORS:
+        raise SubagentQueueError(
+            f"queued predecessor set exceeds {MAX_QUEUE_PREDECESSORS}"
+        )
+    values: list[str] = []
+    for value in plural:
+        if not isinstance(value, str) or not _RUN_ID_RE.fullmatch(value):
+            raise SubagentQueueError("queued predecessor run_id is malformed")
+        if value in values:
+            raise SubagentQueueError(f"duplicate queued predecessor run_id: {value}")
+        values.append(value)
+    if singular is not None and (len(values) != 1 or singular != values[0]):
+        raise SubagentQueueError(
+            "queued singular/plural predecessor fields are inconsistent"
+        )
+    return tuple(values)
+
+
+def _queue_waiting_labels(predecessor_run_ids: Sequence[str]) -> tuple[str, str]:
+    if len(predecessor_run_ids) == 1:
+        return "waiting_predecessor", "waiting_for_predecessor"
+    return "waiting_predecessors", "waiting_for_predecessors"
 
 
 def _queue_provenance_identity(value: Mapping[str, Any]) -> tuple[object, ...]:
@@ -1624,41 +1696,62 @@ def _queue_has_conflicting_delivered_owner(
     return False
 
 
-def _queue_ancestor_ids(root: Path, predecessor_run_id: str) -> list[str]:
-    """Walk immutable predecessor links and fail closed on cycles or excessive depth."""
+def _queue_ancestor_ids(
+    root: Path, predecessor_run_ids: str | Sequence[str]
+) -> list[str]:
+    """Walk a dependency DAG and fail closed on cycles, depth, or breadth."""
 
+    roots = (
+        (predecessor_run_ids,)
+        if isinstance(predecessor_run_ids, str)
+        else tuple(predecessor_run_ids)
+    )
     ancestors: list[str] = []
-    seen: set[str] = set()
-    current = predecessor_run_id
-    while current:
-        if current in seen:
-            raise SubagentQueueError(f"queued dependency cycle detected at {current}")
-        if len(ancestors) >= MAX_QUEUE_CHAIN_DEPTH:
+    visited: set[str] = set()
+    active: set[str] = set()
+
+    def visit(run_id: str, depth: int) -> None:
+        if run_id in active:
+            raise SubagentQueueError(f"queued dependency cycle detected at {run_id}")
+        if run_id in visited:
+            return
+        if depth > MAX_QUEUE_CHAIN_DEPTH:
             raise SubagentQueueError(
                 f"queued dependency depth exceeds {MAX_QUEUE_CHAIN_DEPTH}"
             )
-        seen.add(current)
-        ancestors.append(current)
-        path = root / current / "manifest.json"
+        if len(ancestors) >= MAX_QUEUE_ANCESTOR_RUNS:
+            raise SubagentQueueError(
+                f"queued dependency ancestry exceeds {MAX_QUEUE_ANCESTOR_RUNS} runs"
+            )
+        active.add(run_id)
+        visited.add(run_id)
+        ancestors.append(run_id)
+        path = root / run_id / "manifest.json"
         if not path.is_file():
-            raise SubagentQueueError(f"queued predecessor manifest is missing: {current}")
+            raise SubagentQueueError(f"queued predecessor manifest is missing: {run_id}")
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, TypeError, ValueError) as exc:
             raise SubagentQueueError(
-                f"queued predecessor manifest is unreadable: {current}"
+                f"queued predecessor manifest is unreadable: {run_id}"
             ) from exc
         queue = payload.get("queue")
-        current = (
-            str(queue.get("predecessor_run_id") or "")
-            if isinstance(queue, Mapping)
-            else ""
-        )
+        if isinstance(queue, Mapping):
+            for dependency_run_id in _queue_predecessor_run_ids(queue):
+                visit(dependency_run_id, depth + 1)
+        active.remove(run_id)
+
+    for predecessor_run_id in roots:
+        visit(predecessor_run_id, 1)
     return ancestors
 
 
 def _validate_queue_authorization(
-    predecessor: Mapping[str, Any], successor: Mapping[str, Any], *, manifest_path: Path
+    predecessor: Mapping[str, Any],
+    successor: Mapping[str, Any],
+    *,
+    predecessor_run_id: str,
+    manifest_path: Path,
 ) -> None:
     predecessor_provenance = predecessor.get("launch_provenance")
     successor_provenance = successor.get("launch_provenance")
@@ -1687,15 +1780,30 @@ def _validate_queue_authorization(
             raise SubagentQueueError("queued successor changed logical delivery ownership")
         return
     queue = successor.get("queue")
-    authorization = (
-        queue.get("cross_request_authorization") if isinstance(queue, Mapping) else None
+    authorizations = (
+        queue.get("cross_request_authorizations")
+        if isinstance(queue, Mapping)
+        else None
     )
+    authorization = None
+    if isinstance(authorizations, list):
+        authorization = next(
+            (
+                item
+                for item in authorizations
+                if isinstance(item, Mapping)
+                and item.get("predecessor_run_id") == predecessor_run_id
+            ),
+            None,
+        )
+    elif isinstance(queue, Mapping):
+        authorization = queue.get("cross_request_authorization")
     if not isinstance(authorization, Mapping):
         raise SubagentQueueError("queued successor provenance differs from predecessor")
     recomputed, aggregation, relationship = _cross_request_queue_authorization(
         manifest_path.parent.parent,
         project_root=Path(str(successor.get("project_dir") or "")).resolve(),
-        predecessor_run_id=str(queue.get("predecessor_run_id") or ""),
+        predecessor_run_id=predecessor_run_id,
         predecessor=predecessor,
         current_provenance=normalize_delegation_provenance(successor_provenance),
         require_active_caller=False,
@@ -1741,45 +1849,43 @@ def _recover_idempotent_cross_request_queue(
         or not isinstance(queue, dict)
         or queue.get("attention") != "invalid_dependency_contract"
         or int(queue.get("attempt_count") or 0) != 0
-        or not isinstance(queue.get("cross_request_authorization"), Mapping)
+        or not (
+            isinstance(queue.get("cross_request_authorization"), Mapping)
+            or isinstance(queue.get("cross_request_authorizations"), list)
+        )
         or not isinstance(delivery, Mapping)
         or delivery.get("status") != "pending"
     ):
         return manifest
-    predecessor_run_id = str(queue.get("predecessor_run_id") or "")
-    predecessor_path = manifest_path.parent.parent / predecessor_run_id / "manifest.json"
     try:
-        predecessor = _read_managed_resident_manifest(predecessor_path)
-        ancestors = _queue_ancestor_ids(
-            manifest_path.parent.parent, predecessor_run_id
-        )
-        if queue.get("ancestor_run_ids") != ancestors:
-            raise SubagentQueueError("queued dependency ancestry changed after commit")
-        if queue.get("trigger_policy") != QUEUE_TRIGGER_POLICY:
-            raise SubagentQueueError("queued trigger policy is unsupported")
-        if queue.get("predecessor_references") != _queue_predecessor_references(
-            predecessor_path, predecessor
-        ):
-            raise SubagentQueueError("queued predecessor references changed after commit")
-        _validate_queue_authorization(
-            predecessor, manifest, manifest_path=manifest_path
+        predecessor_run_ids, predecessors = _validated_queue_predecessors(
+            manifest_path, manifest
         )
     except (SubagentFollowupError, SubagentQueueError, OSError, ValueError):
         return manifest
 
     recovered_at = _utc_now()
+    predecessor_states = [
+        _queue_predecessor_state(run_id, path, predecessor)
+        for run_id, path, predecessor in predecessors
+    ]
+    waiting_state, waiting_attention = _queue_waiting_labels(predecessor_run_ids)
     for field in ("failed_at", "last_validation_error"):
         queue.pop(field, None)
     queue.update(
         {
-            "state": "waiting_predecessor",
-            "attention": "waiting_for_predecessor",
-            "predecessor_status": str(predecessor.get("status") or "unknown"),
+            "state": waiting_state,
+            "attention": waiting_attention,
+            "predecessor_states": predecessor_states,
             "recovered_at": recovered_at,
             "recovery_reason": "idempotent_replay_revalidated_dependency_contract",
             "updated_at": recovered_at,
         }
     )
+    if len(predecessor_states) == 1:
+        queue["predecessor_status"] = predecessor_states[0]["status"]
+    else:
+        queue.pop("predecessor_status", None)
     for field in (
         "terminal_outcome",
         "finished_at",
@@ -1826,6 +1932,111 @@ def _queue_result_is_valid(
     if not result_path.is_file() or stat.st_size <= 0:
         return False, "predecessor_result_empty_or_invalid"
     return True, None
+
+
+def _queue_predecessor_state(
+    run_id: str, predecessor_path: Path, predecessor: Mapping[str, Any]
+) -> dict[str, Any]:
+    status = _normalized_queue_predecessor_status(predecessor)
+    state: dict[str, Any] = {
+        "run_id": run_id,
+        "status": status,
+        "result_state": "pending",
+        "attention": "waiting_for_predecessor",
+    }
+    if status == "unknown":
+        state.update(
+            result_state="invalid", attention="predecessor_status_unknown"
+        )
+    elif status in {"cancelled", "superseded"}:
+        state.update(result_state="not_applicable", attention=f"predecessor_{status}")
+    elif status in {"failed", "interrupted"}:
+        state.update(
+            result_state="not_applicable", attention="predecessor_terminal_failure"
+        )
+    elif status == "completed":
+        result_valid, result_error = _queue_result_is_valid(
+            predecessor_path, predecessor
+        )
+        state.update(
+            result_state="valid" if result_valid else "invalid",
+            attention="ready" if result_valid else str(result_error),
+        )
+    return state
+
+
+def _validated_queue_predecessors(
+    manifest_path: Path, manifest: Mapping[str, Any]
+) -> tuple[tuple[str, ...], list[tuple[str, Path, dict[str, Any]]]]:
+    """Validate the immutable dependency contract and return ordered predecessors."""
+
+    queue = manifest.get("queue")
+    if not isinstance(queue, Mapping) or queue.get("schema_version") != QUEUE_SCHEMA:
+        raise SubagentQueueError("invalid queue contract")
+    predecessor_run_ids = _queue_predecessor_run_ids(queue)
+    successor_run_id = str(manifest.get("run_id") or manifest_path.parent.name)
+    if successor_run_id in predecessor_run_ids:
+        raise SubagentQueueError("queued successor cannot depend on itself")
+    ancestors = _queue_ancestor_ids(manifest_path.parent.parent, predecessor_run_ids)
+    if successor_run_id in ancestors:
+        raise SubagentQueueError("queued dependency cycle reaches successor")
+    if queue.get("ancestor_run_ids") != ancestors:
+        raise SubagentQueueError("queued dependency ancestry changed after commit")
+    if queue.get("trigger_policy") != QUEUE_TRIGGER_POLICY:
+        raise SubagentQueueError("queued trigger policy is unsupported")
+
+    predecessors: list[tuple[str, Path, dict[str, Any]]] = []
+    references: list[dict[str, Any]] = []
+    cross_request_ids: list[str] = []
+    for run_id in predecessor_run_ids:
+        predecessor_path = manifest_path.parent.parent / run_id / "manifest.json"
+        predecessor = _read_managed_resident_manifest(predecessor_path)
+        references.extend(_queue_predecessor_references(predecessor_path, predecessor))
+        predecessor_provenance = predecessor.get("launch_provenance")
+        successor_provenance = manifest.get("launch_provenance")
+        if not isinstance(predecessor_provenance, Mapping) or not isinstance(
+            successor_provenance, Mapping
+        ):
+            raise SubagentQueueError("queued dependency lacks immutable launch provenance")
+        if _queue_provenance_identity(
+            normalize_delegation_provenance(predecessor_provenance)
+        ) != _queue_provenance_identity(
+            normalize_delegation_provenance(successor_provenance)
+        ):
+            cross_request_ids.append(run_id)
+        _validate_queue_authorization(
+            predecessor,
+            manifest,
+            predecessor_run_id=run_id,
+            manifest_path=manifest_path,
+        )
+        predecessors.append((run_id, predecessor_path, predecessor))
+    if queue.get("predecessor_references") != references:
+        raise SubagentQueueError("queued predecessor references changed after commit")
+
+    plural_authorizations = queue.get("cross_request_authorizations")
+    singular_authorization = queue.get("cross_request_authorization")
+    if plural_authorizations is not None and singular_authorization is not None:
+        raise SubagentQueueError("queued cross-request authorization fields conflict")
+    if plural_authorizations is not None:
+        if not isinstance(plural_authorizations, list):
+            raise SubagentQueueError("queued cross-request authorizations are malformed")
+        authorization_ids = [
+            item.get("predecessor_run_id") if isinstance(item, Mapping) else None
+            for item in plural_authorizations
+        ]
+        if authorization_ids != cross_request_ids:
+            raise SubagentQueueError("queued cross-request authorization set changed")
+    elif singular_authorization is not None:
+        if cross_request_ids != [
+            singular_authorization.get("predecessor_run_id")
+            if isinstance(singular_authorization, Mapping)
+            else None
+        ]:
+            raise SubagentQueueError("queued cross-request authorization changed")
+    elif cross_request_ids:
+        raise SubagentQueueError("queued cross-request authorization is missing")
+    return predecessor_run_ids, predecessors
 
 
 def _find_managed_run(
@@ -2511,6 +2722,7 @@ def launch_codex_subagent_detached(
     aggregation_role: str = "synthesis_delivery_owner",
     synthesis_group: str | None = None,
     depends_on_run_id: str | None = None,
+    depends_on_run_ids: Sequence[str] | None = None,
     queue_max_launch_attempts: int = _QUEUE_MAX_LAUNCH_ATTEMPTS,
 ) -> SubagentResult:
     """Launch a durable, fully-permissioned Codex worker managed by Arnold.
@@ -2527,7 +2739,11 @@ def launch_codex_subagent_detached(
         raise ValueError(
             "delegated task contains the reserved resident delivery instruction marker"
         )
-    if depends_on_run_id and len(task) > MAX_QUEUE_PROMPT_CHARS:
+    dependency_run_ids = _normalize_dependency_run_ids(
+        depends_on_run_id=depends_on_run_id,
+        depends_on_run_ids=depends_on_run_ids,
+    )
+    if dependency_run_ids and len(task) > MAX_QUEUE_PROMPT_CHARS:
         raise ValueError(
             f"queued successor prompt exceeds {MAX_QUEUE_PROMPT_CHARS} characters"
         )
@@ -2540,10 +2756,11 @@ def launch_codex_subagent_detached(
         if not requested_root.is_absolute() and requested_root == DEFAULT_MANAGED_RUN_ROOT
         else requested_root.resolve()
     )
-    predecessor_path: Path | None = None
+    predecessor_paths: list[Path] = []
+    predecessors: list[dict[str, Any]] = []
     predecessor: dict[str, Any] | None = None
     predecessor_references: list[dict[str, Any]] = []
-    cross_request_authorization: dict[str, Any] | None = None
+    cross_request_authorizations: list[dict[str, Any]] = []
     queue_aggregation_key: str | None = None
     current_provenance = _canonical_launch_provenance(
         launch_origin,
@@ -2552,46 +2769,72 @@ def launch_codex_subagent_detached(
     )
     provenance = current_provenance
     requested_work_intent = work_intent
-    if depends_on_run_id:
-        if not _RUN_ID_RE.fullmatch(depends_on_run_id):
-            raise SubagentQueueError("predecessor run_id is malformed")
-        predecessor_path = root / depends_on_run_id / "manifest.json"
-        if not predecessor_path.is_file():
-            raise SubagentQueueError(
-                f"unknown predecessor run_id in project custody: {depends_on_run_id}"
-            )
-        try:
-            predecessor = _read_managed_resident_manifest(predecessor_path)
-        except SubagentFollowupError as exc:
-            raise SubagentQueueError(str(exc)) from exc
-        predecessor_project = Path(str(predecessor.get("project_dir") or "")).resolve()
-        if predecessor_project != project_root:
-            raise SubagentQueueError(
-                "queued successor must inherit the predecessor project directory"
-            )
+    if dependency_run_ids:
+        for predecessor_run_id in dependency_run_ids:
+            predecessor_path = root / predecessor_run_id / "manifest.json"
+            if not predecessor_path.is_file():
+                raise SubagentQueueError(
+                    f"unknown predecessor run_id in project custody: {predecessor_run_id}"
+                )
+            try:
+                current_predecessor = _read_managed_resident_manifest(predecessor_path)
+            except SubagentFollowupError as exc:
+                raise SubagentQueueError(str(exc)) from exc
+            predecessor_project = Path(
+                str(current_predecessor.get("project_dir") or "")
+            ).resolve()
+            if predecessor_project != project_root:
+                raise SubagentQueueError(
+                    "queued successor must inherit every predecessor project directory"
+                )
+            predecessor_paths.append(predecessor_path)
+            predecessors.append(current_predecessor)
+        predecessor = predecessors[0]
         predecessor_provenance = predecessor.get("launch_provenance")
         if not isinstance(predecessor_provenance, Mapping):
             raise SubagentQueueError("predecessor lacks immutable launch provenance")
         predecessor_provenance = normalize_delegation_provenance(predecessor_provenance)
-        same_request = _queue_provenance_identity(
-            current_provenance
-        ) == _queue_provenance_identity(predecessor_provenance)
+        for current_predecessor in predecessors[1:]:
+            candidate_provenance = current_predecessor.get("launch_provenance")
+            if not isinstance(candidate_provenance, Mapping) or _queue_provenance_identity(
+                normalize_delegation_provenance(candidate_provenance)
+            ) != _queue_provenance_identity(predecessor_provenance):
+                raise SubagentQueueError(
+                    "all predecessors must share one immutable launch provenance"
+                )
+        same_request = _queue_provenance_identity(current_provenance) == (
+            _queue_provenance_identity(predecessor_provenance)
+        )
         if same_request:
             provenance = predecessor_provenance
             request_id = str(predecessor.get("request_id") or "") or None
         else:
-            (
-                cross_request_authorization,
-                current_aggregation,
-                current_relationship,
-            ) = _cross_request_queue_authorization(
-                root,
-                project_root=project_root,
-                predecessor_run_id=depends_on_run_id,
-                predecessor=predecessor,
-                current_provenance=current_provenance,
-                require_active_caller=True,
-            )
+            current_aggregation: dict[str, Any] | None = None
+            current_relationship: dict[str, Any] | None = None
+            for predecessor_run_id, current_predecessor in zip(
+                dependency_run_ids, predecessors, strict=True
+            ):
+                authorization, aggregation, relationship = (
+                    _cross_request_queue_authorization(
+                        root,
+                        project_root=project_root,
+                        predecessor_run_id=predecessor_run_id,
+                        predecessor=current_predecessor,
+                        current_provenance=current_provenance,
+                        require_active_caller=True,
+                    )
+                )
+                if current_aggregation is not None and (
+                    aggregation != current_aggregation
+                    or relationship != current_relationship
+                ):
+                    raise SubagentQueueError(
+                        "predecessors resolve to conflicting current delivery custody"
+                    )
+                cross_request_authorizations.append(authorization)
+                current_aggregation = aggregation
+                current_relationship = relationship
+            assert current_aggregation is not None and current_relationship is not None
             provenance = current_provenance
             request_id = str(current_provenance.get("source_record_id") or "") or None
             query_relationship = current_relationship
@@ -2603,6 +2846,14 @@ def launch_codex_subagent_detached(
         predecessor_work_intent = str(
             predecessor.get("work_intent") or requested_work_intent
         )
+        if any(
+            str(item.get("work_intent") or predecessor_work_intent)
+            != predecessor_work_intent
+            for item in predecessors[1:]
+        ):
+            raise SubagentQueueError(
+                "all predecessors must share one resolved work_intent"
+            )
         if (
             requested_work_intent != "auto"
             and requested_work_intent != predecessor_work_intent
@@ -2633,10 +2884,37 @@ def launch_codex_subagent_detached(
             synthesis_group = (
                 str(predecessor_aggregation.get("synthesis_group") or "") or None
             )
-        predecessor_references = _queue_predecessor_references(
-            predecessor_path, predecessor
+            for item in predecessors[1:]:
+                item_aggregation = item.get("aggregation")
+                if (
+                    not isinstance(item_aggregation, Mapping)
+                    or item_aggregation.get("key") != predecessor_aggregation.get("key")
+                    or item.get("query_relationship")
+                    != predecessor.get("query_relationship")
+                ):
+                    raise SubagentQueueError(
+                        "all predecessors must share logical aggregation custody"
+                    )
+        for predecessor_path, current_predecessor in zip(
+            predecessor_paths, predecessors, strict=True
+        ):
+            predecessor_references.extend(
+                _queue_predecessor_references(predecessor_path, current_predecessor)
+            )
+        _queue_ancestor_ids(root, dependency_run_ids)
+    effective_task = task
+    if dependency_run_ids:
+        effective_task = (
+            f"{task.rstrip()}\n\n"
+            + _render_queue_references(
+                predecessor_run_ids=dependency_run_ids,
+                references=predecessor_references,
+            )
         )
-        _queue_ancestor_ids(root, depends_on_run_id)
+        if len(effective_task) > MAX_DELEGATED_TASK_CHARS:
+            raise ValueError(
+                "queued predecessor references exceed the bounded delegated prompt budget"
+            )
     root.mkdir(parents=True, exist_ok=True)
     is_discord = provenance["applicability"] == "applicable"
     agent_description = concise_agent_description(description, task)
@@ -2684,6 +2962,11 @@ def launch_codex_subagent_detached(
         if is_discord
         else request_id or stable_identity("task", task_digest)
     )
+    dependency_identity = (
+        dependency_run_ids[0]
+        if len(dependency_run_ids) == 1
+        else json.dumps(list(dependency_run_ids), separators=(",", ":"))
+    )
     launch_key = stable_identity(
         "resident-launch",
         provenance.get("correlation_id") or "not-applicable",
@@ -2699,7 +2982,7 @@ def launch_codex_subagent_detached(
         lineage_root_run_id or "",
         continued_session_id or "",
         followup_id or "",
-        depends_on_run_id or "",
+        dependency_identity,
     )
     launch_lock = root / ".launch.lock"
     launch_handle = launch_lock.open("a+b")
@@ -2765,15 +3048,6 @@ def launch_codex_subagent_detached(
         runtime_root=str(context_directory["resident_runtime_source"]),
         evidence_path=git_custody_evidence_path,
     )
-    effective_task = task
-    if depends_on_run_id:
-        effective_task = (
-            f"{task.rstrip()}\n\n"
-            + _render_queue_references(
-                predecessor_run_id=depends_on_run_id,
-                references=predecessor_references,
-            )
-        )
     prompt = _delivery_prompt(
         effective_task,
         str(provenance.get("timezone_name") or "UTC"),
@@ -2840,27 +3114,34 @@ def launch_codex_subagent_detached(
             "delivery_target_source_record_id": provenance.get("source_record_id"),
             "contributors": contributors,
         },
-        "status": "queued" if depends_on_run_id else "launching",
+        "status": "queued" if dependency_run_ids else "launching",
         "created_at": created_at,
         "updated_at": created_at,
         "status_history": [
             {
-                "status": "queued" if depends_on_run_id else "launching",
+                "status": "queued" if dependency_run_ids else "launching",
                 "at": created_at,
                 "evidence": (
                     "successor_committed_waiting_for_predecessor_terminal_evidence"
-                    if depends_on_run_id
+                    if dependency_run_ids
                     else "manifest_committed_before_process_launch"
                 ),
             }
         ],
     }
-    if depends_on_run_id:
+    if dependency_run_ids:
+        predecessor_states = [
+            _queue_predecessor_state(run_id, path, item)
+            for run_id, path, item in zip(
+                dependency_run_ids, predecessor_paths, predecessors, strict=True
+            )
+        ]
+        waiting_state, waiting_attention = _queue_waiting_labels(dependency_run_ids)
         manifest["queue"] = {
             "schema_version": QUEUE_SCHEMA,
             "trigger_policy": QUEUE_TRIGGER_POLICY,
-            "state": "waiting_predecessor",
-            "predecessor_run_id": depends_on_run_id,
+            "state": waiting_state,
+            "predecessor_run_ids": list(dependency_run_ids),
             "successor_run_id": run_id,
             "authored_prompt": {
                 "sha256": task_digest,
@@ -2868,22 +3149,33 @@ def launch_codex_subagent_detached(
                 "description": agent_description,
             },
             "predecessor_references": predecessor_references,
-            "ancestor_run_ids": _queue_ancestor_ids(root, depends_on_run_id),
+            "predecessor_states": predecessor_states,
+            "ancestor_run_ids": _queue_ancestor_ids(root, dependency_run_ids),
             "attempt_count": 0,
             "max_launch_attempts": queue_max_launch_attempts,
             "created_at": created_at,
             "updated_at": created_at,
-            "attention": "waiting_for_predecessor",
+            "attention": waiting_attention,
         }
-        if cross_request_authorization is not None:
-            manifest["queue"]["cross_request_authorization"] = (
-                cross_request_authorization
-            )
-        manifest["parent_run_id"] = depends_on_run_id
+        if len(dependency_run_ids) == 1:
+            manifest["queue"]["predecessor_run_id"] = dependency_run_ids[0]
+            manifest["queue"]["predecessor_status"] = predecessor_states[0][
+                "status"
+            ]
+        if cross_request_authorizations:
+            if len(cross_request_authorizations) == 1:
+                manifest["queue"]["cross_request_authorization"] = (
+                    cross_request_authorizations[0]
+                )
+            else:
+                manifest["queue"]["cross_request_authorizations"] = (
+                    cross_request_authorizations
+                )
+        manifest["parent_run_id"] = dependency_run_ids[0]
         manifest["lineage_root_run_id"] = str(
             predecessor.get("lineage_root_run_id")
             or predecessor.get("run_id")
-            or depends_on_run_id
+            or dependency_run_ids[0]
         )
         manifest["lineage_key"] = stable_identity(
             "resident-session-lineage", manifest["lineage_root_run_id"]
@@ -2965,25 +3257,28 @@ def launch_codex_subagent_detached(
             "evidence": "launch_provenance_explicitly_non_discord",
         }
     _atomic_json(manifest_path, manifest)
-    if depends_on_run_id and predecessor_path is not None:
-        predecessor = json.loads(predecessor_path.read_text(encoding="utf-8"))
-        links = dict(predecessor.get("queue_links") or {})
-        successor_ids = [
-            str(value)
-            for value in links.get("successor_run_ids", [])
-            if str(value).strip() and str(value) != run_id
-        ]
-        successor_ids.append(run_id)
-        links.update(
-            {
-                "schema_version": QUEUE_SCHEMA,
-                "successor_run_ids": successor_ids[-20:],
-                "successor_omitted_count": max(0, len(successor_ids) - 20),
-                "updated_at": created_at,
-            }
-        )
-        predecessor["queue_links"] = links
-        _atomic_json(predecessor_path, predecessor)
+    if dependency_run_ids:
+        for predecessor_path in predecessor_paths:
+            linked_predecessor = json.loads(
+                predecessor_path.read_text(encoding="utf-8")
+            )
+            links = dict(linked_predecessor.get("queue_links") or {})
+            successor_ids = [
+                str(value)
+                for value in links.get("successor_run_ids", [])
+                if str(value).strip() and str(value) != run_id
+            ]
+            successor_ids.append(run_id)
+            links.update(
+                {
+                    "schema_version": QUEUE_SCHEMA,
+                    "successor_run_ids": successor_ids[-20:],
+                    "successor_omitted_count": max(0, len(successor_ids) - 20),
+                    "updated_at": created_at,
+                }
+            )
+            linked_predecessor["queue_links"] = links
+            _atomic_json(predecessor_path, linked_predecessor)
         fcntl.flock(launch_handle.fileno(), fcntl.LOCK_UN)
         launch_handle.close()
         return SubagentResult(
@@ -3532,6 +3827,7 @@ def _queue_terminalize(
     reason: str,
     predecessor_status: str,
     now: datetime,
+    predecessor_run_id: str | None = None,
 ) -> None:
     queue = dict(manifest.get("queue") or {})
     queue.update(
@@ -3543,6 +3839,8 @@ def _queue_terminalize(
             "updated_at": now.isoformat(),
         }
     )
+    if predecessor_run_id:
+        queue["failed_predecessor_run_id"] = predecessor_run_id
     manifest.update(
         {
             "status": status,
@@ -3583,6 +3881,26 @@ def _is_cross_revision_contract_rejection(manifest: Mapping[str, Any]) -> bool:
     authorization = (
         queue.get("cross_request_authorization") if isinstance(queue, Mapping) else None
     )
+    authorizations = (
+        queue.get("cross_request_authorizations") if isinstance(queue, Mapping) else None
+    )
+    authorization_shape_valid = bool(
+        (
+            isinstance(authorization, Mapping)
+            and authorization.get("schema_version")
+            == QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA
+        )
+        or (
+            isinstance(authorizations, list)
+            and bool(authorizations)
+            and all(
+                isinstance(item, Mapping)
+                and item.get("schema_version")
+                == QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA
+                for item in authorizations
+            )
+        )
+    )
     history = manifest.get("status_history")
     last_history = history[-1] if isinstance(history, list) and history else None
     return bool(
@@ -3598,9 +3916,7 @@ def _is_cross_revision_contract_rejection(manifest: Mapping[str, Any]) -> bool:
         and isinstance(delivery, Mapping)
         and delivery.get("status") == "pending"
         and delivery.get("attempt_count") in {None, 0, "0"}
-        and isinstance(authorization, Mapping)
-        and authorization.get("schema_version")
-        == QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA
+        and authorization_shape_valid
         and isinstance(last_history, Mapping)
         and last_history.get("status") == "failed"
         and last_history.get("evidence") == "invalid_dependency_contract"
@@ -3608,20 +3924,29 @@ def _is_cross_revision_contract_rejection(manifest: Mapping[str, Any]) -> bool:
 
 
 def _restore_cross_revision_queue(
-    manifest: dict[str, Any], *, predecessor_status: str, now: datetime
+    manifest: dict[str, Any],
+    *,
+    predecessor_run_ids: Sequence[str],
+    predecessor_states: list[dict[str, Any]],
+    now: datetime,
 ) -> None:
     """Restore a currently validated cross-request queue to pre-launch state."""
 
     queue = dict(manifest.get("queue") or {})
+    waiting_state, _ = _queue_waiting_labels(predecessor_run_ids)
     queue.update(
         {
-            "state": "waiting_predecessor",
+            "state": waiting_state,
             "attention": "dependency_contract_revalidated",
-            "predecessor_status": predecessor_status,
+            "predecessor_states": predecessor_states,
             "revalidated_at": now.isoformat(),
             "updated_at": now.isoformat(),
         }
     )
+    if len(predecessor_states) == 1:
+        queue["predecessor_status"] = predecessor_states[0]["status"]
+    else:
+        queue.pop("predecessor_status", None)
     queue.pop("failed_at", None)
     manifest.update(
         {
@@ -3638,7 +3963,11 @@ def _restore_cross_revision_queue(
             "status": "queued",
             "at": now.isoformat(),
             "evidence": "valid_contract_recovered_after_stale_runtime_rejection",
-            "predecessor_status": predecessor_status,
+            "predecessor_status": (
+                predecessor_states[0]["status"]
+                if len(predecessor_states) == 1
+                else "multiple"
+            ),
         }
     )
     manifest["status_history"] = history[-100:]
@@ -3724,28 +4053,34 @@ def reconcile_managed_subagent_queues(
                 )
                 failed_closed += 1
                 continue
-            predecessor_run_id = str(queue.get("predecessor_run_id") or "")
-            predecessor_path = manifest_path.parent.parent / predecessor_run_id / "manifest.json"
-            predecessor_status = "unknown"
             try:
-                predecessor = _read_managed_resident_manifest(predecessor_path)
-                predecessor_status = _normalized_queue_predecessor_status(predecessor)
-                ancestors = _queue_ancestor_ids(
-                    manifest_path.parent.parent, predecessor_run_id
-                )
-                if str(manifest.get("run_id") or manifest_path.parent.name) in ancestors:
-                    raise SubagentQueueError("queued dependency cycle reaches successor")
-                if queue.get("ancestor_run_ids") != ancestors:
-                    raise SubagentQueueError("queued dependency ancestry changed after commit")
-                if queue.get("trigger_policy") != QUEUE_TRIGGER_POLICY:
-                    raise SubagentQueueError("queued trigger policy is unsupported")
-                refs = _queue_predecessor_references(predecessor_path, predecessor)
-                if queue.get("predecessor_references") != refs:
-                    raise SubagentQueueError("queued predecessor references changed after commit")
-                _validate_queue_authorization(
-                    predecessor, manifest, manifest_path=manifest_path
+                predecessor_run_ids, predecessors = _validated_queue_predecessors(
+                    manifest_path, manifest
                 )
             except (SubagentFollowupError, SubagentQueueError, OSError, ValueError) as exc:
+                observed_states: list[dict[str, Any]] = []
+                try:
+                    declared_ids = _queue_predecessor_run_ids(queue)
+                    for declared_id in declared_ids:
+                        declared_path = (
+                            manifest_path.parent.parent
+                            / declared_id
+                            / "manifest.json"
+                        )
+                        declared_predecessor = _read_managed_resident_manifest(
+                            declared_path
+                        )
+                        observed_states.append(
+                            _queue_predecessor_state(
+                                declared_id, declared_path, declared_predecessor
+                            )
+                        )
+                except (SubagentFollowupError, SubagentQueueError, OSError, ValueError):
+                    observed_states = []
+                if observed_states:
+                    queue["predecessor_states"] = observed_states
+                    if len(observed_states) == 1:
+                        queue["predecessor_status"] = observed_states[0]["status"]
                 queue["last_validation_error"] = {
                     "error_class": exc.__class__.__name__,
                     "message": " ".join(redact_text(str(exc)).split())[:240],
@@ -3758,35 +4093,78 @@ def reconcile_managed_subagent_queues(
                         manifest,
                         status="failed",
                         reason="invalid_dependency_contract",
-                        predecessor_status=predecessor_status,
+                        predecessor_status=(
+                            str(observed_states[0]["status"])
+                            if len(observed_states) == 1
+                            else "unknown"
+                        ),
                         now=observed_at,
                     )
                 failed_closed += 1
                 continue
+            predecessor_states = [
+                _queue_predecessor_state(run_id, path, predecessor)
+                for run_id, path, predecessor in predecessors
+            ]
+            queue["predecessor_states"] = predecessor_states
+            if len(predecessor_states) == 1:
+                queue["predecessor_status"] = predecessor_states[0]["status"]
+            else:
+                queue.pop("predecessor_status", None)
+            manifest["queue"] = queue
             if recovering_cross_revision:
                 _restore_cross_revision_queue(
                     manifest,
-                    predecessor_status=predecessor_status,
+                    predecessor_run_ids=predecessor_run_ids,
+                    predecessor_states=predecessor_states,
                     now=observed_at,
                 )
                 queue = dict(manifest["queue"])
-            if predecessor_status == "unknown":
+            dependency_failure = next(
+                (
+                    state
+                    for state in predecessor_states
+                    if state["status"] == "unknown"
+                    or state["status"] in _TERMINAL_STATUSES
+                    and (
+                        state["status"] != "completed"
+                        or state["result_state"] != "valid"
+                    )
+                ),
+                None,
+            )
+            if dependency_failure is not None:
+                failed_run_id = str(dependency_failure["run_id"])
+                predecessor_status = str(dependency_failure["status"])
+                reason = str(dependency_failure["attention"])
+                propagated_status = (
+                    predecessor_status
+                    if predecessor_status in {"cancelled", "superseded"}
+                    else "failed"
+                )
                 _queue_terminalize(
                     manifest_path,
                     manifest,
-                    status="failed",
-                    reason="predecessor_status_unknown",
+                    status=propagated_status,
+                    reason=reason,
                     predecessor_status=predecessor_status,
+                    predecessor_run_id=failed_run_id,
                     now=observed_at,
                 )
                 failed_closed += 1
                 continue
-            if predecessor_status not in _TERMINAL_STATUSES:
+            if any(
+                state["status"] not in _TERMINAL_STATUSES
+                for state in predecessor_states
+            ):
+                waiting_state, waiting_attention = _queue_waiting_labels(
+                    predecessor_run_ids
+                )
                 queue.update(
                     {
-                        "state": "waiting_predecessor",
-                        "attention": "waiting_for_predecessor",
-                        "predecessor_status": predecessor_status,
+                        "state": waiting_state,
+                        "attention": waiting_attention,
+                        "predecessor_states": predecessor_states,
                         "updated_at": observed_at.isoformat(),
                     }
                 )
@@ -3796,44 +4174,13 @@ def reconcile_managed_subagent_queues(
                 _atomic_json(manifest_path, manifest)
                 waiting += 1
                 continue
-            if predecessor_status in {"cancelled", "superseded"}:
-                _queue_terminalize(
-                    manifest_path,
-                    manifest,
-                    status=predecessor_status,
-                    reason=f"predecessor_{predecessor_status}",
-                    predecessor_status=predecessor_status,
-                    now=observed_at,
-                )
-                failed_closed += 1
-                continue
-            if predecessor_status != "completed":
-                _queue_terminalize(
-                    manifest_path,
-                    manifest,
-                    status="failed",
-                    reason="predecessor_terminal_failure",
-                    predecessor_status=predecessor_status,
-                    now=observed_at,
-                )
-                failed_closed += 1
-                continue
-            result_valid, result_error = _queue_result_is_valid(
-                predecessor_path, predecessor
-            )
-            if not result_valid:
-                _queue_terminalize(
-                    manifest_path,
-                    manifest,
-                    status="failed",
-                    reason=str(result_error or "predecessor_result_invalid"),
-                    predecessor_status=predecessor_status,
-                    now=observed_at,
-                )
-                failed_closed += 1
-                continue
             next_attempt_at = _parse_timestamp(queue.get("next_attempt_at"))
             if next_attempt_at is not None and observed_at < next_attempt_at:
+                queue["predecessor_states"] = predecessor_states
+                queue["updated_at"] = observed_at.isoformat()
+                manifest["queue"] = queue
+                manifest["updated_at"] = observed_at.isoformat()
+                _atomic_json(manifest_path, manifest)
                 retry_pending += 1
                 continue
             attempt = int(queue.get("attempt_count") or 0) + 1
@@ -3845,7 +4192,7 @@ def reconcile_managed_subagent_queues(
                     "state": "launching",
                     "attention": "none",
                     "attempt_count": attempt,
-                    "predecessor_status": predecessor_status,
+                    "predecessor_states": predecessor_states,
                     "launch_claimed_at": observed_at.isoformat(),
                     "updated_at": observed_at.isoformat(),
                 }
@@ -3859,7 +4206,7 @@ def reconcile_managed_subagent_queues(
                 {
                     "status": "launching",
                     "at": observed_at.isoformat(),
-                    "evidence": "predecessor_terminal_success_and_result_validated",
+                    "evidence": "all_predecessors_terminal_success_and_results_validated",
                     "attempt": attempt,
                 }
             )
@@ -3876,7 +4223,7 @@ def reconcile_managed_subagent_queues(
                         manifest,
                         status="failed",
                         reason="successor_launch_retry_budget_exhausted",
-                        predecessor_status=predecessor_status,
+                        predecessor_status="completed",
                         now=observed_at,
                     )
                     failed_closed += 1
@@ -5427,7 +5774,7 @@ def list_managed_resident_agents(
             for row in rows
             if isinstance(row.get("queue"), Mapping)
             and str(row["queue"].get("attention") or "none")
-            not in {"none", "waiting_for_predecessor"}
+            not in {"none", "waiting_for_predecessor", "waiting_for_predecessors"}
         ),
         "recent": recent,
         "running_count": len(running),
@@ -5465,6 +5812,7 @@ async def launch_subagent_task(
     retry_of_run_id: str | None = None,
     query_relationship: Mapping[str, Any] | None = None,
     depends_on_run_id: str | None = None,
+    depends_on_run_ids: Sequence[str] | None = None,
     queue_max_launch_attempts: int = _QUEUE_MAX_LAUNCH_ATTEMPTS,
 ) -> SubagentResult:
     """Dispatch ``task`` through the resident-owned delegated-agent seam.
@@ -5478,7 +5826,8 @@ async def launch_subagent_task(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
             "store large evidence durably and pass paths/routes"
         )
-    if depends_on_run_id and backend != "codex":
+    has_dependencies = depends_on_run_id is not None or depends_on_run_ids is not None
+    if has_dependencies and backend != "codex":
         raise ValueError("queued successors require the durable Codex managed lifecycle")
     if backend == "codex":
         if not background:
@@ -5513,6 +5862,7 @@ async def launch_subagent_task(
             retry_of_run_id=retry_of_run_id,
             query_relationship=query_relationship,
             depends_on_run_id=depends_on_run_id,
+            depends_on_run_ids=depends_on_run_ids,
             queue_max_launch_attempts=queue_max_launch_attempts,
         )
     if backend != "hermes":

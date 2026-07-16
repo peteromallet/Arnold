@@ -319,6 +319,7 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 ("trigger_policy", 48),
                 ("attention", 120),
                 ("predecessor_run_id", 96),
+                ("failed_predecessor_run_id", 96),
                 ("successor_run_id", 96),
                 ("predecessor_status", 48),
                 ("next_attempt_at", 48),
@@ -329,6 +330,26 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 value = queue.get(key)
                 if isinstance(value, int) and not isinstance(value, bool):
                     compact_queue[key] = max(0, min(value, 10_000))
+            predecessor_run_ids = queue.get("predecessor_run_ids")
+            if isinstance(predecessor_run_ids, list):
+                compact_queue["predecessor_run_ids"] = [
+                    str(run_id)[:96] for run_id in predecessor_run_ids[:8]
+                ]
+            predecessor_states = queue.get("predecessor_states")
+            if isinstance(predecessor_states, list):
+                compact_queue["predecessor_states"] = [
+                    {
+                        key: str(state.get(key) or "")[:limit]
+                        for key, limit in (
+                            ("run_id", 96),
+                            ("status", 48),
+                            ("result_state", 48),
+                            ("attention", 120),
+                        )
+                    }
+                    for state in predecessor_states[:8]
+                    if isinstance(state, Mapping)
+                ]
             if isinstance(authored, Mapping):
                 compact_queue["authored_prompt"] = {
                     "description": str(authored.get("description") or "")[:180],
@@ -943,6 +964,15 @@ class LaunchSubagentInput(ToolInput):
             "it launches only after validated terminal success."
         ),
     )
+    depends_on_run_ids: list[str] | None = Field(
+        default=None,
+        max_length=8,
+        description=(
+            "Queue this run behind every listed resident-managed predecessor. IDs must be "
+            "distinct and all must validate and complete successfully before one launch. "
+            "Do not combine this field with depends_on_run_id."
+        ),
+    )
     queue_max_launch_attempts: int = Field(default=3, ge=1, le=10)
     continue_turn: bool = Field(
         default=False,
@@ -1299,10 +1329,13 @@ class MegaplanResidentProfile:
                         "manifest status is idempotent and retry-aware"
                     ),
                     "queued_successors": {
-                        "resident_tool": "launch_subagent with depends_on_run_id",
+                        "resident_tool": (
+                            "launch_subagent with depends_on_run_id (legacy singular) or "
+                            "depends_on_run_ids (multi-predecessor fan-in)"
+                        ),
                         "cli_create": (
                             "python -P -m arnold_pipelines.megaplan resident "
-                            "queue-subagent-successor --after-run-id <run-id> --description "
+                            "queue-subagent-successor --after-run-ids <run-id> [<run-id> ...] --description "
                             "'<concise purpose>' --prompt '<check the output of this agent and use it to XYZ>'"
                         ),
                         "cli_inspect": (
@@ -1310,8 +1343,8 @@ class MegaplanResidentProfile:
                             "inspect-subagent-queue --run-id <run-id>"
                         ),
                         "policy": (
-                            "success-only; failure or invalid result fails closed; cancellation and "
-                            "supersession propagate; launch retries are bounded and cycle-safe"
+                            "all-predecessors-success-only; failure or invalid result fails closed; "
+                            "cancellation and supersession propagate; launch retries are bounded and cycle-safe"
                         ),
                     },
                     "run_root": ".megaplan/plans/resident-subagents",
@@ -1653,7 +1686,7 @@ class MegaplanResidentProfile:
             ToolRegistration("reconcile_todo_item", "Resolve a pending launch intent as superseded by an already-existing canonical run. Requires the stable run id, durable evidence location, and reconciliation reason; never use task-text overlap alone.", "write", ReconcileTodoItemInput, ToolResult, self._reconcile_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
             ToolRegistration("follow_up_subagent", "Durably attach an instruction to one exact resident-managed persistent session. Returns a follow-up receipt and continuation run ID, or an explicit fail-closed error.", "write", FollowUpSubagentInput, ToolResult, self._follow_up_subagent),
-            ToolRegistration("launch_subagent", "Launch or durably queue a resident-managed Codex agent with a manifest, bounded predecessor references, concise description, full log, and result path. `depends_on_run_id` creates a success-gated successor that inherits provenance/authorization and becomes the one synthesis/delivery owner. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("launch_subagent", "Launch or durably queue a resident-managed Codex agent with a manifest, bounded predecessor references, concise description, full log, and result path. `depends_on_run_id` remains the legacy singular dependency; `depends_on_run_ids` creates an all-success fan-in. A queued successor inherits provenance/authorization and becomes the one synthesis/delivery owner. Mixed singular/plural inputs are rejected. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -3080,6 +3113,7 @@ class MegaplanResidentProfile:
             retry_of_run_id=payload.retry_of_run_id,
             query_relationship=query_relationship,
             depends_on_run_id=payload.depends_on_run_id,
+            depends_on_run_ids=payload.depends_on_run_ids,
             queue_max_launch_attempts=payload.queue_max_launch_attempts,
         )
         if not result.ok:
