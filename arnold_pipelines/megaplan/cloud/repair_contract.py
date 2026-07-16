@@ -4176,10 +4176,9 @@ def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
     """Return true for states that must reopen custody despite a success label."""
     target = _as_mapping(current_target)
     active_step = _as_mapping(target.get("active_step_heartbeat"))
-    if (
-        (bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")))
-        and active_step.get("pid_live") is not True
-    ):
+    if bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")):
+        if active_step.get("pid_live") is True:
+            return False
         return _has_current_target_evidence(target)
     stale_kinds = {
         _as_text(_as_mapping(item).get("kind"))
