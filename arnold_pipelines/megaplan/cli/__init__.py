@@ -253,6 +253,8 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--note")
     override_parser.add_argument("--source", default="user")
     override_parser.add_argument("--reason")
+    override_parser.add_argument("--repair-commit", dest="repair_commit")
+    override_parser.add_argument("--failure-fingerprint", dest="failure_fingerprint")
     override_parser.add_argument("--user-approved", action="store_true", default=False)
     override_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED)
     override_parser.add_argument("--profile")

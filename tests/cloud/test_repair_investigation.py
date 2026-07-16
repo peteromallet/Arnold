@@ -208,6 +208,7 @@ def test_verified_deterministic_phase_repair_uses_guarded_override_before_chain_
     state["latest_failure"] = {
         "kind": "deterministic_phase_failure",
         "phase": "finalize",
+        "fingerprint": "f" * 64,
         "message": "critique_finding_identity_reused",
         "metadata": {"count": 3},
     }
@@ -271,6 +272,11 @@ def test_verified_deterministic_phase_repair_uses_guarded_override_before_chain_
     assert recovery["applicable"] is True
     assert recovery["repair_evidence"]["dev_fix_sha"] == head
     assert "override recover-blocked" in supported_cli
+    assert f"--repair-commit {head}" in supported_cli
+    assert (
+        f"--failure-fingerprint {recovery['repair_evidence']['failure_fingerprint']}"
+        in supported_cli
+    )
     assert f"commit {head}" in supported_cli
     assert supported_cli.endswith(
         f"chain start --spec {spec} --project-dir {workspace}"
