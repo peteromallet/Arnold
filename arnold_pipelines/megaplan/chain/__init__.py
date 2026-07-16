@@ -6435,11 +6435,33 @@ def run_chain(
             state.last_state == STATE_AWAITING_PR_MERGE
             and state.current_milestone_index == idx
         ):
+            local_publication_sha: str | None = None
             if not use_pr or state.pr_number is None:
                 log(
                     f"review merge wait for {milestone.label} has no PR context; advancing"
                 )
+                if not use_pr and state.pr_number is not None:
+                    local_publication_sha = _current_git_head(root)
+                    if local_publication_sha is None:
+                        return _result(
+                            "blocked",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=(
+                                f"milestone {milestone.label} cannot reconcile its open PR "
+                                "to a local-only run without a readable local HEAD"
+                            ),
+                        )
+                    state.metadata["local_pr_reconciliation"] = {
+                        "milestone": milestone.label,
+                        "pr_number": state.pr_number,
+                        "observed_pr_state": state.pr_state,
+                        "local_commit_sha": local_publication_sha,
+                    }
+                    state.pr_number = None
                 state.pr_state = None
+                chain_spec.save_chain_state(spec_path, state)
             else:
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
                 if pr_state == "closed":
@@ -6607,16 +6629,20 @@ def run_chain(
                     spec=spec,
                     reason=validation_reason,
                 )
+            completion_record = {
+                "label": milestone.label,
+                "plan": state.current_plan_name,
+                "status": "done",
+                "pr_number": state.pr_number,
+                "pr_state": "merged" if state.pr_number is not None else None,
+            }
+            if local_publication_sha is not None:
+                completion_record["local_commit_sha"] = local_publication_sha
+                completion_record["publication_evidence"] = "local_no_push_reconciliation"
             appended, reason = _append_completed_with_guard(
                 root,
                 state,
-                {
-                    "label": milestone.label,
-                    "plan": state.current_plan_name,
-                    "status": "done",
-                    "pr_number": state.pr_number,
-                    "pr_state": "merged" if state.pr_number is not None else None,
-                },
+                completion_record,
                 implementation_milestone=True,
                 writer=writer,
             )
