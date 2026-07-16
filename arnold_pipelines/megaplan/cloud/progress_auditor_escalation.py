@@ -477,6 +477,11 @@ def _process_evidence(finding: Mapping[str, Any]) -> dict[str, Any]:
         for item in _list(finding.get("prior_watchdog_report_refs"))
         if isinstance(item, Mapping)
     ]
+    l2_failure = _l2_failure_fingerprint(finding)
+    if l2_failure.get("failed") and l2_failure.get("failure_codes"):
+        # A current terminal L2 receipt/log is process custody evidence. The
+        # shared classifier still gives an observed live PID precedence.
+        watchdog_statuses.append("terminal_repair_failure")
     liveness = classify_runner_liveness(
         tmux,
         active,
