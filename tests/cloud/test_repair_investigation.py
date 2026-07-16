@@ -199,6 +199,99 @@ def test_fresh_quality_phase_result_is_exact_error_when_latest_failure_cleared(t
     assert context["current_phase_result"]["path"].endswith("phase_result.json")
 
 
+def test_quality_block_context_carries_bounded_review_rework_evidence(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state.read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = {
+        "kind": "review_quality_blocked_unknown",
+        "phase": "review",
+        "message": "review rework budget exhausted",
+    }
+    _write(state, state_payload)
+    _write(
+        state.parent / "phase_result.json",
+        {
+            "phase": "review",
+            "exit_kind": "blocked_by_quality",
+            "deviations": [{"kind": "quality_gate", "message": "wrapper gate failed"}],
+        },
+    )
+    _write(
+        state.parent / "review.json",
+        {
+            "review_verdict": "needs_rework",
+            "summary": "wrapper continuation opens with fake evidence",
+            "issues": ["wrong state loader"],
+            "criteria": [
+                {
+                    "name": "wrapper paths fail closed",
+                    "pass": "fail",
+                    "evidence": "load_chain_state received the state path",
+                }
+            ],
+            "rework_items": [
+                {
+                    "task_id": "T24",
+                    "issue": "wrapper acceptance gate opens",
+                    "expected": "invalid acceptance evidence blocks",
+                    "actual": "gate_open=True",
+                    "evidence_file": "arnold_pipelines/megaplan/cloud/wrapper_acceptance_gate.py",
+                    "deterministic_check": {
+                        "command": "python bounded_wrapper_probe.py",
+                        "post_status": "failed",
+                    },
+                }
+            ],
+        },
+    )
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    quality = context["durable_quality_block"]
+    assert quality["active"] is True
+    assert quality["recover_state_allowed"] is False
+    assert quality["review_artifact"]["path"].endswith("review.json")
+    assert "recover_state" not in quality["allowed_actions"]
+    review_source = next(
+        item for item in context["evidence_sources"] if item["kind"] == "review_artifact"
+    )
+    assert review_source["path"].endswith("review.json")
+    assert review_source["observed"]["rework_items"][0]["task_id"] == "T24"
+    assert review_source["observed"]["rework_items"][0]["actual"] == "gate_open=True"
+    assert len(json.dumps(context).encode()) <= MAX_CONTEXT_BYTES
+
+
+def test_oversized_review_artifact_fails_closed(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state.read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = {
+        "kind": "quality_gate_blocked",
+        "phase": "review",
+        "message": "blocked",
+    }
+    _write(state, state_payload)
+    (state.parent / "review.json").write_text("x" * (2 * 1024 * 1024 + 1), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="exceeds 2 MiB bound"):
+        build_investigation_context(
+            workspace=workspace,
+            session="custody-control-plane-20260714",
+            remote_spec=str(spec),
+            repair_data_path=repair_data,
+            request_path=request,
+            goal_path=goal,
+        )
+
+
 def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     state = workspace / ".megaplan/plans/current-m5a/state.json"
@@ -486,6 +579,47 @@ def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
             expected_context_digest="digest-1",
             observation_bundle=observation,
         )
+
+
+def test_durable_quality_block_rejects_blind_state_recovery_handoff() -> None:
+    receipt = _receipt()
+    receipt["actual_failure"]["classification"] = "stale_state"
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported_cli:python -m megaplan chain start"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "plan_state_via_cli",
+        "scope": "supported chain start",
+        "rationale": "workspace head changed",
+    }
+    context = {
+        "context_digest": "digest-1",
+        "durable_quality_block": {
+            "active": True,
+            "recover_state_allowed": False,
+            "review_artifact": {"path": "/workspace/review.json", "present": True},
+        },
+    }
+
+    with pytest.raises(ValueError, match="cannot replay a durable review-quality block"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            investigation_context=context,
+        )
+
+
+def test_repair_wrapper_validates_receipt_against_durable_context() -> None:
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert '--context "$INVESTIGATION_CONTEXT_PATH"' in wrapper
+    assert "investigation_context=context" in wrapper
 
 
 def test_context_separates_safe_target_from_handoff_mutation_contract(tmp_path: Path) -> None:
