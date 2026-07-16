@@ -157,16 +157,29 @@ def main(argv: list[str] | None = None) -> int:
             for record in request_records
             if str(record.get("request_id") or "") == requested_request_id
         ]
-    # Queue scanning can contain L1, L2, and L3 candidates together. Acquire
-    # the shared claim lock when any path is authorized; _dispatch revalidates
-    # the exact selected layer immediately before its claim/subprocess effect.
+    def requested_mutation_path(record: Mapping[str, Any]) -> str:
+        target = record.get("target") if isinstance(record.get("target"), Mapping) else {}
+        deterministic = (
+            target.get("deterministic_superfixer_evidence")
+            if isinstance(target.get("deterministic_superfixer_evidence"), Mapping)
+            else {}
+        )
+        if deterministic.get("actionable") is True:
+            if (
+                str(target.get("dispatch_intent") or "") == "deep_superfixer_repair"
+                and str(target.get("retry_strategy") or "") == "deep_superfixer_repair"
+            ):
+                return feature_flags.MUTATION_PATH_L3
+            return feature_flags.MUTATION_PATH_L2
+        return feature_flags.MUTATION_PATH_L1
+
+    # Select authorization from immutable request evidence before taking the
+    # queue lock. Mixed queues may carry L1/L2/L3 candidates; _dispatch still
+    # revalidates the exact classified layer at the claim/subprocess boundary.
+    requested_paths = {requested_mutation_path(record) for record in request_records}
     authorized = any(
         feature_flags.mutation_authorized(path)
-        for path in (
-            feature_flags.MUTATION_PATH_L1,
-            feature_flags.MUTATION_PATH_L2,
-            feature_flags.MUTATION_PATH_L3,
-        )
+        for path in requested_paths
     )
     if not request_records:
         _emit(
