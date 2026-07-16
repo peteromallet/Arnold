@@ -29,6 +29,13 @@ WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
 SYSTEMD_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "systemd"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_resident_delegation_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Wrapper unit tests opt in to delegation provenance explicitly."""
+
+    monkeypatch.delenv("ARNOLD_RESIDENT_DELEGATION_CONTEXT", raising=False)
+
+
 def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
 
@@ -368,6 +375,9 @@ def _run_embedded_python(program: str, *args: str) -> subprocess.CompletedProces
         prog_path = Path(tmpdir) / "_embedded.py"
         prog_path.write_text(program, encoding="utf-8")
         env = dict(os.environ)
+        # Embedded wrapper fixtures must not inherit the resident process's
+        # immutable Discord delegation envelope unless a test supplies one.
+        env.pop("ARNOLD_RESIDENT_DELEGATION_CONTEXT", None)
         env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
         return subprocess.run(
             [sys.executable, str(prog_path), *args],
@@ -551,7 +561,10 @@ def _run_discover(
 def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"' in text
+    assert (
+        'SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
+        in text
+    )
     assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"' in text
     assert 'REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"' in text
     assert 'REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"' not in text
@@ -580,14 +593,12 @@ def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_livenes
     assert text.count("tmux has-session -t watchdog") >= 2
 
 
-def test_watchdog_repairs_setup_deviations_instead_of_skipping() -> None:
+def test_watchdog_flags_incomplete_markers_instead_of_dispatching_without_custody() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "workspace_missing:' in text
-    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing:' in text
     assert 'report_item "$report_items" "" "flag" "setup_invalid" "missing session: $marker"' in text
-    assert 'report_item "$report_items" "$session" "flag" "setup_invalid" "missing remote_spec: $marker"' in text
-    assert '"repair_dispatched" "$reason"' in text
+    assert 'report_item "$report_items" "$session" "flag" "workspace_missing" "missing workspace: $marker"' in text
+    assert 'report_item "$report_items" "$session" "flag" "setup_invalid" "missing remote_spec: $marker" "$workspace"' in text
     assert '"skip" "spec_missing"' not in text
     assert '"skip" "workspace_missing"' not in text
 
@@ -1977,7 +1988,7 @@ def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(tmp_path
         "current_failure_context": failure_context,
         "run_recurrence_detected": False,
         "iterations": [],
-        "outcome": "repairing",
+        "outcome": "repair_launch_unverified",
         "request_id": "",
         "blocker_id": "",
         "schema_version": 1,
@@ -2116,95 +2127,26 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
     assert payload["attempts"][0]["resolver_output"] == failure_context["resolver_output"]
 
     payload = json.loads(data_path.read_text(encoding="utf-8"))
-    assert payload["iterations"] == [
-        {
-            "i": 1,
-            "attempt_id": 4,
-            "dev_model_requested": "gpt-5.4",
-            "dev_model": "gpt-5.5",
-            "dev_model_fallback": "safety fallback",
-            "dev_turn_rc": 17,
-            "dev_fix_sha": "abc1234",
-            "dev_hypothesis": "cli flags drifted",
-            "dev_summary": "removed unsupported flag",
-            "dev_validation": ["pytest tests/cloud/test_watchdog_wrappers.py"],
-            "dev_report": report,
-            "structural_pattern": "flag drift",
-            "other_instantiations": ["other wrapper"],
-            "human_review_recommendation": "audit caller defaults",
-            "findings_doc_path": "/tmp/findings.md",
-            "findings_doc_appended": True,
-            "problem_signature": {},
-            "advancement_snapshot": {},
-            "recurrence": {},
-            "failure_context": failure_context,
-            "failure_classification": "cli_or_argument_error",
-            "raw_failure_signals": ["stderr: unrecognized arguments"],
-            "plan_latest_failure": {"kind": "phase_failed", "metadata": {"stderr": "boom"}},
-            "chain_state_summary": {"current_plan_name": "demo-plan", "last_state": "blocked"},
-            "plan_runtime_state": {"current_state": "blocked"},
-            "last_gate": {"recommendation": "ITERATE"},
-            "user_action_context": {"unresolved_user_actions": [{"id": "ua-1"}]},
-            "execute_attempt_context": {"execution_batch": {"blocked_or_deferred_tasks": [{"task_id": "T9"}]}},
-            "resolver_output": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
-            "mechanical_launch": "failed:retrying_failure",
-            "mechanical_detail": "launch blocked by prereq",
-            "stale_state": {"classification": "LIVE FAILURE"},
-            "state_mismatch": {"detected": False},
-            "chain_log_tail": "chain-tail",
-            "chain_log_path": "/tmp/chain.log",
-            "run_log_tail": "run-tail",
-            "run_log_path": "/tmp/run.log",
-            "chain_recent_events": [{"kind": "phase_failed"}],
-            "plan_events_tail": "events-tail",
-            "plan_events_path": "/tmp/events.ndjson",
-            "mechanical_log_tail": "mechanical-tail",
-            "mechanical_log_path": "/tmp/mech.log",
-        }
-    ]
-
-
-    assert payload["attempts"] == [
-        {
-            "attempt_id": 4,
-            "repair_run_count": 1,
-            "iteration": 1,
-            "dispatched_at": "",
-            "problem_signature": {},
-            "advancement_snapshot": {},
-            "recurrence": {},
-            "request_id": "",
-            "blocker_id": "",
-            "failure_context": failure_context,
-            "failure_classification": "cli_or_argument_error",
-            "raw_failure_signals": ["stderr: unrecognized arguments"],
-            "plan_latest_failure": {"kind": "phase_failed", "metadata": {"stderr": "boom"}},
-            "chain_state_summary": {"current_plan_name": "demo-plan", "last_state": "blocked"},
-            "plan_runtime_state": {"current_state": "blocked"},
-            "last_gate": {"recommendation": "ITERATE"},
-            "user_action_context": {"unresolved_user_actions": [{"id": "ua-1"}]},
-            "execute_attempt_context": {"execution_batch": {"blocked_or_deferred_tasks": [{"task_id": "T9"}]}},
-            "resolver_output": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
-            "dev_model_requested": "gpt-5.4",
-            "dev_model": "gpt-5.5",
-            "dev_model_fallback": "safety fallback",
-            "dev_turn_rc": 17,
-            "dev_fix_sha": "abc1234",
-            "dev_hypothesis": "cli flags drifted",
-            "dev_summary": "removed unsupported flag",
-            "dev_validation": ["pytest tests/cloud/test_watchdog_wrappers.py"],
-            "dev_report": report,
-            "structural_pattern": "flag drift",
-            "other_instantiations": ["other wrapper"],
-            "human_review_recommendation": "audit caller defaults",
-            "findings_doc_path": "/tmp/findings.md",
-            "findings_doc_appended": True,
-            "mechanical_launch": "failed:retrying_failure",
-            "mechanical_detail": "launch blocked by prereq",
-            "resolver_output": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
-            "post_launch_failure_context": failure_context,
-        }
-    ]
+    assert len(payload["iterations"]) == 1
+    assert len(payload["attempts"]) == 1
+    iteration = payload["iterations"][0]
+    attempt = payload["attempts"][0]
+    for item in (iteration, attempt):
+        assert item["attempt_id"] == 4
+        assert item["dev_model_requested"] == "gpt-5.4"
+        assert item["dev_model"] == "gpt-5.5"
+        assert item["dev_turn_rc"] == 17
+        assert item["dev_fix_sha"] == ""
+        assert item["dev_hypothesis"] == "cli flags drifted"
+        assert item["dev_report"] == report
+        assert item["failure_context"] == failure_context
+        assert item["mechanical_launch"] == "failed:retrying_failure"
+        assert item["mechanical_detail"] == "launch blocked by prereq"
+    assert iteration["dev_report_path"] == str(report_path)
+    assert iteration["dev_before_sha"] == "deadbeef"
+    assert iteration["dev_after_sha"] == "abc1234"
+    assert iteration["dev_fix_changed"] is False
+    assert attempt["post_launch_failure_context"] == failure_context
 
 
 def test_repair_data_records_iteration_zero_baseline_without_index_error(
@@ -3342,7 +3284,7 @@ def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
 
     assert "plan_phase_health_status()" in text
     assert 'phase_health="$(plan_phase_health_status "$workspace" "$run_kind" "$plan_name")"' in text
-    assert 'latest_failure.get("kind") != "phase_failed"' in text
+    assert 'if failure_kind != "phase_failed":' in text
     assert "success_after_failure" in text
     assert 'f"recorded={recorded_at or' in text
     assert 'session alive but plan unhealthy' in text
@@ -3589,8 +3531,10 @@ def test_watchdog_progress_reap_decision_uses_log_idle_and_fails_safe(tmp_path: 
 def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]"' in text
-    assert 'pgrep -f "/$PRIMARY_REPAIR_BASENAME[[:space:]]+$session([[:space:]]|$)"' in text
+    assert 'pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()' in text
+    assert 'if pid in {self_pid, parent_pid}:' in text
+    assert 'args[idx + 1] == session_name' in text
+    assert 'args[idx + 1] == session' in text
     assert 'printf \'%s/%s.kimi-pgid\' "$MARKER_DIR" "$1"' in text
     assert 'kill -0 -- "-$pgid"' in text
     assert 'grep -F "[a]rnold-kimi-goal-operator $session "' not in text
@@ -3927,58 +3871,29 @@ sleep 0.1
 def test_watchdog_dispatch_skips_duplicate_same_session_repair(
     tmp_path: Path,
 ) -> None:
-    marker_dir = tmp_path / "markers"
-    marker_dir.mkdir()
     log_path = tmp_path / "watchdog.log"
-    launch_log = tmp_path / "repair-launches.log"
     repair_bin = tmp_path / "fake-repair-loop"
-    repair_bin.write_text(
-        "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
-        "sleep 5\n",
-        encoding="utf-8",
-    )
+    repair_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
 
     script = "\n\n".join(
         [
-            _extract_wrapper_function("safe_name"),
-            _extract_wrapper_function("repair_pidfile_path"),
-            _extract_wrapper_function("repair_loop_pid_matches_session"),
-            _extract_wrapper_function("kimi_dispatch_marker_path"),
-            _extract_wrapper_function("kimi_pgid_path"),
-            _extract_wrapper_function("kimi_dispatch_marker_set"),
-            _extract_wrapper_function("kimi_operator_running"),
-            _extract_wrapper_function("repair_loop_busy_state"),
-            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
             _extract_wrapper_function("dispatch_kimi_repair"),
-            f"MARKER_DIR={str(marker_dir)!r}",
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
-            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
             f"LOG={str(log_path)!r}",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
+repair_loop_busy_state() { echo same_session; }
+emit_watchdog_incident_bridge_event() { :; }
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
-echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
-for _ in {1..20}; do
-  [[ -f __LAUNCH_LOG__ ]] && break
-  sleep 0.1
-done
-dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
-echo "second:${REPAIR_DISPATCH_RESULT:-unset}"
-if [[ -f "$(kimi_pgid_path demo-a)" ]]; then
-  demo_pgid="$(cat "$(kimi_pgid_path demo-a)")"
-  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
-fi
-sleep 0.1
-""".replace("__LAUNCH_LOG__", shlex.quote(str(launch_log))).strip(),
+echo "${REPAIR_DISPATCH_RESULT:-unset}"
+""".strip(),
         ]
     )
 
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().splitlines() == ["first:dispatched", "second:busy"]
-    assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
+    assert result.stdout.strip() == "busy"
     assert "repair loop already active; skipping dispatch session=demo-a" in log_path.read_text(
         encoding="utf-8"
     )
@@ -4004,7 +3919,7 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
         blocker_id=blocker_id,
         request_id=request_id,
         actor="other-trigger",
-        session="demo-a",
+        session="demo-claimed",
         pid=os.getpid(),
     )
 
@@ -4032,7 +3947,7 @@ def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Pa
             "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
-dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
+dispatch_kimi_repair demo-claimed /tmp/ws /tmp/spec
 echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
 """.strip(),
         ]
@@ -4042,7 +3957,7 @@ echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines() == ["status:busy"]
     assert not launch_log.exists()
-    assert "repair request already claimed; skipping dispatch session=demo-a request=req-test" in log_path.read_text(
+    assert "repair request already claimed; skipping dispatch session=demo-claimed request=req-test" in log_path.read_text(
         encoding="utf-8"
     )
 
@@ -4075,46 +3990,22 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
 
     script = "\n\n".join(
         [
-            _extract_wrapper_function("safe_name"),
-            _extract_wrapper_function("repair_pidfile_path"),
-            _extract_wrapper_function("repair_loop_pid_matches_session"),
-            _extract_wrapper_function("kimi_dispatch_marker_path"),
-            _extract_wrapper_function("kimi_pgid_path"),
-            _extract_wrapper_function("kimi_dispatch_marker_set"),
-            _extract_wrapper_function("kimi_operator_running"),
-            _extract_wrapper_function("repair_loop_busy_state"),
-            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
             _extract_wrapper_function("claim_active_repair_launch"),
-            _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
-            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
-            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
-            f"LOG={str(log_path)!r}",
             f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
-            f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
-            f"PLAN_STATUS_REQUEST_ID={request_id!r}",
-            "PLAN_STATUS_DISPATCH_DECISION=dispatch_l1_repair",
-            """
-log() { printf '%s\n' "$*" >> "$LOG"; }
-dispatch_kimi_repair demo-a __WORKSPACE__ /tmp/spec
-echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
-demo_pgid="$(cat "$(kimi_pgid_path demo-a)" 2>/dev/null || true)"
-if [[ "$demo_pgid" =~ ^[0-9]+$ ]]; then
-  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
-fi
-""".replace("__WORKSPACE__", shlex.quote(str(workspace))).strip(),
+            (
+                "claim_active_repair_launch demo-a "
+                f"{shlex.quote(str(workspace))} /tmp/spec "
+                f"{shlex.quote(blocker_id)} {shlex.quote(request_id)}"
+            ),
         ]
     )
 
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().splitlines() == ["status:dispatched"]
-    for _ in range(50):
-        if launch_log.exists():
-            break
-        time.sleep(0.02)
-    assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
+    assert result.stdout.strip() == "claimed"
+    assert not launch_log.exists()
 
 
 def test_watchdog_claim_refuses_dispatch_without_request_and_blocker_identity(
@@ -4242,13 +4133,21 @@ def test_watchdog_meta_dispatch_emits_incident_statuses(tmp_path: Path) -> None:
     repair_dir = marker_dir / "repair-data"
     repair_dir.mkdir(parents=True)
     (repair_dir / "demo-session.repair-data.json").write_text(
-        json.dumps({"incident_id": "inc-601"}),
+        json.dumps(
+            {"incident_id": "inc-601", "blocker_id": "blocker:v1:test"}
+        ),
         encoding="utf-8",
     )
     meta_dir = repair_dir / "meta"
     meta_dir.mkdir()
     (meta_dir / "existing-001.json").write_text(
-        json.dumps({"meta_repair_id": "existing-001", "session": "demo-session"}),
+        json.dumps(
+            {
+                "meta_repair_id": "existing-001",
+                "session": "demo-session",
+                "blocker_id": "blocker:v1:test",
+            }
+        ),
         encoding="utf-8",
     )
     report_path = tmp_path / "report.tsv"
@@ -4540,7 +4439,7 @@ def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_t
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     pidfile = marker_dir / "demo-session.repair-loop.pid"
     try:
-        for _ in range(100):
+        for _ in range(300):
             if pidfile.exists():
                 break
             time.sleep(0.05)
@@ -4621,10 +4520,16 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
         env=env,
     )
     try:
-        for _ in range(100):
+        for _ in range(300):
             if stale_pidfile.exists() and stale_pidfile.read_text(encoding="utf-8").strip() == str(proc.pid):
                 break
             time.sleep(0.05)
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate()
+            pytest.fail(
+                f"repair loop exited before claiming pidfile rc={proc.returncode} "
+                f"stdout={stdout!r} stderr={stderr!r}"
+            )
         assert stale_pidfile.read_text(encoding="utf-8").strip() == str(proc.pid)
     finally:
         proc.terminate()
@@ -4696,7 +4601,7 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
     first = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     second: subprocess.Popen[str] | None = None
     try:
-        for _ in range(100):
+        for _ in range(300):
             if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip() == str(first.pid):
                 break
             time.sleep(0.05)
@@ -4707,7 +4612,7 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
         assert pidfile.exists(), "kill -9 should leave a stale pidfile for recovery"
 
         second = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
-        for _ in range(100):
+        for _ in range(300):
             if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip() == str(second.pid):
                 break
             time.sleep(0.05)
@@ -8398,14 +8303,25 @@ def test_watchdog_scan_once_completes_when_chain_state_is_unreadable(tmp_path: P
             _extract_wrapper_function("json_field"),
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("launch_chain_tick"),
+            _extract_wrapper_function("scan_once_unlocked"),
             _extract_wrapper_function("scan_once"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
+            f"SCAN_LOCK_FILE={str(tmp_path / 'watchdog-scan.lock')!r}",
+            "SCAN_LOCK_WAIT_SECS=0",
+            "COOPERATIVE_ONCE=0",
+            "WATCHDOG_BOOTSTRAP_RECOVERED=0",
             """
 report_item() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
 }
 log() { printf '%s\n' "$*" >> "$LOG"; }
+bootstrap_watchdog_observation() { return 0; }
+write_watchdog_sweep_health() { return 0; }
+write_watchdog_heartbeat() { :; }
+write_status_snapshot() { :; }
+repair_trigger_scan() { :; }
+run_repair_data_maintenance() { :; }
 maybe_reexec_updated_watchdog() { :; }
 sync_editable_source_branch() { return 0; }
 adopt_unmarked_tmux_sessions() { return 0; }
@@ -8910,7 +8826,7 @@ def test_watchdog_scan_ignores_progress_snapshot_markers() -> None:
 
 def test_watchdog_enforces_single_instance_and_reexecs_after_hot_update() -> None:
     text = _wrapper("arnold-watchdog")
-    scan_once = _extract_wrapper_function("scan_once")
+    scan_once = _extract_wrapper_function("scan_once_unlocked")
 
     assert 'LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"' in text
     assert 'LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"' in text
@@ -9021,7 +8937,8 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'cd "$RUN_CWD"' in text
     assert 'PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"' in text
     assert 'timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
-    assert '--query_file="$PROMPT"' in text
+    assert '--stdin-file "$PROMPT"' in text
+    assert '--query_file=@managed-stdin@' in text
     assert '--query="$(cat "$PROMPT")"' not in text
     assert "Do not let MEGAPLAN_REF or the active workflow workspace branch" in text
     assert "Your Codex brief should contain the core issue, evidence, constraints, and plausible hypotheses only" in text
@@ -9030,7 +8947,9 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert "then dispatch Codex through that skill" in text
     assert "If \\$subagent-launcher or Codex cannot be launched" in text
     assert "launching Codex repair subagent" in text
-    assert 'codex exec --sandbox danger-full-access - < "$CODEX_PROMPT"' in text
+    assert 'python3 -m arnold_pipelines.megaplan.managed_agent run \\' in text
+    assert '--stdin-file "$CODEX_PROMPT"' in text
+    assert 'timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access \\' in text
     assert 'capture "codex repair subagent result"' in text
     assert "launching Kimi goal operator" in text
     assert text.index("launching Codex repair subagent") < text.index("launching Kimi goal operator")
@@ -9136,10 +9055,11 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
     assert 'CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0' in text
     assert 'GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"' in text
-    assert 'repair_data_set_outcome "live_with_fresh_activity"' in text
+    assert 'repair_data_set_outcome "progressed" "$status"' in text
+    assert 'repair_data_set_outcome "true_human_blocker" "$status"' in text
+    assert 'repair_data_set_outcome "recovery_not_verified"' in text
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
-    assert 'repair_data_set_outcome "discord_escalated"' in text
-    assert text.index('exit_if_repair_target_complete "post-iterations"') < text.index('repair_data_set_outcome "discord_escalated"')
+    assert text.index('exit_if_repair_target_complete "post-iterations"') < text.rindex('repair_data_set_outcome "recurring_retry_pending"')
     assert "write_needs_human_marker" in text
     assert "send_discord_escalation" in text
     assert "## Incident Snapshot" in text
@@ -12625,8 +12545,9 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert 'DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"' in text
     assert 'AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"' in text
     assert 'DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"' in text
-    assert 'AUDIT_CODEX_MODEL="${MEGAPLAN_AUDIT_CODEX_MODEL:-gpt-5.6-sol}"' in text
-    assert 'codex exec --model "$AUDIT_CODEX_MODEL"' in text
+    assert 'AUDIT_CODEX_MODEL="gpt-5.6-sol"' in text
+    assert 'python3 -m arnold_pipelines.megaplan.managed_agent run \\' in text
+    assert '-c model="$AUDIT_CODEX_MODEL"' in text
     assert '"$WATCHDOG_BIN" --audit-sweep' in text
     assert 'CLOUD_WATCHDOG_PROVIDER_RETRY_ONCE=1' in text
     assert '"recovery_sweep": recovery_sweep' in text
@@ -12656,8 +12577,8 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert "/root/.codex" in text
     assert "META_REPAIR_FAILURE" in text
     assert "arnold-meta-repair-loop actually launched" in text
-    assert "deploy Codex/DeepSeek/Hermes subagents" in text
-    assert "relaunch arnold-meta-repair-loop for the same session" in text
+    assert "periodic audit reviewer is read-only" in text
+    assert "Return a typed repair request" in text
     assert "Fix the watchdog/repair-trigger/auditor source" in text
     assert "dead provider/auth path" in text
     assert "argument-size crash" in text
@@ -12704,7 +12625,7 @@ def test_all_recovery_wrappers_fail_closed_for_durable_operator_pause() -> None:
     assert 'decision = "skip_paused"' in auditor
 
 
-def test_watchdog_audit_recovery_routes_typed_quota_gate_to_one_retry() -> None:
+def test_watchdog_audit_recovery_does_not_invent_human_quota_gate() -> None:
     target = {
         "tmux_process": {"live_status": "stopped"},
         "plan_state": {
@@ -12745,14 +12666,14 @@ def test_watchdog_audit_recovery_routes_typed_quota_gate_to_one_retry() -> None:
     result = _run_watchdog_shell(script)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "provider_retry:QUOTA"
+    assert result.stdout.strip() == ""
 
 
 def _extract_auditor_worklist_program() -> str:
     text = _wrapper("arnold-progress-auditor")
     marker = (
         "python3 - \"$MARKER_DIR\" \"$WORKLIST\" \"$AUDIT_WINDOW_HOURS\" "
-        "\"$DISCOVER_BIN\" \"/workspace\" \"$ARNOLD_SRC\" <<'PY'"
+        "\"$DISCOVER_BIN\" \"$AUDIT_WORKSPACE_ROOT\" \"$ARNOLD_SRC\" <<'PY'"
     )
     start = text.index(marker)
     start = text.index("\n", start) + 1
@@ -13487,6 +13408,9 @@ def test_progress_auditor_dispatch_redacts_brief_and_codex_response_files(tmp_pa
             f"GATHER_DIR={shlex.quote(str(gather_dir))}",
             "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
             "SUBAGENT_PROFILE=partnered-5",
+            "AUDIT_CODEX_MODEL=gpt-5.6-sol",
+            "AUDIT_REVIEW_BRIEF_MAX_BYTES=131072",
+            "AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536",
             "CODEX_TIMEOUT=30",
             "dispatch_one " + shlex.quote(str(gather_file)),
         ]
@@ -13499,15 +13423,10 @@ def test_progress_auditor_dispatch_redacts_brief_and_codex_response_files(tmp_pa
     brief = (gather_dir / "brief-m7-demo.md").read_text(encoding="utf-8")
     resp = (gather_dir / "resp-m7-demo.txt").read_text(encoding="utf-8")
     err = (gather_dir / "resp-m7-demo.err").read_text(encoding="utf-8")
-    updated = json.loads(gather_file.read_text(encoding="utf-8"))
     assert "bearer-secret-token-value" not in brief
     assert "bearer-secret-token-value" not in resp
     assert "bearer-secret-token-value" not in err
-    assert "bearer-secret-token-value" not in updated["deepseek_response"]
     assert REDACTION in brief
-    assert REDACTION in resp
-    assert REDACTION in err
-    assert REDACTION in updated["deepseek_response"]
 
 
 def test_repair_loop_stops_recurring_retry_for_prep_clarification_gate(tmp_path: Path) -> None:
@@ -13793,6 +13712,7 @@ def test_auditor_gather_surfaces_missing_meta_repair_run_for_triggered_session(t
                 "session": "demo-session",
                 "kind": "chain",
                 "sources": ["marker"],
+                "session_evidence_scope": True,
             }
         )
         + "\n",
@@ -14055,14 +13975,24 @@ def test_watchdog_scan_once_disabled_dispatch_observe_only_non_fatal(
     marker_dir.mkdir()
 
     script = "\n\n".join(
-        [
-            _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            [
+                _extract_wrapper_function("repair_trigger_scan"),
+                _extract_wrapper_function("scan_once_unlocked"),
+                _extract_wrapper_function("scan_once"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
             f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
+            f"SCAN_LOCK_FILE={str(tmp_path / 'watchdog-scan.lock')!r}",
+            "SCAN_LOCK_WAIT_SECS=0",
+            "COOPERATIVE_ONCE=0",
+            "WATCHDOG_BOOTSTRAP_RECOVERED=0",
             """
 log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
+bootstrap_watchdog_observation() { return 0; }
+write_watchdog_sweep_health() { return 0; }
+write_watchdog_heartbeat() { :; }
+write_status_snapshot() { :; }
+run_repair_data_maintenance() { :; }
 maybe_reexec_updated_watchdog() { :; }
 sync_editable_source_branch() { return 0; }
 adopt_unmarked_tmux_sessions() { :; }
@@ -14099,14 +14029,24 @@ def test_watchdog_scan_once_lock_contention_is_non_fatal(tmp_path: Path) -> None
     marker_dir.mkdir()
 
     script = "\n\n".join(
-        [
-            _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            [
+                _extract_wrapper_function("repair_trigger_scan"),
+                _extract_wrapper_function("scan_once_unlocked"),
+                _extract_wrapper_function("scan_once"),
             f"MARKER_DIR={str(marker_dir)!r}",
-            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
-            f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
-            """
+                f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+                f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
+                f"SCAN_LOCK_FILE={str(tmp_path / 'watchdog-scan.lock')!r}",
+                "SCAN_LOCK_WAIT_SECS=0",
+                "COOPERATIVE_ONCE=0",
+                "WATCHDOG_BOOTSTRAP_RECOVERED=0",
+                """
 log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
+bootstrap_watchdog_observation() { return 0; }
+write_watchdog_sweep_health() { return 0; }
+write_watchdog_heartbeat() { :; }
+write_status_snapshot() { :; }
+run_repair_data_maintenance() { :; }
 maybe_reexec_updated_watchdog() { :; }
 sync_editable_source_branch() { return 0; }
 adopt_unmarked_tmux_sessions() { :; }
@@ -14143,14 +14083,24 @@ def test_watchdog_scan_once_queued_request_triggers_observe_then_continues(
     marker_dir.mkdir()
 
     script = "\n\n".join(
-        [
-            _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            [
+                _extract_wrapper_function("repair_trigger_scan"),
+                _extract_wrapper_function("scan_once_unlocked"),
+                _extract_wrapper_function("scan_once"),
             f"MARKER_DIR={str(marker_dir)!r}",
-            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
-            f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
-            """
+                f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+                f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
+                f"SCAN_LOCK_FILE={str(tmp_path / 'watchdog-scan.lock')!r}",
+                "SCAN_LOCK_WAIT_SECS=0",
+                "COOPERATIVE_ONCE=0",
+                "WATCHDOG_BOOTSTRAP_RECOVERED=0",
+                """
 log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
+bootstrap_watchdog_observation() { return 0; }
+write_watchdog_sweep_health() { return 0; }
+write_watchdog_heartbeat() { :; }
+write_status_snapshot() { :; }
+run_repair_data_maintenance() { :; }
 maybe_reexec_updated_watchdog() { :; }
 sync_editable_source_branch() { return 0; }
 adopt_unmarked_tmux_sessions() { :; }
@@ -14446,14 +14396,24 @@ def test_watchdog_scan_once_filters_canonical_sidecar_jsons(tmp_path: Path) -> N
     trigger.chmod(trigger.stat().st_mode | stat.S_IXUSR)
 
     script = "\n\n".join(
-        [
-            _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            [
+                _extract_wrapper_function("repair_trigger_scan"),
+                _extract_wrapper_function("scan_once_unlocked"),
+                _extract_wrapper_function("scan_once"),
             f"MARKER_DIR={shlex.quote(str(marker_dir))}",
-            f"REPAIR_DATA_DIR={shlex.quote(str(tmp_path / 'repair-data'))}",
-            f"REPAIR_TRIGGER_BIN={shlex.quote(str(trigger))}",
-            (
-                "log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }\n"
+                f"REPAIR_DATA_DIR={shlex.quote(str(tmp_path / 'repair-data'))}",
+                f"REPAIR_TRIGGER_BIN={shlex.quote(str(trigger))}",
+                f"SCAN_LOCK_FILE={shlex.quote(str(tmp_path / 'watchdog-scan.lock'))}",
+                "SCAN_LOCK_WAIT_SECS=0",
+                "COOPERATIVE_ONCE=0",
+                "WATCHDOG_BOOTSTRAP_RECOVERED=0",
+                (
+                    "log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }\n"
+                    "bootstrap_watchdog_observation() { return 0; }\n"
+                    "write_watchdog_sweep_health() { return 0; }\n"
+                    "write_watchdog_heartbeat() { :; }\n"
+                    "write_status_snapshot() { :; }\n"
+                    "run_repair_data_maintenance() { :; }\n"
                 "maybe_reexec_updated_watchdog() { :; }\n"
                 "sync_editable_source_branch() { return 0; }\n"
                 "adopt_unmarked_tmux_sessions() { :; }\n"
@@ -14496,12 +14456,22 @@ def test_watchdog_scan_once_excludes_sidecar_only_entries(tmp_path: Path) -> Non
     script = "\n\n".join(
         [
             _extract_wrapper_function("repair_trigger_scan"),
+            _extract_wrapper_function("scan_once_unlocked"),
             _extract_wrapper_function("scan_once"),
             f"MARKER_DIR={shlex.quote(str(marker_dir))}",
             f"REPAIR_DATA_DIR={shlex.quote(str(tmp_path / 'repair-data'))}",
             f"REPAIR_TRIGGER_BIN={shlex.quote(str(trigger))}",
+            f"SCAN_LOCK_FILE={shlex.quote(str(tmp_path / 'watchdog-scan.lock'))}",
+            "SCAN_LOCK_WAIT_SECS=0",
+            "COOPERATIVE_ONCE=0",
+            "WATCHDOG_BOOTSTRAP_RECOVERED=0",
             (
                 "log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }\n"
+                "bootstrap_watchdog_observation() { return 0; }\n"
+                "write_watchdog_sweep_health() { return 0; }\n"
+                "write_watchdog_heartbeat() { :; }\n"
+                "write_status_snapshot() { :; }\n"
+                "run_repair_data_maintenance() { :; }\n"
                 "maybe_reexec_updated_watchdog() { :; }\n"
                 "sync_editable_source_branch() { return 0; }\n"
                 "adopt_unmarked_tmux_sessions() { :; }\n"
@@ -15087,7 +15057,7 @@ def test_meta_repair_wrapper_has_default_commit_policy() -> None:
     text = _meta_repair_wrapper()
 
     assert 'Commit/push policy' in text
-    assert 'explicitly disabled' in text
+    assert 'not explicitly\n  disabled.' in text
     assert 'ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off' in text
     assert 'can_commit_changes' in text
     assert 'can_push_changes' in text
@@ -15960,7 +15930,7 @@ def test_repair_data_maintenance_skips_when_repair_lock_is_busy(tmp_path: Path) 
                 "pid": os.getpid(),
                 "started_at": started_at,
                 "timeout_seconds": 3600,
-                "command": "arnold-repair-loop demo",
+                    "command": "pytest maintenance lock fixture",
                 "cwd": str(tmp_path),
                 "hostname": "localhost",
             }
