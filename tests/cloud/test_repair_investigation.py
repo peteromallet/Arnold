@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1076,16 +1079,67 @@ def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path)
         validate_meta_investigation_context(context)
 
 
-def test_repair_loop_embeds_bounded_context_for_sandbox_independent_investigation() -> None:
+def test_repair_loop_uses_bounded_context_pointer_from_sandbox_root() -> None:
     wrapper = (
         REPO_ROOT
         / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
     ).read_text(encoding="utf-8")
 
-    assert '<authoritative_repair_context>' in wrapper
-    assert 'cat "$INVESTIGATION_CONTEXT_PATH" >> "$INVESTIGATOR_PROMPT_PATH"' in wrapper
-    assert "does not depend on filesystem sandbox availability" in wrapper
+    assert '<authoritative_repair_context>' not in wrapper
+    assert 'cat "$INVESTIGATION_CONTEXT_PATH" >> "$INVESTIGATOR_PROMPT_PATH"' not in wrapper
+    assert '--project-dir "$RUN_DIR"' in wrapper
+    assert '(cd "$RUN_DIR" && "${managed_cmd[@]}")' in wrapper
+    assert 'type: arnold-repair-investigation-context' in wrapper
+    assert 'sha256: $context_sha256' in wrapper
+    assert 'prompt_bytes > 65536' in wrapper
     assert "<investigation_handoff>" in wrapper
+
+
+def test_repair_loop_has_one_pointer_only_invalid_receipt_correction() -> None:
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+    function = wrapper[
+        wrapper.index("run_repair_investigator_turn() {") :
+        wrapper.index("\nrun_dev_fix_turn()", wrapper.index("run_repair_investigator_turn() {"))
+    ]
+
+    assert ":correction:1" in function
+    assert ":correction:2" not in function
+    assert "invalid_candidate_receipt; path:" in function
+    assert "validator_error; path:" in function
+    assert 'cat "$invalid_receipt_path"' not in function
+    assert '${validation_output:0:2000}' in function
+    assert "invalid_receipt_bytes > 65536" in function
+    assert "prompt_bytes > 65536" in function
+
+
+def test_receipt_validator_rejects_oversized_input_before_json_parse(tmp_path: Path) -> None:
+    receipt = tmp_path / "oversized-receipt.json"
+    receipt.write_bytes(b'{' + b'"padding":"' + b'x' * 65_536 + b'"}')
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan.cloud.repair_investigation",
+            "validate",
+            "--receipt",
+            str(receipt),
+            "--context-digest",
+            "unused",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "investigator receipt exceeds 65536-byte bound" in result.stderr
 
 
 def test_l1_investigation_precedes_every_target_mutation_and_failures_stop() -> None:
