@@ -618,6 +618,137 @@ def test_durable_quality_block_rejects_blind_state_recovery_handoff() -> None:
         )
 
 
+def test_durable_quality_block_allows_receipt_bound_recovery_after_target_repair() -> None:
+    head = "b" * 40
+    receipt = _receipt()
+    receipt["actual_failure"]["classification"] = "stale_state"
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported_cli:python -m megaplan chain start"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "plan_state_via_cli",
+        "scope": "supported chain start",
+        "rationale": "the bounded target repair is committed at current HEAD",
+    }
+    context = {
+        "context_digest": "digest-1",
+        "current": {"workspace_head": head},
+        "durable_quality_block": {
+            "active": True,
+            "recover_state_allowed": True,
+            "repair_evidence": {
+                "verified": True,
+                "workspace_head": head,
+                "dev_fix_sha": head,
+                "target_kind": "target_workspace",
+                "target_scope": "arnold_pipelines/megaplan/cloud/wrapper_acceptance_gate.py",
+                "validation_present": True,
+            },
+        },
+    }
+
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest="digest-1",
+        investigation_context=context,
+    )
+
+    assert validated["recommended_action"] == "recover_state"
+
+
+def test_durable_quality_repair_context_is_bound_to_current_head_and_scope(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state.read_text(encoding="utf-8"))
+    state_payload.update(
+        {
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "review_quality_blocked_unknown",
+                "phase": "review",
+            },
+        }
+    )
+    _write(state, state_payload)
+    target_scope = "arnold_pipelines/megaplan/cloud/wrapper_acceptance_gate.py"
+    _write(
+        state.parent / "review.json",
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {"task_id": "T24", "evidence_file": target_scope, "issue": "bad gate"}
+            ],
+        },
+    )
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "bounded repair"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    payload = json.loads(repair_data.read_text(encoding="utf-8"))
+    payload["attempts"].append(
+        {
+            "attempt_id": 19,
+            "dev_turn_rc": 0,
+            "dev_fix_sha": head,
+            "dev_report": {
+                "local_commit": head,
+                "safe_repair_target": {"kind": "target_workspace", "scope": target_scope},
+                "validation": {"focused": "passed"},
+            },
+        }
+    )
+    _write(repair_data, payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    quality = context["durable_quality_block"]
+    assert quality["recover_state_allowed"] is True
+    assert quality["repair_evidence"]["workspace_head"] == head
+    assert quality["repair_evidence"]["target_scope"] == target_scope
+    assert "recover_state" in quality["allowed_actions"]
+    assert (
+        context["required_investigator_output"]["recommended_action"]
+        == "preserve_live|repair_source|repair_target|recover_state|replan"
+    )
+
+    payload["attempts"][-1]["dev_report"]["safe_repair_target"]["scope"] = (
+        "unrelated/component.py"
+    )
+    _write(repair_data, payload)
+    mismatched = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    assert mismatched["durable_quality_block"]["recover_state_allowed"] is False
+
+
 def test_repair_wrapper_validates_receipt_against_durable_context() -> None:
     wrapper = (
         REPO_ROOT
