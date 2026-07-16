@@ -143,6 +143,8 @@ SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
 DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"
 AUDIT_CODEX_MODEL="gpt-5.6-sol"
 CODEX_TIMEOUT="${MEGAPLAN_AUDIT_CODEX_TIMEOUT_SECS:-1800}"
+AUDIT_REVIEW_BRIEF_MAX_BYTES=131072
+AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536
 SUBAGENT_SKILL="${MEGAPLAN_AUDIT_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 AUDIT_GITHUB_REPO="${MEGAPLAN_AUDIT_GITHUB_REPO:-}"
 AUDIT_GITHUB_REPO_PATH="${MEGAPLAN_AUDIT_GITHUB_REPO_PATH:-}"
@@ -709,6 +711,9 @@ from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import classify_runner_liveness
+from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    bounded_auditor_projection,
+)
 try:
     from arnold_pipelines.megaplan.cloud.repair_investigation import summarize_investigation_artifacts
 except ImportError:
@@ -4812,6 +4817,19 @@ def _plan_evidence(entry):
                 }
             )
 
+    bounded_incident_brief = bounded_auditor_projection(
+        incident_brief, kind="brief"
+    )
+    bounded_incident_projection = bounded_auditor_projection(
+        incident_projection, kind="incident"
+    )
+    bounded_problem_projection = bounded_auditor_projection(
+        problem_projection, kind="problem"
+    )
+    bounded_incident_audit = bounded_auditor_projection(
+        incident_audit, kind="audit"
+    )
+
     return {
         "plan": plan_dir.name,
         "workspace": workspace,
@@ -4870,10 +4888,10 @@ def _plan_evidence(entry):
         "latest_failure_kind": latest_failure.get("kind"),
         "latest_failure_message": (latest_failure.get("message") or "")[:240],
         "latest_failure_metadata": _metadata_excerpt(latest_failure_metadata),
-        "incident_brief": incident_brief,
-        "incident_projection": incident_projection,
-        "problem_projection": problem_projection,
-        "incident_audit": incident_audit,
+        "incident_brief": bounded_incident_brief,
+        "incident_projection": bounded_incident_projection,
+        "problem_projection": bounded_problem_projection,
+        "incident_audit": bounded_incident_audit,
         "current_target": current_target,
         "resolver_state": resolver_state,
         "ci_health": ci_health,
@@ -5337,7 +5355,7 @@ PY
 
 dispatch_one() {
   local gather_file="$1"
-  local plan workspace reasons kind receipt_root dispatch_id child_pid rc run_id_file managed_run_id managed_manifest
+  local plan workspace reasons kind receipt_root dispatch_id child_pid rc run_id_file managed_run_id managed_manifest review_evidence evidence_size brief_size model_resp_path
   plan="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plan'])" "$gather_file")"
   workspace="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'])" "$gather_file")"
   reasons="$(python3 -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['reasons']))" "$gather_file")"
@@ -5345,6 +5363,35 @@ dispatch_one() {
   log "plan=$plan reasons=$reasons"
 
   local brief="$GATHER_DIR/brief-${plan}.md"
+  review_evidence="$GATHER_DIR/review-evidence-${plan}.json"
+  if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$gather_file" "$review_evidence" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    bounded_audit_review_pointer,
+)
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+finding = json.loads(source.read_text(encoding="utf-8"))
+pointer = bounded_audit_review_pointer(finding, evidence_path=source)
+destination.write_text(
+    json.dumps(pointer, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  then
+    log "L3 review evidence pointer failed closed plan=$plan"
+    return 1
+  fi
+  evidence_size="$(wc -c < "$review_evidence" | tr -d ' ')"
+  if [[ ! "$evidence_size" =~ ^[0-9]+$ ]] || (( evidence_size > AUDIT_REVIEW_EVIDENCE_MAX_BYTES )); then
+    log "L3 review evidence pointer exceeded 64 KiB plan=$plan bytes=${evidence_size:-unknown}"
+    return 1
+  fi
   {
     echo "# Progress audit: $plan"
     echo
@@ -5356,9 +5403,9 @@ dispatch_one() {
     echo "- Use live-process discovery, repair-data sidecars, tmux state, and watchdog archives only as corroboration."
     echo "- Reconcile contradictions explicitly instead of letting corroboration override the ledger."
     echo
-    echo "Evidence JSON (verbatim):"
+    echo "Validated bounded evidence pointer:"
     echo '```json'
-    cat "$gather_file"
+    cat "$review_evidence"
     echo '```'
     echo
     echo "You are reconciling a cloud megaplan SESSION, not just one plan. Reconciler"
@@ -5513,8 +5560,14 @@ EOF
 
   } > "$brief"
   redact_file_in_place "$brief"
+  brief_size="$(wc -c < "$brief" | tr -d ' ')"
+  if [[ ! "$brief_size" =~ ^[0-9]+$ ]] || (( brief_size > AUDIT_REVIEW_BRIEF_MAX_BYTES )); then
+    log "L3 reviewer brief exceeded 128 KiB preflight plan=$plan bytes=${brief_size:-unknown}"
+    return 1
+  fi
 
   local resp_path="$GATHER_DIR/resp-${plan}.txt"
+  model_resp_path="$GATHER_DIR/model-response-${plan}.txt"
   if python3 - "$gather_file" <<'PY'
 import json
 import sys
@@ -5620,6 +5673,7 @@ PY
           --sandbox read-only \
           -c model="$AUDIT_CODEX_MODEL" \
           -c model_reasoning_effort=high \
+          --output-last-message "$model_resp_path" \
           -
     ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" &
     child_pid=$!
@@ -5633,6 +5687,24 @@ PY
     if ! finalize_audit_dispatch_receipt "$receipt_root" "$dispatch_id" "$rc"; then
       log "six-hour audit dispatch indeterminate: receipt finalization failed plan=$plan"
     fi
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+      "$resp_path" "$model_resp_path" <<'PY'
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    normalize_audit_review_response,
+)
+
+transcript = Path(sys.argv[1])
+model_output = Path(sys.argv[2])
+source = model_output if model_output.is_file() and model_output.stat().st_size else transcript
+try:
+    raw = source.read_text(encoding="utf-8", errors="replace")
+except OSError:
+    raw = ""
+transcript.write_text(normalize_audit_review_response(raw) + "\n", encoding="utf-8")
+PY
     redact_file_in_place "$resp_path"
     redact_file_in_place "$GATHER_DIR/resp-${plan}.err"
     managed_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
@@ -5703,7 +5775,7 @@ text = redact_text(open(resp, encoding="utf-8").read().strip())
 data["codex_launch_attempted"] = launch_attempted == "1"
 data["requested_research_model"] = model
 data["agent_response"] = text
-data["hypothesis"] = text
+data["hypothesis"] = text[:2000]
 with open(gather, "w", encoding="utf-8") as h:
     json.dump(data, h, indent=2, sort_keys=True)
 PY
@@ -5986,11 +6058,22 @@ for item in findings + green_checks:
     audit_complete = incident_audit.get("audit_complete") if isinstance(incident_audit.get("audit_complete"), dict) else {}
     raw_handoff = audit_complete.get("next_expected_event") or incident_audit.get("next_expected_event")
     normalized_handoff = _normalize_handoff(audit_complete.get("outcome"), raw_handoff)
+    reconciler_findings = []
+    for finding in (incident_audit.get("findings") or [])[-10:]:
+        if not isinstance(finding, dict):
+            continue
+        reconciler_findings.append(
+            {
+                key: (str(finding.get(key) or "")[:1000] if key in {"message", "recommendation"} else finding.get(key))
+                for key in ("code", "status", "message", "recommendation")
+                if finding.get(key) not in (None, "")
+            }
+        )
     decision = {
-        "reconciler_findings": incident_audit.get("findings") or [],
+        "reconciler_findings": reconciler_findings,
         "reconciler_next_expected_event": raw_handoff,
-        "hypothesis": item.get("hypothesis") or "",
-        "corroboration": item.get("corroboration") or [],
+        "hypothesis": str(item.get("hypothesis") or "")[:2000],
+        "corroboration": [str(value)[:1000] for value in (item.get("corroboration") or [])[-10:]],
     }
     links = {
         "incident_summary": (item.get("source_refs") or {}).get("incident_summary_path"),

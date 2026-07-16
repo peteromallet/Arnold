@@ -12,6 +12,7 @@ Exports
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
@@ -53,6 +54,7 @@ OPTIONAL_NULLABLE_STRING_FIELDS: tuple[str, ...] = (
 
 MAX_SUMMARY_LENGTH: int = 2048
 MAX_COMMITTED_OUTPUT_BYTES: int = 50 * 1024
+MAX_STRUCTURED_FIELD_BYTES: int = 64 * 1024
 _ALWAYS_ON_REDACTION_ENV: dict[str, str] = {}
 _COMMITTED_OUTPUT_TRUNCATION_TEMPLATE = (
     "\n[truncated {omitted} bytes to satisfy the 50KB committed-output cap]"
@@ -240,6 +242,36 @@ def validate_incident_event(event: dict[str, Any]) -> dict[str, Any]:
     """
     if not isinstance(event, dict):
         raise ValueError("incident event must be a dict")
+    # Reject expanding evidence before recursive regex redaction. This keeps a
+    # malformed historical auditor event from consuming gigabytes while the
+    # projection layer validates it, and prevents recursive report/decision
+    # embedding from entering the append-only ledger in the first place.
+    structured_bytes = 0
+    for field in ("evidence", "links", "decision", "actions"):
+        if field not in event:
+            continue
+        try:
+            encoded = json.dumps(
+                event[field],
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"incident event '{field}' must be JSON serializable"
+            ) from exc
+        if len(encoded) > MAX_STRUCTURED_FIELD_BYTES:
+            raise ValueError(
+                f"incident event '{field}' must be <= {MAX_STRUCTURED_FIELD_BYTES} bytes "
+                f"(got {len(encoded)})"
+            )
+        structured_bytes += len(encoded)
+    if structured_bytes > MAX_STRUCTURED_FIELD_BYTES:
+        raise ValueError(
+            "incident event structured fields must be <= "
+            f"{MAX_STRUCTURED_FIELD_BYTES} bytes in aggregate (got {structured_bytes})"
+        )
     event = redact_incident_event(event)
 
     # ── schema_version ──────────────────────────────────────────────
