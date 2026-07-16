@@ -17,6 +17,10 @@ from arnold_pipelines.megaplan.cloud.meta_repair_policy import (
     resolve_authoritative_blocker_id,
 )
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
+from arnold_pipelines.megaplan.resident.provenance import (
+    normalize_delegation_provenance,
+    provenance_from_environment,
+)
 
 
 REPAIR_INVESTIGATION_CONTEXT_SCHEMA = "arnold-repair-investigation-context-v1"
@@ -1027,6 +1031,7 @@ def build_meta_investigation_context(
     arnold_src: str | Path,
     request_id: str = "",
     blocker_id: str = "",
+    resident_delegation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a minimal, reference-only, read-only L2 launch envelope."""
 
@@ -1109,14 +1114,44 @@ def build_meta_investigation_context(
             evidence_refs.append(_file_reference("meta_repair", path))
             seen_paths.add(str(path))
 
-    delegation = (
-        repair_data.get("resident_delegation")
-        if isinstance(repair_data.get("resident_delegation"), Mapping)
-        else {}
+    inherited_delegation = (
+        normalize_delegation_provenance(resident_delegation)
+        if resident_delegation is not None
+        else None
     )
+    if inherited_delegation is not None:
+        encoded_delegation = json.dumps(
+            inherited_delegation, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        delegation_digest = hashlib.sha256(encoded_delegation).hexdigest()
+        safe_session = re.sub(r"[^A-Za-z0-9_.-]+", "-", session).strip("-") or "session"
+        delegation_path = (
+            repair_root
+            / "meta"
+            / "evidence"
+            / f"{safe_session}-resident-delegation-{delegation_digest}.json"
+        )
+        if delegation_path.exists():
+            if _load(delegation_path) != inherited_delegation:
+                raise ValueError("content-addressed resident delegation evidence disagrees")
+        else:
+            _atomic_write(delegation_path, inherited_delegation)
+        delegation = inherited_delegation
+        delegation_source_path = delegation_path
+        delegation_pointer = ""
+    else:
+        delegation = (
+            repair_data.get("resident_delegation")
+            if isinstance(repair_data.get("resident_delegation"), Mapping)
+            else {}
+        )
+        delegation_source_path = repair_path
+        delegation_pointer = "/resident_delegation"
     if delegation:
         provenance_ref = _file_reference(
-            "resident_delegation", repair_path, json_pointer="/resident_delegation"
+            "resident_delegation",
+            delegation_source_path,
+            json_pointer=delegation_pointer,
         )
         provenance_ref.update(
             {
@@ -1876,6 +1911,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             arnold_src=args.arnold_src,
             request_id=args.request_id,
             blocker_id=args.blocker_id,
+            resident_delegation=provenance_from_environment(strict=True),
         )
         _atomic_write(Path(args.output), value)
     elif args.command == "observe-meta":
