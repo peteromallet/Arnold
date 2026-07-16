@@ -6943,6 +6943,13 @@ def run_chain(
                 _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
                 state.current_milestone_index = idx
                 state.current_plan_name = plan_name
+                # The chain cursor and lifecycle projection must move together.
+                # Leaving the predecessor's terminal ``last_state`` in place
+                # makes a live successor look canonically complete to repair
+                # and resident consumers until the entire plan driver returns.
+                state.last_state = (
+                    _plan_current_state_from_payload(root, plan_name) or "initialized"
+                )
                 _emit_milestone_start_evidence(
                     state,
                     milestone_label=milestone.label,
