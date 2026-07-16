@@ -5316,7 +5316,7 @@ def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) 
     command = tmp_path / "binding-drift"
     command.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' '{\"success\":false,\"error\":\"chain_execution_binding_drift\"}'\n"
+        "printf '%s\\n' \"{\\\"success\\\":false,\\\"error\\\":\\\"chain_execution_binding_drift\\\",\\\"message\\\":\\\"active_errors=['editable_runtime_import_root_mismatch']\\\"}\"\n"
         "exit 1\n",
         encoding="utf-8",
     )
@@ -5342,6 +5342,10 @@ def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) 
 
     assert result.returncode == 1
     assert "refusing retry spin" in result.stdout
+    assert (
+        "chain_execution_binding_drift;"
+        "active_errors=editable_runtime_import_root_mismatch"
+    ) in result.stdout
     assert "error retry" not in result.stdout
 
 
