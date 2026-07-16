@@ -674,6 +674,46 @@ def build_investigation_context(
     required_investigator_output["action_specific_handoff_examples"]["recover_state"][
         "allowed_mutations"
     ] = [f"supported_cli:{supported_recovery_cli}"]
+    if durable_quality_block:
+        rework_items = (
+            review_quality_blocker.get("rework_items")
+            if isinstance(review_quality_blocker.get("rework_items"), list)
+            else []
+        )
+        repair_files = [
+            _text(item.get("evidence_file"), 500)
+            for item in rework_items
+            if isinstance(item, Mapping) and _text(item.get("evidence_file"), 500)
+        ]
+        repair_scope = ",".join(repair_files)[:2000] or "current review rework target"
+        required_investigator_output.update(
+            {
+                "recommended_action": "repair_target",
+                "safe_repair_target": {
+                    "kind": "target_workspace",
+                    "scope": repair_scope,
+                    "rationale": (
+                        "The authoritative blocked review artifact names unresolved target "
+                        "rework; state replay is prohibited until that rework is repaired."
+                    ),
+                },
+                "handoff": {
+                    "action": "repair_target",
+                    "allowed_mutations": [f"target_workspace:{repair_scope}"],
+                    "forbidden_mutations": [
+                        "arnold_source",
+                        "direct_chain_state_edit",
+                        "hand_advance_chain",
+                        "guard_weakening",
+                    ],
+                },
+                "prohibited_actions": {
+                    "recover_state": (
+                        "persisted review-quality blocker has concrete unresolved rework"
+                    )
+                },
+            }
+        )
     context: dict[str, Any] = {
         "schema_version": REPAIR_INVESTIGATION_CONTEXT_SCHEMA,
         "target_kind": "l1_repair_target",

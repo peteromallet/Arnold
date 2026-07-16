@@ -81,6 +81,8 @@ REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
 REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-1}"
 REPAIR_INVESTIGATOR_MODEL="${CLOUD_WATCHDOG_REPAIR_INVESTIGATOR_MODEL:-gpt-5.6-sol}"
 REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"
+COMMIT_REPAIRS="${CLOUD_WATCHDOG_COMMIT_REPAIRS:-1}"
+PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 REPAIR_GOAL_POLL_SECS="${CLOUD_WATCHDOG_REPAIR_GOAL_POLL_SECS:-30}"
 DURABLE_GOAL_OWNER_ENABLED="${CLOUD_WATCHDOG_DURABLE_GOAL_OWNER_ENABLED:-1}"
 KIMI_AFTER_OWNER_ENABLED="${CLOUD_WATCHDOG_KIMI_AFTER_OWNER_ENABLED:-0}"
@@ -252,6 +254,57 @@ prepare_repair_agent_exec_env() {
   # the repair agent starts.
   set +a
   export -n failure_summary chain_health_block recurrence_block mode_tasks relaunch_command 2>/dev/null || true
+}
+
+prepare_repair_delivery_authority() {
+  local shim_dir="$RUN_DIR/delivery-authority-bin"
+  local real_git real_gh
+  real_git="$(command -v git)"
+  real_gh="$(command -v gh 2>/dev/null || true)"
+  mkdir -p "$shim_dir"
+  cat > "$shim_dir/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  if [[ "$arg" == "push" && "${ARNOLD_REPAIR_PUSH_AUTHORIZED:-0}" != "1" ]]; then
+    echo "git push refused: repair push authority is disabled" >&2
+    exit 77
+  fi
+  if [[ "$arg" == "commit" && "${ARNOLD_REPAIR_COMMIT_AUTHORIZED:-0}" != "1" ]]; then
+    echo "git commit refused: repair commit authority is disabled" >&2
+    exit 77
+  fi
+done
+exec "$ARNOLD_REPAIR_REAL_GIT" "$@"
+SH
+  chmod 0755 "$shim_dir/git"
+  if [[ -n "$real_gh" ]]; then
+    cat > "$shim_dir/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ " ${*} " == *" pr merge "* ]]; then
+  echo "gh pr merge refused: remote merge is outside repair authority" >&2
+  exit 77
+fi
+exec "$ARNOLD_REPAIR_REAL_GH" "$@"
+SH
+    chmod 0755 "$shim_dir/gh"
+  fi
+  export ARNOLD_REPAIR_REAL_GIT="$real_git"
+  export ARNOLD_REPAIR_REAL_GH="$real_gh"
+  export ARNOLD_REPAIR_COMMIT_AUTHORIZED="$([[ "$COMMIT_REPAIRS" == "1" ]] && printf 1 || printf 0)"
+  export ARNOLD_REPAIR_PUSH_AUTHORIZED="$([[ "$COMMIT_REPAIRS" == "1" && "$PUSH_REPAIRS" == "1" ]] && printf 1 || printf 0)"
+  export ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH="$shim_dir"
+}
+
+repair_delivery_policy() {
+  if [[ "$COMMIT_REPAIRS" != "1" ]]; then
+    printf '%s\n' "Do not commit or push. Leave verified changes in the authorized worktree and report the exact commit-authorization gate."
+  elif [[ "$PUSH_REPAIRS" == "1" ]]; then
+    printf '%s\n' "Commit verified changes locally. Push only the resulting non-force update; never force-push or merge a remote PR."
+  else
+    printf '%s\n' "Commit verified changes locally. Do not push, force-push, create or merge a remote PR; remote delivery authority is disabled."
+  fi
 }
 
 entry_target_missing_reason() {
@@ -6042,12 +6095,13 @@ write_dev_prompt() {
   local dispatch_model="$3"
   local report_path="$4"
   local recurrence_mode="${5:-0}"
-  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks investigation_receipt process_custody_policy
+  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks investigation_receipt process_custody_policy delivery_policy
   failure_summary="$(render_failure_summary "$DATA_FILE")"
   chain_health_block="$(render_chain_health_block)"
   recurrence_block="$(render_recurrence_block)"
   canonical_block="$(render_canonical_block)"
   investigation_receipt="$(cat "$INVESTIGATOR_RECEIPT_PATH" 2>/dev/null || true)"
+  delivery_policy="$(repair_delivery_policy)"
   process_custody_policy="$(render_process_custody_policy)" || return 1
   [[ -n "$process_custody_policy" ]] || return 1
   if [[ "$recurrence_mode" == "1" ]]; then
@@ -6134,7 +6188,7 @@ Task:
 5. Apply the narrowest safe root-cause fix at the correct ownership boundary: use $ARNOLD_SRC on branch $SYNC_BRANCH for Arnold engine/superfixer bugs, and use $WORKSPACE for target application code when the blocker is a task implementation failure in that repo. Prefer a general engine fix over a workflow-specific patch only when the evidence points to Arnold itself.
 6. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
 7. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
-8. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
+8. $delivery_policy
 9. Do not relaunch the run yourself. The wrapper will use the marker's run-kind-aware command only when the durable goal proves there is no correct fresh worker to preserve.
    Your process exit, report, commit, push, or a fresh target heartbeat is not semantic success. Success requires the blocker cleared, the correct worker alive where applicable, fresh progress, and the original plan advancing beyond its frozen stage, or an explicit approval/authorization gate. Never weaken a completion, safety, authority, or verification guard to manufacture progress.
 $mode_tasks
@@ -6533,11 +6587,12 @@ run_dev_fix_turn() {
   dev_timeout="$(cap_timeout_to_repair_budget "$dev_timeout" "dev-dispatch-$iteration")"
   log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort workdir=$repair_workdir"
   prepare_repair_agent_exec_env
+  prepare_repair_delivery_authority
   run_id_file="$RUN_DIR/iter${iteration}-dev-fix-managed-run-id"
   if [[ "$dispatch_kind" == "hermes" ]]; then
-    worker_cmd=(timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file=@managed-stdin@ --project_dir="$repair_workdir")
+    worker_cmd=(timeout "$dev_timeout" env PATH="$ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH:$PATH" PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" --model="$dispatch_model" --toolsets="file,web,terminal" --query_file=@managed-stdin@ --project_dir="$repair_workdir")
   else
-    worker_cmd=(timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec --sandbox danger-full-access -c model="$dispatch_model" -c model_reasoning_effort="$reasoning_effort" -)
+    worker_cmd=(timeout "$dev_timeout" env PATH="$ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH:$PATH" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec --sandbox danger-full-access -c model="$dispatch_model" -c model_reasoning_effort="$reasoning_effort" -)
   fi
   managed_cmd=(
     python3 -m arnold_pipelines.megaplan.managed_agent run
