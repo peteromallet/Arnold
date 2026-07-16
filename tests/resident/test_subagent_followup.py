@@ -516,6 +516,28 @@ def test_followup_rejects_ambiguous_model_session_ownership(
         )
 
 
+def test_model_session_identity_reads_only_bounded_log_prefix(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest_path = _write_run(tmp_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    log_path = Path(manifest["log_path"])
+    with log_path.open("r+b") as handle:
+        handle.seek(subagent.MAX_MODEL_SESSION_LOG_PREFIX_BYTES + 1024)
+        handle.write(b"large-tail-marker\n")
+
+    original_read_text = Path.read_text
+
+    def reject_whole_log_read(path: Path, *args, **kwargs):
+        if path == log_path:
+            raise AssertionError("session ownership must not read the complete run log")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", reject_whole_log_read)
+
+    assert subagent._manifest_session_ids(manifest_path, manifest) == {SESSION_ID}
+
+
 def test_active_followup_without_session_evidence_falls_back_before_interrupt(
     tmp_path: Path, monkeypatch, caller_provenance: dict
 ) -> None:

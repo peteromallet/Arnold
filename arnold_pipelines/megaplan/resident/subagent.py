@@ -130,6 +130,7 @@ MAX_DELEGATED_TASK_CHARS = 32_000
 MAX_DELEGATED_PROMPT_CHARS = 40_000
 MAX_FOLLOWUP_MESSAGE_CHARS = 32_000
 MAX_AGENT_DESCRIPTION_CHARS = 180
+MAX_MODEL_SESSION_LOG_PREFIX_BYTES = 1024 * 1024
 FOLLOWUP_SCHEMA = "arnold-resident-agent-followup-v1"
 AGGREGATION_SCHEMA = "arnold-resident-agent-aggregation-v1"
 AGGREGATION_ROLES = frozenset({"synthesis_delivery_owner", "internal_contributor"})
@@ -1965,10 +1966,7 @@ def _manifest_session_ids(
                 raise SubagentFollowupError("managed run has a malformed model session id")
             found.add(session_id)
     log_path = Path(str(manifest.get("log_path") or manifest_path.parent / "run.log"))
-    try:
-        log_text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        log_text = ""
+    log_text = _model_session_log_prefix(log_path)
     # Only the first CLI header/event owns this run. Later tool output may quote
     # another run's log verbatim and must not become session-ownership evidence.
     text_matches = _CODEX_SESSION_RE.findall(log_text)
@@ -1980,6 +1978,18 @@ def _manifest_session_ids(
     if len(found) > 1 and not allow_multiple:
         raise SubagentFollowupError("managed run exposes multiple model session ids")
     return found
+
+
+def _model_session_log_prefix(log_path: Path) -> str:
+    """Read only the authoritative opening portion of a managed worker log."""
+
+    try:
+        with log_path.open("rb") as handle:
+            return handle.read(MAX_MODEL_SESSION_LOG_PREFIX_BYTES).decode(
+                "utf-8", errors="replace"
+            )
+    except OSError:
+        return ""
 
 
 def _lineage_root_id(manifest: Mapping[str, Any], manifest_path: Path) -> str:
@@ -2063,12 +2073,9 @@ def _session_owner_lineage(
                 # If it contains the requested session identity, however, safe
                 # ownership cannot be established and continuation fails closed.
                 log_path = Path(str(payload.get("log_path") or path.parent / "run.log"))
-                try:
-                    raw = json.dumps(payload, sort_keys=True) + log_path.read_text(
-                        encoding="utf-8", errors="replace"
-                    )
-                except OSError:
-                    raw = json.dumps(payload, sort_keys=True)
+                raw = json.dumps(payload, sort_keys=True) + _model_session_log_prefix(
+                    log_path
+                )
                 if session_id in raw.lower():
                     raise SubagentFollowupError(
                         "model session id has ambiguous malformed ownership evidence"
