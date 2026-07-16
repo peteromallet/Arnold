@@ -45,6 +45,28 @@ def _repair_wrapper() -> str:
     return _wrapper("arnold-repair-loop")
 
 
+def test_auditor_classifies_meta_trigger_rejection_as_current_failure(
+    tmp_path: Path,
+) -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _meta_run_failure_code(path):")
+    end = text.index("\ndef _text_has_meta_launch_failure(", start)
+    namespace: dict[str, object] = {}
+    exec("import re\n" + text[start:end], namespace)
+    failure_code = namespace["_meta_run_failure_code"]
+    assert callable(failure_code)
+    log = tmp_path / "meta.log"
+    log.write_text(
+        "[meta-repair 2026-07-16T00:44:11+00:00] "
+        "no meta-repair trigger matched; exiting\n",
+        encoding="utf-8",
+    )
+
+    assert failure_code(log) == "meta_repair_trigger_rejected"
+    assert '"trigger_rejected": bool(current_episode and trigger_rejected)' in text
+    assert 'or meta.get("trigger_rejection_count")' in text
+
+
 def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
     watchdog = _wrapper("arnold-watchdog")
     repair_loop = _repair_wrapper()

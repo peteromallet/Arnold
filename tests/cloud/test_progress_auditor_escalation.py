@@ -335,6 +335,36 @@ def test_ordinary_retrigger_failure_is_l2_fixed_axis_not_tracking_axis() -> None
     assert gate["custody_walk"]["L2"]["failure"]["axis"] == "FIXED"
 
 
+def test_meta_trigger_rejection_is_l2_fixed_axis_with_current_context() -> None:
+    finding = _true_stall()
+    finding["meta_repair_summary"].update(
+        {
+            "failed_meta_run_count": 0,
+            "missing_meta_run_evidence": False,
+            "meta_record_count": 1,
+            "meta_run_log_count": 1,
+            "meta_run_refs": [
+                {
+                    "current_episode": True,
+                    "failure_code": "meta_repair_trigger_rejected",
+                    "trigger_rejected": True,
+                    "launch_failure": False,
+                }
+            ],
+        }
+    )
+    finding["deterministic_superfixer_evidence"]["absent_or_stale_l2"] = True
+
+    gate = classify_true_stall(finding)
+
+    l2 = gate["custody_walk"]["L2"]
+    assert l2["TRACKED"] is True
+    assert l2["CONTEXT"] is True
+    assert l2["FIXED"] is False
+    assert l2["failure"]["axis"] == "FIXED"
+    assert l2["failure"]["trigger_rejected"] is True
+
+
 def test_partial_liveness_with_unclaimed_request_is_l1_context_failure() -> None:
     finding = _true_stall()
     finding["repair_data_summary"]["outcome"] = "partial_liveness"

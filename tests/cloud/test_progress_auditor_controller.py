@@ -250,3 +250,81 @@ def test_terminal_managed_run_is_reverified_before_any_retry(tmp_path: Path) -> 
     assert item["decision"] == "recovery_verified"
     assert item["reverification"]["verified"] is True
     assert item["repair_dispatched"] is False
+
+
+def test_terminal_attempt_is_closed_when_new_evidence_changes_escalation_id(
+    tmp_path: Path,
+) -> None:
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    state_root = tmp_path / "audit-escalations"
+    current_finding = _true_stall()
+    manifests: list[Path] = []
+    calls = 0
+
+    def runner(argv):
+        nonlocal calls
+        calls += 1
+        request_id = argv[-1]
+        from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+            classify_true_stall,
+        )
+
+        gate = classify_true_stall(current_finding)
+        manifest_path = tmp_path / f"manifest-{calls}.json"
+        manifest = _valid_manifest(gate)
+        manifest.update(
+            {
+                "run_id": f"managed-root-repair-{calls}",
+                "manifest_path": str(manifest_path),
+                "status": "running",
+            }
+        )
+        manifest["links"]["repair_request_id"] = request_id
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        manifests.append(manifest_path)
+        return TriggerResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "event": "repair_trigger_dispatch",
+                    "status": "dispatched",
+                    "request_id": request_id,
+                    "managed_run_id": manifest["run_id"],
+                    "managed_manifest_path": str(manifest_path),
+                }
+            ),
+            stderr="",
+        )
+
+    first = run_escalation_controller(
+        {"findings": [current_finding], "green_checks": []},
+        state_root=state_root,
+        queue_root=queue,
+        authorized=True,
+        trigger_argv=["repair-trigger"],
+        trigger_runner=runner,
+    )
+    assert first["l3_escalation_summary"]["dispatched"] == 1
+    first_state_path = next(state_root.glob("*/state.json"))
+    terminal_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+    terminal_manifest["status"] = "failed"
+    manifests[0].write_text(json.dumps(terminal_manifest), encoding="utf-8")
+
+    current_finding = _true_stall()
+    current_finding["deterministic_superfixer_evidence"][
+        "accepted_unclaimed_request_ids"
+    ] = ["new-failure-fingerprint"]
+    second = run_escalation_controller(
+        {"findings": [current_finding], "green_checks": []},
+        state_root=state_root,
+        queue_root=queue,
+        authorized=True,
+        trigger_argv=["repair-trigger"],
+        trigger_runner=runner,
+    )
+
+    assert second["l3_escalation_summary"]["dispatched"] == 1
+    assert calls == 2
+    reconciled = json.loads(first_state_path.read_text(encoding="utf-8"))
+    assert reconciled["attempts"][-1]["status"] == "failed"
+    assert reconciled["attempts"][-1]["outcome"] == "recovery_not_verified"
