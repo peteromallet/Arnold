@@ -6150,6 +6150,35 @@ def test_receipted_live_runner_gets_bounded_launch_settle_observation(
     assert calls.exists()
 
 
+def test_receipted_quality_prelude_gets_bounded_launch_settle_observation(
+    tmp_path: Path,
+) -> None:
+    calls = tmp_path / "calls"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("wait_for_repair_goal_progress_if_live"),
+            f"CALLS={str(calls)!r}",
+            "repair_goal_control_snapshot() { if [[ -f \"$CALLS\" ]]; then printf '%s\\n' '{\"status\":\"progressed\",\"evaluation\":{\"control_action\":\"\",\"reason\":\"accepted\"},\"observation\":{}}'; else : > \"$CALLS\"; printf '%s\\n' '{\"status\":\"active\",\"evaluation\":{\"control_action\":\"investigate\",\"reason\":\"quality prelude running\"},\"observation\":{\"runner_transition\":{\"runner_pid_live\":false}}}'; fi; }",
+            "tmux() { [[ \"$1\" == has-session && \"$2\" == -t && \"$3\" == test-session ]]; }",
+            "repair_data_set_outcome() { :; }",
+            "clear_repair_markers() { :; }",
+            "repair_goal_record_terminal_failure() { :; }",
+            "ensure_repair_budget_available() { :; }",
+            "cap_timeout_to_repair_budget() { printf '%s\\n' 0; }",
+            "log() { :; }",
+            "SESSION=test-session",
+            "REPAIR_GOAL_POLL_SECS=0",
+            "CLOUD_WATCHDOG_REPAIR_LAUNCH_SETTLE_SECS=120",
+            "wait_for_repair_goal_progress_if_live post-launch",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert calls.exists()
+
+
 def test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_required(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
