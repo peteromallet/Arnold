@@ -33,3 +33,14 @@ def test_live_process_evidence_overrides_stale_absence_signal() -> None:
 
     assert result["state"] == "alive"
     assert result["live"] is True
+
+
+def test_terminal_repair_failure_proves_no_repair_runner_without_live_override() -> None:
+    result = classify_runner_liveness(
+        {"live_status": "unknown"},
+        {},
+        ["dispatched", "terminal_repair_failure"],
+    )
+
+    assert result["state"] == "dead"
+    assert result["source"] == "explicit_absence_evidence"

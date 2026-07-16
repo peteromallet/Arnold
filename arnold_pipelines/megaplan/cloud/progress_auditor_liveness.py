@@ -14,6 +14,7 @@ _DEAD_WATCHDOG = frozenset(
         "progress_stall",
         "broken_superfixer",
         "canonical_launch_evidence_missing",
+        "terminal_repair_failure",
     }
 )
 
