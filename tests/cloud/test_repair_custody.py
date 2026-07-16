@@ -168,8 +168,8 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
         repair_data_dir=repair_data_dir,
     )
 
-    assert projection["blocker_fingerprint"] == _fingerprint()
-    assert projection["blocker_id"] == blocker_id_for_fingerprint(_fingerprint())
+    assert projection["blocker_fingerprint"] == queued["request"]["blocker_fingerprint"]
+    assert projection["blocker_id"] == queued["request"]["blocker_id"]
     assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
     assert projection["current_state"] == "blocked"
     assert projection["retry_strategy"] == "manual_review"
@@ -439,7 +439,7 @@ def test_custody_projection_reads_immutable_queue_dispatch_attempt(
         root_cause_hint="dispatch me",
     )
     request_id = queued["request"]["request_id"]
-    blocker_id = blocker_id_for_fingerprint(_fingerprint())
+    blocker_id = queued["request"]["blocker_id"]
     assert blocker_id is not None
     repair_requests.write_decision(
         queue_root,
@@ -495,7 +495,7 @@ def test_queue_dispatch_attempt_uses_terminal_managed_manifest(tmp_path: Path) -
         root_cause_hint="dispatch me",
     )
     request_id = queued["request"]["request_id"]
-    blocker_id = blocker_id_for_fingerprint(_fingerprint())
+    blocker_id = queued["request"]["blocker_id"]
     assert blocker_id is not None
     managed_dir = tmp_path / "managed-1"
     managed_dir.mkdir()
@@ -574,7 +574,7 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
         created_at="2026-07-04T01:00:00Z",
     )
     request_id = queued["request"]["request_id"]
-    expected_blocker_id = blocker_id_for_fingerprint(_fingerprint())
+    expected_blocker_id = queued["request"]["blocker_id"]
     manifest_path = managed_dir / "manifest.json"
     stdin_path = managed_dir / "stdin.bin"
     stdin_path.write_bytes(b"x")

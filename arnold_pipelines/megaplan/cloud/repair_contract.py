@@ -766,17 +766,28 @@ def project_repair_custody(
                 "phase": signature_phase,
                 "metadata": {"blocked_task_id": signature_blocked_task_id},
             }
-        request_fingerprint = blocker_fingerprint_from_evidence(
+        compatibility_fingerprint = blocker_fingerprint_from_evidence(
             plan_state=request_plan_state,
             current_target=request_target,
             problem_signature=problem_signature,
         )
-        request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
-        if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
+        compatibility_blocker_id = blocker_id_for_fingerprint(compatibility_fingerprint) or ""
+        if blocker_id and compatibility_blocker_id and compatibility_blocker_id != blocker_id:
             continue
         if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
             continue
-        if blocker_id is None and request_blocker_id and blocker_id != request_blocker_id:
+        raw_stored_fingerprint = _as_mapping(record.get("blocker_fingerprint"))
+        stored_fingerprint = (
+            normalize_blocker_fingerprint_v1(raw_stored_fingerprint)
+            or normalize_blocker_fingerprint_v2(raw_stored_fingerprint)
+        )
+        stored_blocker_id = _as_text(record.get("blocker_id"))
+        if blocker_id_for_fingerprint(stored_fingerprint) != stored_blocker_id:
+            stored_fingerprint = None
+            stored_blocker_id = ""
+        request_fingerprint = stored_fingerprint or compatibility_fingerprint
+        request_blocker_id = stored_blocker_id or compatibility_blocker_id
+        if blocker_id is None and request_blocker_id:
             blocker_id = request_blocker_id
             fingerprint = request_fingerprint
         history = decision_history.get(str(record.get("request_id") or ""), [])
@@ -802,6 +813,19 @@ def project_repair_custody(
                 "decision_history": history,
             }
         )
+
+    active_identities = {
+        request["blocker_id"]: request["blocker_fingerprint"]
+        for request in requests
+        if request["active"]
+        and request["blocker_id"]
+        and request["blocker_fingerprint"] is not None
+    }
+    if len(active_identities) == 1:
+        blocker_id, fingerprint = next(iter(active_identities.items()))
+    elif len(active_identities) > 1:
+        blocker_id = None
+        fingerprint = None
 
     attempts = _collect_custody_attempts(
         repair_data_dir=repair_data_dir,
@@ -4176,6 +4200,12 @@ def _is_known_repairable_shape(
         "execution_blocked",
         "no_next_step_state_mapping_failure",
     }:
+        return _has_current_target_evidence(current_target)
+    if (
+        current_state == "blocked"
+        and retry_strategy == "repair_phase_contract"
+        and failure_kind == "deterministic_phase_failure"
+    ):
         return _has_current_target_evidence(current_target)
 
     # --- fallback: semantic findings indicate repairable issues ----------
