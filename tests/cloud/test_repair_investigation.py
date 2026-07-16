@@ -266,6 +266,12 @@ def test_quality_block_context_carries_bounded_review_rework_evidence(tmp_path: 
     assert review_source["path"].endswith("review.json")
     assert review_source["observed"]["rework_items"][0]["task_id"] == "T24"
     assert review_source["observed"]["rework_items"][0]["actual"] == "gate_open=True"
+    required = context["required_investigator_output"]
+    assert required["recommended_action"] == "repair_target"
+    assert required["safe_repair_target"]["kind"] == "target_workspace"
+    assert required["handoff"]["action"] == "repair_target"
+    assert "wrapper_acceptance_gate.py" in required["handoff"]["allowed_mutations"][0]
+    assert "recover_state" in required["prohibited_actions"]
     assert len(json.dumps(context).encode()) <= MAX_CONTEXT_BYTES
 
 
@@ -620,6 +626,21 @@ def test_repair_wrapper_validates_receipt_against_durable_context() -> None:
 
     assert '--context "$INVESTIGATION_CONTEXT_PATH"' in wrapper
     assert "investigation_context=context" in wrapper
+
+
+def test_repair_wrapper_enforces_separate_commit_and_push_authority() -> None:
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert 'COMMIT_REPAIRS="${CLOUD_WATCHDOG_COMMIT_REPAIRS:-1}"' in wrapper
+    assert 'PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"' in wrapper
+    assert "git push refused: repair push authority is disabled" in wrapper
+    assert "gh pr merge refused: remote merge is outside repair authority" in wrapper
+    assert 'PATH="$ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH:$PATH"' in wrapper
+    assert "commit and push them in the repo you changed" not in wrapper
+    assert "Do not push, force-push, create or merge a remote PR" in wrapper
 
 
 def test_context_separates_safe_target_from_handoff_mutation_contract(tmp_path: Path) -> None:
