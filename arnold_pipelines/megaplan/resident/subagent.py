@@ -135,6 +135,7 @@ AGGREGATION_SCHEMA = "arnold-resident-agent-aggregation-v1"
 AGGREGATION_ROLES = frozenset({"synthesis_delivery_owner", "internal_contributor"})
 DISCORD_FOLLOWUP_WINDOW = timedelta(minutes=15)
 _RUN_ID_RE = re.compile(r"^subagent-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{8}$")
+_RESIDENT_TURN_ID_RE = re.compile(r"^turn_[A-Za-z0-9]{12,64}$")
 _FOLLOWUP_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 _SYNTHESIS_GROUP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 _CODEX_SESSION_RE = re.compile(
@@ -1321,8 +1322,15 @@ def _cross_request_queue_authorization(
 
     caller_run_id = str(current_provenance.get("root_run_id") or "")
     if not _RUN_ID_RE.fullmatch(caller_run_id):
-        raise SubagentQueueError(
-            "cross-request queue authorization lacks immutable caller root_run_id"
+        return _resident_turn_queue_authorization(
+            project_root=project_root,
+            predecessor_run_id=predecessor_run_id,
+            predecessor=predecessor,
+            predecessor_provenance=predecessor_provenance,
+            current_provenance=current_provenance,
+            current_request=current_request,
+            predecessor_request=predecessor_request,
+            require_active_caller=require_active_caller,
         )
     caller_path = root / caller_run_id / "manifest.json"
     try:
@@ -1439,6 +1447,156 @@ def _cross_request_queue_authorization(
         "delivery_target_source_record_id": current_source,
     }
     return authorization, dict(aggregation), dict(relationship)
+
+
+def _resident_turn_queue_authorization(
+    *,
+    project_root: Path,
+    predecessor_run_id: str,
+    predecessor: Mapping[str, Any],
+    predecessor_provenance: Mapping[str, Any],
+    current_provenance: Mapping[str, Any],
+    current_request: Mapping[str, str],
+    predecessor_request: Mapping[str, str],
+    require_active_caller: bool,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Authorize a cross-request queue from its durable resident root turn.
+
+    Root Discord turns are not managed subagents and therefore never have a
+    ``root_run_id``.  Their immutable launch envelope does carry the resident
+    turn id committed before tool execution.  Validate that turn and its exact
+    inbound message rather than requiring an impossible subagent manifest.
+    """
+
+    turn_id = str(current_provenance.get("resident_turn_id") or "")
+    if not _RESIDENT_TURN_ID_RE.fullmatch(turn_id):
+        raise SubagentQueueError(
+            "cross-request queue authorization lacks immutable caller root_run_id "
+            "or resident_turn_id"
+        )
+    store_root = _queue_store_root(project_root)
+    turn_path = store_root / "turns" / f"{turn_id}.json"
+    try:
+        turn_raw = turn_path.read_bytes()
+        turn = json.loads(turn_raw)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SubagentQueueError(
+            "cross-request queue authorization caller turn is unavailable"
+        ) from exc
+    current_source = str(current_provenance.get("source_record_id") or "")
+    triggered = turn.get("triggered_by_message_ids") if isinstance(turn, Mapping) else None
+    if (
+        not isinstance(turn, Mapping)
+        or turn.get("id") != turn_id
+        or not isinstance(triggered, list)
+        or triggered != [current_source]
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization caller turn does not own current custody"
+        )
+    if require_active_caller and str(turn.get("status") or "") not in {
+        "in_progress",
+        "running",
+    }:
+        raise SubagentQueueError(
+            "cross-request queue authorization caller turn is not active"
+        )
+
+    message_path = store_root / "messages" / f"{current_source}.json"
+    try:
+        message = json.loads(message_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        raise SubagentQueueError(
+            "cross-request queue authorization source record is unavailable"
+        ) from exc
+    reply = message.get("discord_reply_provenance") if isinstance(message, Mapping) else None
+    ancestors = reply.get("ancestors") if isinstance(reply, Mapping) else None
+    reference_text = "\n".join(
+        [str(message.get("content") or "")]
+        + [
+            str(row.get("content") or "")
+            for row in (ancestors or [])
+            if isinstance(row, Mapping) and row.get("status") == "available"
+        ]
+    )
+    if re.search(
+        rf"(?<![A-Za-z0-9]){re.escape(predecessor_run_id)}(?![A-Za-z0-9])",
+        reference_text,
+    ) is None:
+        raise SubagentQueueError(
+            "cross-request queue authorization does not explicitly name predecessor"
+        )
+
+    relationship = relationship_from_environment_or_project(
+        current_source, project_root=project_root
+    )
+    if not isinstance(relationship, Mapping):
+        raise SubagentQueueError(
+            "cross-request queue authorization lacks current query relationship"
+        )
+    for field in ("current_request", "delivery_owner", "aggregation_owner"):
+        ref = relationship.get(field)
+        if not isinstance(ref, Mapping) or ref.get("source_record_id") != current_source:
+            raise SubagentQueueError(
+                "cross-request queue authorization changed current delivery ownership"
+            )
+    if relationship.get("conversation_id") != current_provenance.get(
+        "resident_conversation_id"
+    ):
+        raise SubagentQueueError(
+            "cross-request queue authorization relationship changed conversation"
+        )
+    if predecessor.get("work_intent") not in DELEGATED_WORK_INTENTS:
+        raise SubagentQueueError(
+            "cross-request queue authorization predecessor work intent is invalid"
+        )
+
+    aggregation_key = stable_identity(
+        "resident-root-turn-successor", current_source, predecessor_run_id
+    )
+    synthesis_group = stable_identity(
+        "resident-root-turn-synthesis", turn_id, predecessor_run_id
+    )
+    aggregation = {
+        "schema_version": AGGREGATION_SCHEMA,
+        "key": aggregation_key,
+        "synthesis_group": synthesis_group,
+        "role": "internal_contributor",
+        "delivery_owner_run_id": None,
+        "delivery_target_source_record_id": current_source,
+        "contributors": [],
+    }
+    turn_authority = {
+        "id": turn.get("id"),
+        "triggered_by_message_ids": list(triggered),
+        "prompt_snapshot": turn.get("prompt_snapshot"),
+        "started_at": turn.get("started_at"),
+    }
+    authorization = {
+        "schema_version": QUEUE_CROSS_REQUEST_AUTHORIZATION_SCHEMA,
+        "mode": "same_subject_same_conversation_explicit_predecessor",
+        "authorization_source": "resident_root_turn",
+        "predecessor_run_id": predecessor_run_id,
+        "resident_conversation_id": current_provenance.get(
+            "resident_conversation_id"
+        ),
+        "subject_sha256": current_request["subject_sha256"],
+        "current_source_record_id": current_source,
+        "current_source_record_sha256": current_request["record_sha256"],
+        "predecessor_source_record_id": predecessor_request["source_record_id"],
+        "predecessor_source_record_sha256": predecessor_request["record_sha256"],
+        "caller_turn_id": turn_id,
+        "caller_turn_authority_sha256": _queue_mapping_digest(turn_authority),
+        "caller_provenance_sha256": _queue_mapping_digest(current_provenance),
+        "predecessor_provenance_sha256": _queue_mapping_digest(
+            predecessor_provenance
+        ),
+        "query_relationship_sha256": _queue_mapping_digest(relationship),
+        "aggregation_key": aggregation_key,
+        "synthesis_group": synthesis_group,
+        "delivery_target_source_record_id": current_source,
+    }
+    return authorization, aggregation, dict(relationship)
 
 
 def _queue_has_conflicting_delivered_owner(
@@ -1961,6 +2119,8 @@ def follow_up_managed_subagent(
     expected_target_source_record_id: str | None = None,
     expected_target_discord_message_id: str | None = None,
     query_relationship: Mapping[str, Any] | None = None,
+    aggregation_role: str = "synthesis_delivery_owner",
+    synthesis_group: str | None = None,
 ) -> SubagentFollowupResult:
     """Durably append ``message`` to the unique persistent session lineage.
 
@@ -1982,6 +2142,15 @@ def follow_up_managed_subagent(
         )
     if idempotency_key is not None and not _FOLLOWUP_KEY_RE.fullmatch(idempotency_key):
         raise SubagentFollowupError("idempotency_key is malformed")
+    if aggregation_role not in AGGREGATION_ROLES:
+        raise SubagentFollowupError("follow-up aggregation_role is invalid")
+    synthesis_group = str(synthesis_group or "").strip() or None
+    if aggregation_role == "internal_contributor" and synthesis_group is None:
+        raise SubagentFollowupError(
+            "internal contributor follow-ups require synthesis_group"
+        )
+    if synthesis_group is not None and not _SYNTHESIS_GROUP_RE.fullmatch(synthesis_group):
+        raise SubagentFollowupError("follow-up synthesis_group is malformed")
     inherited_provenance = (
         normalize_delegation_provenance(caller_provenance)
         if caller_provenance is not None
@@ -2055,6 +2224,9 @@ def follow_up_managed_subagent(
             if (
                 loaded.get("message_sha256") != message_sha256
                 or loaded.get("requester_provenance_sha256") != caller_sha256
+                or loaded.get("aggregation_role", "synthesis_delivery_owner")
+                != aggregation_role
+                or loaded.get("synthesis_group") != synthesis_group
             ):
                 raise SubagentFollowupError(
                     "idempotency key is already bound to different follow-up content or custody"
@@ -2143,6 +2315,8 @@ def follow_up_managed_subagent(
                 "idempotency_key": selector,
                 "requester_provenance": caller_provenance,
                 "requester_provenance_sha256": caller_sha256,
+                "aggregation_role": aggregation_role,
+                "synthesis_group": synthesis_group,
                 "query_relationship": (
                     dict(query_relationship)
                     if isinstance(query_relationship, Mapping)
@@ -2200,6 +2374,8 @@ def follow_up_managed_subagent(
                 parent_manifest_path=tip_path,
                 interrupt_parent=parent_live,
                 query_relationship=query_relationship,
+                aggregation_role=aggregation_role,
+                synthesis_group=synthesis_group,
             )
         except Exception as exc:
             failed_at = _utc_now()
@@ -5444,6 +5620,12 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
         "--idempotency-key",
         help="Stable retry key; reuse is allowed only with identical message and custody",
     )
+    followup.add_argument(
+        "--aggregation-role",
+        choices=sorted(AGGREGATION_ROLES),
+        default="synthesis_delivery_owner",
+    )
+    followup.add_argument("--synthesis-group")
     return parser
 
 
@@ -5502,6 +5684,8 @@ def _main(argv: list[str] | None = None) -> int:
                 message=message,
                 project_dir=args.project_dir,
                 idempotency_key=args.idempotency_key,
+                aggregation_role=args.aggregation_role,
+                synthesis_group=args.synthesis_group,
             )
         except (SubagentFollowupError, DelegationProvenanceError, OSError) as exc:
             print(

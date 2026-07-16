@@ -92,6 +92,7 @@ def _write_authoritative_request(
     provenance: dict[str, object],
     *,
     author_id: str,
+    ancestor_content: str | None = None,
 ) -> None:
     store = root / ".megaplan/resident"
     messages = store / "messages"
@@ -118,6 +119,18 @@ def _write_authoritative_request(
                         "channel_id": provenance["channel_id"],
                         "dm_user_id": provenance["dm_user_id"],
                     },
+                    **(
+                        {
+                            "ancestors": [
+                                {
+                                    "status": "available",
+                                    "content": ancestor_content,
+                                }
+                            ]
+                        }
+                        if ancestor_content is not None
+                        else {}
+                    ),
                 },
             },
             sort_keys=True,
@@ -239,6 +252,65 @@ def _queue_cross_request(root: Path):
         project_dir=str(root),
         depends_on_run_id=PREDECESSOR_RUN_ID,
     )
+
+
+def _cross_request_root_turn_fixture(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, object], Path, Path]:
+    monkeypatch.setenv(
+        "MEGAPLAN_RESIDENT_STORE_ROOT", str(root / ".megaplan/resident")
+    )
+    predecessor_provenance = _cross_provenance(
+        source_record_id="msg_predecessor1",
+        message_id="1527043418327486586",
+    )
+    current_provenance = _cross_provenance(
+        source_record_id="msg_currentreq1",
+        message_id="1527043418327486587",
+    )
+    current_provenance["resident_turn_id"] = "turn_123456789abc"
+    _write_authoritative_request(
+        root, predecessor_provenance, author_id="42"
+    )
+    _write_authoritative_request(
+        root,
+        current_provenance,
+        author_id="42",
+        ancestor_content=f"Launched `{PREDECESSOR_RUN_ID}`.",
+    )
+    predecessor_path = _write_predecessor(
+        root, provenance=predecessor_provenance
+    )
+    source = str(current_provenance["source_record_id"])
+    relationship = {
+        "schema_version": "arnold-resident-query-relationship-v1",
+        "conversation_id": current_provenance["resident_conversation_id"],
+        "current_request": {"source_record_id": source},
+        "delivery_owner": {"source_record_id": source},
+        "aggregation_owner": {"source_record_id": source},
+    }
+    relationship_dir = root / ".megaplan/resident/query_relationships"
+    relationship_dir.mkdir(parents=True, exist_ok=True)
+    relationship_dir.joinpath(f"{source}.json").write_text(
+        json.dumps(relationship), encoding="utf-8"
+    )
+    turn_dir = root / ".megaplan/resident/turns"
+    turn_dir.mkdir(parents=True, exist_ok=True)
+    turn_path = turn_dir / f"{current_provenance['resident_turn_id']}.json"
+    turn_path.write_text(
+        json.dumps(
+            {
+                "id": current_provenance["resident_turn_id"],
+                "status": "in_progress",
+                "triggered_by_message_ids": [source],
+                "prompt_snapshot": {"message_count": 1},
+                "started_at": "2026-07-15T13:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(current_provenance))
+    return current_provenance, predecessor_path, turn_path
 
 
 def _write_predecessor(
@@ -645,6 +717,44 @@ def test_cross_request_queue_uses_authoritative_same_subject_and_current_deliver
     predecessor = json.loads(predecessor_path.read_text())
     assert predecessor["aggregation"]["role"] == "synthesis_delivery_owner"
     assert predecessor["completion_delivery"]["status"] == "pending"
+
+
+def test_cross_request_queue_accepts_immutable_resident_root_turn_authority(
+    tmp_path, monkeypatch
+) -> None:
+    current, predecessor_path, turn_path = _cross_request_root_turn_fixture(
+        tmp_path, monkeypatch
+    )
+
+    queued = _queue_cross_request(tmp_path)
+    successor = json.loads(Path(queued.manifest_path).read_text())
+    authorization = successor["queue"]["cross_request_authorization"]
+
+    assert queued.status == "queued"
+    assert successor["launch_provenance"] == current
+    assert authorization["authorization_source"] == "resident_root_turn"
+    assert authorization["caller_turn_id"] == current["resident_turn_id"]
+    assert "caller_run_id" not in authorization
+    assert authorization["current_source_record_id"] == current["source_record_id"]
+
+    turn = json.loads(turn_path.read_text())
+    turn["status"] = "completed"
+    turn["completed_at"] = "2026-07-15T13:01:00+00:00"
+    turn_path.write_text(json.dumps(turn))
+    _complete_predecessor(predecessor_path)
+    launched: list[Path] = []
+    monkeypatch.setattr(
+        subagent,
+        "_spawn_managed_supervisor",
+        lambda path, manifest: (launched.append(path) or _Supervisor(), manifest),
+    )
+
+    result = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+
+    assert result.launched == 1
+    assert launched == [Path(queued.manifest_path)]
 
 
 @pytest.mark.parametrize(
