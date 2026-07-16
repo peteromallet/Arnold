@@ -7834,6 +7834,7 @@ PY
   fi
 
   local repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action repair_goal_target_worker_live
+  local repair_goal_progressed=0
   IFS=$'\t' read -r repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action repair_goal_target_worker_live <<< "$(repair_goal_watchdog_status "$session" || printf 'none\t\t\t\tfalse')"
   case "$repair_goal_status" in
     active_owner)
@@ -7906,6 +7907,7 @@ PY
       ;;
     progressed)
       log "durable repair goal verified target progress session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+      repair_goal_progressed=1
       ;;
   esac
 
@@ -8478,18 +8480,22 @@ PY
     fi
   else
     local meta_repair_trigger meta_dispatch_result
-    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
-    if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
-      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
-        meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
-        if [[ "$meta_dispatch_result" == "dispatched" ]]; then
-          log "session stopped after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
-          return 0
+    if [[ "$repair_goal_progressed" != "1" ]]; then
+      meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
+      if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+        if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
+          meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+          if [[ "$meta_dispatch_result" == "dispatched" ]]; then
+            log "session stopped after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+            return 0
+          fi
+          log "session stopped after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
+        else
+          log "session stopped after repair failure; meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
         fi
-        log "session stopped after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
-      else
-        log "session stopped after repair failure; meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
       fi
+    else
+      log "durable repair goal superseded by authoritative cursor; bypassing historical repair-failure routing for successor relaunch session=$session"
     fi
     if mechanical_relaunch_attempted_previously "$session"; then
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
